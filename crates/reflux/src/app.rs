@@ -537,7 +537,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             }
             c.child(logout_button(p))
         }
-        Route::Main => return crate::shell::view(&s.app.store, &s.app.shell, &p, |s: &mut State| &mut s.app.shell),
+        Route::Main => return crate::shell::view(&s.app.store, &s.app.shell, p, |s: &mut State| &mut s.app.shell),
     };
     col().w_full().h_full().center().fill(p.background_primary).child(body)
 }
