@@ -2,6 +2,7 @@ mod app;
 mod icons;
 mod login;
 mod media;
+mod passkey;
 mod session;
 mod settings;
 mod shell;

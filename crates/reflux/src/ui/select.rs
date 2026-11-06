@@ -119,7 +119,17 @@ impl<'a, S: 'static> Select<'a, S> {
                 .border(1.0, over(p.background_modifier_accent, bg))
                 .radius(8.0)
                 .box_shadow(popout_shadow(p, 0.24, 0.24))
-                .child(col().w_full().pt(4.0).px(4.0).pb(4.0).gap(1.0).children(rows))
+                .child(super::scroller(
+                    // react-select's `maxMenuHeight` (300) caps long lists like the birth year.
+                    col()
+                        .key(format!("{}-list", self.id))
+                        .w_full()
+                        .max_h(300.0)
+                        .scroll(rune::ScrollSpec { stick_bottom: false })
+                        .child(col().w_full().pt(4.0).px(4.0).pb(4.0).gap(1.0).children(rows)),
+                    false,
+                    p,
+                ))
                 .focus_group()
                 .role("listbox")
                 .modal(true, move |s: &mut S| access(s).close());

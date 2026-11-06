@@ -7,14 +7,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reflux_model::{
     AuthResponse, CloseCode, CreateMessage, IdentifyProperties, InstanceDiscovery, LoginRequest, Message,
-    SessionFlags, Snowflake, TotpLoginRequest,
+    RegisterRequest, SessionFlags, Snowflake, TotpLoginRequest, WebAuthnLoginRequest,
 };
 use reflux_net::{Client, Command, ConnectionState, Gateway, GatewayConfig, GatewayEvent, MessagePage};
 use reflux_store::Store;
 use rune::{AppHandle, Cx, El, TextEdit, col, text};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::login::{IpAuth, Mfa, Step};
+use crate::login::{IpAuth, Mfa, Prompt, Step};
 use crate::theme::{self, font};
 use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
@@ -238,6 +238,15 @@ where
     F: FnOnce(Arc<Instance>) -> Fut + Send + 'static,
     Fut: Future<Output = reflux_net::Result<AuthResponse>> + Send,
 {
+    request_with(s, f, on_auth);
+}
+
+fn request_with<T, F, Fut>(s: &mut State, f: F, done: fn(&mut State, reflux_net::Result<T>))
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<Instance>) -> Fut + Send + 'static,
+    Fut: Future<Output = reflux_net::Result<T>> + Send,
+{
     let Some(inst) = s.app.instance.clone() else {
         s.login.errors.form = Some(if s.login.discovering { "Still connecting to the instance…" } else { "No instance selected." }.into());
         return;
@@ -256,7 +265,7 @@ where
         update(move |s| {
             s.login.submitting = false;
             s.login.slow = false;
-            on_auth(s, r);
+            done(s, r);
         });
     });
 }
@@ -265,15 +274,11 @@ fn on_auth(s: &mut State, r: reflux_net::Result<AuthResponse>) {
     match r {
         Ok(AuthResponse::Token(t)) => signed_in(s, t.token),
         Ok(AuthResponse::Mfa(m)) => {
-            let webauthn_only = !m.totp && !m.backup_codes;
             s.login.code = TextEdit::default();
-            s.login.code.focused = !webauthn_only;
-            s.login.step = Step::Mfa(Mfa { ticket: m.ticket, totp: m.totp, backup_codes: m.backup_codes });
-            if webauthn_only {
-                s.login.errors.form =
-                    Some("This account signs in with a security key or passkey, which Reflux doesn't support yet.".into());
-            }
+            s.login.code.focused = m.totp || m.backup_codes;
+            s.login.step = Step::Mfa(Mfa { ticket: m.ticket, totp: m.totp, backup_codes: m.backup_codes, webauthn: m.webauthn });
         }
+        Ok(AuthResponse::PendingApproval(_)) if s.login.step == Step::Register => s.login.register.pending = true,
         Ok(AuthResponse::PendingApproval(_)) => {
             s.login.errors.form = Some("Your account is waiting for approval by the instance's staff.".into());
         }
@@ -285,6 +290,153 @@ fn on_auth(s: &mut State, r: reflux_net::Result<AuthResponse>) {
         }
         Err(e) => s.login.errors = crate::login::Errors::from_error(&e),
     }
+}
+
+pub fn submit_register(s: &mut State) {
+    if s.login.submitting || crate::login::register_missing(s) {
+        return;
+    }
+    s.login.errors = Default::default();
+    if s.login.password.text != s.login.register.confirm.text {
+        s.login.errors.confirm = Some("The passwords don't match.".into());
+        return;
+    }
+    let r = &s.login.register;
+    let opt = |t: &str| Some(t.trim().to_owned()).filter(|t| !t.is_empty());
+    let date_of_birth = match (&r.year, &r.month, &r.day) {
+        (Some(y), Some(m), Some(d)) if crate::login::sign_up(s).collect_date_of_birth => Some(format!("{y}-{m:0>2}-{d:0>2}")),
+        _ => None,
+    };
+    let req = RegisterRequest {
+        email: opt(&s.login.email.text),
+        username: opt(&r.username.text),
+        global_name: opt(&r.global_name.text),
+        password: Some(s.login.password.text.clone()),
+        date_of_birth,
+        consent: true,
+        ..Default::default()
+    };
+    request(s, move |inst| async move { inst.rest.register(&req).await });
+}
+
+pub fn submit_forgot(s: &mut State) {
+    let email = s.login.email.text.trim().to_owned();
+    if s.login.submitting {
+        return;
+    }
+    if email.is_empty() {
+        s.login.errors.email = Some("This field is required.".into());
+        return;
+    }
+    request_with(s, move |inst| async move { inst.rest.forgot_password(&email).await }, |s, r| match r {
+        Ok(()) => s.login.step = Step::Forgot { sent: true },
+        Err(_) => s.login.errors.email = Some("Failed to send reset link. Try again.".into()),
+    });
+}
+
+/// Signs in with a security key: password-less, or as the second factor of `mfa`.
+pub fn start_passkey(s: &mut State, mfa: Option<Mfa>) {
+    let Some(inst) = s.app.instance.clone() else {
+        s.login.errors.form = Some(if s.login.discovering { "Still connecting to the instance…" } else { "No instance selected." }.into());
+        return;
+    };
+    s.login.errors = Default::default();
+    s.login.attempt += 1;
+    let attempt = s.login.attempt;
+    let ticket = mfa.as_ref().map(|m| m.ticket.clone());
+    s.login.step = Step::Passkey(crate::login::Passkey { mfa, prompt: Prompt::Touch });
+    // Applies `f` only while this attempt's passkey screen is still up.
+    let live = move |f: Box<dyn FnOnce(&mut State) + Send>| {
+        update(move |s| {
+            if s.login.attempt == attempt && matches!(s.login.step, Step::Passkey(_)) {
+                f(s)
+            }
+        })
+    };
+    spawn(async move {
+        let opts = match &ticket {
+            Some(t) => inst.rest.login_webauthn_options(t).await,
+            None => inst.rest.passkey_options().await,
+        };
+        let opts = match opts {
+            Ok(o) => o,
+            Err(e) => return live(Box::new(move |s| passkey_failed(s, crate::login::Errors::from_error(&e)))),
+        };
+        let origin = crate::passkey::origin_for(&inst.discovery, &opts.rp_id);
+        let challenge = opts.challenge.clone();
+        let assertion = tokio::task::spawn_blocking(move || {
+            crate::passkey::get(
+                &opts,
+                &origin,
+                move |st| live(Box::new(move |s| passkey_status(s, st))),
+                move |c| live(Box::new(move |s| s.login.passkey_cancel = Some(c))),
+            )
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        let response = match assertion {
+            Ok(r) => r,
+            Err(msg) => {
+                let errors = crate::login::Errors { form: Some(msg), ..Default::default() };
+                return live(Box::new(move |s| passkey_failed(s, errors)));
+            }
+        };
+        let req = WebAuthnLoginRequest { response, challenge, ticket: ticket.clone() };
+        let r = match ticket {
+            Some(_) => inst.rest.login_webauthn(&req).await,
+            None => inst.rest.login_passkey(&req).await,
+        };
+        live(Box::new(move |s| {
+            passkey_back(s);
+            on_auth(s, r.map(AuthResponse::Token));
+        }));
+    });
+}
+
+fn passkey_status(s: &mut State, st: crate::passkey::Status) {
+    let Step::Passkey(k) = &mut s.login.step else { return };
+    k.prompt = match st {
+        crate::passkey::Status::Touch => Prompt::Touch,
+        crate::passkey::Status::SelectDevice => Prompt::SelectDevice,
+        crate::passkey::Status::Pin { reply, wrong, attempts } => {
+            s.login.pin = TextEdit::default();
+            s.login.pin.focused = true;
+            s.login.pin_reply = Some(reply);
+            Prompt::Pin { wrong, attempts }
+        }
+    };
+}
+
+pub fn submit_pin(s: &mut State) {
+    let pin = std::mem::take(&mut s.login.pin);
+    if let (Some(reply), Step::Passkey(k)) = (s.login.pin_reply.take(), &mut s.login.step) {
+        let _ = reply.send(authenticator::Pin::new(&pin.text));
+        k.prompt = Prompt::Touch;
+    }
+}
+
+/// Leaves the passkey screen for where it came from (MFA or the method list).
+fn passkey_back(s: &mut State) {
+    if let Some(c) = s.login.passkey_cancel.take() {
+        c.cancel();
+    }
+    s.login.pin_reply = None;
+    s.login.pin = TextEdit::default();
+    if let Step::Passkey(k) = std::mem::take(&mut s.login.step) {
+        s.login.step = k.mfa.map_or(Step::Method, Step::Mfa);
+    }
+}
+
+fn passkey_failed(s: &mut State, errors: crate::login::Errors) {
+    passkey_back(s);
+    s.login.errors = errors;
+}
+
+/// Back on the passkey screen: cancel the key request and ignore its late result.
+pub fn cancel_passkey(s: &mut State) {
+    s.login.attempt += 1;
+    passkey_back(s);
+    s.login.errors = Default::default();
 }
 
 /// Polls every 2 s while the IP authorization screen (holding `alive`) is shown.

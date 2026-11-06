@@ -50,6 +50,24 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     ("select", |s| g(s).popups = Popups { open: Some("g-select".into()), ..Popups::default() }),
     ("light", |s| g(s).theme = Kind::Light),
     ("coal", |s| g(s).theme = Kind::Coal),
+    // Logged-out screens (no gallery).
+    ("register", crate::login::scenes::register),
+    ("register-filled", crate::login::scenes::register_filled),
+    ("register-dob", crate::login::scenes::register_dob),
+    ("register-pending", crate::login::scenes::register_pending),
+    ("forgot", crate::login::scenes::forgot),
+    ("forgot-sent", crate::login::scenes::forgot_sent),
+    ("mfa-webauthn", crate::login::scenes::mfa_webauthn),
+    ("passkey", crate::login::scenes::passkey),
+    ("passkey-failed", crate::login::scenes::passkey_failed),
+    ("passkey-pin", crate::login::scenes::passkey_pin),
+    // `--shell-demo` with an unverified account: the email verification nagbar.
+    ("unverified", |s| {
+        if let Some(me) = s.shell_demo.as_mut().and_then(|d| d.store.me.as_mut()) {
+            me.verified = false;
+            me.email = Some("me@example.com".into());
+        }
+    }),
 ];
 
 fn g(s: &mut State) -> &mut Gallery {

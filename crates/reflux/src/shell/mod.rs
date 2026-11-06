@@ -81,6 +81,45 @@ pub enum Intent {
     MarkRead(Vec<(Snowflake, Snowflake)>),
     /// Mute a guild (`channel: None`) or a channel's override.
     Mute { guild: Option<Snowflake>, channel: Option<Snowflake>, muted: bool },
+    /// `POST /auth/verify/resend` from the email verification nagbar.
+    ResendVerification,
+}
+
+/// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
+/// and a super-compact inverted button, gap 12.
+fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let me = store.me.as_ref().filter(|u| !u.verified && u.email.is_some())?;
+    let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
+    let (message, button) = if me.email_bounced {
+        (format!("Hey {name}, we can't deliver email to your address. Add a working email to verify your account."), None)
+    } else {
+        let label = if st.verify_sent { "Email sent" } else { "Resend email" };
+        let b = crate::ui::Button::new(label)
+            .variant(crate::ui::ButtonVariant::Inverted)
+            .size(crate::ui::ButtonSize::SuperCompact)
+            .disabled(st.verify_sent)
+            .key("nagbar-verify-resend")
+            .on_press(move |s: &mut S| {
+                let sh = acc(s);
+                sh.verify_sent = true;
+                sh.intents.push(Intent::ResendVerification);
+            })
+            .el(p);
+        (format!("Hey {name}, please confirm your email address."), Some(b))
+    };
+    Some(
+        row()
+            .w_full()
+            .min_h(36.0)
+            .py(4.0)
+            .px(8.0)
+            .gap(12.0)
+            .center()
+            .fill(crate::ui::rgb(0x4e, 0x50, 0x58))
+            .child(rune::text(message).font(crate::theme::font(14.0, 600.0).lh(20.0)).color(rune::Color::WHITE).wrap().align(rune::Align::Center))
+            .children(button)
+            .role("status"),
+    )
 }
 
 /// What the open context menu or profile popout is about.
@@ -118,6 +157,8 @@ pub struct ShellState {
     /// Avatars, icons, attachments and emoji from the media proxy.
     pub media: crate::media::Media,
     pub intents: Vec<Intent>,
+    /// The verification nagbar's "Resend email" was used this session.
+    pub verify_sent: bool,
     /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
     pub popups: Popups,
     /// The message under the pointer (shows its action bar).
@@ -178,6 +219,7 @@ impl Default for ShellState {
             default_avatars: Vec::new(),
             media: Default::default(),
             intents: Vec::new(),
+            verify_sent: false,
             popups: Popups::default(),
             hover_msg: None,
             active_msg: None,
@@ -311,11 +353,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     );
     let body = row()
         .w_full()
-        .h_full()
+        .grow(1.0)
+        .min_h(0.0)
         .fill(p.background_secondary)
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
+    let body = col().w_full().h_full().children(verify_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);

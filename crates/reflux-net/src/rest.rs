@@ -192,8 +192,27 @@ impl Client {
         self.get(&format!("/auth/ip-authorization/poll?ticket={ticket}")).await
     }
 
+    /// Options for a passkey sign-in without a password (discoverable credential).
+    pub async fn passkey_options(&self) -> Result<WebAuthnAuthenticationOptions> {
+        self.request(Method::POST, "/auth/webauthn/authentication-options", Some(&serde_json::json!({}))).await
+    }
+
+    pub async fn login_passkey(&self, req: &WebAuthnLoginRequest) -> Result<AuthToken> {
+        self.request(Method::POST, "/auth/webauthn/authenticate", Some(req)).await
+    }
+
     pub async fn register(&self, req: &RegisterRequest) -> Result<AuthResponse> {
         self.request(Method::POST, "/auth/register", Some(req)).await
+    }
+
+    /// Emails a password reset link (same answer whether or not the address has an account).
+    pub async fn forgot_password(&self, email: &str) -> Result<()> {
+        self.request(Method::POST, "/auth/forgot", Some(&serde_json::json!({ "email": email }))).await
+    }
+
+    /// Sends another verification email to the signed-in account.
+    pub async fn resend_verification(&self) -> Result<()> {
+        self.request::<(), ()>(Method::POST, "/auth/verify/resend", None).await
     }
 
     /// Revokes the current session token server-side and forgets it locally.

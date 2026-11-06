@@ -129,6 +129,7 @@ pub(super) fn run(s: &mut State, i: Intent) {
                 });
             });
         }
+        Intent::ResendVerification => call(inst, |i| async move { i.rest.resend_verification().await }, "resend verification email"),
         Intent::MarkRead(acks) => {
             for &(c, m) in &acks {
                 ack_locally(s, c, m, false);
