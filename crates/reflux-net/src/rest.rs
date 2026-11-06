@@ -82,6 +82,11 @@ impl Client {
         *self.sudo.write().unwrap() = None;
     }
 
+    /// The API base with its version (`…/v1`).
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.request(Method::GET, path, None::<&()>).await
     }
@@ -93,6 +98,17 @@ impl Client {
         method: Method,
         path: &str,
         body: Option<&B>,
+    ) -> Result<T> {
+        self.request_with_reason(method, path, body, None).await
+    }
+
+    /// [`Self::request`] with an `X-Audit-Log-Reason` (moderation actions).
+    pub async fn request_with_reason<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        reason: Option<&str>,
     ) -> Result<T> {
         guard(&method, path)?;
         let body = body.map(serde_json::to_vec).transpose()?;
@@ -120,6 +136,9 @@ impl Client {
             }
             if let Some(id) = &self.installation_id {
                 req = req.header("X-Fluxer-Client-Installation-ID", id);
+            }
+            if let Some(r) = reason {
+                req = req.header("X-Audit-Log-Reason", urlencoding_min(r));
             }
             if let Some(token) = &captcha {
                 req = req.header("X-Captcha-Token", token);
@@ -682,4 +701,17 @@ mod tests {
         assert_eq!(rl.wait("GET /a", t + ms(1000)), None);
         assert!(rl.routes.is_empty() && rl.global.is_none(), "expired entries are dropped");
     }
+}
+
+/// Percent-encodes what a header value can't carry (non-ASCII, controls, `%`).
+fn urlencoding_min(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_graphic() && b != b'%' || b == b' ' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }

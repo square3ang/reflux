@@ -1,0 +1,305 @@
+//! Explore (`DiscoveryPage`, `DiscoveryGuildCard`), the guild preview nagbar shown while
+//! visiting a community, and `InviteAcceptModal`.
+// shortcut: cards show the community's initials instead of its icon and banner images, there is
+// no language filter, and results stop at the first 24.
+
+use reflux_model::Snowflake;
+use reflux_store::Store;
+use reqwest::Method;
+use rune::{El, ScrollSpec, col, el, icon, row, text};
+use serde_json::{Value, json};
+
+use super::{Done, body, close, desc, error};
+use crate::icons;
+use crate::shell::{ShellAccess, ShellState};
+use crate::theme::{Palette, font};
+use crate::ui::{Button, ButtonSize, ButtonVariant, Input, Modal as Dialog, scroller, spinner};
+
+const CATEGORIES: [&str; 9] = ["Gaming", "Music", "Entertainment", "Education", "Science & Technology", "Content Creator", "Anime & Manga", "Movies & TV", "Other"];
+
+/// The search request for the current query and category.
+pub fn search_path(query: &str, category: Option<u8>) -> String {
+    let mut p = "/discovery/guilds?limit=24".to_string();
+    let q = query.trim();
+    if !q.is_empty() {
+        p.push_str("&sort_by=relevance&query=");
+        for b in q.bytes() {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                p.push(b as char);
+            } else {
+                p.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    if let Some(c) = category {
+        p.push_str(&format!("&category={c}"));
+    }
+    p
+}
+
+/// Opens Explore and runs the search.
+pub fn open(st: &mut ShellState) {
+    st.social.discovery = true;
+    st.channel = None;
+    search(st);
+}
+
+fn search(st: &mut ShellState) {
+    st.social.data.remove("discovery");
+    let path = search_path(&st.social.discovery_query.text, st.social.discovery_category);
+    st.social(Method::GET, path, None, Done::Data("discovery".into()));
+}
+
+fn compact(n: u64) -> String {
+    match n {
+        0..1000 => n.to_string(),
+        1000..1_000_000 => format!("{:.1}K", n as f64 / 1000.0).replace(".0K", "K"),
+        _ => format!("{:.1}M", n as f64 / 1e6).replace(".0M", "M"),
+    }
+}
+
+pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let search_box = Input::new("discovery-search", &st.social.discovery_query, move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).social.discovery_query })
+        .placeholder("Search communities")
+        .el(p)
+        .w(360.0)
+        .on_key(move |s: &mut S, k: &rune::KeyEvent, _: &mut rune::Tx| {
+            if k.key == rune::Key::Enter {
+                search(acc(s));
+                return true;
+            }
+            false
+        });
+    let head = row()
+        .w_full()
+        .h(48.0)
+        .px(16.0)
+        .gap(8.0)
+        .center_y()
+        .child(rune::el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
+        .child(icon(&icons::COMPASS_FILL, 20.0).color(p.text_primary_muted))
+        .child(text("Explore").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .child(search_box);
+    let pill = |label: &str, cat: Option<u8>| {
+        let on = st.social.discovery_category == cat;
+        row()
+            .h(32.0)
+            .px(12.0)
+            .center()
+            .radius(16.0)
+            .fill(if on { p.brand_primary } else { p.background_secondary })
+            .hover(if on { p.brand_primary } else { p.background_modifier_hover })
+            .cursor(rune::Cursor::Pointer)
+            .role("tab")
+            .key(format!("discovery-cat-{}", cat.map_or(-1, |c| c as i32)))
+            .child(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(if on { p.brand_primary_fill } else { p.text_primary }))
+            .on_press(move |s: &mut S| {
+                let st = acc(s);
+                st.social.discovery_category = cat;
+                search(st);
+            })
+    };
+    let mut cats = row().w_full().gap(8.0).flex_wrap().child(pill("All", None));
+    for (i, c) in CATEGORIES.iter().enumerate() {
+        cats = cats.child(pill(c, Some(i as u8)));
+    }
+    let results = match st.social.data.get("discovery") {
+        None => row().w_full().h(300.0).center().child(spinner(p.text_primary_muted)),
+        Some(v) => {
+            let guilds = v["guilds"].as_array().cloned().unwrap_or_default();
+            if guilds.is_empty() {
+                let searching = !st.social.discovery_query.text.trim().is_empty() || st.social.discovery_category.is_some();
+                col()
+                    .w_full()
+                    .min_h(300.0)
+                    .center()
+                    .gap(8.0)
+                    .child(icon(&icons::COMPASS_FILL, 64.0).color(p.text_primary_muted))
+                    .child(text(if searching { "No communities match." } else { "Nothing to explore yet" }).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary))
+                    .child(
+                        text(if searching { "Try another search term, or pick a different category or language." } else { "No communities are listed right now. Check back a little later." })
+                            .font(font(14.0, 400.0).lh(20.0))
+                            .color(p.text_primary_muted),
+                    )
+            } else {
+                let total = v["total"].as_u64().unwrap_or(guilds.len() as u64);
+                let mut grid = col().w_full().gap(16.0).child(text(if total == 1 { "1 community found".to_string() } else { format!("{total} communities found") }).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted));
+                for chunk in guilds.chunks(3) {
+                    let mut r = row().w_full().gap(16.0).items_stretch();
+                    for g in chunk {
+                        r = r.child(card(g, p, acc));
+                    }
+                    for _ in chunk.len()..3 {
+                        r = r.child(el().grow(1.0).w(0.0));
+                    }
+                    grid = grid.child(r);
+                }
+                grid
+            }
+        }
+    };
+    let content = col().w_full().padding(24.0).gap(24.0).child(cats).children(st.social.data.get("discovery_error").map(|e| text(e.as_str().unwrap_or_default().to_string()).color(p.status_danger))).child(results);
+    col()
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .fill(p.background_secondary_lighter)
+        .child(head)
+        .child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(content), false, p)))
+}
+
+/// `DiscoveryGuildCard`: banner strip, initials, name, description and counts; opens a preview.
+fn card<S: 'static>(g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
+    let id: Snowflake = g["id"].as_str().and_then(|s| s.parse().ok()).unwrap_or_default();
+    let name = g["name"].as_str().unwrap_or_default().to_string();
+    let description = g["description"].as_str().filter(|d| !d.is_empty()).unwrap_or("No description.").to_string();
+    let online = g["online_count"].as_u64().unwrap_or(0);
+    let members = g["member_count"].as_u64().unwrap_or(0);
+    let dot = |c| el().size(8.0, 8.0).radius(4.0).fill(c);
+    let face = row().size(56.0, 56.0).center().radius(16.0).fill(p.background_primary).border(3.0, p.background_secondary).child(text(crate::shell::acronym(&name)).font(font(18.0, 600.0)).color(p.text_primary));
+    let visits = g["visits_enabled"].as_bool().unwrap_or(true);
+    col()
+        .grow(1.0)
+        .w(0.0)
+        .min_w(0.0)
+        .radius(12.0)
+        .clip_rounded(12.0)
+        .fill(p.background_secondary)
+        .hover(p.background_secondary_alt)
+        .border(1.0, p.background_modifier_accent)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(format!("Preview {name}"))
+        .key(format!("discovery-guild-{id}"))
+        .on_press(move |s: &mut S| {
+            let st = acc(s);
+            if visits {
+                st.social(Method::POST, format!("/discovery/guilds/{id}/visit"), None, Done::EnterGuild(id));
+            } else {
+                st.social(Method::POST, format!("/discovery/guilds/{id}/join"), None, Done::EnterGuild(id));
+            }
+        })
+        .child(el().w_full().h(120.0).fill(p.background_tertiary))
+        .child(face.pin(Some(16.0), Some(92.0), None, None))
+        .child(
+            col()
+                .w_full()
+                .pt(40.0)
+                .px(16.0)
+                .pb(16.0)
+                .gap(8.0)
+                .grow(1.0)
+                .child(text(name.clone()).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate())
+                .child(text(description).font(font(14.0, 400.0).lh(21.0)).color(p.text_secondary).wrap().max_lines(4).min_h(84.0))
+                .child(
+                    row()
+                        .gap(16.0)
+                        .center_y()
+                        .child(row().gap(6.0).center_y().child(dot(p.status_online)).child(text(format!("{} online", compact(online))).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted)))
+                        .child(row().gap(6.0).center_y().child(dot(p.text_tertiary)).child(text(if members == 1 { "1 member".to_string() } else { format!("{} members", compact(members)) }).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))),
+                ),
+        )
+}
+
+/// While visiting a community: "Join" or "Stop previewing".
+pub fn preview_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let g = st.guild?;
+    let gs = store.guilds.get(&g).filter(|gs| gs.visiting)?;
+    let name = gs.info.as_ref().map_or(String::new(), |i| i.name.clone());
+    let join = Button::new("Join")
+        .variant(ButtonVariant::Inverted)
+        .size(ButtonSize::SuperCompact)
+        .submitting(st.form.busy && st.dialog.is_none())
+        .key("nagbar-visit-join")
+        .on_press(move |s: &mut S| acc(s).social(Method::POST, format!("/users/@me/guild-visits/{g}/join"), None, Done::Nothing))
+        .el(p);
+    let stop = Button::new("Stop previewing")
+        .variant(ButtonVariant::Secondary)
+        .size(ButtonSize::SuperCompact)
+        .key("nagbar-visit-stop")
+        .on_press(move |s: &mut S| {
+            let st = acc(s);
+            st.social(Method::DELETE, format!("/users/@me/guild-visits/{g}"), None, Done::Nothing);
+            st.select_guild(None, None);
+        })
+        .el(p);
+    Some(
+        row()
+            .w_full()
+            .min_h(36.0)
+            .py(4.0)
+            .px(8.0)
+            .gap(12.0)
+            .center()
+            .fill(p.brand_primary)
+            .role("status")
+            .child(text(format!("You're previewing {name}. Join to chat and get notifications.")).font(font(14.0, 600.0).lh(20.0)).color(rune::Color::WHITE).wrap())
+            .child(join)
+            .child(stop),
+    )
+}
+
+/// `InviteAcceptModal`: the invite preview (`form.data["invite"]`), then Join.
+pub fn invite_accept<S: 'static>(_store: &Store, st: &ShellState, code: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let inv = st.form.data.get("invite").cloned();
+    let Some(inv) = inv else {
+        let mut items = vec![if st.form.error.is_some() { desc("This invite may be expired, or you might not have permission to join.", p) } else { row().w_full().h(80.0).center().child(spinner(p.text_primary_muted)) }];
+        items.extend(error(st, p));
+        return Dialog::new("Join community", close(acc)).body(body(items)).el(p);
+    };
+    let name = inv["guild"]["name"].as_str().or(inv["channel"]["name"].as_str()).unwrap_or("this community").to_string();
+    let by = inv["inviter"]["global_name"].as_str().or(inv["inviter"]["username"].as_str()).map(str::to_string);
+    let members = inv["member_count"].as_u64();
+    let online = inv["presence_count"].as_u64();
+    let mut items = vec![col()
+        .w_full()
+        .gap(12.0)
+        .items_center()
+        .child(row().size(80.0, 80.0).center().radius(24.0).fill(p.background_tertiary).child(text(crate::shell::acronym(&name)).font(font(24.0, 600.0)).color(p.text_primary)))
+        .children(by.map(|b| text(format!("{b} invited you to join")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)))
+        .child(text(name.clone()).font(font(24.0, 600.0).lh(30.0)).color(p.text_primary))
+        .child(
+            row()
+                .gap(16.0)
+                .children(online.map(|o| text(format!("{} online", compact(o))).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)))
+                .children(members.map(|m| text(format!("{} members", compact(m))).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted))),
+        )];
+    items.extend(error(st, p));
+    let code = code.to_string();
+    let join = Button::new("Join community").submitting(st.form.busy).key("invite-accept").on_press(move |s: &mut S| acc(s).social(Method::POST, format!("/invites/{code}"), Some(json!({})), Done::Enter)).el(p);
+    Dialog::new("Join community", close(acc)).body(body(items)).footer(row().w_full().child(join.grow(1.0))).el(p)
+}
+
+/// The code of an invite link on this instance (`{invite}/code` or `{webapp}/invite/code`).
+pub fn invite_code(invite_base: &str, web_base: &str, url: &str) -> Option<String> {
+    let strip = |base: &str, extra: &str| {
+        let b = base.trim_end_matches('/');
+        (!b.is_empty()).then(|| url.strip_prefix(&format!("{b}{extra}/"))).flatten()
+    };
+    let rest = strip(invite_base, "").or_else(|| strip(web_base, "/invite"))?;
+    let code = rest.split(['?', '#', '/']).next()?;
+    (!code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| code.to_string())
+}
+
+/// Opens the invite modal and loads its preview.
+pub fn open_invite(st: &mut ShellState, code: String) {
+    st.open_social(super::Modal::InviteAccept(code.clone()));
+    st.social(Method::GET, format!("/invites/{code}?with_counts=true"), None, Done::Form("invite".into()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_paths_encode_the_query() {
+        assert_eq!(search_path("", None), "/discovery/guilds?limit=24");
+        assert_eq!(search_path(" rust & go ", Some(4)), "/discovery/guilds?limit=24&sort_by=relevance&query=rust%20%26%20go&category=4");
+        assert_eq!(compact(1500), "1.5K");
+        assert_eq!(compact(2000), "2K");
+        assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://fluxer.gg/AbC-1"), Some("AbC-1".into()));
+        assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://web.fluxer.app/invite/xyz?x=1"), Some("xyz".into()));
+        assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://example.com/xyz"), None);
+        assert_eq!(invite_code("", "", "https://example.com/xyz"), None);
+    }
+}

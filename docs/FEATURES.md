@@ -38,30 +38,30 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Overview | PARTIAL | splashes, detached banner, history threshold, advanced | guild_tabs/guild_overview_tab/* |
 | Roles | PARTIAL | role icon, members-in-role, drag reorder | guild_tabs/GuildRolesTab.tsx |
-| Moderation | MISSING | | guild_tabs/GuildModerationTab.tsx |
+| Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
 | Activity log | PARTIAL | filters, paging, change details | guild_tabs/GuildAuditLogTab.tsx |
 | Emoji | PARTIAL | rename, bulk upload | guild_tabs/GuildEmojiTab.tsx |
 | Stickers | PARTIAL | bulk upload, image crop | guild_tabs/GuildStickersTab.tsx |
-| Explore (discovery listing) | MISSING | | guild_tabs/GuildDiscoveryTab.tsx |
-| Vanity URL | MISSING | | guild_tabs/GuildVanityURLTab.tsx |
-| Webhooks | MISSING | | guild_tabs/GuildWebhooksTab.tsx, F/webhook/* |
-| Members | PARTIAL | timeout, nickname, filters, paging | GuildMembersPage.tsx |
-| Invites | PARTIAL | pause invites | DisableInvitesButton.tsx |
-| Bans | DONE | ban details modal | GuildBansTab.tsx |
+| Explore (discovery listing) | DONE | | guild_tabs/GuildDiscoveryTab.tsx |
+| Vanity URL | DONE | | guild_tabs/GuildVanityURLTab.tsx |
+| Webhooks | PARTIAL | editor always returns to the guild tab | guild_tabs/GuildWebhooksTab.tsx, F/webhook/* |
+| Members | PARTIAL | filters, paging | GuildMembersPage.tsx |
+| Invites | DONE | | DisableInvitesButton.tsx |
+| Bans | DONE | | GuildBansTab.tsx |
 | Delete community | DONE | sudo: password only | GuildDeleteModal.tsx |
-| Transfer ownership | MISSING | | TransferOwnershipModal.tsx |
+| Transfer ownership | DONE | | TransferOwnershipModal.tsx |
 
 ### 1.3 Channel / thread / forum / group settings (ours guild/channel.rs)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
 | Channel overview | PARTIAL | multi-line topic, voice bitrate/user limit/region, link URL | channel_tabs/ChannelOverviewTab.tsx |
 | Channel permissions | PARTIAL | network member search, sync-with-category, thread rows | channel_tabs/ChannelPermissionsTab.tsx |
-| Channel invites | MISSING | | ChannelSettingsModalUtils.ts |
-| Channel webhooks | MISSING | | channel_tabs/ChannelWebhooksTab.tsx |
+| Channel invites | DONE | | ChannelSettingsModalUtils.ts |
+| Channel webhooks | DONE | | channel_tabs/ChannelWebhooksTab.tsx |
 | Delete channel | DONE | | ChannelDeleteModal.tsx |
 | Forum settings / tags | PARTIAL | tag add/edit/delete (ForumTagEditModal), default reaction picker, guidelines textarea, thread defaults, mature content | F/forum/components/settings/* |
 | Thread settings | PARTIAL | slowmode; no live write test | F/threads/…/ThreadSettingsModal.tsx |
-| Group DM edit | MISSING | | modals/EditGroupModal.tsx |
+| Group DM edit | DONE | | modals/EditGroupModal.tsx |
 
 ## 2. Feature areas
 
@@ -102,30 +102,30 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Channel list, header, message list, composer, member list, friends, notes, pins, uploads | DONE | | |
 | Channel-list typing / unread on muted | MISSING | | InterfaceTab.tsx |
 | Header bell dropdown | MISSING | | ChannelNotificationSettingsDropdown.tsx |
-| Topic modal | MISSING | | ChannelTopicModal.tsx |
+| Topic modal | DONE | | ChannelTopicModal.tsx |
 | DM call buttons | MISSING | | CallButtons.tsx |
-| Announcement follow | MISSING | | ChannelFollowModal.tsx |
+| Announcement follow | DONE | | ChannelFollowModal.tsx |
 | Compact layout | MISSING | | CompactMessageLayout.tsx |
-| Welcome sections | MISSING | | ChannelWelcomeSection.tsx |
-| Blocked message groups | MISSING | | BlockedMessageGroups.tsx |
+| Welcome sections | DONE | | ChannelWelcomeSection.tsx |
+| Blocked message groups | DONE | | BlockedMessageGroups.tsx |
 | Typing indicator tiers | PARTIAL | | ChannelTyping.tsx |
 | Rich composer (pills, toolbar) | MISSING | | F/lexical/* |
 | Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
 | Composer context menu | MISSING | | TextareaContextMenu.tsx |
 | Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
-| @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
+| @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
 | Attachments | PARTIAL | video/audio play only where Rune's `Player` does (macOS); elsewhere "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
 | Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
 | NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
 | Guild members page | MISSING | | GuildMembersPage.tsx |
 | DM list | PARTIAL | pinned DMs, previews | DirectMessageList.tsx |
-| Create DM / group DM | MISSING | | CreateDMModal.tsx |
-| Group DM management | MISSING | | EditGroupModal.tsx |
+| Create DM / group DM | DONE | | CreateDMModal.tsx |
+| Group DM management | PARTIAL | member add/remove only from the user menu | EditGroupModal.tsx |
 | Active Now | MISSING | | ActiveNowSidebar.tsx |
 | Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
-| Duplicate channel | MISSING | | ChannelDuplicateModal.tsx |
+| Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
 | Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
 | Call system message / system message wording | MISSING/PARTIAL | | CallMessage.tsx, SystemMessageUtils.tsx |
 
@@ -134,17 +134,17 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
 | Offline queue | PARTIAL | | MessageQueue.tsx |
-| Action bar / context menu | PARTIAL | shift layout; forward, bookmark, suppress embeds, report | MessageContextMenu.tsx |
-| Forward | MISSING | | ForwardModal.tsx |
+| Action bar / context menu | PARTIAL | shift layout | MessageContextMenu.tsx |
+| Forward | DONE | | ForwardModal.tsx |
 | Saved messages | MISSING | | SavedMessagesPage.tsx |
-| Inbox / recent mentions | MISSING | | InboxPopout.tsx |
+| Inbox / recent mentions | PARTIAL | no paging past 25; unread tab lists channels only | InboxPopout.tsx |
 | Who reacted | PARTIAL | reactors past the first 100; filter right-click "Remove reaction" (it's in the message menu) | ReactionTooltip.tsx, MessageReactionsModal.tsx |
 | Media viewer | DONE | | MediaModal.tsx |
 | Edit alt text | MISSING | | EditAltTextModal.tsx |
 | External link warning | DONE | | ExternalLinkWarningModal.tsx |
 | Markdown alerts/tables | PARTIAL | | markdown/renderers/* |
 | Code highlighting | DONE | | F/code_highlighting/* |
-| Crosspost | MISSING | | MessageCrosspostConfirmModal.tsx |
+| Crosspost | DONE | | MessageCrosspostConfirmModal.tsx |
 
 ### notification / read_state / typing / presence
 | Feature | Status | Missing | Official source |
@@ -152,9 +152,9 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Desktop notifications | PARTIAL | strip markdown; clicks on Win/mac | MessageNotificationPreview.ts |
 | Sounds, status select, custom status display | DONE | | |
 | Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
-| Timed mute expiry | PARTIAL | | useMuteSheet.ts |
+| Timed mute expiry | DONE | | useMuteSheet.ts |
 | Per-channel overrides | MISSING | | GuildNotificationSettingsModal.tsx |
-| Mute duration submenu | PARTIAL | | MuteTargetMenuItem.tsx |
+| Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
 | TTS | MISSING | | TextToSpeech.tsx |
 | Auto-idle | MISSING | | LocalPresence.ts |
 | Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
@@ -163,13 +163,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Friends actions, notes | DONE | | |
-| Friend nicknames | MISSING | | ChangeFriendNicknameModal.tsx |
+| Friend nicknames | DONE | | ChangeFriendNicknameModal.tsx |
 | Add friends to group | MISSING | | AddFriendsToGroupModal.tsx |
 | Profile popout | DONE | | UserProfilePopout.tsx |
 | Full profile modal | DONE | | UserProfileModal.tsx |
 | Change own nickname | DONE | | ChangeNicknameModal.tsx |
 | Community member avatars | PARTIAL | | F/user/components/profile/* |
-| User context menu | PARTIAL | call, invite, friend nickname, local mute, moderation | UserContextMenu.tsx |
+| User context menu | PARTIAL | call, invite, local mute | UserContextMenu.tsx |
 
 ### guild
 | Feature | Status | Missing | Official source |
@@ -185,10 +185,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### moderation
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Kick / Ban | PARTIAL | from user menu, reason, delete history | KickMemberModal.tsx, BanMemberModal.tsx |
-| Timeout | MISSING | | TimeoutMemberModal.tsx |
-| Ban details | MISSING | | BanDetailsModal.tsx |
-| Report | MISSING | | ReportFlowModal.tsx |
+| Kick / Ban | DONE | | KickMemberModal.tsx, BanMemberModal.tsx |
+| Timeout | DONE | | TimeoutMemberModal.tsx |
+| Ban details | DONE | | BanDetailsModal.tsx |
+| Report | PARTIAL | untested against a live server | ReportFlowModal.tsx |
 | Voice moderation | MISSING | | VoiceParticipantMenuItems.tsx |
 
 ### voice
@@ -225,7 +225,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
 | Gifts *(low)* | MISSING | | F/gift/* |
 | Invite: friends list, accept preview, pause | PARTIAL/MISSING | | F/invite/* |
-| Discovery page | MISSING | | DiscoveryPage.tsx |
+| Discovery page | PARTIAL | card images, language filter | DiscoveryPage.tsx |
 | Search UI chips/suggestions, history | PARTIAL/MISSING | | F/search/* |
 | Quick switcher recents | PARTIAL | | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | MISSING/PARTIAL | | F/input/* |

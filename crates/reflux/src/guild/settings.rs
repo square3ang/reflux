@@ -31,6 +31,7 @@ const TABS: &[TabDef] = &[
     ("emoji", "Expressions", "Emoji", &icons::SMILEY, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
     ("stickers", "Expressions", "Stickers", &icons::STICKER, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
     ("vanity_url", "Community", "Vanity URL", &icons::LINK_BOLD, P::MANAGE_GUILD),
+    ("explore", "Community", "Explore", &icons::COMPASS, P::MANAGE_GUILD),
     ("webhooks", "Integrations", "Webhooks", &icons::WEBHOOKS_LOGO, P::MANAGE_WEBHOOKS),
     ("members", "People", "Members", &icons::USER, P::MANAGE_GUILD),
     ("invites", "People", "Invites", &icons::TICKET, P::MANAGE_GUILD),
@@ -56,7 +57,7 @@ pub fn load_tab(st: &mut ShellState, guild: Snowflake, tab: &str) {
         "invites" => st.load("invites", format!("/guilds/{guild}/invites")),
         "bans" => st.load("bans", format!("/guilds/{guild}/bans")),
         "audit_log" => st.load("audit", format!("/guilds/{guild}/audit-logs?limit=50")),
-        _ => {}
+        _ => crate::social::load_guild_tab(st, guild, tab),
     }
 }
 
@@ -106,7 +107,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
         "invites" => invites(store, st, guild, p, acc),
         "bans" => bans(store, st, guild, p, acc),
         "audit_log" => audit_log(store, st, p),
-        _ => not_available(p),
+        _ => crate::social::guild_tab(store, st, guild, tab, p, acc, &mut popups).unwrap_or_else(|| not_available(p)),
     };
     let mut modal = frame("Community settings", label, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {
@@ -125,16 +126,16 @@ fn select_tab(st: &mut ShellState, guild: Snowflake, tab: &'static str) {
 
 // ---- Shared bits ----------------------------------------------------------------------------
 
-pub(super) fn small(t: impl Into<String>, p: &Palette) -> El {
+pub(crate) fn small(t: impl Into<String>, p: &Palette) -> El {
     text(t.into()).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted)
 }
 
-pub(super) fn title(t: impl Into<String>, p: &Palette) -> El {
+pub(crate) fn title(t: impl Into<String>, p: &Palette) -> El {
     text(t.into()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).truncate()
 }
 
 /// A bordered card of rows split by hairlines (`AccountSecurityCard`-style lists).
-pub(super) fn card(rows: Vec<El>, p: &Palette) -> El {
+pub(crate) fn card(rows: Vec<El>, p: &Palette) -> El {
     let n = rows.len();
     col().w_full().radius(12.0).border(1.0, p.background_modifier_accent).children(rows.into_iter().enumerate().map(move |(i, r)| {
         let r = row().w_full().px(16.0).py(12.0).gap(12.0).center_y().child(r);
@@ -142,13 +143,13 @@ pub(super) fn card(rows: Vec<El>, p: &Palette) -> El {
     }))
 }
 
-pub(super) fn empty(t: &str, p: &Palette) -> El {
+pub(crate) fn empty(t: &str, p: &Palette) -> El {
     text(t.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).py(24.0).w_full().align(rune::Align::Center)
 }
 
 /// A list loaded into `form.data[key]`, or a loading / failed line.
 #[allow(clippy::result_large_err)] // the Err is the El shown instead, built once a frame
-pub(super) fn loaded<T: serde::de::DeserializeOwned>(st: &ShellState, key: &str, p: &Palette) -> Result<T, El> {
+pub(crate) fn loaded<T: serde::de::DeserializeOwned>(st: &ShellState, key: &str, p: &Palette) -> Result<T, El> {
     // shortcut: parses the kept JSON every frame; keep typed lists if they get large.
     match st.form.data.get(key) {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| empty(&format!("Couldn't read the list: {e}"), p)),
@@ -166,7 +167,7 @@ fn date(ts: &str) -> String {
 }
 
 /// The sticky "unsaved changes" bar with Reset and Save.
-pub(super) fn save_bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, save: impl Fn(&mut S) + 'static) -> El {
+pub(crate) fn save_bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, save: impl Fn(&mut S) + 'static) -> El {
     let bg = p.form_surface_background;
     let mut bar = row()
         .w_full()
@@ -187,7 +188,7 @@ pub(super) fn save_bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAcces
                 .on_press(move |s: &mut S| {
                     let f = &mut acc(s).form;
                     (f.text, f.error) = (Default::default(), None);
-                    f.data.retain(|k, _| matches!(k.as_str(), "members" | "invites" | "bans" | "audit"));
+                    f.data.retain(|k, _| matches!(k.as_str(), "members" | "invites" | "bans" | "audit" | "vanity" | "webhooks" | "discovery" | "categories"));
                 })
                 .el(p),
         )
@@ -358,7 +359,7 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palett
 
 // ---- Roles ----------------------------------------------------------------------------------
 
-pub(super) fn sorted_roles(store: &Store, g: Snowflake) -> Vec<&Role> {
+pub(crate) fn sorted_roles(store: &Store, g: Snowflake) -> Vec<&Role> {
     let mut roles: Vec<&Role> = store.guilds.get(&g).map(|gs| gs.roles.iter().collect()).unwrap_or_default();
     roles.sort_by(|a, b| b.position.cmp(&a.position).then(a.id.cmp(&b.id)));
     roles
@@ -644,10 +645,10 @@ fn members<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette
                 line = line.child(Button::new("Roles").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(id).on_press(move |s: &mut S| acc(s).popups.toggle(&toggle)).el(p));
             }
             if target && have.contains(P::KICK_MEMBERS) {
-                line = line.child(Button::new("Kick").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::Kick(g, u))).el(p));
+                line = line.child(Button::new("Kick").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).open_social(crate::social::Modal::Kick { guild: g, user: u })).el(p));
             }
             if target && have.contains(P::BAN_MEMBERS) {
-                line = line.child(Button::new("Ban").variant(ButtonVariant::Danger).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::Ban(g, u))).el(p));
+                line = line.child(Button::new("Ban").variant(ButtonVariant::Danger).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).open_social(crate::social::Modal::Ban { guild: g, user: u })).el(p));
             }
             line
         })
@@ -686,7 +687,7 @@ fn invites<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette
                 }).el(p))
         })
         .collect();
-    let mut content = col().w_full().gap(16.0);
+    let mut content = col().w_full().gap(16.0).children(crate::social::pause_invites(store, g, p, acc));
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
@@ -704,10 +705,18 @@ fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, a
         .filter(|b| q.is_empty() || b.user.username.to_lowercase().contains(&q))
         .map(|b| {
             let u = b.user.id;
+            let ban = serde_json::to_value(b).unwrap_or_default();
             row()
                 .w_full()
                 .gap(12.0)
                 .center_y()
+                .cursor(rune::Cursor::Pointer)
+                .key(format!("ban-{u}"))
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.open_social(crate::social::Modal::BanDetails { guild: g, user: u });
+                    sh.form.data.insert("ban".into(), ban.clone());
+                })
                 .child(crate::shell::avatar(store, st, u, 32.0, None, p.background_secondary, p))
                 .child(col().grow(1.0).min_w(0.0).child(title(user_name(&b.user), p)).child(small(b.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| "No reason given".into()), p)))
                 .child(Button::new("Unban").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| {

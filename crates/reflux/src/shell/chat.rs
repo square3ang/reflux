@@ -214,7 +214,13 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
                 markdown::inline_text(topic, &Md::new(store, &st.media, c.guild_id, p, "topic"), font(13.0, 400.0).lh(18.0), p.text_tertiary)
                     .grow(1.0)
                     .shrink()
-                    .pr(dim::SPACING_5),
+                    .pr(dim::SPACING_5)
+                    .cursor(rune::Cursor::Pointer)
+                    .key("header-topic")
+                    .on_press({
+                        let cid = c.id;
+                        move |s: &mut S| acc(s).open_social(crate::social::Modal::Topic(cid))
+                    }),
             );
     }
     let mut right = row().gap(dim::CHANNEL_HEADER_ACTIONS_GAP).center_y();
@@ -224,7 +230,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .on_press(move |s: &mut S| super::pins::open(acc(s), cid));
     let forum = reflux_store::threads::is_forum(c.kind);
     if c.guild_id.is_some() {
-        right = right.child(if c.kind.is_thread() { super::threads::notification_button(st, c, p, acc) } else { action(&icons::BELL, "Notification Settings", false) });
+        right = right.child(if c.kind.is_thread() { super::threads::notification_button(st, c, p, acc) } else { crate::social::bell_button(store, st, c, p, acc) });
         right = right.children(super::threads::header_button(store, st, c, p, acc));
         if !forum {
             right = right.child(pins).child(
@@ -242,6 +248,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     if !forum {
         right = right.child(super::search::bar(st, p, acc, layer));
     }
+    right = right.child(crate::social::inbox_button(st, p, acc));
     row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
@@ -381,13 +388,15 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         sticky
     };
     let mut md = Md::new(store, &st.media, c.guild_id, p, "");
-    // Links to messages on this instance jump in-app; others open in the browser.
-    let web = st.web_base.clone();
+    // Links to messages on this instance jump in-app, invites open the invite modal; others
+    // open in the browser.
+    let (web, inv) = (st.web_base.clone(), st.invite_base.clone());
     md.on_link = Some(std::rc::Rc::new(move |t: El| {
-        let web = web.clone();
-        t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| match super::parse_message_link(&web, url) {
-            Some((g, ch, m)) => super::jump(acc(s), g, ch, m),
-            None => super::links::open(acc(s), url, tx),
+        let (web, inv) = (web.clone(), inv.clone());
+        t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| match (super::parse_message_link(&web, url), crate::social::invite_code(&inv, &web, url)) {
+            (Some((g, ch, m)), _) => super::jump(acc(s), g, ch, m),
+            (None, Some(code)) => crate::social::open_invite(acc(s), code),
+            _ => super::links::open(acc(s), url, tx),
         })
     }));
     md.on_emoji = Some(std::rc::Rc::new(move |e: El, kind: &reflux_markdown::EmojiKind, key: String| {
@@ -402,12 +411,22 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     let items = stream(msgs, first_unread);
     let n_items = items.len();
     let mut rows = Vec::with_capacity(n_items + 1);
-    for it in &items {
-        rows.push(match *it {
+    // `BlockedMessageGroups`: a run of blocked authors folds into one bar (rows stay one per item).
+    let runs = crate::social::blocked_runs(store, msgs);
+    let run_of = |i: usize| runs.iter().find(|(s, n)| (*s..s + n).contains(&i)).copied();
+    // The channel's start gets its welcome section (not in the thread pane).
+    let welcome = !pane && !store.messages.get(&c.id).is_some_and(|w| w.has_more_before);
+    for (k, it) in items.iter().enumerate() {
+        let row_el = match *it {
             Item::Date(ms) => date_divider(ms, p).key(format!("{pre}date-{}", format_full_date(ms))),
+            Item::Msg { i, .. } if run_of(i).is_some_and(|(s, _)| !st.social.show_blocked.contains(&msgs[s].id)) => {
+                let (s, n) = run_of(i).unwrap_or_default();
+                if s == i { crate::social::blocked_bar(msgs[s].id, n, false, p, acc).key(format!("msg-{}", msgs[i].id)) } else { el().key(format!("msg-{}", msgs[i].id)) }
+            }
             Item::Msg { i, head, space, unread } => {
                 let m = &msgs[i];
-                let mut r = col().w_full();
+                let shown_run = run_of(i).filter(|(s, _)| *s == i).map(|(s, n)| crate::social::blocked_bar(msgs[s].id, n, true, p, acc));
+                let mut r = col().w_full().children(shown_run);
                 if unread {
                     r = r.child(new_divider(p));
                 } else if space > 0.0 {
@@ -441,13 +460,22 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 }
                 r.child(body).key(format!("msg-{}", m.id))
             }
-        });
+        };
+        // The channel's start: its welcome section above the first row.
+        rows.push(if k == 0 && welcome { col().w_full().key("msgs-start").child(crate::social::welcome(store, st, c, p, acc)).child(row_el) } else { row_el });
+    }
+    if rows.is_empty() && welcome && store.messages.contains_key(&c.id) {
+        rows.push(col().w_full().key("msgs-start").child(crate::social::welcome(store, st, c, p, acc)));
     }
     if let Some(m) = active.and_then(|id| find(store, c.id, id)) {
         let open = st.popups.open.clone().unwrap_or_default();
         if open == format!("msg-menu-{}", m.id) || open == format!("msg-more-{}", m.id) {
             let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(m.id).is_none()), ..perms };
-            message_menu(store, &open, m, c, perms, st, acc).el(&st.popups, pops(acc), p, layer);
+            let mut menu = message_menu(store, &open, m, c, perms, st, acc).separator();
+            for e in crate::social::message_items(store, st, c, m, acc) {
+                menu = menu.entry(e);
+            }
+            menu.el(&st.popups, pops(acc), p, layer);
         } else if open == format!("emoji-{}", m.id) {
             let close = move |s: &mut S| {
                 let st = acc(s);
@@ -1287,9 +1315,17 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             _ => false,
         })
         // Enter sends; Shift+Enter is the field's own newline.
-        .on_submit(move |s: &mut S, _| match slot {
-            Slot::Create => super::threads::submit_create(acc(s), &suggested),
-            _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
+        .on_submit({
+            let mass = crate::social::mass_mention(store, c, &st.composer.text).filter(|_| slot == Slot::Main);
+            move |s: &mut S, _| match (slot, mass) {
+                (Slot::Create, _) => super::threads::submit_create(acc(s), &suggested),
+                (Slot::Main, Some((mention, n))) => {
+                    let st = acc(s);
+                    st.social.mass = Some((cid, mention, n));
+                    st.social.pending_send = (limit, slow);
+                }
+                _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
+            }
         });
     // shortcut: the thread panels have no upload tray; files go through the full view.
     let plus = button(&icons::PLUS_BOLD, "Upload").key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
@@ -1384,6 +1420,12 @@ fn slowmode_label(left_ms: u64, p: &Palette) -> El {
 
 /// Enter: sends the text (after `/me`, `/spoiler`) with the tray's files, unless over the length
 /// limit or cooling down from slowmode.
+/// Sends after the @everyone confirmation, with the limits the composer had.
+pub(super) fn send_now(st: &mut ShellState, channel: Snowflake) {
+    let (limit, slow) = st.social.pending_send;
+    send(st, channel, limit, slow);
+}
+
 fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
     let content = autocomplete::apply_command(st.composer.text.trim());
     if (content.is_empty() && st.uploads.is_empty()) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {

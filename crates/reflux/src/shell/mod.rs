@@ -107,8 +107,6 @@ pub enum Intent {
     LeaveGuild(Snowflake),
     /// (channel, its last message) pairs to ack.
     MarkRead(Vec<(Snowflake, Snowflake)>),
-    /// Mute a guild (`channel: None`) or a channel's override.
-    Mute { guild: Option<Snowflake>, channel: Option<Snowflake>, muted: bool },
     /// `POST /auth/verify/resend` from the email verification nagbar.
     ResendVerification,
     /// A community management request (`crate::guild`).
@@ -131,6 +129,8 @@ pub enum Intent {
     /// A message carrying a sticker or a saved meme instead of text.
     SendExtra { channel: Snowflake, sticker: Option<Snowflake>, meme: Option<Snowflake> },
     Desktop(crate::desktop::Request),
+    /// A people / moderation request (`crate::social`).
+    Social(crate::social::Req),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -306,6 +306,7 @@ pub struct ShellState {
     pub account: crate::settings::AccountUi,
     /// Thread panel, browser and forum state.
     pub threads: threads::Threads,
+    pub social: crate::social::Social,
 }
 
 impl Default for ShellState {
@@ -376,6 +377,7 @@ impl Default for ShellState {
             media_ui: Default::default(),
             account: Default::default(),
             threads: Default::default(),
+            social: crate::social::Social::new(),
         }
     }
 }
@@ -389,6 +391,7 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 impl ShellState {
     pub fn select_guild(&mut self, guild: Option<Snowflake>, channel: Option<Snowflake>) {
         self.guild = guild;
+        self.social.discovery = false;
         self.intents.push(Intent::SelectGuild(guild));
         match channel {
             Some(c) => self.select_channel(c),
@@ -434,6 +437,7 @@ impl ShellState {
             self.rows_below = 0;
         }
         self.channel = Some(channel);
+        self.social.discovery = false;
         self.intents.push(Intent::SelectChannel(channel));
     }
 
@@ -566,6 +570,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     };
     let main = match (st.guild, channel) {
         _ if st.voice.watching.is_some() => voice::viewer(store, st, p, acc).unwrap_or_else(el),
+        (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc),
         (None, None) => friends::view(store, st, p, acc, &mut layer),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
@@ -589,12 +594,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(verify_nagbar(store, st, p, acc)).child(body);
+    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
     expr::layer(store, st, p, acc, &mut layer);
     crate::desktop::nagbar::layer(st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
+    crate::social::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }
@@ -609,6 +615,22 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
 }
 
 // ---- Shared bits -------------------------------------------------------------------------------
+
+/// A message drawn on its own as a group head, for surfaces outside the shell (inbox, forward).
+pub(crate) fn preview<S: 'static>(store: &Store, st: &ShellState, m: &reflux_model::Message, key: String, p: &Palette, acc: ShellAccess<S>) -> El {
+    let md = markdown::Md::new(store, &st.media, store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p, key);
+    chat::message_preview(store, st, m, &md, p, acc)
+}
+
+/// Markdown text (a channel topic) as a wrapped block.
+pub(crate) fn rich_text(store: &Store, st: &ShellState, guild: Option<Snowflake>, t: &str, key: &str, p: &Palette) -> El {
+    markdown::inline_text(t, &markdown::Md::new(store, &st.media, guild, p, key.to_string()), crate::theme::font(16.0, 400.0).lh(22.0), p.text_primary).w_full()
+}
+
+/// Sends the composer after the @everyone confirmation.
+pub(crate) fn send_confirmed(st: &mut ShellState, channel: Snowflake) {
+    chat::send_now(st, channel);
+}
 
 /// Height the user area covers at the bottom of the rail and sidebar (`--layout-user-area-height`
 /// + `--user-area-box-inset-block-end` + `--layout-voice-connection-height`).

@@ -2,7 +2,8 @@
 //! `cargo run -p reflux -- --shell-demo --snap /tmp/opencode/snaps/shell.png --size 1280x800 --scale 1`
 //! (add `--shell-home` for the DM list, `--friends[=all|pending|add]` for the friends page,
 //! `--profile` for a profile popout, `--ctx=user|guild|channel` for context menus,
-//! `--guild-ui=<scene>` for community management, `--threads[=<scene>]` for threads and forums).
+//! `--guild-ui=<scene>` for community management, `--threads[=<scene>]` for threads and forums,
+//! `--social=<scene>` for `crate::social`).
 
 use chrono::{Local, TimeZone};
 use reflux_model::{DispatchEvent, Snowflake};
@@ -363,6 +364,9 @@ impl Demo {
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--guild-ui=")) {
             guild_scene(&mut shell, sc);
+        }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--social=")) {
+            crate::social::demo::scene(&mut shell, &mut store, sc);
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--voice")) {
             voice_scene(&mut shell, &mut store, sc.trim_start_matches('='));

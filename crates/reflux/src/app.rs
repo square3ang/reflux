@@ -26,6 +26,7 @@ mod expr;
 mod guild;
 mod invites;
 mod threads;
+pub(crate) use guild::entered;
 pub mod live;
 mod voice;
 
@@ -764,6 +765,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::Thread(o) => threads::run(s, o),
             Intent::Fetch { key, method, path, body } => expr::fetch(s, key, method, path, body),
             Intent::SendExtra { channel, sticker, meme } => expr::send(s, channel, sticker, meme),
+            Intent::Social(r) => crate::social::run(s, r),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {

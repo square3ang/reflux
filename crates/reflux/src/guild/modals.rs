@@ -495,7 +495,6 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
         f.confirm = None;
         f.error = None;
     };
-    let user = |u: Snowflake| store.users.get(&u).map_or_else(|| u.to_string(), |x| x.global_name.clone().unwrap_or_else(|| x.username.clone()));
     let gname = |g: Snowflake| store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).map_or(String::new(), |i| i.name.clone());
     let (title, msg, action, method, path, body, then): (String, String, &str, Method, String, Option<Value>, Then) = match c {
         Confirm::DeleteGuild(g) => (
@@ -515,24 +514,6 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
             let n = store.guilds.get(&g).and_then(|gs| gs.roles.iter().find(|x| x.id == r)).map_or(String::new(), |x| x.name.clone());
             (format!("Delete '{n}'"), format!("Are you sure you want to delete the {n} role? This can't be undone."), "Delete role", Method::DELETE, format!("/guilds/{g}/roles/{r}"), None, Then::Nothing)
         }
-        Confirm::Kick(g, u) => (
-            format!("Kick '{}'", user(u)),
-            format!("{} will be removed from the community. They can rejoin with a new invite.", user(u)),
-            "Kick",
-            Method::DELETE,
-            format!("/guilds/{g}/members/{u}"),
-            None,
-            Then::Reload("members".into(), format!("/guilds/{g}/members?limit=1000")),
-        ),
-        Confirm::Ban(g, u) => (
-            format!("Ban '{}'", user(u)),
-            format!("{} will be removed from the community and can't rejoin.", user(u)),
-            "Ban",
-            Method::PUT,
-            format!("/guilds/{g}/bans/{u}"),
-            Some(json!({ "delete_message_seconds": 0 })),
-            Then::Reload("members".into(), format!("/guilds/{g}/members?limit=1000")),
-        ),
     };
     let mut content = col().w_full().gap(16.0).child(desc(&msg, p));
     if matches!(c, Confirm::DeleteGuild(_)) {

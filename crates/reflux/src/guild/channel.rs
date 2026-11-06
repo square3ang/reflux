@@ -77,6 +77,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
                 sh.popups.close();
                 sh.form = Form::default();
                 sh.dialog = Some(Dialog::Channel { channel, tab: id, target: None });
+                crate::social::load_channel_tab(sh, channel, id);
             })
         })
         .collect();
@@ -92,8 +93,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
             Some(t) => overwrite_editor(store, st, channel, t, p, acc),
             None => overwrites(store, st, channel, p, acc, &mut popups),
         },
-        // shortcut: channel invites and webhooks aren't managed here yet.
-        _ => not_available(p),
+        _ => crate::social::channel_tab(store, st, channel, tab, p, acc).unwrap_or_else(|| not_available(p)),
     };
     let mut modal = frame("Channel settings", label, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {

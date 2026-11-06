@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use reflux_model::{
     ChannelType, DispatchEvent, GatewayPayload, GuildSubscription, LazyRequest, MessageAck, MessageDelete, MessageReaction, OpCode,
-    ReactionEmoji, Snowflake, UserGuildSettings,
+    ReactionEmoji, Snowflake,
 };
 use reflux_net::{Command, ConnectionState};
 
@@ -139,27 +139,6 @@ pub(super) fn run(s: &mut State, i: Intent) {
                 call(inst.clone(), move |i| async move { i.rest.ack_bulk(&chunk).await }, "mark as read");
             }
         }
-        Intent::Mute { guild, channel, muted } => {
-            // Optimistic; the gateway's USER_GUILD_SETTINGS_UPDATE (or the response) settles it.
-            let st = s.app.store.guild_settings.entry(guild).or_insert_with(|| UserGuildSettings { guild_id: guild, ..Default::default() });
-            let patch = match channel {
-                None => {
-                    st.muted = muted;
-                    serde_json::json!({ "muted": muted })
-                }
-                Some(c) => {
-                    let ov = st.channel_overrides.get_or_insert_default();
-                    ov.entry(c).or_default().muted = muted;
-                    serde_json::json!({ "channel_overrides": ov })
-                }
-            };
-            spawn(async move {
-                match inst.rest.update_guild_settings(guild, &patch).await {
-                    Ok(u) => update(move |s| s.app.store.apply(&DispatchEvent::UserGuildSettingsUpdate(u), now_ms())),
-                    Err(e) => eprintln!("reflux: mute: {e}"),
-                }
-            });
-        }
         _ => {}
     }
 }
@@ -232,6 +211,11 @@ pub(super) fn tick(s: &mut State) -> bool {
             s.app.shell.expr.persist = true;
         }
         s.app.shell.gif_provider = if inst.discovery.services.gif_enabled { gif.display_name.clone() } else { String::new() };
+        s.app.shell.social.api_base = inst.rest.base().to_string();
+    }
+    // Timed mutes run out locally (Fluxer's mute timers).
+    if crate::social::expire_mutes(&mut s.app.store, &crate::social::iso(now_ms())) {
+        changed = true;
     }
     if let Some(inst) = &s.app.instance {
         let traits = s.app.store.me.as_ref().map_or(&[][..], |m| &m.traits[..]);

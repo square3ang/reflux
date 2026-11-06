@@ -28,7 +28,8 @@ use crate::ui::{Input, mix};
 pub use channel::first_tab as first_channel_tab;
 pub use settings::tab_ids;
 pub use menu::{HEADER_MENU, first_settings_tab, header_menu, invitable_channel, open_invite};
-pub use modals::parse_invite;
+pub use modals::{mute_config, parse_invite};
+pub(crate) use settings::{card, empty, loaded, save_bar, small, sorted_roles, title};
 
 /// The management dialog that's open (one at a time).
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +48,8 @@ pub enum Dialog {
     Guild { guild: Snowflake, tab: &'static str, role: Option<Snowflake> },
     /// `ChannelSettingsModal`; `target` is the role or member whose overwrite is being edited.
     Channel { channel: Snowflake, tab: &'static str, target: Option<Snowflake> },
+    /// People and moderation dialogs (`crate::social`, which draws them).
+    Social(crate::social::Modal),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,12 +61,11 @@ pub enum AddView {
 
 /// A destructive action waiting on its confirmation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Confirm {
     DeleteGuild(Snowflake),
     DeleteChannel(Snowflake),
     DeleteRole(Snowflake, Snowflake),
-    Kick(Snowflake, Snowflake),
-    Ban(Snowflake, Snowflake),
 }
 
 /// The open dialog's form: text fields and loaded or picked values by name.
@@ -151,6 +153,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     match *d {
         Dialog::Guild { guild, tab, role } => settings::view(store, st, guild, tab, role, p, acc, layer),
         Dialog::Channel { channel, tab, target } => channel::view(store, st, channel, tab, target, p, acc, layer),
+        Dialog::Social(_) => {}
         _ => modals::view(store, st, d, p, acc, layer),
     }
 }

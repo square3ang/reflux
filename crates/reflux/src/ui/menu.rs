@@ -85,6 +85,7 @@ impl<S: 'static> Menu<S> {
     pub fn min_w(mut self, w: f32) -> Self { self.min_w = w; self }
     pub fn item(mut self, i: MenuItem<S>) -> Self { self.entries.push(MenuEntry::Item(i)); self }
     pub fn separator(mut self) -> Self { self.entries.push(MenuEntry::Separator); self }
+    pub fn entry(mut self, e: MenuEntry<S>) -> Self { self.entries.push(e); self }
     pub fn group(mut self, label: impl Into<String>) -> Self { self.entries.push(MenuEntry::Group(label.into())); self }
     pub fn submenu(mut self, id: impl Into<String>, label: impl Into<String>, entries: Vec<MenuEntry<S>>) -> Self {
         self.entries.push(MenuEntry::Submenu(id.into(), label.into(), entries));

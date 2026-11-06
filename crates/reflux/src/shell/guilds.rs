@@ -27,7 +27,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder.color, &guilds, p)),
         };
     }
-    list = list.child(add_button(p, acc));
+    list = list.child(add_button(p, acc)).child(explore_button(st, p, acc));
     let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false });
     scroller(viewport.child(list), false, p).key("guild-rail")
 }
@@ -199,6 +199,30 @@ fn add_button<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
             .label("Add a Community")
             .on_press(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Add(crate::guild::AddView::Landing)))
             .child(icon(&icons::PLUS_BOLD, 20.0).color(p.text_primary)),
+    )
+}
+
+/// The Explore button under Add a Community.
+fn explore_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let on = st.social.discovery;
+    row().w_full().h(dim::GUILD_LIST_ITEM_BOX_SIZE).center().child(
+        row()
+            .size(ICON, ICON)
+            .center()
+            .radius(if on { 16.0 } else { ICON / 2.0 })
+            .fill(if on { p.brand_primary } else { p.background_tertiary })
+            .hover(p.brand_primary)
+            .hover_group()
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label("Explore")
+            .key("rail-explore")
+            .on_press(move |s: &mut S| {
+                let st = acc(s);
+                st.select_guild(None, None);
+                crate::social::open_discovery(st);
+            })
+            .child(icon(&icons::COMPASS_FILL, 22.0).color(if on { rune::Color::WHITE } else { p.text_primary }).group_color(rune::Color::WHITE)),
     )
 }
 

@@ -299,9 +299,10 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let pending = store.relationships.values().filter(|r| r.kind == reflux_model::RelationshipType::INCOMING_REQUEST).count();
     let friends_on = st.guild.is_none() && st.channel.is_none();
     let mut rows = col().w_full().px(dim::SPACING_2).gap(1.0).child(el().h(dim::SPACING_2));
-    rows = rows.child(special(&icons::USERS_THREE_FILL, "Friends", friends_on, pending, p).on_press(move |s: &mut S| {
+    rows = rows.child(special(&icons::USERS_THREE_FILL, "Friends", friends_on && !st.social.discovery, pending, p).on_press(move |s: &mut S| {
         let st = acc(s);
         st.channel = None;
+        st.social.discovery = false;
     }));
     if st.personal_notes {
         rows = rows.child(special(&icons::NOTE_PENCIL_FILL, "Personal Notes", st.channel == Some(me), 0, p).on_press(move |s: &mut S| acc(s).select_channel(me)));
@@ -323,6 +324,8 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                         .cursor(rune::Cursor::Pointer)
                         .role("button")
                         .label("Create DM")
+                        .key("create-dm")
+                        .on_press(move |s: &mut S| crate::social::open_create_dm(acc(s)))
                         .child(icon(&icons::PLUS_BOLD, 16.0).color(p.text_primary_muted).group_color(p.text_primary)),
                 ),
         );
