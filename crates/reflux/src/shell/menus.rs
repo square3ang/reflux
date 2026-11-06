@@ -1,0 +1,194 @@
+//! Context menus for users, guilds and channels, the profile popout and the leave-guild
+//! confirmation, drawn into the overlay layer (`ui/action_menu/{UserContextMenu,
+//! GuildContextMenu,ChannelContextMenu}`, `items/{Guild,Channel}MenuData`).
+
+use reflux_model::{ChannelType, RelationshipType, Snowflake};
+use reflux_store::Store;
+use rune::{El, Tx, row, text};
+
+use super::{Intent, ShellAccess, ShellState, Target, pops, profile};
+use crate::icons;
+use crate::theme::{Palette, font};
+use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal};
+
+/// Everything the shell floats over itself for [`ShellState::target`].
+pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    match (st.target, st.popups.open.as_deref()) {
+        (Some(t), Some("ctx-menu")) => {
+            let menu = match t {
+                Target::User { user, guild, dm } => user_menu(store, st, user, guild, dm, acc),
+                Target::Guild(g) => guild_menu(store, g, acc),
+                Target::Channel(c) => channel_menu(store, st, c, acc),
+            };
+            menu.el(&st.popups, pops(acc), p, layer);
+        }
+        (Some(Target::User { user, guild, .. }), Some("profile")) => layer.extend(profile::popout(store, st, user, guild, p, acc)),
+        _ => {}
+    }
+    if let Some(g) = st.confirm_leave {
+        layer.push(leave_modal(g, p, acc));
+    }
+}
+
+/// Unread channels as (channel, last message) pairs to ack.
+fn unread(store: &Store, channels: impl Iterator<Item = Snowflake>) -> Vec<(Snowflake, Snowflake)> {
+    channels.filter(|&c| store.has_unread(c)).filter_map(|c| Some((c, store.channels.get(&c)?.last_message_id?))).collect()
+}
+
+fn mark_read<S: 'static>(acks: Vec<(Snowflake, Snowflake)>, acc: ShellAccess<S>) -> MenuItem<S> {
+    let none = acks.is_empty();
+    MenuItem::new("mark-read", "Mark as read").icon(&icons::EYE_FILL).disabled(none).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone())))
+}
+
+fn copy_id<S: 'static>(label: &str, id: Snowflake) -> MenuItem<S> {
+    MenuItem::new(format!("copy-{label}"), label).icon(&icons::SNOWFLAKE).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(id.to_string()))
+}
+
+/// `UserContextMenu`: profile, mention, message, note, relationship and block, copy ID.
+// shortcut: calls, invite-to-community, friend nicknames and local mute aren't listed yet.
+fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, dm: Option<Snowflake>, acc: ShellAccess<S>) -> Menu<S> {
+    let me = user == store.my_id();
+    let mut m = Menu::new("ctx-menu");
+    if let Some(c) = dm {
+        m = m.item(mark_read(unread(store, std::iter::once(c)), acc)).separator();
+    }
+    let note = store.notes.get(&user).cloned().unwrap_or_default();
+    let profile = move |s: &mut S, focus_note: bool| {
+        let st = acc(s);
+        let anchor = st.profile_anchor.clone();
+        st.popups.close();
+        if let Some((key, side)) = anchor {
+            st.open_profile(user, guild, note.clone(), key, side);
+            st.note.focused = focus_note;
+        }
+    };
+    let p2 = profile.clone();
+    m = m.item(MenuItem::new("profile", "View profile").icon(&icons::USER_FILL).on_select(move |s: &mut S| p2(s, false)));
+    if st.channel.is_some() && dm.is_none() {
+        m = m.item(MenuItem::new("mention", "Mention").icon(&icons::AT_BOLD).on_select(move |s: &mut S| {
+            let st = acc(s);
+            st.composer = rune::TextEdit::new(format!("{}<@{user}> ", st.composer.text));
+            st.composer.focused = true;
+        }));
+    }
+    if !me && dm.is_none() {
+        m = m.item(MenuItem::new("message", "Message").icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user))));
+    }
+    if !me {
+        m = m.separator().item(MenuItem::new("note", "Add note").icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true))).separator();
+        let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());
+        let kind = store.relationships.get(&user).map(|r| r.kind);
+        m = match kind {
+            Some(RelationshipType::FRIEND) => {
+                m.item(MenuItem::new("remove-friend", "Remove friend").icon(&icons::USER_MINUS_FILL).danger().on_select(push(Intent::RemoveRelationship(user))))
+            }
+            Some(RelationshipType::INCOMING_REQUEST) => m
+                .item(MenuItem::new("accept", "Accept friend request").icon(&icons::CHECK_CIRCLE_FILL).on_select(push(Intent::AddFriend(user))))
+                .item(MenuItem::new("ignore", "Ignore friend request").icon(&icons::X_FILL).on_select(push(Intent::RemoveRelationship(user)))),
+            Some(RelationshipType::OUTGOING_REQUEST) => m.item(
+                MenuItem::new("cancel", "Cancel friend request").icon(&icons::CLOCK_COUNTER_CLOCKWISE_FILL).on_select(push(Intent::RemoveRelationship(user))),
+            ),
+            Some(RelationshipType::BLOCKED) => m,
+            _ => m.item(MenuItem::new("add-friend", "Add friend").icon(&icons::USER_PLUS_FILL).on_select(push(Intent::AddFriend(user)))),
+        };
+        m = if kind == Some(RelationshipType::BLOCKED) {
+            m.item(MenuItem::new("unblock", "Unblock").icon(&icons::PROHIBIT_FILL).on_select(push(Intent::RemoveRelationship(user))))
+        } else {
+            m.item(MenuItem::new("block", "Block").icon(&icons::PROHIBIT_FILL).danger().on_select(push(Intent::Block(user))))
+        };
+    }
+    if let Some(c) = dm {
+        m = m.separator().item(MenuItem::new("close-dm", "Close DM").icon(&icons::X_BOLD).on_select(move |s: &mut S| close_dm(acc(s), c)));
+    }
+    if store.settings.developer_mode {
+        m = m.separator().item(copy_id("Copy user ID", user));
+        if let Some(c) = dm {
+            m = m.item(copy_id("Copy channel ID", c));
+        }
+    }
+    m
+}
+
+fn close_dm(st: &mut ShellState, c: Snowflake) {
+    if st.channel == Some(c) {
+        st.channel = None;
+    }
+    st.intents.push(Intent::CloseDm(c));
+}
+
+/// `GuildContextMenu` (`useGuildMenuData`).
+// shortcut: invites, guild settings, channel creation, privacy, the community profile, hide
+// muted channels and delete-my-messages aren't listed; mute is a toggle, not a duration submenu.
+fn guild_menu<S: 'static>(store: &Store, g: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
+    let channels = store.channels.values().filter(|c| c.guild_id == Some(g) && store.can_view(c.id)).map(|c| c.id);
+    let muted = store.guild_settings.get(&Some(g)).is_some_and(|s| s.muted);
+    let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == store.my_id());
+    let mut m = Menu::new("ctx-menu")
+        .item(mark_read(unread(store, channels), acc))
+        .separator()
+        .item(
+            MenuItem::new("mute", if muted { "Unmute community" } else { "Mute community" })
+                .icon(&icons::BELL_SLASH_FILL)
+                .on_select(move |s: &mut S| acc(s).intents.push(Intent::Mute { guild: Some(g), channel: None, muted: !muted })),
+        )
+        // shortcut: notification settings is a stub until the modal exists.
+        .item(MenuItem::new("notifications", "Notification settings").icon(&icons::BELL_FILL))
+        .separator();
+    if !owner {
+        m = m.item(MenuItem::new("leave", "Leave community").icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| acc(s).confirm_leave = Some(g)));
+    }
+    if store.settings.developer_mode {
+        m = m.separator().item(copy_id("Copy community ID", g));
+    }
+    m
+}
+
+/// `ChannelContextMenu` (`useChannelMenuData`): guild channels and group DMs.
+// shortcut: favorites, invites, editing, duplicating and deleting channels aren't listed.
+fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
+    let Some(ch) = store.channels.get(&c) else { return Menu::new("ctx-menu") };
+    let muted = store.is_muted(ch);
+    let guild = ch.guild_id;
+    let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, std::iter::once(c)), acc)).separator().item(
+        MenuItem::new("mute", if muted { "Unmute channel" } else { "Mute channel" })
+            .icon(&icons::BELL_SLASH_FILL)
+            .on_select(move |s: &mut S| acc(s).intents.push(Intent::Mute { guild, channel: Some(c), muted: !muted })),
+    );
+    if let Some(g) = guild {
+        let link = format!("{}/channels/{g}/{c}", st.web_base.trim_end_matches('/'));
+        m = m.separator().item(MenuItem::new("copy-link", "Copy channel link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(link.clone())));
+    }
+    if ch.kind == ChannelType::GROUP_DM {
+        m = m.separator().item(MenuItem::new("leave-group", "Leave group").icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| close_dm(acc(s), c)));
+    }
+    if store.settings.developer_mode {
+        m = m.separator().item(copy_id("Copy channel ID", c));
+    }
+    m
+}
+
+fn leave_modal<S: 'static>(g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+    let close = move |s: &mut S| acc(s).confirm_leave = None;
+    Modal::new("Leave community", close)
+        .body(text("Leave this community? You won't see its messages anymore.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+        .footer(
+            row()
+                .gap(8.0)
+                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("leave-cancel").on_press(close).el(p))
+                .child(
+                    Button::new("Leave community")
+                        .variant(ButtonVariant::Danger)
+                        .key("leave-confirm")
+                        .on_press(move |s: &mut S| {
+                            let st = acc(s);
+                            st.confirm_leave = None;
+                            if st.guild == Some(g) {
+                                (st.guild, st.channel) = (None, None);
+                            }
+                            st.intents.push(Intent::LeaveGuild(g));
+                        })
+                        .el(p),
+                ),
+        )
+        .el(p)
+}

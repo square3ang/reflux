@@ -12,7 +12,7 @@ use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el
 
 use super::markdown::{self, Md};
 use crate::media::Load;
-use super::{Intent, ReplyTo, ShellAccess, ShellState, avatar, channel_icon, emoji, members, role_color};
+use super::{Intent, ReplyTo, ShellAccess, ShellState, Target, avatar, channel_icon, emoji, members, role_color};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::anchor;
@@ -42,7 +42,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
     if show_members {
         content = content
-            .child(members::list(store, st, c, p))
+            .child(members::list(store, st, c, p, acc))
             .child(el().pin(None, Some(0.0), Some(dim::LAYOUT_MEMBER_LIST_WIDTH), Some(0.0)).w(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
     }
     if let Some(m) = st.confirm_delete.and_then(|id| find(store, c.id, id)) {
@@ -666,9 +666,20 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     }
 
     // Avatar column: the avatar on a group head, the hover time on the rest.
+    // The avatar and the name line open the author's profile; right-click opens their menu.
+    let (author, guild, mid) = (m.author.id, store.channels.get(&m.channel_id).and_then(|c| c.guild_id), m.id);
+    let note = store.notes.get(&author).cloned().unwrap_or_default();
+    let open = move |s: &mut S| acc(s).open_profile(author, guild, note.clone(), format!("avatar-{mid}"), Placement::RightStart);
+    let menu = move |s: &mut S, at: rune::PointerPress, _: &mut Tx| {
+        acc(s).open_user_menu(Target::User { user: author, guild, dm: None }, [at.x, at.y], format!("avatar-{mid}"), Placement::RightStart)
+    };
     let gutter = if head {
         col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).child(
-            avatar(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p),
+            avatar(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p)
+                .key(format!("avatar-{mid}"))
+                .cursor(rune::Cursor::Pointer)
+                .on_press(open.clone())
+                .on_secondary_press(menu),
         )
     } else {
         row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().child(
@@ -691,7 +702,16 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
             Span::new(n, n + 2).size(12.0),
             Span::new(n + 2, line.len()).size(dim::MESSAGE_TIMESTAMP_FONT_SIZE).color(mix(p.message_timestamp_color, Color::TRANSPARENT, 60.0)),
         ];
-        content = content.child(rich(line, spans).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary).truncate());
+        // shortcut: the whole name line is the click target, not just the name.
+        content = content.child(
+            rich(line, spans)
+                .font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))
+                .color(p.text_primary)
+                .truncate()
+                .cursor(rune::Cursor::Pointer)
+                .on_press(open)
+                .on_secondary_press(menu),
+        );
     }
     if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         content = content.child(editor(edit, m, p, acc));

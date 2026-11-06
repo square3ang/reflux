@@ -1,65 +1,61 @@
 //! The member list (`MemberListContainer`, `ChannelMembers`, `MemberListItem`,
 //! `MemberListGroupHeader`).
 
-use reflux_model::{Channel, Snowflake};
-use reflux_store::Store;
-use rune::{El, ScrollSpec, col, icon, row, text};
+use reflux_model::{Channel, MemberListGroup, Snowflake};
+use reflux_store::{MemberRow, Store};
+use rune::{El, ScrollSpec, col, el, icon, row, text};
 
-use super::{ShellState, avatar, presence, role_color};
+use super::{ShellAccess, ShellState, Target, avatar, presence, role_color};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
-use crate::ui::{Status, rgb, scroller};
+use crate::ui::{Placement, Status, rgb, scroller};
 
-/// (group label, members) in display order: hoisted roles (highest first), Online, Offline.
-// shortcut: built from the cached members instead of the gateway's GUILD_MEMBER_LIST_UPDATE
-// list (whose ID needs Fluxer's per-channel hash); switch once the runtime subscribes to lists.
-pub fn groups(store: &Store, guild: Snowflake) -> Vec<(String, Vec<Snowflake>)> {
-    let Some(g) = store.guilds.get(&guild) else { return Vec::new() };
-    let mut hoisted: Vec<_> = g.roles.iter().filter(|r| r.hoist && r.id != guild).collect();
-    hoisted.sort_by_key(|r| (std::cmp::Reverse(r.position), r.id));
-    let mut out: Vec<(String, Vec<Snowflake>)> = hoisted.iter().map(|r| (r.name.clone(), Vec::new())).collect();
-    let (mut online, mut offline) = (Vec::new(), Vec::new());
-    for (id, m) in &g.members {
-        if presence(store, *id) == Status::Offline {
-            offline.push(*id);
-        } else if let Some(i) = hoisted.iter().position(|r| m.roles.contains(&r.id)) {
-            out[i].1.push(*id);
-        } else {
-            online.push(*id);
-        }
+/// A list group's label: its hoisted role's name, `Online` or `Offline`.
+pub fn group_label(store: &Store, guild: Snowflake, g: &MemberListGroup) -> String {
+    match g.id.as_str() {
+        "online" => "Online".into(),
+        "offline" => "Offline".into(),
+        id => store.guilds.get(&guild).and_then(|gs| gs.roles.iter().find(|r| r.id.to_string() == id)).map_or_else(|| id.to_string(), |r| r.name.clone()),
     }
-    out.push(("Online".into(), online));
-    out.push(("Offline".into(), offline));
-    out.retain(|(_, v)| !v.is_empty());
-    for (_, v) in &mut out {
-        v.sort_by_cached_key(|u| (store.display_name(Some(guild), *u).to_lowercase(), *u));
-    }
-    out
 }
 
-pub fn list(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
+/// The lazy member list of a channel, from `GUILD_MEMBER_LIST_UPDATE`; reports the rows on
+/// screen to [`ShellState::member_rows`] so the runtime subscribes to them.
+// shortcut: rows not synced yet are blank, where Fluxer draws skeletons.
+pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let gid = c.guild_id.unwrap_or_default();
     let owner = store.guilds.get(&gid).and_then(|g| g.info.as_ref()).map(|i| i.owner_id);
-    let mut body = col()
+    let rows = store.member_lists.get(&(gid, c.id.to_string())).map_or(&[][..], |l| l.rows.as_slice());
+    let item_h = dim::MEMBER_LIST_ITEM_CONTENT_HEIGHT + 2.0 * dim::MEMBER_LIST_ITEM_PADDING_BLOCK;
+    let items = rows.iter().enumerate().map(|(i, r)| match r {
+        Some(MemberRow::Group(g)) => {
+            let label = format!("{} — {}", group_label(store, gid, g), g.count);
+            row()
+                .w_full()
+                .pt(12.0 + if i > 0 { dim::MEMBER_LIST_GROUP_SPACER_HEIGHT } else { 0.0 })
+                .pb(4.0)
+                .px(8.0)
+                .child(text(label).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate())
+                .key(format!("group-{}", g.id))
+        }
+        Some(MemberRow::Member(u)) => col().w_full().pb(dim::MEMBER_LIST_ROW_GAP).child(member(store, st, gid, *u, owner == Some(*u), p, acc)).key(format!("member-row-{u}")),
+        None => el().w_full().h(item_h + dim::MEMBER_LIST_ROW_GAP).key(format!("member-gap-{i}")),
+    });
+    let body = col()
         .w_full()
         .pt(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_START)
         .px(dim::MEMBER_LIST_SCROLLER_PADDING_INLINE)
-        .pb(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_END);
-    for (i, (label, users)) in groups(store, gid).into_iter().enumerate() {
-        if i > 0 {
-            body = body.child(row().h(dim::MEMBER_LIST_GROUP_SPACER_HEIGHT));
-        }
-        body = body.child(
-            row()
-                .w_full()
-                .pt(12.0)
-                .pb(4.0)
-                .px(8.0)
-                .child(text(format!("{label} — {}", users.len())).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate()),
-        );
-        let rows = col().w_full().gap(dim::MEMBER_LIST_ROW_GAP).children(users.into_iter().map(|u| member(store, st, gid, u, owner == Some(u), p)));
-        body = body.child(rows);
-    }
+        .pb(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_END)
+        .key(format!("members-{}", c.id))
+        .growth(rune::GrowthSpec::default())
+        .virtualize(item_h)
+        .children(items)
+        .on_visible_rows(move |s: &mut S, r| {
+            let st = acc(s);
+            let changed = st.member_rows != r;
+            st.member_rows = r;
+            changed
+        });
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body);
     col()
         .w(dim::LAYOUT_MEMBER_LIST_WIDTH)
@@ -69,7 +65,14 @@ pub fn list(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
         .child(scroller(viewport, false, p))
 }
 
-fn member(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: bool, p: &Palette) -> El {
+/// The 100-row windows a lazy request asks for: `[0, 99]` always, plus those the visible rows
+/// touch (`MemberSidebar` ranges).
+pub fn ranges(rows: std::ops::Range<usize>) -> Vec<[u32; 2]> {
+    let (first, last) = (rows.start / 100, rows.end.saturating_sub(1).max(rows.start) / 100);
+    std::iter::once(0).chain(first.max(1)..=last).map(|i| [(i * 100) as u32, (i * 100 + 99) as u32]).collect()
+}
+
+fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let status = presence(store, u);
     let color = store.member_color(gid, u).map_or(p.text_chat, role_color);
     let mut name = row()
@@ -90,6 +93,7 @@ fn member(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: b
                 .truncate(),
         );
     }
+    let note = store.notes.get(&u).cloned().unwrap_or_default();
     let mut r = row()
         .w_full()
         .min_h(dim::MEMBER_LIST_ITEM_CONTENT_HEIGHT + 2.0 * dim::MEMBER_LIST_ITEM_PADDING_BLOCK)
@@ -101,10 +105,26 @@ fn member(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: b
         .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
         .role("button")
+        .key(format!("member-{u}"))
+        .on_press(move |s: &mut S| acc(s).open_profile(u, Some(gid), note.clone(), format!("member-{u}"), Placement::LeftStart))
+        .on_secondary_press(move |s: &mut S, at, _| {
+            acc(s).open_user_menu(Target::User { user: u, guild: Some(gid), dm: None }, [at.x, at.y], format!("member-{u}"), Placement::LeftStart)
+        })
         .child(avatar(store, st, u, 32.0, Some(status), p.background_secondary_lighter, p))
         .child(info);
     if status == Status::Offline {
         r = r.opacity(0.3);
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ranges_cover_the_visible_rows() {
+        assert_eq!(super::ranges(0..0), [[0, 99]]);
+        assert_eq!(super::ranges(10..40), [[0, 99]]);
+        assert_eq!(super::ranges(90..130), [[0, 99], [100, 199]]);
+        assert_eq!(super::ranges(250..280), [[0, 99], [200, 299]]);
+    }
 }

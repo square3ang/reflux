@@ -1,6 +1,7 @@
 //! `--shell-demo`: the shell over a hand-written fixture store, for snapshot checks:
 //! `cargo run -p reflux -- --shell-demo --snap /tmp/opencode/snaps/shell.png --size 1280x800 --scale 1`
-//! (add `--shell-home` for the DM list).
+//! (add `--shell-home` for the DM list, `--friends[=all|pending|add]` for the friends page,
+//! `--profile` for a profile popout, `--ctx=user|guild|channel` for context menus).
 
 use chrono::{Local, TimeZone};
 use reflux_model::{DispatchEvent, Snowflake};
@@ -188,7 +189,12 @@ impl Demo {
                 "user": {"id": ME.to_string(), "username": "square", "global_name": "Square", "email": "square@example.com"},
                 "users": [user(1001, "ada", "Ada Lovelace"), user(1002, "linus", "Linus"), user(1003, "grace", "Grace Hopper"),
                           user(1004, "alan", "Alan Turing"), user(1005, "margaret", "Margaret Hamilton"),
-                          user(1006, "ken", "Ken Thompson"), user(1007, "fluxbot", "Fluxbot")],
+                          user(1006, "ken", "Ken Thompson"), user(1007, "fluxbot", "Fluxbot"),
+                          user(1008, "hedy", "Hedy Lamarr"), user(1009, "spammer", "Spam Bot")],
+                "relationships": [{"id": "1001", "type": 1}, {"id": "1003", "type": 1}, {"id": "1004", "type": 1},
+                                  {"id": "1006", "type": 1}, {"id": "1005", "type": 3}, {"id": "1008", "type": 4},
+                                  {"id": "1009", "type": 2}],
+                "notes": {"1001": "Wrote the first program"},
                 "guilds": [hq, small(3000, "Rust Lang", 3001, new), small(4000, "Design Crit", 4001, new),
                            small(5000, "Ada's Lab", 5001, old), small(6000, "Weekend Hikes", 6001, old),
                            small(7000, "Retro Computing Club", 7001, old)],
@@ -197,7 +203,8 @@ impl Demo {
                     {"id": "8002", "type": 1, "recipients": [user(1003, "grace", "Grace Hopper")], "last_message_id": old.to_string()},
                     {"id": "8003", "type": 3, "name": "Compiler nerds", "recipients": [user(1002, "linus", "Linus"), user(1006, "ken", "Ken Thompson")], "last_message_id": old.to_string()},
                 ],
-                "presences": [presence(1001, "online"), presence(1003, "dnd"), presence(1002, "idle")],
+                "presences": [{"user": {"id": "1001"}, "status": "online", "custom_status": {"text": "Shipping the gateway"}},
+                              presence(1003, "dnd"), presence(1002, "idle"), presence(1004, "online")],
                 "sessions": [{"session_id": "all", "status": "online"}],
                 "read_states": [
                     {"id": "3001", "last_message_id": old.to_string(), "mention_count": 3},
@@ -261,6 +268,22 @@ impl Demo {
             apply("MESSAGE_CREATE", m);
         }
         apply("MESSAGE_ACK", json!({"channel_id": GENERAL.to_string(), "message_id": ack, "mention_count": 1, "manual": true}));
+        // The lazy member list of #general, as the gateway sends it.
+        let groups = [("2010", vec![(1001, "online"), (ME, "online")]), ("2011", vec![(1002, "idle")]),
+                      ("online", vec![(1004, "online"), (1007, "online"), (1003, "dnd")]), ("offline", vec![(1006, "offline"), (1005, "offline")])];
+        let roles_of = |u: u64| match u { ME => vec![staff], 1001 => vec![staff, contrib], 1002 => vec![mods], 1003 => vec![contrib], _ => vec![] };
+        let mut items = Vec::new();
+        for (g, us) in &groups {
+            items.push(json!({"group": {"id": g, "count": us.len()}}));
+            for (u, st) in us {
+                let mut m = member(*u, &roles_of(*u));
+                m["presence"] = json!({"status": st});
+                items.push(json!({"member": m}));
+            }
+        }
+        apply("GUILD_MEMBER_LIST_UPDATE", json!({"guild_id": HQ.to_string(), "id": GENERAL.to_string(), "member_count": 8, "online_count": 6,
+            "groups": groups.iter().map(|(g, us)| json!({"id": g, "count": us.len()})).collect::<Vec<_>>(),
+            "ops": [{"op": "SYNC", "range": [0, 99], "items": items}]}));
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
         let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, ..ShellState::default() };
@@ -275,8 +298,29 @@ impl Demo {
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--msg-scene=")) {
             stage(&mut shell, &store, sc);
         }
-        if rune::extra_args().iter().any(|a| a == "--shell-home") {
-            (shell.guild, shell.channel) = (None, Some(Snowflake(8001)));
+        for a in rune::extra_args() {
+            if a == "--shell-home" {
+                (shell.guild, shell.channel) = (None, Some(Snowflake(8001)));
+            } else if let Some(tab) = a.strip_prefix("--friends").map(|t| t.trim_start_matches('=')) {
+                (shell.guild, shell.channel) = (None, None);
+                shell.friends_tab = match tab {
+                    "all" => super::FriendsTab::All,
+                    "pending" => super::FriendsTab::Pending,
+                    "add" => super::FriendsTab::Add,
+                    _ => super::FriendsTab::Online,
+                };
+            } else if a == "--profile" {
+                let note = store.notes.get(&Snowflake(1001)).cloned().unwrap_or_default();
+                shell.open_profile(Snowflake(1001), Some(Snowflake(HQ)), note, "member-1001".into(), crate::ui::Placement::LeftStart);
+            } else if let Some(which) = a.strip_prefix("--ctx=") {
+                use super::Target;
+                let (t, at) = match which {
+                    "guild" => (Target::Guild(Snowflake(HQ)), [40.0, 120.0]),
+                    "channel" => (Target::Channel(Snowflake(GENERAL)), [180.0, 330.0]),
+                    _ => (Target::User { user: Snowflake(1001), guild: Some(Snowflake(HQ)), dm: None }, [1000.0, 160.0]),
+                };
+                shell.open_user_menu(t, at, "member-1001".into(), crate::ui::Placement::LeftStart);
+            }
         }
         Demo { store, shell }
     }
@@ -341,9 +385,11 @@ mod tests {
         assert!(s.has_unread(Snowflake(GENERAL)));
         assert!(s.has_unread(Snowflake(2202)));
         assert!(s.is_muted(&s.channels[&Snowflake(2203)]));
-        let groups = super::super::members::groups(s, Snowflake(HQ));
-        let names: Vec<&str> = groups.iter().map(|g| g.0.as_str()).collect();
+        let list = &s.member_lists[&(Snowflake(HQ), GENERAL.to_string())];
+        let names: Vec<String> = list.groups.iter().map(|g| super::super::members::group_label(s, Snowflake(HQ), g)).collect();
         assert_eq!(names, ["Staff", "Moderators", "Online", "Offline"]);
+        assert_eq!(list.rows.len(), 12);
+        assert_eq!(s.relationships.len(), 7);
         assert_eq!(s.typing_users(Snowflake(GENERAL), d.shell.now_ms), [Snowflake(1002)]);
     }
 }

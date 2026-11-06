@@ -270,6 +270,17 @@ fn guild_lifecycle_and_member_list() {
     assert_eq!(l.rows.len(), 4);
     assert_eq!(l.rows[1], Some(MemberRow::Member(S(6))));
     assert_eq!(s.presences[&S(6)].status, reflux_model::Status::Online);
+    // A later window only replaces its own range; a shrunk list drops rows past the new total.
+    apply(&mut s, "GUILD_MEMBER_LIST_UPDATE", json!({"guild_id": G.to_string(), "id": "101",
+        "member_count": 2, "online_count": 2, "groups": [{"id": "online", "count": 2}],
+        "ops": [{"op": "SYNC", "range": [2, 3], "items": [
+            {"member": {"user": {"id": "8"}, "roles": [], "presence": {"status": "idle"}}},
+        ]}]}));
+    let l = &s.member_lists[&(S(G), "101".to_string())];
+    assert_eq!(l.rows, [Some(MemberRow::Group(reflux_model::MemberListGroup { id: "online".into(), count: 1 })),
+        Some(MemberRow::Member(S(6))), Some(MemberRow::Member(S(8)))]);
+    assert_eq!((l.online_count, l.groups.len()), (2, 1));
+    assert_eq!(s.users[&S(8)].username, "zed", "partial member keeps the known user");
     apply(&mut s, "GUILD_DELETE", json!({"id": G.to_string()}));
     assert!(s.guilds.is_empty() && !s.channels.contains_key(&S(101)) && s.member_lists.is_empty());
 }

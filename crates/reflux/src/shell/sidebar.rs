@@ -5,7 +5,7 @@ use reflux_model::{Channel, ChannelType, Snowflake};
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, col, el, icon, row, text};
 
-use super::{ShellAccess, ShellState, USER_AREA_OVERLAY, avatar, channel_icon, presence};
+use super::{ShellAccess, ShellState, Target, USER_AREA_OVERLAY, avatar, channel_icon, group_avatar, presence};
 use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
@@ -177,6 +177,7 @@ fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palet
     if !link {
         item = item.on_press(move |s: &mut S| acc(s).select_channel(id));
     }
+    item = item.on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(Target::Channel(id), [at.x, at.y]));
     if muted && !selected {
         item = item.opacity(0.5);
     }
@@ -212,73 +213,70 @@ fn voice_users(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
     }))
 }
 
-/// Home: the DM list.
-// shortcut: the friends/notes rows and pinned DMs aren't drawn; only the conversation list.
+/// Home: the DM list (`DirectMessageList`, `DMListItem`).
+// shortcut: pinned DMs, message previews and the create-DM picker (the + is inert) aren't done.
 pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    // `.dmListHeader`: the quick switcher button with its keybind hint.
+    let kbd = |k: &str| {
+        row().h(18.0).min_w(18.0).px(4.0).center().radius(dim::RADIUS_SM).fill(p.background_modifier_accent).child(
+            text(k).font(font(10.0, 500.0).mono()).color(p.surface_interactive_selected_color),
+        )
+    };
     let header = row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
         .px(dim::SPACING_2)
         .center_y()
         .fill(p.background_secondary)
-        .hover(p.background_modifier_hover)
         .hover_group()
         .cursor(rune::Cursor::Pointer)
         .child(
-            row().w_full().h(28.0).px(dim::SPACING_3).center_y().radius(dim::RADIUS_MD).child(
-                text("Find or start a conversation")
-                    .font(font(13.0, 500.0))
-                    .color(p.text_primary_muted)
-                    .group_color(p.text_primary)
-                    .truncate(),
-            ),
+            row()
+                .w_full()
+                .h(28.0)
+                .px(dim::SPACING_3)
+                .center_y()
+                .radius(dim::RADIUS_MD)
+                .hover(p.background_modifier_hover)
+                .child(text("Quick switcher").font(font(13.0, 500.0)).color(p.text_primary_muted).group_color(p.text_primary).truncate().grow(1.0).shrink())
+                .child(row().gap(2.0).child(kbd("Ctrl")).child(kbd("K"))),
         )
         .child(header_bar(p));
     let me = store.my_id();
-    let mut rows = col().w_full().pr(dim::SPACING_2).pt(10.0).gap(2.0);
-    for c in store.private_channels() {
-        let selected = st.channel == Some(c.id);
-        let other = c.recipients.iter().find(|u| u.id != me);
-        let name = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| {
-            c.recipients.iter().filter(|u| u.id != me).map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", ")
-        });
-        let unread = store.has_unread(c.id);
-        let fg = if selected { p.surface_interactive_selected_color } else if unread { p.text_secondary } else { p.text_tertiary_muted };
-        let surface = if selected { over(p.surface_interactive_selected_bg, p.background_secondary) } else { p.background_secondary };
-        let face = match other {
-            Some(u) if c.kind == ChannelType::DM => avatar(store, st, u.id, 32.0, Some(presence(store, u.id)), surface, p),
-            _ => avatar(store, st, c.id, 32.0, None, surface, p),
-        };
-        let id = c.id;
-        let mut item = row()
-            .grow(1.0)
-            .min_w(0.0)
-            .ml(8.0)
-            .h(42.0)
-            .px(8.0)
-            .gap(12.0)
-            .center_y()
-            .radius(6.0)
-            .cursor(rune::Cursor::Pointer)
-            .hover_group()
-            .on_press(move |s: &mut S| acc(s).select_channel(id))
-            .child(face)
-            .child(
-                text(name)
-                    .font(font(16.0, 500.0).lh(20.0))
-                    .color(fg)
-                    .group_color(if selected { fg } else { p.text_chat })
-                    .truncate()
-                    .grow(1.0)
-                    .shrink(),
-            );
-        if let Some(b) = mention_badge(store.mention_count(c.id) as u64, true, p) {
-            item = item.child(b);
-        }
-        item = if selected { item.fill(p.surface_interactive_selected_bg) } else { item.hover(p.surface_interactive_hover_bg) };
-        rows = rows.child(row().w_full().child(item));
+    let pending = store.relationships.values().filter(|r| r.kind == reflux_model::RelationshipType::INCOMING_REQUEST).count();
+    let friends_on = st.guild.is_none() && st.channel.is_none();
+    let mut rows = col().w_full().px(dim::SPACING_2).gap(1.0).child(el().h(dim::SPACING_2));
+    rows = rows.child(special(&icons::USERS_THREE_FILL, "Friends", friends_on, pending, p).on_press(move |s: &mut S| {
+        let st = acc(s);
+        st.channel = None;
+    }));
+    if st.personal_notes {
+        rows = rows.child(special(&icons::NOTE_PENCIL_FILL, "Personal Notes", st.channel == Some(me), 0, p).on_press(move |s: &mut S| acc(s).select_channel(me)));
     }
-    rows = rows.child(el().h(10.0 + USER_AREA_OVERLAY + dim::SPACING_2));
+    rows = rows
+        .child(el().h(1.0).mx(-dim::SPACING_2).my(dim::SPACING_2).fill(p.user_area_divider_color))
+        .child(
+            row()
+                .mt(8.0)
+                .mb(8.0)
+                .px(8.0)
+                .center_y()
+                .child(text("Direct messages").font(font(13.0, 500.0).lh(16.0)).color(p.text_primary_muted).grow(1.0))
+                .child(
+                    row()
+                        .size(16.0, 16.0)
+                        .center()
+                        .hover_group()
+                        .cursor(rune::Cursor::Pointer)
+                        .role("button")
+                        .label("Create DM")
+                        .child(icon(&icons::PLUS_BOLD, 16.0).color(p.text_primary_muted).group_color(p.text_primary)),
+                ),
+        );
+    for c in store.private_channels() {
+        rows = rows.child(dm_row(store, st, c, p, acc));
+    }
+    rows = rows.child(el().h(USER_AREA_OVERLAY + dim::SPACING_2));
     col()
         .w(dim::LAYOUT_SIDEBAR_WIDTH)
         .h_full()
@@ -286,6 +284,109 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .fill(p.background_secondary)
         .child(header)
         .child(list(rows, p))
+}
+
+/// `ClickableItem`: the Friends and Personal Notes rows, a 32px icon disc and a label.
+fn special(glyph: &'static rune::Icon, label: &str, selected: bool, badge: usize, p: &Palette) -> El {
+    let (disc, glyph_c) = if selected { (p.brand_primary, p.brand_primary_fill) } else { (p.guild_list_foreground, p.text_primary) };
+    let fg = if selected { p.surface_interactive_selected_color } else { p.text_primary_muted };
+    let mut item = row()
+        .w_full()
+        .h(42.0)
+        .px(8.0)
+        .gap(12.0)
+        .center_y()
+        .radius(dim::RADIUS_MD)
+        .hover_group()
+        .cursor(rune::Cursor::Pointer)
+        .role("link")
+        .label(label.to_string())
+        .child(row().size(32.0, 32.0).center().radius(16.0).fill(disc).child(icon(glyph, 20.0).color(glyph_c)))
+        .child(text(label).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).grow(1.0));
+    if let Some(b) = mention_badge(badge as u64, true, p) {
+        item = item.child(b);
+    }
+    if selected { item.fill(mix(p.surface_interactive_selected_bg, Color::TRANSPARENT, 35.0)) } else { item.hover(p.surface_interactive_hover_bg) }
+}
+
+/// `DMListItem` (desktop): avatar, name and subtext, the hover close button, unread pill.
+fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+    let me = store.my_id();
+    let id = c.id;
+    let selected = st.channel == Some(id);
+    let group = c.kind == ChannelType::GROUP_DM;
+    let other = c.recipients.iter().find(|u| u.id != me).map(|u| u.id);
+    let name = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| {
+        c.recipients.iter().filter(|u| u.id != me).map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", ")
+    });
+    let unread = store.has_unread(id);
+    let muted = store.is_muted(c);
+    let fg = if selected { p.surface_interactive_selected_color } else if unread { p.text_primary } else { p.text_primary_muted };
+    let surface = if selected { over(mix(p.surface_interactive_selected_bg, Color::TRANSPARENT, 35.0), p.background_secondary) } else { p.background_secondary };
+    let face = match other {
+        Some(u) if !group => avatar(store, st, u, 32.0, Some(presence(store, u)), surface, p),
+        _ => group_avatar(store, st, c, 32.0, surface, p),
+    };
+    let sub_c = mix(if selected { p.surface_interactive_selected_color } else { p.text_primary_muted }, Color::TRANSPARENT, 85.0);
+    let subtext = if group {
+        let n = c.recipients.len() + 1;
+        Some(if n == 1 { "1 member".to_string() } else { format!("{n} members") })
+    } else {
+        other.and_then(|u| store.presences.get(&u)?.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty())
+    };
+    let mut info = col().grow(1.0).min_w(0.0).gap(1.0).child(
+        text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate(),
+    );
+    if let Some(t) = subtext {
+        info = info.child(text(t).font(font(11.0, 500.0).lh(if group { 14.0 } else { 16.0 })).color(sub_c).truncate().mt(if group { -2.0 } else { -1.0 }));
+    }
+    let close = row()
+        .size(24.0, 24.0)
+        .center()
+        .radius(dim::RADIUS_FULL)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(format!("Close direct message with {name}"))
+        .group_opacity(0.0, 1.0)
+        .on_press(move |s: &mut S| {
+            let st = acc(s);
+            if st.channel == Some(id) {
+                st.channel = None;
+            }
+            st.intents.push(super::Intent::CloseDm(id));
+        })
+        .child(icon(&icons::X_BOLD, 16.0).color(fg));
+    let mut content = row().w_full().gap(12.0).center_y().child(face).child(info);
+    if let Some(b) = mention_badge(store.mention_count(id) as u64, true, p) {
+        content = content.child(b);
+    }
+    let target = match other {
+        Some(user) if !group => Target::User { user, guild: None, dm: Some(id) },
+        _ => Target::Channel(id),
+    };
+    let mut item = row()
+        .w_full()
+        .h(42.0)
+        .px(8.0)
+        .center_y()
+        .radius(dim::RADIUS_MD)
+        .cursor(rune::Cursor::Pointer)
+        .hover_group()
+        .role("link")
+        .label(name)
+        .key(format!("dm-{id}"))
+        .on_press(move |s: &mut S| acc(s).select_channel(id))
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).open_user_menu(target, [at.x, at.y], format!("dm-{id}"), crate::ui::Placement::RightStart))
+        .child(content.child(close));
+    item = if selected { item.fill(mix(p.surface_interactive_selected_bg, Color::TRANSPARENT, 35.0)) } else { item.hover(p.surface_interactive_hover_bg) };
+    if unread && !selected {
+        // `.dmItemUnreadIndicator`: an 8px half-pill 12px past the row's left edge.
+        item = item.child(el().absolute(-12.0, 17.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary));
+    }
+    if muted {
+        item = item.opacity(0.5);
+    }
+    item
 }
 
 /// `.userAreaWrapper` + `.userAreaContainer`, floating over the rail and sidebar bottoms.

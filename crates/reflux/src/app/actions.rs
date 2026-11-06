@@ -4,9 +4,16 @@
 
 use std::collections::HashMap;
 
-use reflux_model::{DispatchEvent, MessageAck, MessageDelete, MessageReaction, ReactionEmoji, Snowflake};
+use std::future::Future;
+use std::sync::Arc;
 
-use super::{Route, now_ms, spawn, update};
+use reflux_model::{
+    ChannelType, DispatchEvent, GatewayPayload, GuildSubscription, LazyRequest, MessageAck, MessageDelete, MessageReaction, OpCode,
+    ReactionEmoji, Snowflake, UserGuildSettings,
+};
+use reflux_net::{Command, ConnectionState};
+
+use super::{Instance, Route, now_ms, spawn, update};
 use crate::State;
 use crate::shell::Intent;
 
@@ -79,7 +86,114 @@ pub(super) fn run(s: &mut State, i: Intent) {
                 eprintln!("reflux: pin {message}: {e}");
             }
         }),
+        Intent::OpenDm(user) => {
+            let me = s.app.store.my_id();
+            let existing = s.app.store.private_channels().into_iter().find(|c| c.kind == ChannelType::DM && c.recipients.iter().any(|u| u.id == user) && user != me).map(|c| c.id);
+            match existing {
+                Some(c) => s.app.shell.select_guild(None, Some(c)),
+                None => spawn(async move {
+                    match inst.rest.open_dm(user).await {
+                        Ok(c) => update(move |s| {
+                            let id = c.id;
+                            s.app.store.apply(&DispatchEvent::ChannelCreate(Box::new(c)), now_ms());
+                            s.app.shell.select_guild(None, Some(id));
+                        }),
+                        Err(e) => eprintln!("reflux: open DM with {user}: {e}"),
+                    }
+                }),
+            }
+        }
+        Intent::CloseDm(channel) => call(inst, move |i| async move { i.rest.close_channel(channel).await }, "close DM"),
+        Intent::AddFriend(user) => call(inst, move |i| async move { i.rest.add_friend(user).await.map(drop) }, "add friend"),
+        Intent::RemoveRelationship(user) => call(inst, move |i| async move { i.rest.remove_relationship(user).await }, "remove relationship"),
+        Intent::Block(user) => call(inst, move |i| async move { i.rest.block(user).await.map(drop) }, "block"),
+        Intent::SetNote { user, note } => call(inst, move |i| async move { i.rest.set_note(user, &note).await }, "set note"),
+        Intent::LeaveGuild(guild) => call(inst, move |i| async move { i.rest.leave_guild(guild).await }, "leave guild"),
+        Intent::FriendRequest(tag) => {
+            let Some((name, disc)) = crate::shell::friends::parse_tag(&tag).map(|(n, d)| (n.to_string(), d.to_string())) else { return };
+            spawn(async move {
+                let r = inst.rest.send_friend_request(&name, &disc).await;
+                update(move |s| {
+                    let sh = &mut s.app.shell;
+                    sh.add_friend_result = Some(match r {
+                        Ok(_) => {
+                            sh.add_friend = rune::TextEdit::new("");
+                            Ok(())
+                        }
+                        Err(reflux_net::Error::Api { error, .. }) if error.code == "NO_USERS_WITH_FLUXERTAG_EXIST" => {
+                            Err("No user found with that username.".into())
+                        }
+                        Err(reflux_net::Error::Api { error, .. }) => Err(error.message),
+                        Err(e) => Err(e.to_string()),
+                    });
+                });
+            });
+        }
+        Intent::MarkRead(acks) => {
+            for &(c, m) in &acks {
+                ack_locally(s, c, m, false);
+                s.app.acks.remove(&c);
+            }
+            for chunk in acks.chunks(100).map(<[_]>::to_vec) {
+                call(inst.clone(), move |i| async move { i.rest.ack_bulk(&chunk).await }, "mark as read");
+            }
+        }
+        Intent::Mute { guild, channel, muted } => {
+            // Optimistic; the gateway's USER_GUILD_SETTINGS_UPDATE (or the response) settles it.
+            let st = s.app.store.guild_settings.entry(guild).or_insert_with(|| UserGuildSettings { guild_id: guild, ..Default::default() });
+            let patch = match channel {
+                None => {
+                    st.muted = muted;
+                    serde_json::json!({ "muted": muted })
+                }
+                Some(c) => {
+                    let ov = st.channel_overrides.get_or_insert_default();
+                    ov.entry(c).or_default().muted = muted;
+                    serde_json::json!({ "channel_overrides": ov })
+                }
+            };
+            spawn(async move {
+                match inst.rest.update_guild_settings(guild, &patch).await {
+                    Ok(u) => update(move |s| s.app.store.apply(&DispatchEvent::UserGuildSettingsUpdate(u), now_ms())),
+                    Err(e) => eprintln!("reflux: mute: {e}"),
+                }
+            });
+        }
         _ => {}
+    }
+}
+
+/// Runs a call whose effects arrive over the gateway; failures are logged.
+fn call<F, Fut>(inst: Arc<Instance>, f: F, what: &'static str)
+where
+    F: FnOnce(Arc<Instance>) -> Fut + Send + 'static,
+    Fut: Future<Output = reflux_net::Result<()>> + Send,
+{
+    spawn(async move {
+        if let Err(e) = f(inst).await {
+            eprintln!("reflux: {what}: {e}");
+        }
+    });
+}
+
+/// Keeps the lazy member list subscription (opcode 14) on the open guild channel and the rows
+/// on screen, like `MemberSidebar.applyChannelSubscription`.
+// shortcut: no unsubscribe when the list closes, and no one-time `sync: true` per guild.
+pub(super) fn subscribe_member_list(s: &mut State) {
+    let sh = &s.app.shell;
+    let want = match (sh.guild, sh.channel.and_then(|c| s.app.store.channels.get(&c))) {
+        (Some(g), Some(c)) if sh.member_list && c.guild_id == Some(g) => Some((g, c.id, crate::shell::member_ranges(sh.member_rows.clone()))),
+        _ => None,
+    };
+    if want.is_none() || want == s.app.member_sub || s.app.connection != Some(ConnectionState::Connected) {
+        return;
+    }
+    let Some((guild, channel, ranges)) = want.clone() else { return };
+    let Some(gw) = &s.app.gateway else { return };
+    let sub = GuildSubscription { active: Some(true), member_list_channels: [(channel, ranges)].into(), ..Default::default() };
+    let req = LazyRequest { subscriptions: [(guild, sub)].into() };
+    if gw.send(Command::Send(GatewayPayload::command(OpCode::LAZY_REQUEST, req))).is_ok() {
+        s.app.member_sub = want;
     }
 }
 

@@ -8,20 +8,26 @@
 mod chat;
 pub mod demo;
 mod emoji;
+pub(crate) mod friends;
 mod guilds;
 mod markdown;
 mod members;
+mod menus;
+mod profile;
 mod sidebar;
+
+pub use friends::FriendsTab;
+pub use members::ranges as member_ranges;
 
 use std::collections::HashSet;
 
-use reflux_model::{ChannelType, ReactionEmoji, Snowflake, Status as PresenceStatus};
+use reflux_model::{Channel, ChannelType, ReactionEmoji, Snowflake, Status as PresenceStatus};
 use reflux_store::Store;
 use rune::{Color, El, Icon, Image, ImageCache, TextEdit, Waker, col, el, row};
 
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim};
-use crate::ui::{Avatar, Popups, Status, over, rgb};
+use crate::ui::{Avatar, Placement, PopupAccess, Popups, Status, over, popup_access, rgb};
 
 /// What the shell asks the runtime to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -45,6 +51,32 @@ pub enum Intent {
     /// A partial user settings object: apply it now and `PATCH /users/@me/settings`.
     PatchSettings(serde_json::Value),
     Logout,
+    /// Open (creating it if needed) the DM with a user and show it.
+    OpenDm(Snowflake),
+    /// Close a DM or leave a group DM.
+    CloseDm(Snowflake),
+    /// Send a friend request to, or accept one from, a user.
+    AddFriend(Snowflake),
+    /// Friend request by `username` or `username#0000`.
+    FriendRequest(String),
+    /// Remove a friend, cancel or ignore a request, or unblock.
+    RemoveRelationship(Snowflake),
+    Block(Snowflake),
+    SetNote { user: Snowflake, note: String },
+    LeaveGuild(Snowflake),
+    /// (channel, its last message) pairs to ack.
+    MarkRead(Vec<(Snowflake, Snowflake)>),
+    /// Mute a guild (`channel: None`) or a channel's override.
+    Mute { guild: Option<Snowflake>, channel: Option<Snowflake>, muted: bool },
+}
+
+/// What the open context menu or profile popout is about.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Target {
+    /// `guild`: the member's guild (roles, nick); `dm`: the DM row the menu came from.
+    User { user: Snowflake, guild: Option<Snowflake>, dm: Option<Snowflake> },
+    Guild(Snowflake),
+    Channel(Snowflake),
 }
 
 /// The composer's "Replying to …" target.
@@ -100,6 +132,23 @@ pub struct ShellState {
     pub settings: Option<crate::settings::SettingsUi>,
     /// The instance shows Billing tabs (`shouldShowPremiumFeatures`).
     pub premium: bool,
+    /// The instance has personal notes (the DM list's Notes row).
+    pub personal_notes: bool,
+    pub friends_tab: FriendsTab,
+    pub friends_query: TextEdit,
+    pub add_friend: TextEdit,
+    /// The last Add Friend result: `Ok` = sent, `Err` = what went wrong.
+    pub add_friend_result: Option<Result<(), String>>,
+    /// The context menu's (`ctx-menu`) or profile popout's (`profile`) subject.
+    pub target: Option<Target>,
+    /// The element the profile popout hangs off, and on which side.
+    pub profile_anchor: Option<(String, Placement)>,
+    /// The profile popout's note field.
+    pub note: TextEdit,
+    /// The guild waiting on the leave confirmation.
+    pub confirm_leave: Option<Snowflake>,
+    /// Member list rows on screen (drives the lazy list subscription).
+    pub member_rows: std::ops::Range<usize>,
 }
 
 impl Default for ShellState {
@@ -129,19 +178,55 @@ impl Default for ShellState {
             web_base: String::new(),
             settings: None,
             premium: false,
+            personal_notes: true,
+            friends_tab: FriendsTab::default(),
+            friends_query: TextEdit::new(""),
+            add_friend: TextEdit::new(""),
+            add_friend_result: None,
+            target: None,
+            profile_anchor: None,
+            note: TextEdit::new(""),
+            confirm_leave: None,
+            member_rows: 0..0,
         }
     }
 }
 
 pub type ShellAccess<S> = fn(&mut S) -> &mut ShellState;
 
+fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
+    popup_access(move |s: &mut S| &mut acc(s).popups)
+}
+
 impl ShellState {
     pub fn select_guild(&mut self, guild: Option<Snowflake>, channel: Option<Snowflake>) {
         self.guild = guild;
         self.intents.push(Intent::SelectGuild(guild));
-        if let Some(c) = channel {
-            self.select_channel(c);
+        match channel {
+            Some(c) => self.select_channel(c),
+            None => self.channel = None,
         }
+    }
+
+    /// Opens the context menu for `t` at a window point.
+    pub fn open_menu(&mut self, t: Target, at: [f32; 2]) {
+        self.popups.open_at("ctx-menu", at);
+        self.target = Some(t);
+    }
+
+    /// [`Self::open_menu`] for a user; "View profile" then opens next to the element keyed `anchor`.
+    pub fn open_user_menu(&mut self, t: Target, at: [f32; 2], anchor: String, placement: Placement) {
+        self.open_menu(t, at);
+        self.profile_anchor = Some((anchor, placement));
+    }
+
+    /// Opens a user's profile popout next to the element keyed `anchor`.
+    pub fn open_profile(&mut self, user: Snowflake, guild: Option<Snowflake>, note: String, anchor: String, placement: Placement) {
+        self.popups.close();
+        self.popups.open = Some("profile".into());
+        self.target = Some(Target::User { user, guild, dm: None });
+        self.profile_anchor = Some((anchor, placement));
+        self.note = TextEdit::new(note);
     }
 
     pub fn select_channel(&mut self, channel: Snowflake) {
@@ -184,11 +269,17 @@ pub fn first_channel(store: &Store, guild: Snowflake) -> Option<Snowflake> {
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let divider = over(p.user_area_divider_color, p.background_secondary);
-    let channel = st.channel.and_then(|c| store.channels.get(&c));
+    // Personal notes: a channel whose ID is the user's own, which READY may leave out.
+    let notes = Channel { id: store.my_id(), kind: ChannelType::DM_PERSONAL_NOTES, name: Some("Personal Notes".into()), ..Default::default() };
+    let channel = st.channel.and_then(|c| store.channels.get(&c).or((c == notes.id).then_some(&notes)));
     let mut layer = Vec::new();
     let side = match st.guild {
         Some(g) => sidebar::guild(store, st, g, p, acc),
         None => sidebar::home(store, st, p, acc),
+    };
+    let main = match (st.guild, channel) {
+        (None, None) => friends::view(store, st, p, acc, &mut layer),
+        _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
     // `OutlineFrame`: 1px divider-coloured border (no top on the web/system-titlebar build), the
     // sidebar, and a 1px divider over the main column's first pixel.
@@ -199,7 +290,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .min_h(0.0)
             .fill(p.background_secondary_lighter)
             .child(side)
-            .child(chat::main(store, st, channel, p, acc, &mut layer))
+            .child(main)
             .child(el().pin(Some(dim::LAYOUT_SIDEBAR_WIDTH), Some(0.0), None, Some(0.0)).w(1.0).fill(divider)),
     );
     let body = row()
@@ -209,6 +300,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
+    menus::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         layer.push(crate::settings::view(store, st, ui, p, st.premium, acc));
     }
@@ -248,6 +340,41 @@ pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32,
         Some(Load::Failed) | None => default(),
     };
     Avatar::new(size).pixels(px.as_ref()).status(status).surface(surface).el(p)
+}
+
+/// `GroupDMAvatar` without an icon: two or three recipients clustered in the circle, each later
+/// one cut out of the earlier by a 2px ring of `surface`.
+// shortcut: group DM icons aren't loaded; the recipient cluster always shows.
+pub(crate) fn group_avatar(store: &Store, st: &ShellState, c: &Channel, size: f32, surface: Color, p: &Palette) -> El {
+    let me = store.my_id();
+    let mut ids: Vec<Snowflake> = c.recipients.iter().map(|u| u.id).filter(|&u| u != me).take(3).collect();
+    if ids.len() == 1 {
+        ids.push(me);
+    }
+    let n = ids.len();
+    let cluster = if n == 3 { size.min(32.0) } else { size };
+    // `getAvatarPosition`: (top, left, size).
+    let at = |i: usize| -> (f32, f32, f32) {
+        let (ratio, inset) = match n {
+            2 => (0.7, (cluster * 0.06).min(cluster * 0.7 * 0.18)),
+            3 => (0.68, (cluster * 0.04).min(cluster * 0.68 * 0.12)),
+            _ => return (0.0, 0.0, cluster),
+        };
+        let a = cluster * ratio;
+        match (n, i) {
+            (_, 0) => (inset, 0.0, a),
+            (2, _) => (cluster - a - inset, cluster - a, a),
+            (_, 1) => (inset, cluster - a, a),
+            _ => (cluster - a - inset, (cluster - a) / 2.0, a),
+        }
+    };
+    let mut e = el().size(cluster, cluster);
+    for (i, u) in ids.into_iter().enumerate() {
+        let (top, left, a) = at(i);
+        let face = avatar(store, st, u, a, None, surface, p);
+        e = e.child(if i == 0 { face.absolute(left, top) } else { el().absolute(left - 2.0, top - 2.0).padding(2.0).radius(a).fill(surface).child(face) });
+    }
+    e
 }
 
 /// A remote picture at a fixed size, cropped to cover it; `background-secondary-alt` until

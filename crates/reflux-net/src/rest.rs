@@ -5,8 +5,9 @@ use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use reflux_model::{
-    ApiError, AuthResponse, AuthToken, CreateMessage, InstanceDiscovery, IpAuthorizationPoll, LoginRequest, Message, MfaTicket,
-    ReactionEmoji, RegisterRequest, Snowflake, TotpLoginRequest, User, UserSettings, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
+    ApiError, AuthResponse, AuthToken, Channel, CreateMessage, InstanceDiscovery, IpAuthorizationPoll, LoginRequest, Message,
+    MfaTicket, ReactionEmoji, RegisterRequest, Relationship, Snowflake, TotpLoginRequest, User, UserGuildSettings, UserSettings,
+    WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
 };
 use reqwest::{Method, StatusCode, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -262,6 +263,62 @@ impl Client {
     pub async fn ack_message(&self, channel: Snowflake, id: Snowflake, manual: bool) -> Result<()> {
         let body = serde_json::json!({ "mention_count": 0, "manual": manual });
         self.empty(Method::POST, &format!("/channels/{channel}/messages/{id}/ack"), Some(&body)).await
+    }
+
+    /// `POST /read-states/ack-bulk`: marks each channel read through its message (≤ 100 entries).
+    pub async fn ack_bulk(&self, acks: &[(Snowflake, Snowflake)]) -> Result<()> {
+        let read_states: Vec<_> = acks.iter().map(|(c, m)| serde_json::json!({ "channel_id": c, "message_id": m })).collect();
+        self.empty(Method::POST, "/read-states/ack-bulk", Some(&serde_json::json!({ "read_states": read_states }))).await
+    }
+
+    // --- Relationships, private channels, notes, guild membership (`http-api/users/*`) ---
+
+    /// Friend request by tag; the official client sends `0000` for a bare username.
+    pub async fn send_friend_request(&self, username: &str, discriminator: &str) -> Result<Relationship> {
+        let body = serde_json::json!({ "username": username, "discriminator": discriminator });
+        self.request(Method::POST, "/users/@me/relationships", Some(&body)).await
+    }
+
+    /// Sends a friend request to the user, or accepts theirs.
+    pub async fn add_friend(&self, user: Snowflake) -> Result<Relationship> {
+        self.request::<_, ()>(Method::POST, &format!("/users/@me/relationships/{user}"), None).await
+    }
+
+    pub async fn block(&self, user: Snowflake) -> Result<Relationship> {
+        let body = serde_json::json!({ "type": 2 });
+        self.request(Method::PUT, &format!("/users/@me/relationships/{user}"), Some(&body)).await
+    }
+
+    /// Removes a friend, cancels or ignores a request, or unblocks.
+    pub async fn remove_relationship(&self, user: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/users/@me/relationships/{user}"), None).await
+    }
+
+    /// Opens (or returns) the DM with a user.
+    pub async fn open_dm(&self, user: Snowflake) -> Result<Channel> {
+        let body = serde_json::json!({ "recipient_id": user });
+        self.request(Method::POST, "/users/@me/channels", Some(&body)).await
+    }
+
+    /// Closes a DM or leaves a group DM.
+    pub async fn close_channel(&self, channel: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/channels/{channel}"), None).await
+    }
+
+    /// An empty note deletes it.
+    pub async fn set_note(&self, user: Snowflake, note: &str) -> Result<()> {
+        let body = serde_json::json!({ "note": note });
+        self.empty(Method::PUT, &format!("/users/@me/notes/{user}"), Some(&body)).await
+    }
+
+    pub async fn leave_guild(&self, guild: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/users/@me/guilds/{guild}"), None).await
+    }
+
+    /// `PATCH /users/@me/guilds/{guild or @me}/settings` with update fields.
+    pub async fn update_guild_settings(&self, guild: Option<Snowflake>, patch: &serde_json::Value) -> Result<UserGuildSettings> {
+        let g = guild.map_or_else(|| "@me".to_string(), |g| g.to_string());
+        self.request(Method::PATCH, &format!("/users/@me/guilds/{g}/settings"), Some(patch)).await
     }
 
     /// A request whose response body (if any) is ignored.

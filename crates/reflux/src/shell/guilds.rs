@@ -96,10 +96,9 @@ fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcces
         .fill(bg)
         .child(icon(&icons::CHAT_CIRCLE, 28.0).color(fg));
     let mentions: u32 = store.private_channels().iter().map(|c| store.mention_count(c.id)).sum();
-    let first = store.private_channels().first().map(|c| c.id);
     slot(None, selected, false, st, face, mention_badge(mentions as u64, true, p), p, acc)
         .label("Direct Messages")
-        .on_press(move |s: &mut S| acc(s).select_guild(None, first))
+        .on_press(move |s: &mut S| acc(s).select_guild(None, None))
 }
 
 /// `.guildDividerSlot`: 6 + 2 + 6, a 32-wide line.
@@ -120,6 +119,7 @@ fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palette,
         .label(name.to_string())
         .key(format!("guild-{id}"))
         .on_press(move |s: &mut S| acc(s).select_guild(Some(id), first))
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::Guild(id), [at.x, at.y]))
 }
 
 /// `GuildIcon`: the icon from the media proxy, else the acronym; a circle that rounds to a

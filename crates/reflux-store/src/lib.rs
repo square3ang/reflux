@@ -420,7 +420,7 @@ impl Store {
             .values()
             .filter(|c| matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM))
             .collect();
-        v.sort_by_key(|c| std::cmp::Reverse(c.last_message_id.unwrap_or(c.id)));
+        v.sort_by_key(|c| std::cmp::Reverse((c.last_message_id.unwrap_or(c.id), c.id)));
         v
     }
 

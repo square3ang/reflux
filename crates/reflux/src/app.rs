@@ -91,6 +91,8 @@ pub struct App {
     /// Bumped per gateway connection, so events of a closed one are dropped.
     generation: u64,
     acks: actions::PendingAcks,
+    /// The member list subscription last sent: (guild, channel, ranges).
+    member_sub: Option<(Snowflake, Snowflake, Vec<[u32; 2]>)>,
 }
 
 /// What views (the shell) ask for; `act` runs it.
@@ -411,6 +413,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
         GatewayEvent::Dispatch(d) => {
             s.app.store.apply(&d, now_ms());
             if matches!(d, reflux_model::DispatchEvent::Ready(_)) {
+                s.app.member_sub = None; // a new session has no subscriptions
                 s.app.route = Route::Main;
             }
         }
@@ -464,6 +467,8 @@ pub fn poll(s: &mut State) -> bool {
     s.app.shell.now_ms = now_ms();
     let f = s.app.instance.as_ref().map(|i| &i.discovery.features);
     s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
+    let community = s.app.instance.as_ref().map(|i| &i.discovery.community);
+    s.app.shell.personal_notes = community.is_none_or(|c| c.personal_notes_enabled != Some(false));
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
     for i in intents {
@@ -478,6 +483,7 @@ pub fn poll(s: &mut State) -> bool {
             other => actions::run(s, other),
         }
     }
+    actions::subscribe_member_list(s);
     actions::tick(s) || ran
 }
 
