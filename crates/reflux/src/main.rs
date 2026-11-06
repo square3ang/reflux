@@ -1,4 +1,5 @@
 mod app;
+mod guild;
 mod icons;
 mod login;
 mod media;

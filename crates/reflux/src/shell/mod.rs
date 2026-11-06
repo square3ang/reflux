@@ -19,6 +19,8 @@ pub mod voice;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
+pub(crate) use chat::format_relative;
+pub(crate) use guilds::acronym;
 
 use std::collections::HashSet;
 
@@ -83,6 +85,11 @@ pub enum Intent {
     Mute { guild: Option<Snowflake>, channel: Option<Snowflake>, muted: bool },
     /// `POST /auth/verify/resend` from the email verification nagbar.
     ResendVerification,
+    /// A community management request (`crate::guild`).
+    Api(crate::guild::Call),
+    /// A partial user guild settings object: apply it now and
+    /// `PATCH /users/@me/guilds/{guild}/settings` (`None` = DMs).
+    PatchGuildSettings { guild: Option<Snowflake>, patch: serde_json::Value },
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -204,6 +211,11 @@ pub struct ShellState {
     /// Member list rows on screen (drives the lazy list subscription).
     pub member_rows: std::ops::Range<usize>,
     pub voice: voice::Voice,
+    /// The open community management dialog and its form.
+    pub dialog: Option<crate::guild::Dialog>,
+    pub form: crate::guild::Form,
+    /// Invite link origin (`discovery.endpoints.invite`, e.g. `https://fluxer.gg`).
+    pub invite_base: String,
 }
 
 impl Default for ShellState {
@@ -245,6 +257,9 @@ impl Default for ShellState {
             confirm_leave: None,
             member_rows: 0..0,
             voice: voice::Voice::default(),
+            dialog: None,
+            form: Default::default(),
+            invite_base: String::new(),
         }
     }
 }
@@ -361,6 +376,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(sidebar::user_area(store, st, p, acc));
     let body = col().w_full().h_full().children(verify_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
+    crate::guild::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }
@@ -376,7 +392,7 @@ fn user_area_overlay(st: &ShellState) -> f32 {
 }
 
 /// A role colour (`0xRRGGBB`).
-fn role_color(c: u32) -> Color {
+pub(crate) fn role_color(c: u32) -> Color {
     rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
@@ -463,7 +479,7 @@ fluxer_icon!(FORUM_CHANNEL, "fluxer-forum-channel", r#"<path fill="currentColor"
 fluxer_icon!(LINK_CHANNEL, "fluxer-link-channel", r#"<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="24" d="m108.71 197.23-5.11 5.11c-4.3345 4.335-9.481 7.773-15.1453 10.117S76.7195 216.005 70.5894 216s-12.1991-1.218-17.8599-3.57c-5.6607-2.353-10.802-5.799-15.1297-10.14-8.7201-8.751-13.6115-20.604-13.6003-32.958.0113-12.353 4.9242-24.198 13.6603-32.932l34.74-34.74c4.3292-4.3306 9.4692-7.7658 15.1262-10.1095 5.6571-2.3437 11.7204-3.55 17.844-3.55 6.123 0 12.186 1.2063 17.844 3.55 5.657 2.3437 10.797 5.7789 15.126 10.1095 6.16 6.132 10.47 13.874 12.44 22.34m-3.49-65.2301 5.11-5.11c4.329-4.3305 9.469-7.7657 15.126-10.1094s11.72-3.55 17.844-3.55c6.123 0 12.186 1.2063 17.844 3.55 5.657 2.3437 10.797 5.7789 15.126 10.1094 4.33 4.3292 7.765 9.4691 10.109 15.1262s3.55 11.7204 3.55 17.8437c0 6.1234-1.206 12.1868-3.55 17.8442-2.344 5.657-5.779 10.797-10.109 15.126l-34.74 34.74c-4.335 4.335-9.481 7.773-15.145 10.117-5.665 2.344-11.735 3.548-17.866 3.543-6.13-.005-12.199-1.218-17.859-3.57-5.661-2.353-10.802-5.799-15.13-10.14-6.125-6.13-10.413-13.851-12.38-22.29"/>"#);
 
 /// `getIcon` in `channel/utils/ChannelUtils.tsx` (the unlocked, non-mature variants).
-fn channel_icon(kind: ChannelType) -> &'static Icon {
+pub(crate) fn channel_icon(kind: ChannelType) -> &'static Icon {
     match kind {
         ChannelType::GUILD_VOICE => &VOICE_CHANNEL,
         ChannelType::GUILD_ANNOUNCEMENT => &ANNOUNCEMENT_CHANNEL,

@@ -6,11 +6,9 @@ use super::{mix, over};
 use crate::icons;
 use crate::theme::{Palette, font};
 
-pub type EditAccess<S> = for<'a> fn(&'a mut S) -> &'a mut TextEdit;
-
 pub struct Input<'a, S: 'static> {
     edit: &'a TextEdit,
-    access: EditAccess<S>,
+    access: Box<dyn for<'b> Fn(&'b mut S) -> &'b mut TextEdit>,
     key: &'a str,
     label: Option<&'a str>,
     placeholder: &'a str,
@@ -20,8 +18,8 @@ pub struct Input<'a, S: 'static> {
 }
 
 impl<'a, S: 'static> Input<'a, S> {
-    pub fn new(key: &'a str, edit: &'a TextEdit, access: EditAccess<S>) -> Self {
-        Self { edit, access, key, label: None, placeholder: "", error: None, password: None }
+    pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
+        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
@@ -38,7 +36,10 @@ impl<'a, S: 'static> Input<'a, S> {
             .color(p.text_primary)
             .placeholder(self.placeholder, p.text_tertiary)
             .caret(p.text_primary, p.background_modifier_selected)
-            .on_edit(self.access);
+            .on_edit({
+                let access = self.access;
+                move |s: &mut S| -> &mut TextEdit { access(s) }
+            });
         if let Some(l) = self.label {
             field = field.label(l);
         }

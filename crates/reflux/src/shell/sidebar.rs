@@ -50,8 +50,12 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .gap(dim::SPACING_1)
         .center_y()
         .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(name.clone())
+        .key(crate::guild::HEADER_MENU)
+        .on_press(move |s: &mut S| acc(s).popups.toggle(crate::guild::HEADER_MENU))
         .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(fg).truncate().grow(1.0).shrink())
-        .child(icon(&icons::CARET_DOWN, 16.0).color(fg));
+        .child(icon(if st.popups.is_open(crate::guild::HEADER_MENU) { &icons::X } else { &icons::CARET_DOWN }, 16.0).color(fg));
     header = match &banner {
         Some(_) => header.pin(Some(0.0), Some(0.0), Some(0.0), None),
         None => header.fill(p.background_secondary).hover(p.background_modifier_hover).child(header_bar(p)),
@@ -59,6 +63,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
 
     // `.navigationContainer`: padding-right 8; 10px drop zones above and below.
     let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0);
+    let hide_muted = store.guild_settings.get(&Some(gid)).is_some_and(|s| s.hide_muted_channels);
     for g in store.channel_groups(gid) {
         let collapsed = g.category.is_some_and(|c| st.collapsed.contains(&c.id));
         if let Some(cat) = g.category {
@@ -68,6 +73,9 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
             let selected = st.channel == Some(c.id);
             // A collapsed category still shows its selected and unread channels.
             if collapsed && !selected && !store.has_unread(c.id) {
+                continue;
+            }
+            if hide_muted && !selected && store.is_muted(c) {
                 continue;
             }
             groups = groups.child(channel_row(store, c, selected, p, acc));

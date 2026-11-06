@@ -159,21 +159,9 @@ impl<'a, S: 'static> RadioGroup<'a, S> {
     pub fn on_change(mut self, f: impl Fn(&mut S, &str) + 'static) -> Self { self.on_change = Some(Rc::new(f)); self }
 
     pub fn el(self, p: &Palette) -> El {
-        let border = control_border(p);
         col().gap(6.0).focus_group().role("radiogroup").children(self.options.iter().map(|&(value, label, desc)| {
             let on = self.value == Some(value);
-            // A 40-unit SVG circle (r 20, stroke 2) drawn at 18px, with an r 8 dot.
-            let mut dot = row()
-                .size(18.0, 18.0)
-                .mt(2.0)
-                .center()
-                .radius(9.0)
-                .fill(if on { p.brand_primary } else { mix(p.background_primary, border, 55.0) })
-                .border(0.9, if on { p.brand_primary_foreground } else { border })
-                .shadow(1.0, if on { 3.0 } else { 2.0 }, rgba(0, 0, 0, if on { 0.2 } else { 0.15 }));
-            if on {
-                dot = dot.child(el().size(7.2, 7.2).radius(3.6).fill(p.brand_primary_fill));
-            }
+            let dot = radio_dot(on, p).mt(2.0);
             let mut words = col()
                 .gap(4.0)
                 .shrink()
@@ -201,6 +189,19 @@ impl<'a, S: 'static> RadioGroup<'a, S> {
             opt
         }))
     }
+}
+
+/// The radio circle: a 40-unit SVG circle (r 20, stroke 2) drawn at 18px, with an r 8 dot.
+pub fn radio_dot(on: bool, p: &Palette) -> El {
+    let border = control_border(p);
+    let dot = row()
+        .size(18.0, 18.0)
+        .center()
+        .radius(9.0)
+        .fill(if on { p.brand_primary } else { mix(p.background_primary, border, 55.0) })
+        .border(0.9, if on { p.brand_primary_foreground } else { border })
+        .shadow(1.0, if on { 3.0 } else { 2.0 }, rgba(0, 0, 0, if on { 0.2 } else { 0.15 }));
+    if on { dot.child(el().size(7.2, 7.2).radius(3.6).fill(p.brand_primary_fill)) } else { dot }
 }
 
 pub struct Slider<S: 'static> {

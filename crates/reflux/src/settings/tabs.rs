@@ -23,7 +23,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
 }
 
 /// `SettingsSection`: title 18/600, content gap 20; later sections get a top border and 24 padding.
-fn section(title: &str, content: El, first: bool, p: &Palette) -> El {
+pub(crate) fn section(title: &str, content: El, first: bool, p: &Palette) -> El {
     let mut s = col()
         .w_full()
         .gap(16.0)
@@ -36,7 +36,7 @@ fn section(title: &str, content: El, first: bool, p: &Palette) -> El {
     s
 }
 
-fn not_available(p: &Palette) -> El {
+pub(crate) fn not_available(p: &Palette) -> El {
     col()
         .w_full()
         .py(48.0)

@@ -20,6 +20,7 @@ use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
 
 mod actions;
+mod guild;
 mod voice;
 
 const PAGE: u8 = 50;
@@ -652,6 +653,8 @@ pub fn poll(s: &mut State) -> bool {
             Intent::SendMessage { channel, content, reply } => act(s, Action::SendMessage { channel, content, reply }),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
+            Intent::Api(c) => guild::run(s, c),
+            Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             i @ (Intent::JoinVoice { .. }
             | Intent::LeaveVoice

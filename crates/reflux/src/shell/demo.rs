@@ -1,7 +1,8 @@
 //! `--shell-demo`: the shell over a hand-written fixture store, for snapshot checks:
 //! `cargo run -p reflux -- --shell-demo --snap /tmp/opencode/snaps/shell.png --size 1280x800 --scale 1`
 //! (add `--shell-home` for the DM list, `--friends[=all|pending|add]` for the friends page,
-//! `--profile` for a profile popout, `--ctx=user|guild|channel` for context menus).
+//! `--profile` for a profile popout, `--ctx=user|guild|channel` for context menus,
+//! `--guild-ui=<scene>` for community management).
 
 use chrono::{Local, TimeZone};
 use reflux_model::{DispatchEvent, Snowflake};
@@ -146,7 +147,9 @@ impl Demo {
             chan(2200, 4, "Text Channels", 1, None),
             json!({"id": GENERAL.to_string(), "type": 0, "name": "general", "position": 0, "parent_id": "2200",
                    "topic": "Talk about anything — be nice, and keep **memes** in #off-topic"}),
-            chan(2202, 0, "dev", 1, Some(2200)),
+            json!({"id": "2202", "type": 0, "name": "dev", "position": 1, "parent_id": "2200", "rate_limit_per_user": 10,
+                   "permission_overwrites": [{"id": HQ.to_string(), "type": 0, "allow": "0", "deny": "2048"},
+                                             {"id": "2011", "type": 0, "allow": "2048", "deny": "0"}]}),
             chan(2203, 0, "off-topic", 2, Some(2200)),
             chan(2204, 15, "help", 3, Some(2200)),
             chan(2300, 4, "Voice", 2, None),
@@ -335,11 +338,60 @@ impl Demo {
                 shell.open_user_menu(t, at, "member-1001".into(), crate::ui::Placement::LeftStart);
             }
         }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--guild-ui=")) {
+            guild_scene(&mut shell, sc);
+        }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--voice")) {
             voice_scene(&mut shell, &mut store, sc.trim_start_matches('='));
         }
         shell.voice.devices = Some((vec!["Built-in Microphone".into(), "USB Headset".into()], vec!["Speakers".into(), "USB Headset".into()]));
         Demo { store, shell }
+    }
+}
+
+/// `--guild-ui=<scene>`: community management mid-use. `menu`, `add|create|join`, `invite[-edit]`,
+/// `channel|category`, `notif`, `privacy`, `gs-<tab>` (community settings), `role`, `delete`,
+/// `cs-overview|cs-permissions|cs-overwrite` (channel settings of #dev).
+fn guild_scene(st: &mut ShellState, scene: &str) {
+    use crate::guild::{AddView, Confirm, Dialog};
+    let g = Snowflake(HQ);
+    let data = |st: &mut ShellState, k: &str, v: Value| {
+        st.form.data.insert(k.into(), v);
+    };
+    match scene {
+        "menu" => st.popups.toggle(crate::guild::HEADER_MENU),
+        "add" => st.open_dialog(Dialog::Add(AddView::Landing)),
+        "create" => st.open_dialog(Dialog::Add(AddView::Create)),
+        "join" => st.open_dialog(Dialog::Add(AddView::Join)),
+        "invite" | "invite-edit" => {
+            st.open_dialog(Dialog::Invite(Snowflake(GENERAL), scene == "invite-edit"));
+            st.invite_base = "https://fluxer.gg".into();
+            data(st, "invite", json!({"code": "AbCd12", "max_age": 604800, "max_uses": 0}));
+        }
+        "channel" | "category" => st.open_dialog(Dialog::CreateChannel { guild: g, parent: Some(Snowflake(2200)), category: scene == "category" }),
+        "notif" => st.open_dialog(Dialog::Notifications(g)),
+        "privacy" => st.open_dialog(Dialog::Privacy(g)),
+        "role" => st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) }),
+        "delete" => {
+            st.open_dialog(Dialog::Guild { guild: g, tab: "overview", role: None });
+            st.form.confirm = Some(Confirm::DeleteGuild(g));
+        }
+        "cs-overview" | "cs-permissions" | "cs-overwrite" => {
+            let tab = if scene == "cs-overview" { "overview" } else { "permissions" };
+            st.open_dialog(Dialog::Channel { channel: Snowflake(2202), tab, target: (scene == "cs-overwrite").then_some(Snowflake(2011)) });
+        }
+        s => {
+            let tab = crate::guild::tab_ids().find(|t| s.strip_prefix("gs-") == Some(*t)).unwrap_or("overview");
+            st.open_dialog(Dialog::Guild { guild: g, tab, role: None });
+            let m = |u: u64, r: &[u64]| json!({"user": {"id": u.to_string(), "username": format!("user{u}"), "global_name": null}, "roles": r.iter().map(|x| x.to_string()).collect::<Vec<_>>(), "joined_at": "2025-01-01T00:00:00Z"});
+            data(st, "members", json!([m(ME, &[2010]), m(1001, &[2010, 2012]), m(1002, &[2011]), m(1003, &[2012]), m(1004, &[])]));
+            data(st, "invites", json!([{"code": "AbCd12", "uses": 3, "max_uses": 0, "max_age": 0, "inviter": {"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, "channel": {"id": GENERAL.to_string(), "name": "general", "type": 0}},
+                                      {"code": "Zz99", "uses": 1, "max_uses": 10, "max_age": 86400, "expires_at": "2026-12-01T00:00:00Z", "inviter": {"id": "1000", "username": "square"}, "channel": {"id": "2001", "name": "welcome", "type": 0}}]));
+            data(st, "bans", json!([{"user": {"id": "1009", "username": "spammer", "global_name": "Spam Bot"}, "reason": "Spam links"}]));
+            let e = |n: u64, user: u64, t: u32, target: &str| json!({"id": id_at(at(0, 9, 0), n), "user_id": user.to_string(), "action_type": t, "target_id": target});
+            data(st, "audit", json!({"audit_log_entries": [e(1, 1001, 22, "1009"), e(2, ME, 31, "2011"), e(3, 1002, 10, "2204")],
+                                     "users": [{"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, {"id": "1009", "username": "spammer"}]}));
+        }
     }
 }
 

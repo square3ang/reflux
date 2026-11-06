@@ -18,7 +18,7 @@ use rune::color::{srgb_decode, srgb_encode};
 
 pub use avatar::{Avatar, Status};
 pub use button::{Button, ButtonSize, ButtonVariant, spinner};
-pub use controls::{Checkbox, RadioGroup, Slider, Switch};
+pub use controls::{Checkbox, RadioGroup, Slider, Switch, radio_dot};
 pub use input::Input;
 pub use menu::{Menu, MenuEntry, MenuItem};
 pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller};

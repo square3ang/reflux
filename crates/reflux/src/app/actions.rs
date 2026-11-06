@@ -224,6 +224,7 @@ pub(super) fn tick(s: &mut State) -> bool {
     {
         s.app.shell.web_base = inst.discovery.endpoints.webapp.clone();
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
+        s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
     }
     let now = now_ms();
     let sh = &s.app.shell;

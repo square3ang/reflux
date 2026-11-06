@@ -17,7 +17,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         (Some(t), Some("ctx-menu")) => {
             let menu = match t {
                 Target::User { user, guild, dm } => user_menu(store, st, user, guild, dm, acc),
-                Target::Guild(g) => guild_menu(store, g, acc),
+                Target::Guild(g) => guild_menu(store, st, g, acc),
                 Target::Channel(c) => channel_menu(store, st, c, acc),
             };
             menu.el(&st.popups, pops(acc), p, layer);
@@ -117,23 +117,34 @@ fn close_dm(st: &mut ShellState, c: Snowflake) {
 }
 
 /// `GuildContextMenu` (`useGuildMenuData`).
-// shortcut: invites, guild settings, channel creation, privacy, the community profile, hide
-// muted channels and delete-my-messages aren't listed; mute is a toggle, not a duration submenu.
-fn guild_menu<S: 'static>(store: &Store, g: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
+// shortcut: privacy, the community profile, hide muted channels and delete-my-messages are only
+// in the header menu; mute is a toggle, not a duration submenu.
+fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
     let channels = store.channels.values().filter(|c| c.guild_id == Some(g) && store.can_view(c.id)).map(|c| c.id);
     let muted = store.guild_settings.get(&Some(g)).is_some_and(|s| s.muted);
     let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == store.my_id());
-    let mut m = Menu::new("ctx-menu")
-        .item(mark_read(unread(store, channels), acc))
-        .separator()
+    let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, channels), acc)).separator();
+    if let Some(ch) = crate::guild::invitable_channel(store, st, g) {
+        m = m.item(MenuItem::new("invite", "Invite members").icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), ch))).separator();
+    }
+    m = m
         .item(
             MenuItem::new("mute", if muted { "Unmute community" } else { "Mute community" })
                 .icon(&icons::BELL_SLASH_FILL)
                 .on_select(move |s: &mut S| acc(s).intents.push(Intent::Mute { guild: Some(g), channel: None, muted: !muted })),
         )
-        // shortcut: notification settings is a stub until the modal exists.
-        .item(MenuItem::new("notifications", "Notification settings").icon(&icons::BELL_FILL))
+        .item(MenuItem::new("notifications", "Notification settings").icon(&icons::BELL_FILL).on_select(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Notifications(g))))
         .separator();
+    if let Some(tab) = crate::guild::first_settings_tab(store, g) {
+        m = m.item(MenuItem::new("settings", "Community settings").icon(&icons::GEAR_FILL).on_select(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
+    }
+    if crate::guild::can(store, g, reflux_model::Permissions::MANAGE_CHANNELS) {
+        let create = move |category: bool| move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::CreateChannel { guild: g, parent: None, category });
+        m = m
+            .item(MenuItem::new("create-channel", "Create channel").icon(&icons::PLUS_CIRCLE_FILL).on_select(create(false)))
+            .item(MenuItem::new("create-category", "Create category").icon(&icons::FOLDER_PLUS_FILL).on_select(create(true)));
+    }
+    m = m.separator();
     if !owner {
         m = m.item(MenuItem::new("leave", "Leave community").icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| acc(s).confirm_leave = Some(g)));
     }
@@ -144,7 +155,7 @@ fn guild_menu<S: 'static>(store: &Store, g: Snowflake, acc: ShellAccess<S>) -> M
 }
 
 /// `ChannelContextMenu` (`useChannelMenuData`): guild channels and group DMs.
-// shortcut: favorites, invites, editing, duplicating and deleting channels aren't listed.
+// shortcut: favorites and duplicating channels aren't listed.
 fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
     let Some(ch) = store.channels.get(&c) else { return Menu::new("ctx-menu") };
     let muted = store.is_muted(ch);
@@ -155,6 +166,31 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
             .on_select(move |s: &mut S| acc(s).intents.push(Intent::Mute { guild, channel: Some(c), muted: !muted })),
     );
     if let Some(g) = guild {
+        let invitable = matches!(ch.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
+            && store.permissions(c).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
+        if invitable {
+            m = m.separator().item(MenuItem::new("invite", "Invite people").icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), c)));
+        }
+        let category = ch.kind == ChannelType::GUILD_CATEGORY;
+        if category && store.permissions(c).contains(reflux_model::Permissions::MANAGE_CHANNELS) {
+            m = m.item(MenuItem::new("create-channel", "Create channel").icon(&icons::PLUS_CIRCLE_FILL).on_select(move |s: &mut S| {
+                acc(s).open_dialog(crate::guild::Dialog::CreateChannel { guild: g, parent: Some(c), category: false })
+            }));
+        }
+        if let Some(tab) = crate::guild::first_channel_tab(store, c) {
+            let label = if category { "Edit category" } else { "Edit channel" };
+            m = m.separator().item(MenuItem::new("edit-channel", label).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| {
+                acc(s).open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None })
+            }));
+            if store.permissions(c).contains(reflux_model::Permissions::MANAGE_CHANNELS) {
+                let label = if category { "Delete category" } else { "Delete channel" };
+                m = m.item(MenuItem::new("delete-channel", label).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None });
+                    sh.form.confirm = Some(crate::guild::Confirm::DeleteChannel(c));
+                }));
+            }
+        }
         let link = format!("{}/channels/{g}/{c}", st.web_base.trim_end_matches('/'));
         m = m.separator().item(MenuItem::new("copy-link", "Copy channel link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(link.clone())));
     }

@@ -6,9 +6,8 @@
 //! Views only queue [`Intent`]s; [`patch`] applies a settings change optimistically to the store
 //! and sends `PATCH /users/@me/settings`.
 
-mod tabs;
+pub(crate) mod tabs;
 
-use reflux_model::UserSettings;
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, Shadow, TextEdit, col, el, icon, row, text, text_input};
 use serde_json::Value;
@@ -118,7 +117,7 @@ fn label_of(id: &str) -> &'static str {
 
 /// Merges a partial settings object into `settings` (what the server will do); false when it
 /// doesn't fit the type, leaving `settings` unchanged.
-pub fn apply(settings: &mut UserSettings, patch: &Value) -> bool {
+pub fn apply<T: serde::Serialize + serde::de::DeserializeOwned>(settings: &mut T, patch: &Value) -> bool {
     let (Ok(Value::Object(mut all)), Value::Object(p)) = (serde_json::to_value(&*settings), patch) else { return false };
     all.extend(p.clone());
     match serde_json::from_value(Value::Object(all)) {
@@ -189,38 +188,10 @@ const LAYER_KEY: &str = "settings-layer";
 /// The modal layer (backdrop + card, and the sign-out confirmation over it).
 pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let mut popups = Vec::new();
-    // The layer covers the window; its size from the last frame stands in for the viewport.
-    let [w, h] = rune::memo::layout_size(LAYER_KEY).unwrap_or([1280.0, 800.0]);
-    let m = metrics(w, h);
     let close = move |s: &mut S| acc(s).settings = None;
-    let radius = (0.01 * w).clamp(8.0, 12.0);
-    let card = row()
-        .w(m.card_w)
-        .h_full()
-        .radius(radius)
-        .fill(p.background_secondary)
-        .border(1.0, over(p.background_header_secondary, p.background_secondary))
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: rgba(47, 49, 55, 0.08), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 24.0, spread: -4.0, color: rgba(0, 0, 0, 0.25), inset: false })
-        .box_shadow(Shadow { x: 0.0, y: 20.0, blur: 48.0, spread: -8.0, color: rgba(0, 0, 0, 0.2), inset: false })
-        .clip_rounded(radius)
-        .role("dialog")
-        .label("User settings")
-        .child(sidebar(store, st, ui, p, &m, premium, acc))
-        .child(content(store, st, ui, p, &m, acc, &mut popups))
-        .modal(true, close);
-    let mut modal = el()
-        .key(LAYER_KEY)
-        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK).opacity(0.85))
-        .child(
-            row()
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .py(m.pad[0] + 1.0)
-                .px(m.pad[1])
-                .justify_center()
-                .child(card),
-        );
+    let (head, nav) = sidebar(store, st, ui, p, premium, acc);
+    let body = tabs::body(store, st, ui, p, acc, &mut popups);
+    let mut modal = frame("User settings", label_of(ui.tab), head, nav, body, close, p);
     if ui.confirm_logout {
         let cancel = move |s: &mut S| set(acc, s, |u| u.confirm_logout = false);
         modal = modal.child(
@@ -239,6 +210,66 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     layer.extend(popups);
 }
 
+/// The full-window settings modal user, community and channel settings share: the backdrop and
+/// card, a sidebar (`head` over the scrolling `nav`), and a content pane titled `title` around
+/// `body`. Escape and the close button call `close`.
+pub(crate) fn frame<S: 'static>(label: &str, title: &str, head: Vec<El>, nav: El, body: El, close: impl Fn(&mut S) + Clone + 'static, p: &Palette) -> El {
+    // The layer covers the window; its size from the last frame stands in for the viewport.
+    let [w, h] = rune::memo::layout_size(LAYER_KEY).unwrap_or([1280.0, 800.0]);
+    let m = metrics(w, h);
+    let c = colors(p);
+    let radius = (0.01 * w).clamp(8.0, 12.0);
+    let viewport = col()
+        .key("settings-nav")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .scroll(ScrollSpec { stick_bottom: false })
+        .child(col().w_full().pr(8.0).child(nav));
+    let sidebar = col()
+        .w(m.sidebar_w)
+        .h_full()
+        .fill(c.surface)
+        .child(
+            col()
+                .w_full()
+                .grow(1.0)
+                .min_h(0.0)
+                .pt(16.0)
+                .px(12.0)
+                .gap(4.0)
+                .children(head)
+                .child(col().w_full().grow(1.0).min_h(0.0).mr(-8.0).child(scroller(viewport, false, p))),
+        )
+        .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(over(c.border, c.surface)));
+    let card = row()
+        .w(m.card_w)
+        .h_full()
+        .radius(radius)
+        .fill(p.background_secondary)
+        .border(1.0, over(p.background_header_secondary, p.background_secondary))
+        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: rgba(47, 49, 55, 0.08), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 24.0, spread: -4.0, color: rgba(0, 0, 0, 0.25), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 20.0, blur: 48.0, spread: -8.0, color: rgba(0, 0, 0, 0.2), inset: false })
+        .clip_rounded(radius)
+        .role("dialog")
+        .label(label.to_string())
+        .child(sidebar)
+        .child(content(title, body, p, &m, close.clone()))
+        .modal(true, close);
+    el().key(LAYER_KEY)
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK).opacity(0.85))
+        .child(
+            row()
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .py(m.pad[0] + 1.0)
+                .px(m.pad[1])
+                .justify_center()
+                .child(card),
+        )
+}
+
 fn set<S>(acc: ShellAccess<S>, s: &mut S, f: impl FnOnce(&mut SettingsUi)) {
     if let Some(u) = acc(s).settings.as_mut() {
         f(u);
@@ -250,16 +281,16 @@ fn select<S: 'static>(acc: ShellAccess<S>, id: &'static str) -> impl Fn(&mut S) 
 }
 
 /// `--settings-*` colours of `.container`.
-struct Colors {
-    surface: Color,
-    border: Color,
-    hover: Color,
-    selected: Color,
-    danger: Color,
-    danger_hover: Color,
+pub(crate) struct Colors {
+    pub surface: Color,
+    pub border: Color,
+    pub hover: Color,
+    pub selected: Color,
+    pub danger: Color,
+    pub danger_hover: Color,
 }
 
-fn colors(p: &Palette) -> Colors {
+pub(crate) fn colors(p: &Palette) -> Colors {
     Colors {
         surface: p.form_surface_background,
         border: p.background_modifier_accent,
@@ -270,7 +301,8 @@ fn colors(p: &Palette) -> Colors {
     }
 }
 
-fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, m: &Metrics, premium: bool, acc: ShellAccess<S>) -> El {
+/// The search field and profile card, and the nav.
+fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>) -> (Vec<El>, El) {
     let c = colors(p);
     // `SettingsSearch`: 34 tall, a 16 bold magnifier 12 in, text 13/18.
     let search = row()
@@ -353,20 +385,8 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         if items.is_empty() {
             continue;
         }
-        let mut group = col().w_full().gap(3.0).mb(8.0).child(
-            text(cat.label())
-                .font(font(11.0, 600.0).lh(16.0).tracking(0.22))
-                .text_case(rune::TextCase::Uppercase)
-                .color(p.text_tertiary)
-                .pt(4.0)
-                .px(10.0)
-                .pb(3.0)
-                .mb(1.0),
-        );
-        for t in items {
-            group = group.child(nav_item(t.icon, t.label, ui.tab == t.id, false, p, &c).on_press(select(acc, t.id)));
-        }
-        nav = nav.child(group);
+        let items = items.into_iter().map(|t| nav_item(t.icon, t.label, ui.tab == t.id, false, p, &c).on_press(select(acc, t.id)));
+        nav = nav.child(nav_group(Some(cat.label()), items, p));
     }
     // shortcut: Fluxer also lists What's new, Submit feedback and Donate here; they open the
     // instance's web pages, and Reflux can't open URLs yet.
@@ -381,31 +401,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .gap(2.0)
         .child(text(format!("Reflux {}", env!("CARGO_PKG_VERSION"))).font(font(11.0, 400.0).lh(14.0)).color(p.text_primary_muted))
         .child(text(format!("{} ({})", os_name(), std::env::consts::ARCH)).font(font(11.0, 400.0).lh(14.0)).color(p.text_primary_muted));
-    let viewport = col()
-        .key("settings-nav")
-        .w_full()
-        .grow(1.0)
-        .min_h(0.0)
-        .scroll(ScrollSpec { stick_bottom: false })
-        .child(col().w_full().pr(8.0).child(nav).child(footer));
-
-    col()
-        .w(m.sidebar_w)
-        .h_full()
-        .fill(c.surface)
-        .child(
-            col()
-                .w_full()
-                .grow(1.0)
-                .min_h(0.0)
-                .pt(16.0)
-                .px(12.0)
-                .gap(4.0)
-                .child(search)
-                .child(profile)
-                .child(col().w_full().grow(1.0).min_h(0.0).mr(-8.0).child(scroller(viewport, false, p))),
-        )
-        .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(over(c.border, c.surface)))
+    (vec![search, profile], col().w_full().child(nav).child(footer))
 }
 
 fn os_name() -> &'static str {
@@ -417,8 +413,26 @@ fn os_name() -> &'static str {
     }
 }
 
+/// A nav category: its uppercase 11/600 title (if any) over its items.
+pub(crate) fn nav_group(title: Option<&str>, items: impl IntoIterator<Item = El>, p: &Palette) -> El {
+    let mut group = col().w_full().gap(3.0).mb(8.0);
+    if let Some(t) = title {
+        group = group.child(
+            text(t.to_string())
+                .font(font(11.0, 600.0).lh(16.0).tracking(0.22))
+                .text_case(rune::TextCase::Uppercase)
+                .color(p.text_tertiary)
+                .pt(4.0)
+                .px(10.0)
+                .pb(3.0)
+                .mb(1.0),
+        );
+    }
+    group.children(items)
+}
+
 /// `.sidebarItem`: 34 tall, padding 5 10, a 20 icon, 13/500 label.
-fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, danger: bool, p: &Palette, c: &Colors) -> El {
+pub(crate) fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, danger: bool, p: &Palette, c: &Colors) -> El {
     let (fg, icon_fg, hover_fg) = if danger {
         (c.danger, c.danger, c.danger)
     } else if selected {
@@ -448,7 +462,7 @@ fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, danger: bool, p
     }
 }
 
-fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, m: &Metrics, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: impl Fn(&mut S) + 'static) -> El {
     let c = colors(p);
     let bg = if is_light(p) { p.background_primary } else { p.background_secondary };
     // `SettingsModalHeader`: 60 tall, padding 0 16, title 18/600, a 34 close button.
@@ -461,7 +475,7 @@ fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label("Close")
-        .on_press(move |s: &mut S| acc(s).settings = None)
+        .on_press(close)
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
     let header = row()
         .w_full()
@@ -470,10 +484,9 @@ fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .pb(1.0)
         .center_y()
         .justify_between()
-        .child(text(label_of(ui.tab)).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
+        .child(text(title.to_string()).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
         .child(close)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(c.border, bg)));
-    let body = tabs::body(store, st, ui, p, acc, layer);
     let inner = col().w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
     let viewport = col()
         .key("settings-content")
@@ -491,7 +504,7 @@ mod tests {
 
     #[test]
     fn apply_merges_known_fields_and_rejects_bad_types() {
-        let mut s = UserSettings { theme: "dark".into(), ..Default::default() };
+        let mut s = reflux_model::UserSettings { theme: "dark".into(), ..Default::default() };
         assert!(apply(&mut s, &serde_json::json!({"theme": "coal", "developer_mode": true})));
         assert_eq!((s.theme.as_str(), s.developer_mode), ("coal", true));
         assert!(!apply(&mut s, &serde_json::json!({"developer_mode": "yes"})));

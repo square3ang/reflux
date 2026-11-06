@@ -27,7 +27,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder.color, &guilds, p)),
         };
     }
-    list = list.child(add_button(p));
+    list = list.child(add_button(p, acc));
     let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false });
     scroller(viewport.child(list), false, p).key("guild-rail")
 }
@@ -185,7 +185,7 @@ fn folder_item(store: &Store, st: &ShellState, color: Option<u32>, guilds: &[Sno
 }
 
 /// `.createGuildButton`: a dashed ring with a plus.
-fn add_button(p: &Palette) -> El {
+fn add_button<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
     row().w_full().h(dim::GUILD_LIST_ITEM_BOX_SIZE).center().child(
         row()
             .size(ICON, ICON)
@@ -197,6 +197,7 @@ fn add_button(p: &Palette) -> El {
             .cursor(rune::Cursor::Pointer)
             .role("button")
             .label("Add a Community")
+            .on_press(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Add(crate::guild::AddView::Landing)))
             .child(icon(&icons::PLUS_BOLD, 20.0).color(p.text_primary)),
     )
 }
