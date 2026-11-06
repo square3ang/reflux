@@ -1,7 +1,10 @@
 //! `--live[=SCENE]` (with `--snap`): a headless snapshot of the real signed-in UI. Read-only mode
 //! is forced. Rune's `setup` blocks (real time, bounded) applying the runtime's updates itself
 //! until READY and the scene's data are in, and the media loader fetches images synchronously so
-//! the first frame has them. Scenes: `guild` (default), `members`, `dm`, `settings`, `home`;
+//! the first frame has them. Scenes: `guild` (default), `members`, `dm`, `settings`, `home`,
+//! `pins`, `search` (`REFLUX_LIVE_QUERY`, default `has:image`) and `jump` (to a message ~100
+//! back, loaded around it, then scrolled to on the first frame, or `REFLUX_LIVE_JUMP_FRAMES` later;
+//! snap with `--at 1`).
 //! `REFLUX_LIVE_GUILD=N` picks the rail's Nth guild, `REFLUX_LIVE_TAB` the settings tab.
 
 use std::sync::Mutex;
@@ -17,7 +20,26 @@ type Update = Box<dyn FnOnce(&mut State) + Send>;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-static CAPTURE: Mutex<Option<(Sender<Update>, Option<Receiver<Update>>)>> = Mutex::new(None);
+/// The sender for `app::update`, and the receiver until [`wait`] takes it.
+type Capture = (Sender<Update>, Option<Receiver<Update>>);
+
+static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
+
+/// A scroll request held for a number of polls (frames), as if the user clicked after mount.
+static DELAYED: Mutex<Option<(String, u32)>> = Mutex::new(None);
+
+/// From `app::poll`: hands a held scroll request to the shell once its frame comes.
+pub(super) fn on_poll(s: &mut State, tx: &mut rune::Tx) {
+    let mut d = DELAYED.lock().unwrap();
+    match d.as_mut() {
+        Some((_, n)) if *n > 0 => {
+            *n -= 1;
+            tx.wake_after(Duration::ZERO);
+        }
+        Some(_) => s.app.shell.scroll_to = d.take().map(|(k, _)| k),
+        None => {}
+    }
+}
 
 pub fn scene() -> Option<&'static str> {
     rune::extra_args().iter().find_map(|a| match a.as_str() {
@@ -58,6 +80,9 @@ pub fn wait(s: &mut State) {
     let Some(rx) = CAPTURE.lock().unwrap().as_mut().and_then(|c| c.1.take()) else { return };
     let start = Instant::now();
     let mut target: Option<Option<target::Target>> = None;
+    let mut started = false;
+    // `poll` here scrolls a throwaway `Tx`; [`on_poll`] hands this to the real frames.
+    let mut scroll = None;
     while start.elapsed() < TIMEOUT {
         if let Ok(f) = rx.recv_timeout(Duration::from_millis(50)) {
             f(s);
@@ -70,8 +95,47 @@ pub fn wait(s: &mut State) {
             continue;
         }
         let t = *target.get_or_insert_with(|| target::pick(s, scene));
-        if target::ready(s, scene, t) {
-            break;
+        if !target::ready(s, scene, t) {
+            continue;
+        }
+        let Some(t) = t else { break };
+        let first = !std::mem::replace(&mut started, true);
+        let sh = &mut s.app.shell;
+        match scene {
+            "pins" => {
+                if first {
+                    crate::shell::pins::open(sh, t.channel);
+                }
+                if sh.pins.get(&t.channel).is_some_and(|p| !p.loading) {
+                    break;
+                }
+            }
+            "search" => {
+                if first {
+                    let q = std::env::var("REFLUX_LIVE_QUERY").unwrap_or_else(|_| "has:image".into());
+                    sh.search.query = rune::TextEdit::new(q);
+                    sh.search_requested = true;
+                }
+                if sh.search.results.as_ref().is_some_and(|r| !matches!(r, crate::shell::search::Results::Loading)) {
+                    break;
+                }
+            }
+            "jump" => {
+                if first {
+                    target::jump_back(s, t.channel);
+                }
+                let sh = &mut s.app.shell;
+                if let Some(h) = sh.highlight
+                    && s.app.store.messages(t.channel).iter().any(|m| m.id == h)
+                    && sh.intents.is_empty()
+                {
+                    scroll = Some(format!("msg-{h}"));
+                    let at = s.app.store.messages(t.channel).iter().position(|m| m.id == h).unwrap_or(0);
+                    eprintln!("reflux --live=jump: message {at} of {} in the window", s.app.store.messages(t.channel).len());
+                    break;
+                }
+            }
+            _ => break,
         }
     }
     *CAPTURE.lock().unwrap() = None;
@@ -79,6 +143,9 @@ pub fn wait(s: &mut State) {
         f(s);
     }
     poll(s, &mut rune::Tx::default());
+    let frames = std::env::var("REFLUX_LIVE_JUMP_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    *DELAYED.lock().unwrap() = scroll.map(|k| (k, frames));
+
     let ok = s.app.route == Route::Main;
     eprintln!("reflux --live={scene}: {} after {:.1}s", if ok { "ready" } else { "TIMED OUT" }, start.elapsed().as_secs_f32());
 }
@@ -124,6 +191,18 @@ mod target {
             sh.settings = Some(crate::settings::SettingsUi::new(tab));
         }
         Some(t)
+    }
+
+    /// Jumps to the oldest message of the page before the loaded ones (or the oldest loaded).
+    pub fn jump_back(s: &State, channel: Snowflake) {
+        let (Some(inst), Some(oldest)) = (s.app.instance.clone(), s.app.store.messages(channel).first().map(|m| m.id)) else { return };
+        let guild = s.app.store.channels.get(&channel).and_then(|c| c.guild_id);
+        crate::app::spawn(async move {
+            let page = inst.rest.messages(channel, reflux_net::MessagePage::Before(oldest), 100).await;
+            // Newest first: the last is the oldest.
+            let id = page.ok().and_then(|p| p.last().map(|m| m.id)).unwrap_or(oldest);
+            crate::app::update(move |s| crate::shell::jump(&mut s.app.shell, guild, channel, id));
+        });
     }
 
     pub fn ready(s: &State, scene: &str, t: Option<Target>) -> bool {

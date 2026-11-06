@@ -454,12 +454,18 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                 st.intents.push(Intent::LoadNewer { channel: cid });
             }
             let below = (n_items + 1).saturating_sub(r.end);
-            let changed = st.at_bottom != bottom || (st.rows_below > PRESENT_ROWS) != (below > PRESENT_ROWS);
+            let fits = r.start == 0 && bottom;
+            let changed = st.at_bottom != bottom || (st.rows_below > PRESENT_ROWS) != (below > PRESENT_ROWS) || st.list_fits != fits;
+            st.list_fits = fits;
             st.at_bottom = bottom;
             st.rows_below = below;
             changed
         });
-    let viewport = col().w_full().grow(1.0).min_h(0.0).justify_end().scroll(ScrollSpec { stick_bottom: !newer }).child(list);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: !newer }).child(list);
+    // Bottom-aligned like Fluxer's `.scrollerContent` only while everything fits: Rune's reveal
+    // and centring miss rows in an overflowing `justify_end` viewport (seen live: a jump showed
+    // an empty list).
+    let viewport = if st.list_fits && !newer { viewport.justify_end() } else { viewport };
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
     if newer || st.rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, p, acc));

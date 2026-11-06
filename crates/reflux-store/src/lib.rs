@@ -775,24 +775,24 @@ impl Store {
         let covered = self.channels.get(&m.channel_id).and_then(|c| c.last_message_id).is_some_and(|l| l >= m.id);
         self.bump_last_message(m.channel_id, m.id);
 
-        let mut m = m.clone();
-        let w = self.messages.entry(m.channel_id).or_insert_with(|| MessageWindow {
-            has_more_before: true,
-            ..Default::default()
-        });
-        // Replace our optimistic copy (fluxer `replaceNonceMessage`).
-        let pending = m.nonce.as_ref().and_then(|n| {
-            w.messages.iter().position(|p| p.id.to_string() == *n && p.author.id == m.author.id && p.id != m.id)
-        });
-        if let Some(i) = pending {
-            let old = w.messages.remove(i);
-            if m.reactions.is_empty() {
-                m.reactions = old.reactions;
+        // A channel never loaded keeps no window, so opening it fetches its history (fluxer
+        // drops messages for channels it hasn't loaded).
+        if let Some(w) = self.messages.get_mut(&m.channel_id) {
+            let mut m = m.clone();
+            // Replace our optimistic copy (fluxer `replaceNonceMessage`).
+            let pending = m.nonce.as_ref().and_then(|n| {
+                w.messages.iter().position(|p| p.id.to_string() == *n && p.author.id == m.author.id && p.id != m.id)
+            });
+            if let Some(i) = pending {
+                let old = w.messages.remove(i);
+                if m.reactions.is_empty() {
+                    m.reactions = old.reactions;
+                }
+                merge(&mut w.messages, vec![m]);
+            } else if !w.has_more_after {
+                merge(&mut w.messages, vec![m]);
+                trim_oldest(w);
             }
-            merge(&mut w.messages, vec![m.clone()]);
-        } else if !w.has_more_after {
-            merge(&mut w.messages, vec![m.clone()]);
-            trim_oldest(w);
         }
 
         // Read state (fluxer `handleIncomingMessage`).
@@ -807,7 +807,7 @@ impl Store {
             return;
         }
         let acked = self.read_states.get(&m.channel_id).and_then(|r| r.last_message_id).is_some_and(|a| a >= m.id);
-        if !acked && self.mentions_me(&m) {
+        if !acked && self.mentions_me(m) {
             self.read_state(m.channel_id).mention_count += 1;
         }
     }

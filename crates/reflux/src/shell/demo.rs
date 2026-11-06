@@ -125,7 +125,16 @@ impl Demo {
         let now = at(0, 15, 30);
         let mut store = Store::default();
         let mut apply = |t: &str, d: Value| match DispatchEvent::parse(t, &d) {
-            Ok(ev) => store.apply(&ev, now),
+            Ok(ev) => {
+                // Histories count as fetched (their messages go into a loaded window), except the
+                // two channels whose only activity is unread pings.
+                if let DispatchEvent::MessageCreate(m) = &ev
+                    && ![2202, 2203].contains(&m.channel_id.0)
+                {
+                    store.messages.entry(m.channel_id).or_insert_with(|| reflux_store::MessageWindow { has_more_before: true, ..Default::default() });
+                }
+                store.apply(&ev, now)
+            }
             Err(e) => panic!("fixture {t}: {e}"),
         };
 

@@ -232,6 +232,16 @@ fn message_window_and_nonce() {
     assert!(s.messages(S(101)).iter().all(|m| m.id != S(9000)), "not appended while detached");
 }
 
+/// Found live: a message in a channel never opened made a one-message window, so opening the
+/// channel later skipped fetching its history.
+#[test]
+fn live_message_in_an_unloaded_channel_keeps_it_unloaded() {
+    let mut s = store();
+    apply(&mut s, "MESSAGE_CREATE", msg(Snowflake::from_timestamp_ms(1_700_000_000_000).0, 106, 6));
+    assert!(!s.messages.contains_key(&S(106)), "no window until the channel's history is fetched");
+    assert!(s.has_unread(S(106)), "read state and last message still follow it");
+}
+
 #[test]
 fn reactions() {
     let mut s = store();

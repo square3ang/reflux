@@ -753,6 +753,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     actions::subscribe_member_list(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s);
+    live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
     actions::tick(s) || ran || shell
 }

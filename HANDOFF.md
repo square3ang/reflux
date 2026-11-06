@@ -111,3 +111,18 @@ See `git log` for details. Crates:
 ## Commands
 - Build: `cargo build -p reflux` (first build ~6 min). Tests: `cargo test --workspace`.
 - Snapshot: `cargo run -p reflux -- --snap /tmp/opencode/snaps/x.png --size 1280x800 --scale 1`.
+
+## Live testing (real account, read-only)
+- `reflux --import-fluxer-session` (or the login screen's "Import session from Fluxer desktop")
+  copies the official desktop app's session (`<config>/fluxer/desktop-app-store.sqlite3`) into
+  `~/.config/reflux/session.json`. Logging out of an imported session only forgets it locally.
+- `REFLUX_READONLY=1` (forced by `--live` and the probe): non-GET REST (except
+  `POST /search/messages`) and mutating gateway ops are refused in `reflux-net`.
+- `cargo run -p reflux-net --example live_probe` (`REFLUX_PROBE_SECS`): parse failures with JSON
+  paths, unknown events, rate limits, store invariants, dropped fields, pins/search/history pages.
+- `reflux --live[=guild|members|dm|home|settings|pins|search|jump] --snap /tmp/opencode/snaps/live/x.png
+  --size 1280x800 --scale 1 [--at 1]` renders the real UI headless (`REFLUX_LIVE_GUILD=N`,
+  `REFLUX_LIVE_TAB`, `REFLUX_LIVE_QUERY`, `REFLUX_LIVE_JUMP_FRAMES`). Snapshots hold private
+  messages: never commit them.
+- Shared target dir: other worktrees overwrite `target/debug/reflux`; copy the binary right after
+  building (cargo's `--message-format=json` `executable`) before running it.

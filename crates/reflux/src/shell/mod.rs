@@ -261,6 +261,11 @@ pub struct ShellState {
     pub highlight: Option<Snowflake>,
     /// A key to scroll into view on the next frame (`msg-{id}`, or `msgs-end`).
     pub scroll_to: Option<String>,
+    /// The last scroll request, sent once more on the next frame: a list that mounts in the
+    /// request's frame isn't laid out when `poll` runs, and Rune drops a reveal it can't place.
+    pub scroll_again: Option<String>,
+    /// The whole message list showed on the last frame (it's bottom-aligned only then).
+    pub list_fits: bool,
     /// Rows between the last one on screen and the end of the list.
     pub rows_below: usize,
     pub switcher: Option<switcher::Switcher>,
@@ -327,6 +332,8 @@ impl Default for ShellState {
             search_requested: false,
             highlight: None,
             scroll_to: None,
+            scroll_again: None,
+            list_fits: true,
             rows_below: 0,
             switcher: None,
             ac_index: 0,
@@ -422,10 +429,16 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         _ => true,
     });
     // A jumped-to message lands centred (`scrollToMessage`); the end just comes into view.
-    match st.scroll_to.take() {
-        Some(key) if key.starts_with("msg-") => tx.scroll_center(key),
-        Some(key) => tx.scroll_into_view(key),
-        None => return changed,
+    let again = st.scroll_again.take();
+    let Some(key) = st.scroll_to.take().or(again.clone()) else { return changed };
+    if key.starts_with("msg-") {
+        tx.scroll_center(key.clone());
+    } else {
+        tx.scroll_into_view(key.clone());
+    }
+    if again.is_none() {
+        st.scroll_again = Some(key);
+        tx.wake_after(std::time::Duration::ZERO);
     }
     true
 }

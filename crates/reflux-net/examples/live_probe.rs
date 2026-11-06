@@ -270,6 +270,9 @@ async fn probe_rest(rest: &Client, http: &reqwest::Client, media: &str, store: &
             dropped(&raw, &serde_json::to_value(parsed).unwrap_or_default(), "messages", &mut rep.dropped);
         }
     }
+    if let Some(&c) = targets.first() {
+        history(rest, store, c, rep).await;
+    }
     let mut avatars: Vec<(Snowflake, String)> =
         store.users.values().filter_map(|u| Some((u.id, u.avatar.clone()?))).collect();
     avatars.sort();
@@ -296,6 +299,59 @@ async fn probe_rest(rest: &Client, http: &reqwest::Client, media: &str, store: &
     }
     println!("avatars: {ok}/{} ok", avatars.len().min(8));
     rep.failures.extend(bad.into_iter().map(|b| format!("avatar: {b}")));
+}
+
+/// Older pages, a page around an old message (a jump), pins and a search, in one channel.
+async fn history(rest: &Client, store: &mut Store, c: Snowflake, rep: &mut Report) {
+    let oldest = |store: &Store| store.messages(c).first().map(|m| m.id);
+    if let Some(o) = oldest(store) {
+        match rest.messages(c, MessagePage::Before(o), 50).await {
+            Ok(p) => {
+                println!("before page: {}", p.len());
+                store.prepend_messages(c, p, 50);
+            }
+            Err(e) => rep.failures.push(format!("GET before: {e}")),
+        }
+    }
+    // Jump: the window becomes the page around the oldest known message.
+    if let Some(o) = oldest(store) {
+        match rest.messages(c, MessagePage::Around(o), 50).await {
+            Ok(p) => {
+                let has = p.iter().any(|m| m.id == o);
+                println!("around page: {} (contains the target: {has})", p.len());
+                if !has {
+                    rep.failures.push("around page lacks its target".into());
+                }
+                store.set_around_messages(c, p, 50);
+                if !store.messages(c).iter().any(|m| m.id == o) {
+                    rep.failures.push("store window after a jump lacks the target".into());
+                }
+            }
+            Err(e) => rep.failures.push(format!("GET around: {e}")),
+        }
+    }
+    match rest.pins(c, None).await {
+        Ok(p) => println!("pins: {} (more: {})", p.items.len(), p.has_more),
+        Err(e) => rep.failures.push(format!("GET pins: {e}")),
+    }
+    let guild = store.channels.get(&c).and_then(|ch| ch.guild_id);
+    let mut body = serde_json::json!({ "has": ["embed"], "hits_per_page": 25, "page": 1 });
+    match guild {
+        Some(g) => body["context_guild_id"] = serde_json::json!(g),
+        None => body["context_channel_id"] = serde_json::json!(c),
+    }
+    match rest.request::<Value, _>(reqwest::Method::POST, "/search/messages", Some(&body)).await {
+        Ok(raw) if raw.get("indexing").is_some() => println!("search: indexing"),
+        Ok(raw) => match reflux_model::from_value::<Vec<reflux_model::Message>>(&raw["messages"]) {
+            Ok(m) => println!("search: {} of {}", m.len(), raw["total"]),
+            Err(e) => rep.failures.push(format!("search messages: {e}")),
+        },
+        Err(e) => rep.failures.push(format!("POST /search/messages: {e}")),
+    }
+    match rest.search_messages(&body).await {
+        Ok(_) => {}
+        Err(e) => rep.failures.push(format!("search_messages (typed): {e}")),
+    }
 }
 
 fn invariants(s: &Store) -> Vec<String> {
