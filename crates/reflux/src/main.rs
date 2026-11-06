@@ -1,14 +1,18 @@
+mod icons;
+mod login;
 mod theme;
+#[allow(dead_code, unused_imports)] // the kit exposes variants the screens don't use yet
+mod ui;
 
-use rune::{AppSpec, Cx, El, col, text};
+use rune::{AppSpec, Cx, El};
 
 #[derive(Default)]
-struct State;
+struct State {
+    login: login::Login,
+}
 
-fn view(_: &State, _: &mut Cx<State>) -> El {
-    let p = theme::palette(theme::Kind::Dark);
-    col().w_full().h_full().center().fill(p.background_primary)
-        .child(text("Welcome back").font(theme::font(20.0, 600.0)).color(p.text_primary))
+fn view(s: &State, cx: &mut Cx<State>) -> El {
+    login::view(s, cx)
 }
 
 fn main() {

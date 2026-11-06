@@ -10,7 +10,4 @@ rune-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-reflux-model.workspace = true
-reflux-net.workspace = true
-reflux-store.workspace = true
 reflux-markdown.workspace = true
