@@ -89,12 +89,7 @@ impl Client {
         path: &str,
         body: Option<&B>,
     ) -> Result<T> {
-        // Message search is a POST but only reads (it may start indexing, which nobody sees).
-        if crate::readonly() && method != Method::GET && !(method == Method::POST && path == "/search/messages") {
-            tracing::warn!(%method, path = path.split('?').next().unwrap_or(path), "read-only mode: request refused");
-            let error = ApiError { code: "READONLY".into(), message: "Read-only mode".into(), ..Default::default() };
-            return Err(Error::Api { status: StatusCode::FORBIDDEN, error: Box::new(error) });
-        }
+        guard(&method, path)?;
         let body = body.map(serde_json::to_vec).transpose()?;
         let key = format!("{method} {}", path.split('?').next().unwrap_or(path));
         let (mut captcha, mut solves, mut retries) = (None::<String>, 0, 0);
@@ -265,6 +260,7 @@ impl Client {
         files: Vec<(String, Arc<Vec<u8>>, String)>,
         progress: impl Fn(u64) + Send + Sync + 'static,
     ) -> Result<Message> {
+        guard(&Method::POST, &format!("/channels/{channel}/messages"))?;
         let progress = Arc::new(progress);
         let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let mut form = reqwest::multipart::Form::new().text("payload_json", serde_json::to_string(msg)?);
@@ -311,6 +307,10 @@ impl Client {
 
     /// `PUT`s `bytes` to an upload URL exactly as issued, without `Authorization`.
     pub async fn put_upload(&self, url: &str, bytes: Arc<Vec<u8>>, range: std::ops::Range<usize>, content_type: Option<&str>, sent: Arc<std::sync::atomic::AtomicU64>, progress: Arc<dyn Fn(u64) + Send + Sync>) -> Result<()> {
+        // Upload URLs come only from `upload_plan`, which the guard already scoped to a channel.
+        if crate::readonly() && crate::write_channel().is_none() {
+            return Err(readonly_error());
+        }
         let len = range.len() as u64;
         let body = counted_range(bytes, range, sent, progress);
         let mut req = self.http.put(url).header(header::CONTENT_LENGTH, len).body(reqwest::Body::wrap_stream(body));
@@ -514,6 +514,20 @@ fn reaction_path(e: &ReactionEmoji) -> String {
     url::form_urlencoded::byte_serialize(raw.as_bytes()).collect()
 }
 
+/// Refuses what read-only mode doesn't allow (see [`crate::readonly`]).
+fn guard(method: &Method, path: &str) -> Result<()> {
+    if crate::readonly() && !crate::allows(method, path, crate::write_channel()) {
+        tracing::warn!(%method, path = path.split('?').next().unwrap_or(path), "read-only mode: request refused");
+        return Err(readonly_error());
+    }
+    Ok(())
+}
+
+fn readonly_error() -> Error {
+    let error = ApiError { code: "READONLY".into(), message: "Read-only mode".into(), ..Default::default() };
+    Error::Api { status: StatusCode::FORBIDDEN, error: Box::new(error) }
+}
+
 fn secs(s: f64) -> Duration {
     Duration::try_from_secs_f64(s).unwrap_or(Duration::from_secs(1))
 }
@@ -569,8 +583,52 @@ mod tests {
         let c = Client::new(reqwest::Client::new(), "http://127.0.0.1:9");
         assert_eq!(c.logout().await.unwrap_err().code(), Some("READONLY"));
         assert!(c.typing(Snowflake(1)).await.unwrap_err().code() == Some("READONLY"));
+        // The requests that skip `request` are guarded too.
+        let files = vec![("a.txt".to_string(), Arc::new(b"a".to_vec()), "text/plain".to_string())];
+        let r = c.send_message_multipart(Snowflake(1), &CreateMessage::default(), files, |_| {}).await;
+        assert_eq!(r.unwrap_err().code(), Some("READONLY"));
+        let r = c.put_upload("http://127.0.0.1:9/u", Arc::new(vec![1]), 0..1, None, Arc::default(), Arc::new(|_| {})).await;
+        assert_eq!(r.unwrap_err().code(), Some("READONLY"));
         // GETs still go out (and fail here only because nothing listens).
         assert!(matches!(c.current_user().await, Err(Error::Http(_))));
+    }
+
+    #[test]
+    fn read_only_allowlist() {
+        let (get, post, put, patch, delete) = (Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE);
+        let w = Some("42");
+        assert!(crate::allows(&get, "/users/@me", None));
+        assert!(crate::allows(&post, "/search/messages", None));
+        assert!(!crate::allows(&post, "/channels/42/messages", None), "no write channel, no writes");
+        for (m, p) in [
+            (&post, "/channels/42/messages"),
+            (&patch, "/channels/42/messages/7"),
+            (&delete, "/channels/42/messages/7"),
+            (&put, "/channels/42/messages/7/reactions/%F0%9F%91%8D/@me"),
+            (&post, "/channels/42/typing"),
+            (&post, "/channels/42/messages/7/ack"),
+            (&put, "/channels/42/pins/7"),
+            (&post, "/channels/42/attachments"),
+            (&post, "/channels/42/attachments/complete?x=1"),
+        ] {
+            assert!(crate::allows(m, p, w), "{m} {p}");
+        }
+        for (m, p) in [
+            (&patch, "/channels/42"),
+            (&delete, "/channels/42"),
+            (&post, "/channels/420/messages"),
+            (&post, "/channels/4/messages"),
+            (&post, "/channels/42/../../users/@me/channels"),
+            (&post, "/channels/42/%2E%2E/43/messages"),
+            (&patch, "/users/@me/settings"),
+            (&post, "/auth/logout"),
+            (&post, "/read-states/ack-bulk"),
+            (&put, "/users/@me/relationships/1"),
+            (&post, "/guilds/1/channels"),
+            (&post, "/invites/abc"),
+        ] {
+            assert!(!crate::allows(m, p, w), "{m} {p}");
+        }
     }
 
     #[test]

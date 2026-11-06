@@ -5,6 +5,7 @@
 //! `pins`, `search` (`REFLUX_LIVE_QUERY`, default `has:image`) and `jump` (to a message ~100
 //! back, loaded around it, then scrolled to on the first frame, or `REFLUX_LIVE_JUMP_FRAMES` later;
 //! snap with `--at 1`).
+//! `write` and `cleanup` test writes in `REFLUX_WRITE_CHANNEL` only (see [`write`]).
 //! `REFLUX_LIVE_GUILD=N` picks the rail's Nth guild, `REFLUX_LIVE_TAB` the settings tab.
 
 use std::sync::Mutex;
@@ -14,11 +15,15 @@ use std::time::{Duration, Instant};
 use rune::{Image, ImageCache};
 
 use super::{Route, poll};
+
+mod write;
 use crate::State;
 
 type Update = Box<dyn FnOnce(&mut State) + Send>;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// For `write` and `cleanup`, whose steps each time out on their own.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The sender for `app::update`, and the receiver until [`wait`] takes it.
 type Capture = (Sender<Update>, Option<Receiver<Update>>);
@@ -83,7 +88,9 @@ pub fn wait(s: &mut State) {
     let mut started = false;
     // `poll` here scrolls a throwaway `Tx`; [`on_poll`] hands this to the real frames.
     let mut scroll = None;
-    while start.elapsed() < TIMEOUT {
+    let mut run = write::Run::new(scene);
+    let timeout = if run.is_some() { WRITE_TIMEOUT } else { TIMEOUT };
+    while start.elapsed() < timeout {
         if let Ok(f) = rx.recv_timeout(Duration::from_millis(50)) {
             f(s);
         }
@@ -93,6 +100,15 @@ pub fn wait(s: &mut State) {
         poll(s, &mut rune::Tx::default());
         if s.app.route != Route::Main {
             continue;
+        }
+        if let Some(r) = &mut run {
+            match r.step(s) {
+                write::Next::Wait => continue,
+                write::Next::Done(key) => {
+                    scroll = key;
+                    break;
+                }
+            }
         }
         let t = *target.get_or_insert_with(|| target::pick(s, scene));
         if !target::ready(s, scene, t) {
