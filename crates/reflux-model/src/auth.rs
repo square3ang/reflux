@@ -227,8 +227,8 @@ model! {
         pub message: String,
     }
 
-    // shortcut: `parameters` is a serde_json::Value (sorted keys without `preserve_order`); fine
-    // if the server re-canonicalizes, otherwise switch to RawValue when the solver is built.
+    /// `parameters` may be re-serialized with any key order: the server verifies the signature
+    /// over altcha-lib's `canonicalJSON(parameters)` (sorted keys).
     pub struct AltchaChallenge {
         pub parameters: serde_json::Value,
         pub signature: String,
