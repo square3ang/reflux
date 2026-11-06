@@ -1,13 +1,35 @@
 //! Fluxer's design-system components, drawn with Rune to match `fluxer_app/src/features/ui`.
+// Builder handler fields (`Option<Rc<dyn Fn(&mut S, &str)>>`) read better spelled out than aliased.
+#![allow(clippy::type_complexity)]
 
+pub mod avatar;
 pub mod button;
+pub mod controls;
+pub mod gallery;
 pub mod input;
+pub mod menu;
+pub mod misc;
+pub mod modal;
+pub mod overlay;
+pub mod select;
 
 use rune::Color;
 use rune::color::{srgb_decode, srgb_encode};
 
+pub use avatar::{Avatar, Status};
 pub use button::{Button, ButtonSize, ButtonVariant, spinner};
+pub use controls::{Checkbox, RadioGroup, Slider, Switch};
 pub use input::Input;
+pub use menu::{Menu, MenuEntry, MenuItem};
+pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller};
+pub use modal::{Modal, ModalSize};
+pub use overlay::{Placement, PopupAccess, Popups, Tooltip};
+pub use select::Select;
+
+/// Whether a palette is the light theme (its primary text is dark).
+pub fn is_light(p: &crate::theme::Palette) -> bool {
+    p.text_primary.r + p.text_primary.g + p.text_primary.b < 1.5
+}
 
 /// `top` composited over an opaque `bottom` in gamma-encoded sRGB, as browsers blend. Rune's border
 /// replaces the fill under it, while CSS paints the background under the border; pre-blending keeps
