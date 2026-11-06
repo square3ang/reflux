@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -115,10 +115,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 | Composer context menu | MISSING | | TextareaContextMenu.tsx |
 | Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
 | @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
-| Attachments | PARTIAL | video/audio players, text preview, download, mosaic (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
-| Embeds | PARTIAL | author/footer icons, galleries, video/YouTube/audio | RichEmbed.tsx |
-| Invite embed | MISSING | | InviteEmbed.tsx |
-| NSFW gate / blur | MISSING | | MatureContentChannelGate.tsx |
+| Attachments | PARTIAL | video/audio play only where Rune's `Player` does (macOS); elsewhere "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
+| Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
+| Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
+| NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
 | Guild members page | MISSING | | GuildMembersPage.tsx |
 | DM list | PARTIAL | pinned DMs, previews | DirectMessageList.tsx |
 | Create DM / group DM | MISSING | | CreateDMModal.tsx |
@@ -139,11 +139,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 | Saved messages | MISSING | | SavedMessagesPage.tsx |
 | Inbox / recent mentions | MISSING | | InboxPopout.tsx |
 | Who reacted | MISSING | | ReactionTooltip.tsx, MessageReactionsModal.tsx |
-| Media viewer | MISSING | | MediaModal.tsx |
+| Media viewer | DONE | | MediaModal.tsx |
 | Edit alt text | MISSING | | EditAltTextModal.tsx |
-| External link warning | MISSING | | ExternalLinkWarningModal.tsx |
+| External link warning | DONE | | ExternalLinkWarningModal.tsx |
 | Markdown alerts/tables | PARTIAL | | markdown/renderers/* |
-| Code highlighting | MISSING | | F/code_highlighting/* |
+| Code highlighting | DONE | | F/code_highlighting/* |
 | Crosspost | MISSING | | MessageCrosspostConfirmModal.tsx |
 
 ### notification / read_state / typing / presence
@@ -221,7 +221,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 ### expressions / emoji / gift / invite / discovery / search / input / theme / i18n / a11y / misc
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Animated emoji/avatars/stickers | PARTIAL | first frame only | |
+| Animated emoji/avatars/stickers | DONE | | |
 | Expression info popout, favorite memes, clone expression | MISSING | | F/expressions/* |
 | Gifts *(low)* | MISSING | | F/gift/* |
 | Invite: friends list, accept preview, pause | PARTIAL/MISSING | | F/invite/* |
@@ -251,6 +251,6 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 | Zoom | MISSING | | D/Menu.ts |
 | Screen-share picker / app audio | PARTIAL | | D/DisplayMedia.ts |
 | App menu (macOS) | MISSING | | D/Menu.ts |
-| File downloads | MISSING | | D/FileDownloads.ts |
-| Copy image | MISSING | | D/MediaClipboard.ts |
+| File downloads | DONE | | D/FileDownloads.ts |
+| Copy image | DONE | | D/MediaClipboard.ts |
 | Streamer-mode detection, theme folder, troubleshooting *(low)* | MISSING | | |

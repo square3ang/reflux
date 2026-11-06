@@ -51,6 +51,8 @@ pub struct Button<S: 'static> {
     submitting: bool,
     key: Option<String>,
     on_press: Option<Box<dyn Fn(&mut S)>>,
+    on_press_tx: Option<Box<dyn Fn(&mut S, &mut rune::Tx)>>,
+    icon_right: bool,
 }
 
 impl<S: 'static> Button<S> {
@@ -67,6 +69,8 @@ impl<S: 'static> Button<S> {
             submitting: false,
             key: None,
             on_press: None,
+            on_press_tx: None,
+            icon_right: false,
         }
     }
     pub fn variant(mut self, v: ButtonVariant) -> Self { self.variant = v; self }
@@ -81,6 +85,10 @@ impl<S: 'static> Button<S> {
     pub fn submitting(mut self, s: bool) -> Self { self.submitting = s; self }
     pub fn key(mut self, k: impl Into<String>) -> Self { self.key = Some(k.into()); self }
     pub fn on_press(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_press = Some(Box::new(f)); self }
+    /// `on_press` that needs the `Tx` (open a URL, copy).
+    pub fn on_press_tx(mut self, f: impl Fn(&mut S, &mut rune::Tx) + 'static) -> Self { self.on_press_tx = Some(Box::new(f)); self }
+    /// `rightIcon`: the icon after the label.
+    pub fn icon_right(mut self, i: &'static Icon) -> Self { self.icon = Some(i); self.icon_right = true; self }
 
     pub fn el(self, p: &Palette) -> El {
         let (h, min_w, pad, fs, lh, radius, icon_size) = self.size.metrics();
@@ -134,11 +142,14 @@ impl<S: 'static> Button<S> {
         let live = !self.disabled && !self.submitting;
 
         let mut content = row().center().gap(self.icon_gap).opacity(if self.submitting { 0.0 } else { 1.0 });
-        if let Some(i) = self.icon {
+        if let Some(i) = self.icon.filter(|_| !self.icon_right) {
             content = content.child(icon(i, icon_size).color(fg));
         }
         if !self.label.is_empty() {
             content = content.child(text(self.label.clone()).font(font(fs, 600.0).lh(lh)).color(fg));
+        }
+        if let Some(i) = self.icon.filter(|_| self.icon_right) {
+            content = content.child(icon(i, icon_size).color(fg));
         }
 
         // Rune's border takes no layout space, so the 1px CSS border is added to the padding.
@@ -173,6 +184,9 @@ impl<S: 'static> Button<S> {
             b = b.hover(hover).press(press).cursor(rune::Cursor::Pointer);
             if let Some(f) = self.on_press {
                 b = b.on_press(f);
+            }
+            if let Some(f) = self.on_press_tx {
+                b = b.on_press_tx(move |s: &mut S, tx: &mut rune::Tx| f(s, tx));
             }
         }
         b

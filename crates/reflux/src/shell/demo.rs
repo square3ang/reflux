@@ -501,6 +501,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
                 w.has_more_after = true;
             }
         }
+        m if m.starts_with("media-") => media_scene(st, store, &m[6..]),
         "slowmode" | "counter" => {
             if let Some(c) = store.channels.get_mut(&Snowflake(GENERAL)) {
                 c.rate_limit_per_user = 90;
@@ -515,6 +516,98 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
         _ => {}
+    }
+}
+
+/// `--msg-scene=media-<scene>`: attachments and embeds. `mosaic` (several images, a spoiler,
+/// alt text), `files` (video, audio, text preview, file card), `embeds` (rich, YouTube, gifv),
+/// `invite`, `viewer` (the lightbox), `link` (external link warning), `nsfw` (the channel gate),
+/// `blur` (flagged media under the guild filter).
+fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
+    let t = |m| at(0, 12, m);
+    let att = |id: u64, name: &str, ty: &str, w: u32, h: u32, extra: Value| {
+        let mut a = json!({"id": id.to_string(), "filename": name, "content_type": ty, "size": 482133, "width": w, "height": h,
+                           "url": format!("https://cdn.fluxer.app/attachments/2201/{id}/{name}"),
+                           "proxy_url": format!("https://media.fluxer.app/attachments/2201/{id}/{name}")});
+        if let (Some(o), Some(e)) = (a.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        a
+    };
+    let ext = |w: u32, h: u32| json!({"url": "https://example.com/x.png", "proxy_url": "https://media.fluxer.app/external/sig/x.png", "width": w, "height": h});
+    let mut msgs = Vec::new();
+    // Fluxer's defaults: spoilers on click.
+    store.settings.render_spoilers = 1;
+    match scene {
+        "mosaic" | "viewer" => {
+            msgs.push(message(t(1), 0, 1001, "Three from the offsite:", json!({"attachments": [
+                att(9101, "a.png", "image/png", 1200, 800, json!({})), att(9102, "b.png", "image/png", 800, 800, json!({})),
+                att(9103, "c.png", "image/png", 800, 1200, json!({"description": "The team on the stairs"}))]})));
+            msgs.push(message(t(2), 0, 1003, "and five more", json!({"attachments": [
+                att(9111, "d.png", "image/png", 1200, 800, json!({})), att(9112, "SPOILER_e.png", "image/png", 1200, 800, json!({})),
+                att(9113, "f.gif", "image/gif", 400, 400, json!({})), att(9114, "g.png", "image/png", 400, 400, json!({})),
+                att(9115, "h.png", "image/png", 400, 400, json!({}))]})));
+        }
+        "files" => {
+            msgs.push(message(t(1), 0, 1004, "", json!({"attachments": [att(9201, "demo.mp4", "video/mp4", 1280, 720, json!({}))]})));
+            msgs.push(message(t(2), 0, 1002, "", json!({"attachments": [
+                att(9202, "theme.ogg", "audio/ogg", 0, 0, json!({"width": null, "height": null, "size": 1843200, "duration": 94.0})),
+                att(9203, "main.rs", "text/x-rust", 0, 0, json!({"width": null, "height": null, "size": 412})),
+                att(9204, "release-0.4.tar.gz", "application/gzip", 0, 0, json!({"width": null, "height": null, "size": 15728640}))]})));
+            st.media.seed_text("https://cdn.fluxer.app/attachments/2201/9203/main.rs",
+                "use std::io;\n\n/// Greets the world.\nfn main() -> io::Result<()> {\n    let name = \"Fluxer\";\n    println!(\"hello, {name}\");\n    Ok(())\n}\n");
+        }
+        "embeds" => {
+            msgs.push(message(t(1), 0, 1007, "https://ci.fluxer.app/1843", json!({"embeds": [{"type": "rich", "title": "Build #1843 failed", "url": "https://ci.fluxer.app/1843",
+                "description": "2 tests failed on `main`:\n- `store::ack`\n- `gateway::resume`", "color": 0xED4245,
+                "author": {"name": "Fluxer CI", "url": "https://ci.fluxer.app", "icon_url": "https://ci.fluxer.app/i.png", "proxy_icon_url": "https://media.fluxer.app/external/sig/ci.png"},
+                "fields": [{"name": "Branch", "value": "main", "inline": true}, {"name": "Duration", "value": "5m 03s", "inline": true},
+                           {"name": "Commit", "value": "a91782b", "inline": true}, {"name": "Log", "value": "[open](https://ci.fluxer.app/1843/log)", "inline": false}],
+                "image": ext(1280, 720),
+                "footer": {"text": "Fluxer CI", "icon_url": "https://ci.fluxer.app/i.png", "proxy_icon_url": "https://media.fluxer.app/external/sig/ci.png"},
+                "timestamp": iso(t(1))}]})));
+            msgs.push(message(t(2), 0, 1002, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", json!({"embeds": [{"type": "video", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "title": "Fluxer launch trailer", "description": "Meet Fluxer.", "color": 0xFF0000,
+                "provider": {"name": "YouTube", "url": "https://www.youtube.com"}, "author": {"name": "Fluxer", "url": "https://www.youtube.com/@fluxer"},
+                "thumbnail": ext(1280, 720), "video": {"url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "width": 1280, "height": 720}}]})));
+            msgs.push(message(t(3), 0, 1003, "https://tenor.com/x.gif", json!({"embeds": [{"type": "gifv", "url": "https://tenor.com/x.gif",
+                "thumbnail": ext(498, 280), "video": {"url": "https://media.tenor.com/x.mp4", "proxy_url": "https://media.fluxer.app/external/sig/x.mp4", "width": 498, "height": 280}}]})));
+        }
+        "invite" => {
+            msgs.push(message(t(1), 0, 1001, "come hang out https://fluxer.gg/rustlang and https://fluxer.gg/gone", json!({})));
+            msgs.push(message(t(2), 0, 1003, "also https://fluxer.gg/hq", json!({})));
+            let inv = |code: &str, id: u64, name: &str| -> super::invite_embed::Preview {
+                let v = json!({"code": code, "type": 0, "guild": {"id": id.to_string(), "name": name, "icon": "demo"},
+                               "channel": {"id": "1", "name": "general", "type": 0}, "member_count": 12873, "presence_count": 2041});
+                super::invite_embed::Preview::Ready(Box::new(serde_json::from_value(v).expect("invite")))
+            };
+            st.media_ui.invites.insert("rustlang".into(), inv("rustlang", 9900, "Rust Programming"));
+            st.media_ui.invites.insert("gone".into(), super::invite_embed::Preview::Unknown);
+            st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ"));
+        }
+        "link" => st.media_ui.link_warning = Some(("https://example.com/some/long/path?q=1".into(), false)),
+        "nsfw" => {
+            if let Some(c) = store.channels.get_mut(&Snowflake(GENERAL)) {
+                c.nsfw_override = Some(true);
+            }
+        }
+        "blur" => {
+            store.settings.sensitive_content_guild_filter = 1;
+            msgs.push(message(t(1), 0, 1006, "careful", json!({"attachments": [att(9301, "x.png", "image/png", 1200, 800, json!({"flags": 16}))]})));
+        }
+        _ => {}
+    }
+    for m in msgs {
+        match DispatchEvent::parse("MESSAGE_CREATE", &m) {
+            Ok(ev) => store.apply(&ev, st.now_ms),
+            Err(e) => panic!("media scene: {e}"),
+        }
+    }
+    if scene == "viewer" {
+        let ms = store.messages(Snowflake(GENERAL));
+        let m = ms.last().expect("message");
+        let items = m.attachments.iter().map(super::attachments::item).collect();
+        super::lightbox::open(st, items, 0, Some((m.channel_id, m.id)));
     }
 }
 

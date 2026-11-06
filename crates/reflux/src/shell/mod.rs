@@ -5,8 +5,14 @@
 //! Views are pure; what needs the network goes out as an [`Intent`] queued on
 //! [`ShellState::intents`] for the runtime to drain.
 
+pub mod attachments;
 mod autocomplete;
 mod chat;
+mod embeds;
+mod highlight;
+pub mod invite_embed;
+pub mod lightbox;
+mod links;
 pub mod demo;
 mod emoji;
 pub(crate) mod friends;
@@ -110,6 +116,8 @@ pub enum Intent {
     Prefs(crate::desktop::Prefs),
     /// Switch the interface language (a `crate::i18n::LOCALES` code).
     SetLocale(&'static str),
+    /// `GET /invites/{code}` into `media_ui.invites`.
+    FetchInvite(String),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -274,6 +282,8 @@ pub struct ShellState {
     pub ac_dismissed: Option<(usize, String)>,
     /// When slowmode lets the user send again, by channel (unix ms).
     pub cooldowns: std::collections::HashMap<Snowflake, u64>,
+    /// Lightbox, spoilers, inline players, invite previews, link warning.
+    pub media_ui: attachments::MediaUi,
 }
 
 impl Default for ShellState {
@@ -339,6 +349,7 @@ impl Default for ShellState {
             ac_index: 0,
             ac_dismissed: None,
             cooldowns: Default::default(),
+            media_ui: Default::default(),
         }
     }
 }
@@ -420,6 +431,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         search::run(store, st, st.search.page.max(1));
         changed = true;
     }
+    changed |= media_poll(store, st, tx);
     // A jump to a loaded message only scrolls; the runtime loads the others first.
     st.intents.retain(|i| match i {
         Intent::JumpTo { channel, message } if store.messages(*channel).iter().any(|m| m.id == *message) => {
@@ -441,6 +453,31 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         tx.wake_after(std::time::Duration::ZERO);
     }
     true
+}
+
+/// Media upkeep: mirrors trusted domains, fetches linked invites, schedules the next animation
+/// frame and player tick, and puts a copied image on the clipboard.
+fn media_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    if st.media_ui.trusted != store.settings.trusted_domains {
+        st.media_ui.trusted = store.settings.trusted_domains.clone();
+    }
+    let mut changed = invite_embed::request(store, st);
+    if let Some(d) = st.media.take_next_frame() {
+        tx.wake_after(d);
+        changed = true;
+    }
+    let playing = st.media_ui.playing.as_ref().is_some_and(|(_, c)| matches!(c.state(), rune::PlayerState::Playing | rune::PlayerState::Loading));
+    if playing {
+        tx.wake_after(std::time::Duration::from_millis(250));
+    }
+    if let Some(png) = st.media.take_clip() {
+        match rune::ClipboardImage::from_png(png) {
+            Some(img) => tx.copy_rich(rune::ClipboardContent::default().with_image(img)),
+            None => eprintln!("reflux: copy image: not a PNG"),
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// A message link (`https://{webapp}/channels/{guild or @me}/{channel}/{message}`) on this
@@ -527,6 +564,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(upload::edit_modal(st, p, acc));
     layer.extend(switcher::view(store, st, p, acc));
     layer.extend(upload::notice_modal(st, p, acc));
+    layer.extend(lightbox::view(st, p, acc));
+    layer.extend(links::modal(st, p, acc));
     rune_kit::root(body, layer)
 }
 
@@ -557,9 +596,15 @@ pub(crate) fn presence(store: &Store, user: Snowflake) -> Status {
 /// (`id % 6`) without a hash or when it fails.
 // shortcut: guild member avatars aren't used; every surface shows the account avatar.
 pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
+    avatar_anim(store, st, user, size, status, surface, false, p)
+}
+
+/// [`avatar`], animated (an `a_` hash) when `animate` (`shouldAnimate`: the message is hovered).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn avatar_anim(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, animate: bool, p: &Palette) -> El {
     let hash = store.users.get(&user).map(|u| &u.avatar).or(store.me.as_ref().filter(|m| m.id == user).map(|m| &m.avatar));
     let default = || st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels().clone());
-    let px = match hash.and_then(|h| h.as_deref()).map(|h| st.media.asset(|b, s| media::avatar_url(b, user, h, size, s))) {
+    let px = match hash.and_then(|h| h.as_deref()).map(|h| st.media.asset(|b, s| media::animate(media::avatar_url(b, user, h, size, s), h, animate))) {
         Some(Load::Ready(px)) => Some(px),
         Some(Load::Pending) => None,
         Some(Load::Failed) | None => default(),

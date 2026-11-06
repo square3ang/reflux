@@ -69,6 +69,15 @@ See `git log` for details. Crates:
   i18n: English text is the key into Fluxer's catalogs; `scripts/i18n-extract.py` copies the used
   entries to `assets/i18n/*.json` (re-run after adding strings). Only login + settings chrome are
   converted; the remaining files are listed in `i18n.rs`. Headless snapshots: `REFLUX_LOCALE=ko`.
+- Media (`shell/{attachments,embeds,lightbox,links,highlight,invite_embed}.rs`, `media.rs`):
+  mosaic, spoiler/mature blur, inline video/audio (Rune `Player`; it only plays on macOS, so
+  Linux/Windows show "Open in browser"), file cards + text previews, rich/YouTube/gifv embeds,
+  invite cards (`Intent::FetchInvite` → `app/invites.rs`), lightbox (zoom/pan/arrows/Esc,
+  download, copy image/link), external link warning + trusted domains, syntect highlighting,
+  GIF/animated-WebP frames on a shared clock (`Media::take_next_frame` → `wake_after`).
+  Scenes: `--shell-demo --msg-scene=media-{mosaic,files,embeds,invite,viewer,link,nsfw,blur}`.
+  Shared target dir caveat: other worktrees overwrite `target/debug/reflux`; snapshot with the
+  `target/debug/deps/reflux-<hash>` your build produced.
 - Workflow that worked: each subagent in its own `git worktree` with shared
   `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
 - Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining

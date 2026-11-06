@@ -22,6 +22,7 @@ use crate::{State, session};
 mod actions;
 mod chat;
 mod guild;
+mod invites;
 pub mod live;
 mod voice;
 
@@ -726,6 +727,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
             Intent::Api(c) => guild::run(s, c),
+            Intent::FetchInvite(code) => invites::fetch(s, code),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {

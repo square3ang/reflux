@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use reflux_model::{
-    Attachment, Channel, ChannelType, Embed, Message, MessageFlags, MessageType, Permissions, ReactionEmoji, Snowflake,
+    Channel, ChannelType, Message, MessageFlags, MessageType, Permissions, ReactionEmoji, Snowflake,
 };
 use reflux_store::Store;
 use rune::text::Span;
@@ -43,8 +43,10 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .min_h(0.0)
         // Fixed-width cards stay under the search panel when the column narrows.
         .clip_rounded(0.0)
-        .child(messages(store, st, c, p, acc, layer))
-        .child(composer(store, st, c, p, acc))
+        .children(match super::attachments::mature_gate(store, st, c, p, acc) {
+            Some(gate) => vec![gate],
+            None => vec![messages(store, st, c, p, acc, layer), composer(store, st, c, p, acc)],
+        })
         // Files dragged in from other apps join the tray.
         .on_drop_files(move |s: &mut S, files, _| {
             let st = acc(s);
@@ -357,9 +359,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         let web = web.clone();
         t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| match super::parse_message_link(&web, url) {
             Some((g, ch, m)) => super::jump(acc(s), g, ch, m),
-            None => {
-                let _ = tx.open_url(url);
-            }
+            None => super::links::open(acc(s), url, tx),
         })
     }));
     let copy = RefCell::new(markdown::CopyMap::new());
@@ -786,7 +786,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     };
     let gutter = if head {
         col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).child(
-            avatar(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p)
+            super::avatar_anim(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, st.hover_msg == Some(m.id), p)
                 .key(format!("avatar-{mid}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(open.clone())
@@ -1021,31 +1021,34 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
         )
 }
 
-/// `.container`: attachments, embeds, reactions; row-gap 4, padding-block 2.
+/// `.container`: invites, stickers, attachments, embeds, reactions; row-gap 4, padding-block 2.
 fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() && m.stickers.is_empty() {
+    let invites = super::invite_embed::embeds(store, st, m, p, acc);
+    if invites.is_empty() && m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() && m.stickers.is_empty() && !st.progress.contains_key(&m.id) {
         return None;
     }
-    let mut c = col().w_full().gap(dim::MESSAGE_CONTAINER_GAP).py(dim::MESSAGE_CONTAINER_PADDING_Y).items_start();
+    let mut c = col().w_full().gap(dim::MESSAGE_CONTAINER_GAP).py(dim::MESSAGE_CONTAINER_PADDING_Y).items_start().children(invites);
     if !m.stickers.is_empty() {
         // `.stickersContainer`: wrapping, 8 apart, 4 down; each 160×160 (`.stickerWrapper`), contained.
-        let one = |s: &reflux_model::StickerItem| match st.media.asset(|b, _| crate::media::sticker_url(b, s.id)) {
-            Load::Ready(px) => el().size(160.0, 160.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-            _ => el().size(160.0, 160.0),
+        // `animate_stickers`: 0 always, 1 on hover, 2 never.
+        let hovered = st.hover_msg == Some(m.id);
+        let mode = store.settings.animate_stickers;
+        let one = |s: &reflux_model::StickerItem| {
+            let animated = s.animated && (mode == 0 || (mode == 1 && hovered));
+            match st.media.asset(|b, _| crate::media::sticker_url(b, s.id, animated)) {
+                Load::Ready(px) => el().size(160.0, 160.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+                _ => el().size(160.0, 160.0),
+            }
         };
         c = c.child(row().flex_wrap().gaps(8.0, 8.0).mt(4.0).children(m.stickers.iter().map(one)));
     }
-    for a in &m.attachments {
-        c = c.child(attachment(st, a, p));
-    }
+    c = c.children(super::attachments::attachments(store, st, m, p, acc));
     // An optimistic message's upload progress.
     if let Some(&f) = st.progress.get(&m.id) {
         c = c.child(row().w(432.0).h(4.0).radius(2.0).fill(p.background_modifier_accent).child(el().w(432.0 * f).h(4.0).radius(2.0).fill(p.brand_primary)));
     }
     if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
-        for (i, e) in m.embeds.iter().enumerate() {
-            c = c.child(embed(e, i, store, st, m, p));
-        }
+        c = c.children(super::embeds::embeds(store, st, m, p, acc));
     }
     if !m.reactions.is_empty() {
         c = c.child(reactions(st, m, p, acc));
@@ -1054,7 +1057,7 @@ fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pale
 }
 
 /// `fitMediaWithinBounds`: the size media draws at inside `max`, never upscaled.
-fn fit(w: u32, h: u32, max: (f32, f32)) -> (f32, f32) {
+pub(super) fn fit(w: u32, h: u32, max: (f32, f32)) -> (f32, f32) {
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
     let k = (max.0 / w).min(max.1 / h).min(1.0);
     ((w * k).round(), (h * k).round())
@@ -1063,102 +1066,6 @@ fn fit(w: u32, h: u32, max: (f32, f32)) -> (f32, f32) {
 /// The size an image attachment draws at: fit in 550×350 (`MediaDimensionConfig`).
 pub fn media_size(w: u32, h: u32) -> (f32, f32) {
     fit(w, h, (550.0, 350.0))
-}
-
-/// An image (or a video's poster frame) through the media proxy at its drawn size.
-fn media(st: &ShellState, proxy_url: Option<&str>, (w, h): (f32, f32), p: &Palette) -> El {
-    let load = match proxy_url {
-        Some(u) => st.media.get(&crate::media::fit_url(u, w, st.media.scale())),
-        None => Load::Failed,
-    };
-    if matches!(load, Load::Failed) {
-        return row().size(w, h).center().radius(dim::MEDIA_BORDER_RADIUS).fill(p.background_secondary_alt).child(icon(&icons::IMAGE, 32.0).color(p.text_tertiary_muted));
-    }
-    super::picture(load, w, h, dim::MEDIA_BORDER_RADIUS, p)
-}
-
-fn attachment(st: &ShellState, a: &Attachment, p: &Palette) -> El {
-    if let (Some(w), Some(h), true) = (a.width, a.height, a.content_type.starts_with("image/") || a.content_type.starts_with("video/")) {
-        // shortcut: videos show their first frame without a player.
-        return media(st, a.proxy_url.as_deref().or(a.url.as_deref()), media_size(w, h), p);
-    }
-    // A file card.
-    // shortcut: approximates `AttachmentFile` (no download button or type-specific icons).
-    let size = if a.size >= 1 << 20 { format!("{:.2} MB", a.size as f64 / (1 << 20) as f64) } else { format!("{:.2} KB", a.size as f64 / 1024.0) };
-    // `.attachmentContainer` is `width: 100%` of the 432-wide accessory column, so it narrows
-    // with the chat (seen live: it overflowed under the search panel).
-    row()
-        .w_full()
-        .max_w(432.0)
-        .min_w(0.0)
-        .padding(13.0)
-        .gap(8.0)
-        .center_y()
-        .radius(8.0)
-        .fill(p.background_secondary)
-        .border(1.0, over(p.background_modifier_accent, p.background_secondary))
-        .child(icon(&icons::FILE_TEXT, 30.0).color(p.text_tertiary))
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .child(text(a.filename.clone()).font(font(16.0, 500.0).lh(20.0)).color(p.text_link).truncate())
-                .child(text(size).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary)),
-        )
-}
-
-/// Embed media with its dimensions (`isValidMedia`).
-fn sized(m: &reflux_model::EmbedMedia) -> Option<(&reflux_model::EmbedMedia, u32, u32)> {
-    Some((m, m.width?, m.height?))
-}
-
-// shortcut: rich embeds show provider, author, title, description, fields and image or
-// thumbnail; no author/footer icons, galleries or players.
-fn embed(e: &Embed, i: usize, store: &Store, st: &ShellState, m: &Message, p: &Palette) -> El {
-    let thumb = e.thumbnail.as_ref().and_then(sized);
-    // An image or gifv link with nothing else is the bare media (`EMBED_MAX_*` 400×300).
-    if matches!(e.kind.as_str(), "image" | "gifv") && e.title.is_none() && e.description.is_none()
-        && let Some((t, w, h)) = e.image.as_ref().and_then(sized).or(thumb)
-    {
-        return media(st, t.proxy_url.as_deref(), fit(w, h, (400.0, 300.0)), p);
-    }
-    // `RichEmbed`: articles and images promote the thumbnail; else it sits inline at 80px tall.
-    let promote = matches!(e.kind.as_str(), "article" | "image");
-    let image = e.image.as_ref().and_then(sized).or(thumb.filter(|_| promote || e.video.is_some()));
-    let inline = thumb.filter(|_| image.is_none());
-    let bar = e.color.map_or(p.background_modifier_accent, role_color);
-    let md = Md::new(store, &st.media, m.guild_id, p, format!("m{}-embed{i}", m.id));
-    let mut body = col().grow(1.0).min_w(0.0).gap(8.0).pt(8.0).pr(16.0).pb(16.0).pl(12.0);
-    if let Some(pr) = &e.provider {
-        body = body.child(text(pr.name.clone()).font(font(12.0, 400.0)).color(p.text_tertiary));
-    }
-    if let Some(a) = &e.author {
-        body = body.child(text(a.name.clone()).font(font(14.0, 600.0)).color(p.text_primary));
-    }
-    if let Some(t) = &e.title {
-        body = body.child(text(t.clone()).font(font(16.0, 600.0).lh(22.0)).color(if e.url.is_some() { p.text_link } else { p.text_primary }).wrap());
-    }
-    if let Some(d) = &e.description {
-        body = body.child(markdown::render(d, &md).font(font(14.0, 400.0).lh(18.0)));
-    }
-    for f in &e.fields {
-        body = body.child(
-            col()
-                .child(text(f.name.clone()).font(font(14.0, 600.0).lh(18.0)).color(p.text_primary))
-                .child(markdown::render(&f.value, &md)),
-        );
-    }
-    if let Some((t, w, h)) = image {
-        body = body.child(media(st, t.proxy_url.as_deref(), fit(w, h, (400.0, 300.0)), p));
-    }
-    if let Some(f) = &e.footer {
-        body = body.child(text(f.text.clone()).font(font(12.0, 500.0)).color(p.text_tertiary));
-    }
-    if let Some((t, w, h)) = inline {
-        let tw = 80f32.min((80.0 * w as f32 / h.max(1) as f32).round());
-        body = row().grow(1.0).min_w(0.0).items_start().child(body).child(media(st, t.proxy_url.as_deref(), (tw, 80.0), p).mt(8.0).mr(16.0).ml(16.0));
-    }
-    row().w_full().max_w(432.0).radius(4.0).fill(p.background_secondary).child(el().w(4.0).self_stretch().corners([4.0, 0.0, 0.0, 4.0]).fill(bar)).child(body)
 }
 
 /// `.reactionsGrid`.

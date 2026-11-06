@@ -136,6 +136,14 @@ impl Combo {
 
 /// `AppSpec::on_key`: keys nothing focused took (or the focused control passed on).
 pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
+    let sh = match &mut s.shell_demo {
+        Some(d) => Some(&mut d.shell),
+        None if s.app.route == Route::Main => Some(&mut s.app.shell),
+        None => None,
+    };
+    if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k)) {
+        return true;
+    }
     let Some(bind) = BINDS.iter().find(|b| b.combo.matches(k)) else { return false };
     match &mut s.shell_demo {
         Some(d) => run(&d.store, &mut d.shell, bind.action),
@@ -147,7 +155,7 @@ pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
 /// Runs a keybind; false when it did nothing (the key goes on).
 pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
     // Modals keep their own keys (Esc closes them), except the keybind list itself.
-    if (sh.settings.is_some() || sh.dialog.is_some()) && a != ShowKeybinds {
+    if (sh.settings.is_some() || sh.dialog.is_some() || sh.media_ui.viewer.is_some() || sh.media_ui.link_warning.is_some()) && a != ShowKeybinds {
         return false;
     }
     match a {

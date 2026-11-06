@@ -292,6 +292,10 @@ pub fn render(content: &str, md: &Md) -> El {
 // glyph; Fluxer loads their twemoji SVG from its static host.
 fn emoji_image(kind: &EmojiKind, md: &Md) -> Load {
     match kind {
+        // `AnimateEmoji`: animated emoji move unless the user turned it off.
+        EmojiKind::Custom { id, animated, .. } if *animated && md.store.settings.animate_emoji => {
+            md.media.asset(|b, _| crate::media::emoji_url_animated(b, id))
+        }
         EmojiKind::Custom { id, .. } => md.media.asset(|b, _| crate::media::emoji_url(b, id)),
         EmojiKind::Standard { raw, .. } => super::emoji::sprite_index(raw).map_or(Load::Failed, |i| md.media.sprite(i)),
     }
@@ -381,9 +385,10 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
             children.iter().for_each(|c| inline(c, Style::default(), &mut run, md));
             run.el(13.0, 18.0, 400.0, p.text_tertiary, md).unwrap_or_else(el)
         }
-        Node::CodeBlock { content, .. } => {
+        Node::CodeBlock { content, language } => {
             // `.codeContainer`: radius 6, 1px border, padding 14; `pre` 12px mono, line-height 1.33.
             let body = content.strip_suffix('\n').unwrap_or(content);
+            let spans = super::highlight::spans(language.as_deref().unwrap_or_default(), body, crate::ui::is_light(p));
             col()
                 .w_full()
                 .padding(15.0)
@@ -391,7 +396,7 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                 .fill(p.bg_code_block)
                 .border(1.0, crate::ui::over(p.code_block_border, p.bg_code_block))
                 .mb(if last { 0.0 } else { 12.0 })
-                .child(md.text(text(body.to_string()).font(font(12.0, 400.0).mono().lh(16.0)).color(p.text_primary).wrap(), Vec::new()).0)
+                .child(md.text(rich(body.to_string(), spans).font(font(12.0, 400.0).mono().lh(16.0)).color(p.text_primary).wrap(), Vec::new()).0)
         }
         Node::Blockquote { children, .. } => row()
             .w_full()

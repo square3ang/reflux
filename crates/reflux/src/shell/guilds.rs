@@ -135,7 +135,7 @@ fn guild_face(store: &Store, st: &ShellState, id: Snowflake, size: f32, lit: boo
     }
 }
 
-fn acronym_face(name: &str, size: f32, lit: bool, p: &Palette) -> El {
+pub(super) fn acronym_face(name: &str, size: f32, lit: bool, p: &Palette) -> El {
     let (bg, fg) = if lit { (p.brand_primary, p.brand_primary_fill) } else { (p.guilds_layout_item_bg, p.text_primary) };
     let a = acronym(name);
     row()
