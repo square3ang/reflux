@@ -239,12 +239,12 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Tray, close to tray, flash, open links, HW encoder | DONE | | |
-| Minimize to tray / start minimized | PARTIAL | minimize to tray (no minimize event in Rune) | D/Window.ts |
+| Minimize to tray / start minimized | PARTIAL | WONTFIX (user decision): minimize to tray — raw-window-handle workaround works only on X11/Windows/macOS, not Wayland | D/Window.ts |
 | Notifications | PARTIAL | click routing Win/mac | D/NotificationsIpc.ts |
 | Badge | PARTIAL | Win/mac | D/UnreadBadge.ts |
 | Deep links | PARTIAL | Windows forwarding | D/DeepLinks.ts |
 | Autostart | DONE | Flatpak Background portal; Win/mac compile-checked only | D/Autostart.ts |
-| Window state persistence | PARTIAL | size only; Rune reports no position/maximized | D/Window.ts |
+| Window state persistence | PARTIAL | WONTFIX (user decision): size only — position/maximized need the raw handle and are impossible on Wayland | D/Window.ts |
 | Updater | PARTIAL | no release feed yet (`REFLUX_UPDATE_FEED`); AppImage self-update, else opens the page | D/Updater.ts |
 | Global shortcuts / PTT | PARTIAL | Linux portal only (no X11 fallback), Windows mute/deafen only, macOS none; PTT not used by voice yet (`shortcuts::ptt_held`) | D/GlobalShortcutsEngine.ts |
 | Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
