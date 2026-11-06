@@ -10,6 +10,7 @@ use super::{Intent, ShellAccess, ShellState, Target, pops, profile};
 use crate::icons;
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal};
+use crate::i18n::t;
 
 /// Everything the shell floats over itself for [`ShellState::target`].
 pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
@@ -37,7 +38,7 @@ fn unread(store: &Store, channels: impl Iterator<Item = Snowflake>) -> Vec<(Snow
 
 fn mark_read<S: 'static>(acks: Vec<(Snowflake, Snowflake)>, acc: ShellAccess<S>) -> MenuItem<S> {
     let none = acks.is_empty();
-    MenuItem::new("mark-read", "Mark as read").icon(&icons::EYE_FILL).disabled(none).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone())))
+    MenuItem::new("mark-read", t("Mark as read")).icon(&icons::EYE_FILL).disabled(none).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone())))
 }
 
 fn copy_id<S: 'static>(label: &str, id: Snowflake) -> MenuItem<S> {
@@ -63,42 +64,42 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
         }
     };
     let p2 = profile.clone();
-    m = m.item(MenuItem::new("profile", "View profile").icon(&icons::USER_FILL).on_select(move |s: &mut S| p2(s, false)));
+    m = m.item(MenuItem::new("profile", t("View profile")).icon(&icons::USER_FILL).on_select(move |s: &mut S| p2(s, false)));
     if st.channel.is_some() && dm.is_none() {
-        m = m.item(MenuItem::new("mention", "Mention").icon(&icons::AT_BOLD).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("mention", t("Mention")).icon(&icons::AT_BOLD).on_select(move |s: &mut S| {
             let st = acc(s);
             st.composer = rune::TextEdit::new(format!("{}<@{user}> ", st.composer.text));
             st.composer.focused = true;
         }));
     }
     if !me && dm.is_none() {
-        m = m.item(MenuItem::new("message", "Message").icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user))));
+        m = m.item(MenuItem::new("message", t("Message")).icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user))));
     }
     // shortcut: only your own nickname (CHANGE_NICKNAME); MANAGE_NICKNAMES on others isn't offered.
     if let Some(g) = guild.filter(|&g| me && crate::guild::can(store, g, reflux_model::Permissions::CHANGE_NICKNAME)) {
-        m = m.item(MenuItem::new("nickname", "Change nickname").icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
+        m = m.item(MenuItem::new("nickname", t("Change nickname")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
     }
     if !me {
-        m = m.separator().item(MenuItem::new("note", "Add note").icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true))).separator();
+        m = m.separator().item(MenuItem::new("note", t("Add note")).icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true))).separator();
         let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());
         let kind = store.relationships.get(&user).map(|r| r.kind);
         m = match kind {
             Some(RelationshipType::FRIEND) => {
-                m.item(MenuItem::new("remove-friend", "Remove friend").icon(&icons::USER_MINUS_FILL).danger().on_select(push(Intent::RemoveRelationship(user))))
+                m.item(MenuItem::new("remove-friend", t("Remove friend")).icon(&icons::USER_MINUS_FILL).danger().on_select(push(Intent::RemoveRelationship(user))))
             }
             Some(RelationshipType::INCOMING_REQUEST) => m
-                .item(MenuItem::new("accept", "Accept friend request").icon(&icons::CHECK_CIRCLE_FILL).on_select(push(Intent::AddFriend(user))))
-                .item(MenuItem::new("ignore", "Ignore friend request").icon(&icons::X_FILL).on_select(push(Intent::RemoveRelationship(user)))),
+                .item(MenuItem::new("accept", t("Accept friend request")).icon(&icons::CHECK_CIRCLE_FILL).on_select(push(Intent::AddFriend(user))))
+                .item(MenuItem::new("ignore", t("Ignore friend request")).icon(&icons::X_FILL).on_select(push(Intent::RemoveRelationship(user)))),
             Some(RelationshipType::OUTGOING_REQUEST) => m.item(
-                MenuItem::new("cancel", "Cancel friend request").icon(&icons::CLOCK_COUNTER_CLOCKWISE_FILL).on_select(push(Intent::RemoveRelationship(user))),
+                MenuItem::new("cancel", t("Cancel friend request")).icon(&icons::CLOCK_COUNTER_CLOCKWISE_FILL).on_select(push(Intent::RemoveRelationship(user))),
             ),
             Some(RelationshipType::BLOCKED) => m,
-            _ => m.item(MenuItem::new("add-friend", "Add friend").icon(&icons::USER_PLUS_FILL).on_select(push(Intent::AddFriend(user)))),
+            _ => m.item(MenuItem::new("add-friend", t("Add friend")).icon(&icons::USER_PLUS_FILL).on_select(push(Intent::AddFriend(user)))),
         };
         m = if kind == Some(RelationshipType::BLOCKED) {
-            m.item(MenuItem::new("unblock", "Unblock").icon(&icons::PROHIBIT_FILL).on_select(push(Intent::RemoveRelationship(user))))
+            m.item(MenuItem::new("unblock", t("Unblock")).icon(&icons::PROHIBIT_FILL).on_select(push(Intent::RemoveRelationship(user))))
         } else {
-            m.item(MenuItem::new("block", "Block").icon(&icons::PROHIBIT_FILL).danger().on_select(push(Intent::Block(user))))
+            m.item(MenuItem::new("block", t("Block")).icon(&icons::PROHIBIT_FILL).danger().on_select(push(Intent::Block(user))))
         };
     }
     for e in crate::social::group_items(store, st, user, acc) {
@@ -110,12 +111,12 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
         }
     }
     if let Some(c) = dm {
-        m = m.separator().item(MenuItem::new("close-dm", "Close DM").icon(&icons::X_BOLD).on_select(move |s: &mut S| close_dm(acc(s), c)));
+        m = m.separator().item(MenuItem::new("close-dm", t("Close DM")).icon(&icons::X_BOLD).on_select(move |s: &mut S| close_dm(acc(s), c)));
     }
     if store.settings.developer_mode {
-        m = m.separator().item(copy_id("Copy user ID", user));
+        m = m.separator().item(copy_id(t("Copy user ID"), user));
         if let Some(c) = dm {
-            m = m.item(copy_id("Copy channel ID", c));
+            m = m.item(copy_id(t("Copy channel ID"), c));
         }
     }
     m
@@ -136,29 +137,29 @@ fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: She
     let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == store.my_id());
     let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, channels), acc)).separator();
     if let Some(ch) = crate::guild::invitable_channel(store, st, g) {
-        m = m.item(MenuItem::new("invite", "Invite members").icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), ch))).separator();
+        m = m.item(MenuItem::new("invite", t("Invite members")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), ch))).separator();
     }
     m = m
         .entry(crate::social::mute_entry(store, st, Some(g), None, "community", acc))
-        .item(MenuItem::new("notifications", "Notification settings").icon(&icons::BELL_FILL).on_select(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Notifications(g))))
+        .item(MenuItem::new("notifications", t("Notification settings")).icon(&icons::BELL_FILL).on_select(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Notifications(g))))
         .separator();
     if let Some(tab) = crate::guild::first_settings_tab(store, g) {
-        m = m.item(MenuItem::new("settings", "Community settings").icon(&icons::GEAR_FILL).on_select(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
+        m = m.item(MenuItem::new("settings", t("Community settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
     }
     if crate::guild::can(store, g, reflux_model::Permissions::MANAGE_CHANNELS) {
         let create = move |category: bool| move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::CreateChannel { guild: g, parent: None, category });
         m = m
-            .item(MenuItem::new("create-channel", "Create channel").icon(&icons::PLUS_CIRCLE_FILL).on_select(create(false)))
-            .item(MenuItem::new("create-category", "Create category").icon(&icons::FOLDER_PLUS_FILL).on_select(create(true)));
+            .item(MenuItem::new("create-channel", t("Create channel")).icon(&icons::PLUS_CIRCLE_FILL).on_select(create(false)))
+            .item(MenuItem::new("create-category", t("Create category")).icon(&icons::FOLDER_PLUS_FILL).on_select(create(true)));
     }
     m = m.separator();
     if !owner {
         let r = crate::social::Modal::Report { target: "guild", guild: Some(g), channel: None, id: g };
         m = m.item(MenuItem::new("report-guild", "Report community").icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| crate::social::open_report(acc(s), r.clone())));
-        m = m.item(MenuItem::new("leave", "Leave community").icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| acc(s).confirm_leave = Some(g)));
+        m = m.item(MenuItem::new("leave", t("Leave community")).icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| acc(s).confirm_leave = Some(g)));
     }
     if store.settings.developer_mode {
-        m = m.separator().item(copy_id("Copy community ID", g));
+        m = m.separator().item(copy_id(t("Copy community ID"), g));
     }
     m
 }
@@ -174,28 +175,28 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
         let invitable = matches!(ch.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
             && store.permissions(c).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
         if invitable {
-            m = m.separator().item(MenuItem::new("invite", "Invite people").icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), c)));
+            m = m.separator().item(MenuItem::new("invite", t("Invite people")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), c)));
         }
         let category = ch.kind == ChannelType::GUILD_CATEGORY;
         let manage = store.permissions(c).contains(reflux_model::Permissions::MANAGE_CHANNELS);
         if !category && manage {
-            m = m.item(MenuItem::new("duplicate-channel", "Duplicate channel").icon(&icons::COPY_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Duplicate(c))));
+            m = m.item(MenuItem::new("duplicate-channel", t("Duplicate channel")).icon(&icons::COPY_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Duplicate(c))));
         }
         if ch.kind == ChannelType::GUILD_ANNOUNCEMENT {
-            m = m.item(MenuItem::new("follow-channel", "Follow channel").icon(&icons::BELL_RINGING_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Follow(c))));
+            m = m.item(MenuItem::new("follow-channel", t("Follow channel")).icon(&icons::BELL_RINGING_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Follow(c))));
         }
         if category && manage {
-            m = m.item(MenuItem::new("create-channel", "Create channel").icon(&icons::PLUS_CIRCLE_FILL).on_select(move |s: &mut S| {
+            m = m.item(MenuItem::new("create-channel", t("Create channel")).icon(&icons::PLUS_CIRCLE_FILL).on_select(move |s: &mut S| {
                 acc(s).open_dialog(crate::guild::Dialog::CreateChannel { guild: g, parent: Some(c), category: false })
             }));
         }
         if let Some(tab) = crate::guild::first_channel_tab(store, c) {
-            let label = if category { "Edit category" } else { "Edit channel" };
+            let label = if category { t("Edit category") } else { t("Edit channel") };
             m = m.separator().item(MenuItem::new("edit-channel", label).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| {
                 acc(s).open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None })
             }));
             if store.permissions(c).contains(reflux_model::Permissions::MANAGE_CHANNELS) {
-                let label = if category { "Delete category" } else { "Delete channel" };
+                let label = if category { t("Delete category") } else { t("Delete channel") };
                 m = m.item(MenuItem::new("delete-channel", label).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| {
                     let sh = acc(s);
                     sh.open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None });
@@ -204,31 +205,31 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
             }
         }
         let link = format!("{}/channels/{g}/{c}", st.web_base.trim_end_matches('/'));
-        m = m.separator().item(MenuItem::new("copy-link", "Copy channel link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(link.clone())));
+        m = m.separator().item(MenuItem::new("copy-link", t("Copy channel link")).icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(link.clone())));
     }
     if ch.kind == ChannelType::GROUP_DM {
         m = m
             .separator()
-            .item(MenuItem::new("edit-group", "Edit group").icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::EditGroup(c))))
-            .item(MenuItem::new("add-to-group", "Add friends to group").icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::AddToGroup(c))));
-        m = m.separator().item(MenuItem::new("leave-group", "Leave group").icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| close_dm(acc(s), c)));
+            .item(MenuItem::new("edit-group", t("Edit group")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::EditGroup(c))))
+            .item(MenuItem::new("add-to-group", t("Add friends to group")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::AddToGroup(c))));
+        m = m.separator().item(MenuItem::new("leave-group", t("Leave group")).icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| close_dm(acc(s), c)));
     }
     if store.settings.developer_mode {
-        m = m.separator().item(copy_id("Copy channel ID", c));
+        m = m.separator().item(copy_id(t("Copy channel ID"), c));
     }
     m
 }
 
 fn leave_modal<S: 'static>(g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).confirm_leave = None;
-    Modal::new("Leave community", close)
-        .body(text("Leave this community? You won't see its messages anymore.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+    Modal::new(t("Leave community"), close)
+        .body(text(t("Leave this community? You won't see its messages anymore.")).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("leave-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("leave-cancel").on_press(close).el(p))
                 .child(
-                    Button::new("Leave community")
+                    Button::new(t("Leave community"))
                         .variant(ButtonVariant::Danger)
                         .key("leave-confirm")
                         .on_press(move |s: &mut S| {

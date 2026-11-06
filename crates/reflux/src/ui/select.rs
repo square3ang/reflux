@@ -8,6 +8,7 @@ use rune::{El, col, icon, row, text};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, popout_shadow};
 use super::over;
+use crate::i18n::t;
 use crate::icons;
 use crate::theme::{Palette, font};
 
@@ -42,7 +43,7 @@ impl<'a, S: 'static> Select<'a, S> {
         let border = if open { p.background_modifier_accent_focus } else { p.background_modifier_accent };
         let (min_h, pl, style) =
             if self.compact { (34.0, 10.0, font(13.0, 400.0).lh(18.0)) } else { (44.0, 16.0, font(14.0, 400.0).lh(20.0)) };
-        let current = self.options.iter().find(|(v, _)| Some(*v) == self.value).map(|(_, l)| *l);
+        let current = self.options.iter().find(|(v, _)| Some(*v) == self.value).map(|(_, l)| t(l));
         let shown = match current {
             Some(l) => text(l).color(p.text_primary),
             None => text(self.placeholder).color(p.text_tertiary),
@@ -80,6 +81,7 @@ impl<'a, S: 'static> Select<'a, S> {
         if open {
             let (item_h, ipy, ipx) = if self.compact { (30.0, 5.0, 8.0) } else { (32.0, 8.0, 10.0) };
             let rows = self.options.iter().map(|&(value, label)| {
+                let label = t(label);
                 let on = self.value == Some(value);
                 let mut r = row()
                     .key(format!("{}-{value}", self.id))

@@ -18,6 +18,7 @@ use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::{anchor, popout_shadow};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Input, Menu, MenuEntry, MenuItem, Modal, Placement, RadioGroup, Switch, mention_badge, over, scroller, spinner};
+use crate::i18n::t;
 
 /// The header's thread browser popout.
 pub const BROWSER: &str = "header-threads";
@@ -199,7 +200,7 @@ pub(super) fn submit_create(st: &mut ShellState, suggested: &str) {
     let typed = st.threads.name.text.trim();
     let name: String = if typed.is_empty() { suggested } else { typed }.chars().take(NAME_MAX).collect();
     if name.is_empty() {
-        st.threads.name_error = Some("Give the thread a name before you send.".into());
+        st.threads.name_error = Some(t("Give the thread a name before you send.").into());
         return;
     }
     let content = super::autocomplete::apply_command(st.threads.composer.text.trim());
@@ -305,7 +306,7 @@ pub(super) fn chip<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
     let last = t.last_message_id.and_then(|l| store.messages(t.id).iter().find(|x| x.id == l));
     let preview = match last {
         Some(l) => Some(format!("{}: {}", store.display_name(t.guild_id, l.author.id), notification_body(l))),
-        None if t.message_count == 0 => Some("There are no recent messages in this thread.".to_string()),
+        None if t.message_count == 0 => Some(crate::i18n::t("There are no recent messages in this thread.").to_string()),
         None => None,
     };
     let (thread, id) = (t.clone(), t.id);
@@ -357,7 +358,7 @@ pub(super) fn notification_body(m: &Message) -> String {
     }
     match m.attachments.len() {
         0 => String::new(),
-        1 => "Sent an attachment".into(),
+        1 => t("Sent an attachment").into(),
         n => format!("Sent {n} attachments"),
     }
 }
@@ -427,7 +428,7 @@ pub(super) fn starter_message<S: 'static>(store: &Store, st: &ShellState, m: &Me
             .gap(8.0)
             .center_y()
             .child(icon(&icons::TRASH, 16.0).color(p.text_tertiary))
-            .child(text("Original message was deleted.").font(font(14.0, 400.0).italic().lh(20.0)).color(p.text_tertiary)),
+            .child(text(t("Original message was deleted.")).font(font(14.0, 400.0).italic().lh(20.0)).color(p.text_tertiary)),
     }
 }
 
@@ -456,7 +457,7 @@ fn browser_parent<'a>(store: &'a Store, c: &'a Channel) -> Option<&'a Channel> {
 /// The header's Threads button (`ThreadsButton`), for text and announcement channels and threads.
 pub(super) fn header_button<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     browser_parent(store, c)?;
-    Some(header_icon(&icons::CHATS, "Threads", st.popups.is_open(BROWSER), p).key(BROWSER).on_press(move |s: &mut S| {
+    Some(header_icon(&icons::CHATS, t("Threads"), st.popups.is_open(BROWSER), p).key(BROWSER).on_press(move |s: &mut S| {
         let st = acc(s);
         st.popups.toggle(BROWSER);
         st.threads.tab = Tab::Active;
@@ -514,7 +515,7 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
             body = body.children(composer_area(store, st, t, true, p, acc));
             (t.name.clone().unwrap_or_default(), body, Some(t))
         }
-        Panel::Create { parent: pid, message } if pid == parent.id => ("New thread".to_string(), create_pane(store, st, parent, message, p, acc), None),
+        Panel::Create { parent: pid, message } if pid == parent.id => (t("New thread").to_string(), create_pane(store, st, parent, message, p, acc), None),
         Panel::Create { .. } => return None,
     };
     let forum_post = thread.is_some_and(|t| t.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| rules::is_forum(p.kind)));
@@ -523,10 +524,10 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
         let id = t.id;
         if !forum_post {
             actions = actions
-                .child(header_icon(&icons::USERS, "Thread members", st.popups.is_open(MEMBERS), p).key(MEMBERS).on_press(move |s: &mut S| acc(s).popups.toggle(MEMBERS)))
-                .child(header_icon(&icons::ARROWS_OUT_SIMPLE, "Open in full view", false, p).on_press(move |s: &mut S| open_full(acc(s), id)));
+                .child(header_icon(&icons::USERS, crate::i18n::t("Thread members"), st.popups.is_open(MEMBERS), p).key(MEMBERS).on_press(move |s: &mut S| acc(s).popups.toggle(MEMBERS)))
+                .child(header_icon(&icons::ARROWS_OUT_SIMPLE, crate::i18n::t("Open in full view"), false, p).on_press(move |s: &mut S| open_full(acc(s), id)));
         }
-        actions = actions.child(header_icon(&icons::DOTS_THREE_BOLD, "Thread settings", false, p).key(MENU).on_press(move |s: &mut S| {
+        actions = actions.child(header_icon(&icons::DOTS_THREE_BOLD, crate::i18n::t("Thread settings"), false, p).key(MENU).on_press(move |s: &mut S| {
             let st = acc(s);
             st.threads.menu = Some(id);
             st.popups.at = None;
@@ -536,7 +537,7 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
             layer.push(members_popout(store, st, t, p, acc));
         }
     }
-    actions = actions.child(header_icon(&icons::X_BOLD, "Close", false, p).on_press(move |s: &mut S| close(acc(s))));
+    actions = actions.child(header_icon(&icons::X_BOLD, t("Close"), false, p).on_press(move |s: &mut S| close(acc(s))));
     let divider = over(p.user_area_divider_color, p.background_secondary_lighter);
     let mut header = row()
         .w_full()
@@ -595,18 +596,18 @@ pub(super) fn composer_area<S: 'static>(store: &Store, st: &ShellState, t: &Chan
                     .radius(dim::FOOTER_BOX_RADIUS)
                     .fill(p.background_textarea)
                     .child(icon(&icons::LOCK_SIMPLE, 20.0).color(p.text_primary_muted))
-                    .child(text("This thread is locked. Only moderators can send messages.").font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)),
+                    .child(text(crate::i18n::t("This thread is locked. Only moderators can send messages.")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)),
             ),
         ];
     }
     let mut out = Vec::new();
     let post = t.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| rules::is_forum(p.kind));
     if rules::is_archived(t) {
-        out.push(notice(&icons::ARCHIVE, "This thread is closed. Sending a message will open it again.", None));
+        out.push(notice(&icons::ARCHIVE, crate::i18n::t("This thread is closed. Sending a message will open it again."), None));
     } else if !post && !r.member && r.join {
         let id = t.id;
-        let join = Button::new("Join thread").size(ButtonSize::Small).key(format!("thread-join-{id}")).on_press(move |s: &mut S| op(acc(s), Op::Join(id))).el(p);
-        out.push(notice(&icons::CHATS, "Join this thread to follow it in your channel list and get notifications.", Some(join)));
+        let join = Button::new(crate::i18n::t("Join thread")).size(ButtonSize::Small).key(format!("thread-join-{id}")).on_press(move |s: &mut S| op(acc(s), Op::Join(id))).el(p);
+        out.push(notice(&icons::CHATS, crate::i18n::t("Join this thread to follow it in your channel list and get notifications."), Some(join)));
     }
     out.push(super::chat::composer(store, st, t, p, acc, if pane { super::chat::Slot::Pane } else { super::chat::Slot::Main }));
     out
@@ -629,7 +630,7 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
         .child(row().size(64.0, 64.0).center().radius(32.0).fill(p.background_modifier_accent).child(icon(&icons::CHATS, 32.0).color(p.text_primary)))
         .child(
             Input::new("thread-name", &st.threads.name, move |s: &mut S| &mut acc(s).threads.name)
-                .label("Thread name")
+                .label(t("Thread name"))
                 .placeholder(&placeholder)
                 .error(st.threads.name_error.as_deref())
                 .el(p),
@@ -637,8 +638,8 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
     if can_private && can_public {
         body = body.child(
             Switch::new(st.threads.private)
-                .label("Private thread")
-                .description("Only people you invite and moderators can see this thread.")
+                .label(t("Private thread"))
+                .description(t("Only people you invite and moderators can see this thread."))
                 .on_toggle(move |s: &mut S| acc(s).threads.private ^= true)
                 .el(p),
         );
@@ -696,7 +697,7 @@ fn members_popout<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &P
         .clip_rounded(8.0)
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
-        .label("Thread members")
+        .label(crate::i18n::t("Thread members"))
         .child(scroller(col().w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     anchor(surface, MEMBERS, Placement::BottomEnd, 8.0)
@@ -755,14 +756,14 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
         .gap(8.0)
         .center_y()
         .child(icon(&icons::CHATS, 20.0).color(p.text_primary_muted))
-        .child(text("Threads").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0));
+        .child(text(t("Threads")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0));
     if store.can_create_thread(parent, CreateKind::Public) || store.can_create_thread(parent, CreateKind::Private) {
-        header = header.child(Button::new("Create thread").size(ButtonSize::Small).key("thread-browser-create").on_press(move |s: &mut S| start_create(acc(s), pid, None)).el(p));
+        header = header.child(Button::new(t("Create thread")).size(ButtonSize::Small).key("thread-browser-create").on_press(move |s: &mut S| start_create(acc(s), pid, None)).el(p));
     }
     header = header.child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(border));
     let mut tabs = vec![(Tab::Active, "Active"), (Tab::Archived, "Closed")];
     if parent.kind == ChannelType::GUILD_TEXT {
-        tabs.push((Tab::ArchivedPrivate, "Closed private"));
+        tabs.push((Tab::ArchivedPrivate, t("Closed private")));
     }
     let mut tab_list = row().w_full().padding(3.0).radius(10.0).fill(p.background_tertiary);
     for (t, label) in tabs {
@@ -824,7 +825,7 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
                 list = list.child(row().w_full().padding(12.0).center().child(spinner(p.text_primary_muted)));
             } else if a.has_more {
                 list = list.child(row().w_full().padding(12.0).center().child(
-                    Button::new("Load more")
+                    Button::new(t("Load more"))
                         .variant(ButtonVariant::Secondary)
                         .size(ButtonSize::Small)
                         .key("thread-browser-more")
@@ -847,7 +848,7 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
         .clip_rounded(8.0)
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
-        .label("Threads")
+        .label(t("Threads"))
         .child(header)
         .child(tabs_el)
         .child(col().w_full().grow(1.0).min_h(0.0).child(body))
@@ -889,9 +890,9 @@ fn empty(p: &Palette) -> El {
         .gap(8.0)
         .center()
         .child(icon(&icons::CHATS, 48.0).color(p.text_tertiary))
-        .child(text("There are no threads").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
+        .child(text(t("There are no threads")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
         .child(
-            text("Stay focused on a conversation with a thread, a temporary text channel.")
+            text(t("Stay focused on a conversation with a thread, a temporary text channel."))
                 .font(font(14.0, 400.0).lh(20.0))
                 .color(p.text_primary_muted)
                 .wrap()
@@ -940,7 +941,7 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
         }
         if r.member {
             let muted = t.member.as_ref().is_some_and(|x| x.muted);
-            m = m.separator().item(MenuItem::new("thread-mute", if muted { "Unmute thread" } else { "Mute thread" }).on_select(move |s: &mut S| {
+            m = m.separator().item(MenuItem::new("thread-mute", if muted { crate::i18n::t("Unmute thread") } else { crate::i18n::t("Mute thread") }).on_select(move |s: &mut S| {
                 op(acc(s), Op::MemberSettings { thread: id, body: if muted { serde_json::json!({ "muted": false }) } else { serde_json::json!({ "muted": true, "mute_config": null }) } })
             }));
         }
@@ -952,25 +953,25 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     }
     let parent = t.parent_id;
     if st.threads.panel != Some(Panel::Thread(id)) && st.channel != Some(id) {
-        m = m.item(MenuItem::new("thread-open", "Open thread").icon(&icons::ARROW_SQUARE_OUT).on_select(move |s: &mut S| open(acc(s), parent, id)));
+        m = m.item(MenuItem::new("thread-open", crate::i18n::t("Open thread")).icon(&icons::ARROW_SQUARE_OUT).on_select(move |s: &mut S| open(acc(s), parent, id)));
     }
     if st.channel != Some(id) {
-        m = m.item(MenuItem::new("thread-full", "Open in full view").icon(&icons::ARROWS_OUT_SIMPLE).on_select(move |s: &mut S| open_full(acc(s), id)));
+        m = m.item(MenuItem::new("thread-full", crate::i18n::t("Open in full view")).icon(&icons::ARROWS_OUT_SIMPLE).on_select(move |s: &mut S| open_full(acc(s), id)));
     }
     m = m.separator();
     if r.member {
         let muted = t.member.as_ref().is_some_and(|x| x.muted);
         m = m
-            .item(MenuItem::new("thread-mute", if muted { "Unmute thread" } else { "Mute thread" }).icon(&icons::BELL_SLASH).on_select(move |s: &mut S| {
+            .item(MenuItem::new("thread-mute", if muted { crate::i18n::t("Unmute thread") } else { crate::i18n::t("Mute thread") }).icon(&icons::BELL_SLASH).on_select(move |s: &mut S| {
                 op(acc(s), Op::MemberSettings { thread: id, body: if muted { serde_json::json!({ "muted": false }) } else { serde_json::json!({ "muted": true, "mute_config": null }) } })
             }))
-            .submenu("thread-notify", "Notification settings", notification_items(store, t, acc))
+            .submenu("thread-notify", crate::i18n::t("Notification settings"), notification_items(store, t, acc))
             .separator();
     }
     if r.edit {
         let meta = t.thread_metadata.clone().unwrap_or_default();
         let (tname, auto, invitable) = (t.name.clone().unwrap_or_default(), meta.auto_archive_duration.max(60), meta.invitable.unwrap_or(true));
-        m = m.item(MenuItem::new("thread-edit", "Edit thread").icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-edit", crate::i18n::t("Edit thread")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
             let st = acc(s);
             st.popups.close();
             st.threads.settings = Some(Settings { thread: id, name: TextEdit::new(tname.clone()), auto_archive: auto, invitable });
@@ -978,22 +979,22 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     }
     let archived = rules::is_archived(t);
     if if archived { r.unarchive } else { r.archive } {
-        m = m.item(MenuItem::new("thread-archive", if archived { "Open thread again" } else { "Close thread" }).icon(&icons::ARCHIVE).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-archive", if archived { crate::i18n::t("Open thread again") } else { crate::i18n::t("Close thread") }).icon(&icons::ARCHIVE).on_select(move |s: &mut S| {
             op(acc(s), Op::Patch { channel: id, body: serde_json::json!({ "archived": !archived }) })
         }));
     }
     if r.lock {
         let locked = rules::is_locked(t);
-        m = m.item(MenuItem::new("thread-lock", if locked { "Unlock thread" } else { "Lock thread" }).icon(if locked { &icons::LOCK_SIMPLE_OPEN } else { &icons::LOCK_SIMPLE }).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-lock", if locked { crate::i18n::t("Unlock thread") } else { crate::i18n::t("Lock thread") }).icon(if locked { &icons::LOCK_SIMPLE_OPEN } else { &icons::LOCK_SIMPLE }).on_select(move |s: &mut S| {
             op(acc(s), Op::Patch { channel: id, body: serde_json::json!({ "locked": !locked }) })
         }));
     }
     if !r.member && r.join {
-        m = m.item(MenuItem::new("thread-join", "Join thread").icon(&icons::SIGN_IN).on_select(move |s: &mut S| op(acc(s), Op::Join(id))));
+        m = m.item(MenuItem::new("thread-join", crate::i18n::t("Join thread")).icon(&icons::SIGN_IN).on_select(move |s: &mut S| op(acc(s), Op::Join(id))));
     }
     if r.member && r.leave {
         let private = t.kind == ChannelType::PRIVATE_THREAD;
-        let mut item = MenuItem::new("thread-leave", "Leave thread").icon(&icons::SIGN_OUT).on_select(move |s: &mut S| {
+        let mut item = MenuItem::new("thread-leave", crate::i18n::t("Leave thread")).icon(&icons::SIGN_OUT).on_select(move |s: &mut S| {
             let st = acc(s);
             if private {
                 st.threads.confirm = Some(Confirm::LeavePrivate(id));
@@ -1007,13 +1008,13 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
         m = m.item(item);
     }
     if r.delete {
-        m = m.item(MenuItem::new("thread-delete", "Delete thread").icon(&icons::TRASH).danger().on_select(move |s: &mut S| acc(s).threads.confirm = Some(Confirm::Delete(id))));
+        m = m.item(MenuItem::new("thread-delete", crate::i18n::t("Delete thread")).icon(&icons::TRASH).danger().on_select(move |s: &mut S| acc(s).threads.confirm = Some(Confirm::Delete(id))));
     }
     m = m.separator();
     let link = format!("{}/channels/{}/{}", st.web_base.trim_end_matches('/'), t.guild_id.map_or("@me".into(), |g| g.to_string()), id);
-    m = m.item(MenuItem::new("thread-link", "Copy link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx| tx.copy(link.clone())));
+    m = m.item(MenuItem::new("thread-link", crate::i18n::t("Copy link")).icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx| tx.copy(link.clone())));
     if store.settings.developer_mode {
-        m = m.item(MenuItem::new("thread-id", "Copy thread ID").icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(id.to_string())));
+        m = m.item(MenuItem::new("thread-id", crate::i18n::t("Copy thread ID")).icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(id.to_string())));
     }
     m
 }
@@ -1036,12 +1037,12 @@ pub(super) fn layer<S: 'static>(store: &Store, st: &ShellState, c: Option<&Chann
     match st.threads.confirm {
         Some(Confirm::Delete(id)) => {
             let name = store.channels.get(&id).and_then(|t| t.name.clone()).unwrap_or_default();
-            layer.push(confirm(p, acc, "Delete thread", &format!("Are you sure you want to delete {name}? This cannot be undone."), "Delete thread", Op::Delete(id)));
+            layer.push(confirm(p, acc, t("Delete thread"), &crate::i18n::tf("Are you sure you want to delete {channelLabel}? This cannot be undone.", &[("channelLabel", &name.to_string())]), t("Delete thread"), Op::Delete(id)));
         }
         Some(Confirm::LeavePrivate(id)) => {
             let name = store.channels.get(&id).and_then(|t| t.name.clone()).unwrap_or_default();
-            let body = format!("Leave {name}? It's private, so you can only come back if someone adds you again.");
-            layer.push(confirm(p, acc, "Leave private thread", &body, "Leave thread", Op::Leave(id)));
+            let body = crate::i18n::tf("Leave {threadName}? It's private, so you can only come back if someone adds you again.", &[("threadName", &name.to_string())]);
+            layer.push(confirm(p, acc, t("Leave private thread"), &body, t("Leave thread"), Op::Leave(id)));
         }
         None => {}
     }
@@ -1054,7 +1055,7 @@ fn confirm<S: 'static>(p: &Palette, acc: ShellAccess<S>, title: &str, body: &str
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("thread-confirm-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("thread-confirm-cancel").on_press(close).el(p))
                 .child(
                     Button::new(primary)
                         .variant(ButtonVariant::Danger)
@@ -1092,10 +1093,10 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
                 let st = acc(s);
                 &mut st.threads.settings.get_or_insert_with(|| Settings { thread: Snowflake(0), name: TextEdit::new(""), auto_archive: 4320, invitable: true }).name
             })
-            .label("Thread name")
+            .label(crate::i18n::t("Thread name"))
             .el(p),
         )
-        .child(text("Hide after inactivity").font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
+        .child(text(crate::i18n::t("Hide after inactivity")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
         .child(
             RadioGroup::new(&opts, Some(&cur))
                 .on_change(move |s: &mut S, v| {
@@ -1107,21 +1108,21 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
         );
     let private = t.kind == ChannelType::PRIVATE_THREAD;
     if private {
-        body = body.child(Switch::new(s.invitable).label("Allow anyone to invite").on_toggle(move |s: &mut S| {
+        body = body.child(Switch::new(s.invitable).label(crate::i18n::t("Allow anyone to invite")).on_toggle(move |s: &mut S| {
             if let Some(x) = draft(acc, s) {
                 x.invitable ^= true;
             }
         }).el(p));
     }
     let id = t.id;
-    Modal::new("Thread settings", close)
+    Modal::new(crate::i18n::t("Thread settings"), close)
         .body(body)
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("thread-settings-cancel").on_press(close).el(p))
+                .child(Button::new(crate::i18n::t("Cancel")).variant(ButtonVariant::Secondary).key("thread-settings-cancel").on_press(close).el(p))
                 .child(
-                    Button::new("Save")
+                    Button::new(crate::i18n::t("Save"))
                         .key("thread-settings-save")
                         .on_press(move |s: &mut S| {
                             let st = acc(s);

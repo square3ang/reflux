@@ -13,6 +13,7 @@ use crate::media::Load;
 use crate::shell::Intent;
 use crate::shell::emoji::{self as data, Emoji};
 use crate::theme::{Palette, font};
+use crate::i18n::t;
 
 /// `EMOJI_PICKER_CELL_SIZE` and columns at the default width.
 const GRID: Grid = Grid { cell: 48.0, row_h: 48.0, cols: 11, kind: "emoji" };
@@ -145,7 +146,7 @@ fn skin_tones<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
     let Some(clap) = data::by_name("clap") else { return el() };
     let tone = st.expr.saved.skin_tone;
     let one = |t: u8, size: f32| glyph(&st.media, &Item::Unicode(clap), t, size);
-    let button = row().size(24.0, 24.0).center().cursor(rune::Cursor::Pointer).role("button").label("Skin tone").child(one(tone, 24.0)).on_press(move |s: &mut S| {
+    let button = row().size(24.0, 24.0).center().cursor(rune::Cursor::Pointer).role("button").label(t("Skin tone")).child(one(tone, 24.0)).on_press(move |s: &mut S| {
         let x = &mut acc(s).expr;
         x.skin_open = !x.skin_open;
     });
@@ -178,7 +179,7 @@ fn skin_tones<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel>, _: For, p: &Palette, acc: ShellAccess<S>) -> (El, El) {
     let rows = Rc::new(rows(store, st, channel));
     let hovered = st.expr.hover.as_ref().and_then(|k| super::item_rows(&rows).into_iter().flat_map(|r| r.1.iter()).find(|i| i.key() == *k).cloned());
-    let placeholder = hovered.as_ref().map_or_else(|| "Find the emoji of your dreams".to_string(), Item::names);
+    let placeholder = hovered.as_ref().map_or_else(|| t("Find the emoji of your dreams").to_string(), Item::names);
     let keys = rows.clone();
     let bar = row()
         .w_full()
@@ -190,7 +191,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     let extra = data::CATEGORIES.iter().zip(CAT_ICONS).map(|((k, l), i)| (k.to_string(), i, *l)).collect();
     let mut grid = col().grow(1.0).min_w(0.0).h_full().child(grid_list(store, st, rows.clone(), GRID, p, acc, cell));
     if empty {
-        grid = grid.child(super::empty_state("No emojis match that search", None, p));
+        grid = grid.child(super::empty_state(t("No emojis match that search"), None, p));
     }
     let tone = st.expr.saved.skin_tone;
     let body = col()

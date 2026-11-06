@@ -11,6 +11,7 @@ use rune::{Color, El, Pixels, col, el, icon, row, text};
 
 use super::voice::{Modal, Op};
 use super::{Intent, ShellAccess, ShellState, avatar, pops};
+use crate::i18n::t;
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::{anchor, popout_shadow};
@@ -66,7 +67,7 @@ fn tiles(people: &[(Snowflake, &VoiceState)]) -> Vec<Tile> {
 }
 
 /// The video a tile shows, if any.
-fn video<'a>(st: &'a ShellState, me: Snowflake, t: Tile) -> Option<&'a Pixels> {
+fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
     let v = &st.voice;
     match (t.screen, t.user == me) {
         (true, _) => (v.watching == Some(t.user)).then_some(&v.stream),
@@ -76,6 +77,7 @@ fn video<'a>(st: &'a ShellState, me: Snowflake, t: Tile) -> Option<&'a Pixels> {
 }
 
 /// `VoiceParticipantTile`.
+#[allow(clippy::too_many_arguments)]
 fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t: Tile, vs: &VoiceState, big: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let me = store.my_id();
     let speaking = !t.screen && st.voice.speaking.contains(&t.user);
@@ -97,9 +99,9 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
                 .hover(rgb(0x11, 0x11, 0x11))
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Watch stream")
+                .label(crate::i18n::t("Watch stream"))
                 .child(icon(&icons::MONITOR_PLAY_FILL, 16.0).color(Color::WHITE))
-                .child(text("Watch stream").font(font(13.0, 600.0).lh(15.6)).color(Color::WHITE))
+                .child(text(crate::i18n::t("Watch stream")).font(font(13.0, 600.0).lh(15.6)).color(Color::WHITE))
                 .on_press(move |s: &mut S| {
                     let sh = acc(s);
                     sh.voice.watching = Some(u);
@@ -138,7 +140,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
     } else {
         pill = pill.child(glyph(&icons::MONITOR_PLAY_FILL, Color::WHITE));
     }
-    let label = if t.screen { format!("{name}'s screen") } else { name.clone() };
+    let label = if t.screen { crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name.to_string())]) } else { name.clone() };
     pill = pill.child(text(label).font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().shrink().ml(3.0));
     if st.voice.settings.show_connection_ids
         && let Some(c) = &vs.connection_id
@@ -161,7 +163,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
         // `[data-speaking='true']::after`: a 3.5px status-online border inside the tile.
         outer = outer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).border(3.5, p.status_online));
     }
-    let focus = Some(t.user).filter(|_| st.voice.focus != Some(t.user));
+    let focus = (st.voice.focus != Some(t.user)).then_some(t.user);
     let user = t.user;
     outer
         .on_press(move |s: &mut S| acc(s).voice.focus = focus)
@@ -232,16 +234,16 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: Sh
         .radius(16.0 + 6.0 + 2.0)
         .fill(rgb(0, 0, 0))
         .border(1.0, hud_border())
-        .child(button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { "Unmute" } else { "Mute" }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute())))
-        .child(button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { "Undeafen" } else { "Deafen" }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf())));
+        .child(button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { t("Unmute") } else { t("Mute") }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute())))
+        .child(button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { t("Undeafen") } else { t("Deafen") }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf())));
     if can_video {
-        bar = bar.child(button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { "Turn off camera" } else { "Turn on camera" }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera))));
+        bar = bar.child(button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { t("Turn off camera") } else { t("Turn on camera") }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera))));
     }
-    bar = bar.child(button(&icons::MONITOR_ARROW_UP_FILL, if v.screen { "Stop sharing your screen" } else { "Share your screen" }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
+    bar = bar.child(button(&icons::MONITOR_ARROW_UP_FILL, if v.screen { "Stop sharing your screen" } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
         let sh = acc(s);
         if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { sh.voice.modal = Some(Modal::ScreenShare) }
     })));
-    bar.child(button(&icons::PHONE_X_FILL, "Disconnect", rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())))
+    bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())))
 }
 
 /// `VoiceCallView` for the connected channel, in place of the chat column.
@@ -268,14 +270,14 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .hover(rgba(255, 255, 255, 0.12))
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label("Show chat")
+            .label(t("Show chat"))
             .child(icon(&icons::CHAT_CIRCLE_TEXT_FILL, 20.0).color(rgba(255, 255, 255, 0.9)))
             .on_press(move |s: &mut S| acc(s).voice.call_view = false),
     );
     let body = if st.voice.connected {
         layout(store, st, guild, &people, p, acc)
     } else {
-        row().w_full().h_full().center().child(text(if st.voice.reconnecting { "Reconnecting…" } else { "Connecting…" }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
+        row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
     Some(
         col()
@@ -338,7 +340,7 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     let footer = if joined {
         control_bar(store, st, p, acc)
     } else {
-        Button::new("Join call").icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p)
+        Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p)
     };
     Some(col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer))
 }
@@ -353,15 +355,24 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
     }
     el_.on_press(move |s: &mut S| {
         let sh = acc(s);
-        let o = if active { Op::AcceptCall(ch) } else { Op::StartCall(ch) };
-        sh.intents.push(Intent::Voice(o));
-        if video {
-            // The camera turns on once connected (`startCall` with video).
-            sh.voice.modal = Some(Modal::CameraPreview);
-            sh.intents.push(Intent::Voice(Op::LoadCameras));
-            sh.intents.push(Intent::Voice(Op::Preview(true)));
+        if !active && crate::look::with(|l| l.confirm_calls) {
+            // shortcut: Shift-click doesn't skip the confirmation.
+            sh.voice.modal = Some(Modal::StartCall { channel: ch, video });
+        } else {
+            start_call(sh, ch, active, video);
         }
     })
+}
+
+fn start_call(sh: &mut ShellState, ch: Snowflake, active: bool, video: bool) {
+    let o = if active { Op::AcceptCall(ch) } else { Op::StartCall(ch) };
+    sh.intents.push(Intent::Voice(o));
+    if video {
+        // The camera turns on once connected (`startCall` with video).
+        sh.voice.modal = Some(Modal::CameraPreview);
+        sh.intents.push(Intent::Voice(Op::LoadCameras));
+        sh.intents.push(Intent::Voice(Op::Preview(true)));
+    }
 }
 
 /// `IncomingCallUI`: the first call ringing us that we haven't answered or dismissed.
@@ -411,13 +422,13 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
         .border(1.0, rgba(255, 255, 255, 0.08))
         .box_shadow(rune::Shadow { x: 0.0, y: 24.0, blur: 60.0, spread: 0.0, color: rgba(0, 0, 0, 0.55), inset: false })
         .role("dialog")
-        .label("Incoming call")
+        .label(t("Incoming call"))
         .child(
             row()
                 .gap(6.0)
                 .center_y()
                 .child(icon(&icons::PHONE_INCOMING_FILL, 14.0).color(secondary))
-                .child(text("Incoming call").font(font(13.0, 500.0).lh(16.0)).color(secondary)),
+                .child(text(t("Incoming call")).font(font(13.0, 500.0).lh(16.0)).color(secondary)),
         )
         .child(avatar(store, st, caller, 96.0, None, rgb(0x2c, 0x2c, 0x2e), p))
         .child(
@@ -426,17 +437,17 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                 .gap(4.0)
                 .items_center()
                 .child(text(name).font(font(22.0, 600.0).lh(26.4)).color(Color::WHITE).truncate())
-                .child(text("Voice call").font(font(14.0, 400.0).lh(18.0)).color(secondary)),
+                .child(text(t("Voice call")).font(font(14.0, 400.0).lh(18.0)).color(secondary)),
         )
         .child(
             row()
                 .gap(56.0)
                 .pt(8.0)
-                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), "Decline", Box::new(op(acc, Op::DeclineCall(channel)))))
-                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), "Accept", Box::new(op(acc, Op::AcceptCall(channel))))),
+                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), t("Decline"), Box::new(op(acc, Op::DeclineCall(channel)))))
+                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), t("Accept"), Box::new(op(acc, Op::AcceptCall(channel))))),
         )
         .child(
-            text("Ignore")
+            text(t("Ignore"))
                 .font(font(13.0, 500.0).lh(16.0))
                 .color(rgba(235, 235, 245, 0.5))
                 .cursor(rune::Cursor::Pointer)
@@ -468,11 +479,11 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     let modal = match m {
         Modal::ChannelFull => crate::ui::Modal::new("Channel full", close)
             .body(body_text("This voice channel has reached its user limit. Try again later.", p))
-            .footer(ok("Okay")),
+            .footer(ok(t("Okay"))),
         Modal::NotRingable => crate::ui::Modal::new("Can't start a call", close)
             .body(body_text("You can't call this person right now. They may not accept calls from you.", p))
-            .footer(ok("Okay")),
-        Modal::Refused(msg) => crate::ui::Modal::new("Couldn't join voice", close).body(body_text(msg, p)).footer(ok("Okay")),
+            .footer(ok(t("Okay"))),
+        Modal::Refused(msg) => crate::ui::Modal::new("Couldn't join voice", close).body(body_text(msg, p)).footer(ok(t("Okay"))),
         Modal::JoinConfirm { guild, channel } => {
             let (g, c) = (*guild, *channel);
             crate::ui::Modal::new("Already in voice", close)
@@ -480,11 +491,27 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                 .footer(
                     row()
                         .gap(8.0)
-                        .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("voice-confirm-cancel").on_press(close).el(p))
-                        .child(Button::new("Join").key("voice-confirm-join").on_press(move |s: &mut S| {
+                        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("voice-confirm-cancel").on_press(close).el(p))
+                        .child(Button::new(t("Join")).key("voice-confirm-join").on_press(move |s: &mut S| {
                             let sh = acc(s);
                             sh.voice.modal = None;
                             sh.intents.push(Intent::Voice(Op::ConfirmJoin(g, c)));
+                        }).el(p)),
+                )
+        }
+        Modal::StartCall { channel, video } => {
+            let (ch, video) = (*channel, *video);
+            let title = t(if video { "Start video call" } else { "Start voice call" });
+            crate::ui::Modal::new(title, close)
+                .body(body_text(t(if video { "Start a video call?" } else { "Start a voice call?" }), p))
+                .footer(
+                    row()
+                        .gap(8.0)
+                        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("call-confirm-cancel").on_press(close).el(p))
+                        .child(Button::new(title).key("call-confirm-start").on_press(move |s: &mut S| {
+                            let sh = acc(s);
+                            sh.voice.modal = None;
+                            start_call(sh, ch, false, video);
                         }).el(p)),
                 )
         }
@@ -499,11 +526,11 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
 fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static, layer: &mut Vec<El>) -> crate::ui::Modal<S> {
     let v = &st.voice;
     let preview = el().w(400.0).h(225.0).radius(dim::RADIUS_LG).clip_rounded(dim::RADIUS_LG).fill(surface_0());
-    let preview = if v.previewing { preview.pixels_fit(&v.self_view, rune::SurfaceFit::Fit) } else { preview.child(row().w_full().h_full().center().child(text("Camera preview").font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)))) };
+    let preview = if v.previewing { preview.pixels_fit(&v.self_view, rune::SurfaceFit::Fit) } else { preview.child(row().w_full().h_full().center().child(text(t("Camera preview")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)))) };
     let names = v.cameras.clone().unwrap_or_default();
     let opts: Vec<(&str, &str)> = std::iter::once(("", "Default")).chain(names.iter().map(|n| (n.as_str(), n.as_str()))).collect();
     let pick = crate::ui::Select::new("camera-device", &opts, Some(v.settings.camera.as_deref().unwrap_or("")))
-        .label("Camera")
+        .label(t("Camera"))
         .width(400.0)
         .on_choose(move |s: &mut S, val| {
             let sh = acc(s);
@@ -515,14 +542,14 @@ fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>,
         })
         .el(&st.popups, pops(acc), p, layer);
     let can_turn_on = v.connected && !v.camera;
-    crate::ui::Modal::new("Camera preview", close)
+    crate::ui::Modal::new(t("Camera preview"), close)
         .body(col().w_full().gap(16.0).child(preview).child(pick))
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("cam-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("cam-cancel").on_press(close).el(p))
                 .child(
-                    Button::new("Turn on camera")
+                    Button::new(t("Turn on camera"))
                         .key("cam-on")
                         .disabled(!can_turn_on)
                         .on_press(move |s: &mut S| {
@@ -547,7 +574,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
     let res_v = set.screen_height.map_or("source".to_string(), |h| h.to_string());
     let fps_v = set.screen_fps.to_string();
     let r = crate::ui::Select::new("share-res", &res, Some(&res_v))
-        .label("Resolution")
+        .label(t("Resolution"))
         .width(190.0)
         .on_choose(move |s: &mut S, v| {
             let sh = acc(s);
@@ -556,7 +583,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
         })
         .el(&st.popups, pops(acc), p, layer);
     let f = crate::ui::Select::new("share-fps", &fps, Some(&fps_v))
-        .label("Frame rate")
+        .label(t("Frame rate"))
         .width(190.0)
         .on_choose(move |s: &mut S, v| {
             let sh = acc(s);
@@ -564,7 +591,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
             sh.intents.push(Intent::Voice(Op::Settings));
         })
         .el(&st.popups, pops(acc), p, layer);
-    crate::ui::Modal::new("Share your screen", close)
+    crate::ui::Modal::new(t("Share your screen"), close)
         .body(
             col()
                 .w_full()
@@ -575,7 +602,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("share-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("share-cancel").on_press(close).el(p))
                 .child(Button::new("Go live").key("share-go").on_press(move |s: &mut S| {
                     let sh = acc(s);
                     sh.voice.modal = None;
@@ -621,11 +648,11 @@ pub fn details<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
         .label("Voice details")
-        .child(text("Voice connection").font(font(14.0, 600.0).lh(18.0)).color(p.text_primary))
+        .child(text(t("Voice connection")).font(font(14.0, 600.0).lh(18.0)).color(p.text_primary))
         .child(line("Server", host))
         .child(line("Room", room))
-        .child(line("Ping", v.ping.map_or("—".into(), |ms| format!("{ms} ms"))))
-        .child(line("Encryption", if v.encrypted { "Encrypted (server key)".into() } else { "Transport only (DTLS-SRTP)".into() }))
+        .child(line(t("Ping"), v.ping.map_or("—".into(), |ms| format!("{ms} ms"))))
+        .child(line(t("Encryption"), if v.encrypted { "Encrypted (server key)".into() } else { "Transport only (DTLS-SRTP)".into() }))
         .child(graph)
         .modal(true, move |s: &mut S| acc(s).popups.close());
     layer.push(anchor(surface, DETAILS, Placement::Top, 8.0));
@@ -640,12 +667,12 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let me = store.my_id();
     let mut m = Menu::new(TILE_MENU);
     let focused = st.voice.focus == Some(user);
-    m = m.item(MenuItem::new("focus", if focused { "Unfocus" } else { "Focus" }).icon(&icons::CORNERS_OUT).on_select(move |s: &mut S| {
+    m = m.item(MenuItem::new("focus", if focused { t("Unfocus") } else { t("Focus") }).icon(&icons::CORNERS_OUT).on_select(move |s: &mut S| {
         acc(s).voice.focus = (!focused).then_some(user);
     }));
     let streaming = store.voice_states.get(&(guild, user)).is_some_and(|v| v.self_stream);
     if streaming && user != me {
-        m = m.item(MenuItem::new("watch", "Watch stream").icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.watching = Some(user);
             sh.intents.push(Intent::Watch(Some(user)));
@@ -653,13 +680,13 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     }
     if user != me {
         let muted = st.voice.local_mutes.contains(&user);
-        m = m.separator().item(MenuItem::new("local-mute", "Mute").checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted))));
+        m = m.separator().item(MenuItem::new("local-mute", t("Mute")).checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted))));
         if let Some((None, ch)) = st.voice.channel
             && let Some(call) = store.calls.get(&ch)
             && !store.voice_states.contains_key(&(None, user))
         {
             let ringing = call.ringing.contains(&user);
-            m = m.item(MenuItem::new("ring", if ringing { "Stop ringing" } else { "Ring" }).icon(&icons::PHONE_FILL).on_select(op(acc, Op::Ring(ch, user, !ringing))));
+            m = m.item(MenuItem::new("ring", if ringing { t("Stop ringing") } else { t("Ring") }).icon(&icons::PHONE_FILL).on_select(op(acc, Op::Ring(ch, user, !ringing))));
         }
     }
     m.el(&st.popups, pops(acc), p, layer);

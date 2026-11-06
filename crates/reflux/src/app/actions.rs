@@ -16,6 +16,7 @@ use reflux_net::{Command, ConnectionState};
 use super::{Instance, Route, now_ms, spawn, update};
 use crate::State;
 use crate::shell::Intent;
+use crate::i18n::t;
 
 /// `ACK_BATCH_DELAY_MS`: automatic acks wait this long (mentions go at once).
 const ACK_DELAY_MS: u64 = 3000;
@@ -121,7 +122,7 @@ pub(super) fn run(s: &mut State, i: Intent) {
                             Ok(())
                         }
                         Err(reflux_net::Error::Api { error, .. }) if error.code == "NO_USERS_WITH_FLUXERTAG_EXIST" => {
-                            Err("No user found with that username.".into())
+                            Err(t("No user found with that username.").into())
                         }
                         Err(reflux_net::Error::Api { error, .. }) => Err(error.message),
                         Err(e) => Err(e.to_string()),

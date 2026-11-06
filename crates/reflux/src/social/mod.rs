@@ -27,6 +27,7 @@ use crate::guild::Dialog;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonVariant, Input, mix};
+use crate::i18n::t;
 
 pub use channel::{bell_button, blocked_bar, blocked_runs, mass_mention, mute_entry, welcome};
 pub use discovery::{discovery_page, invite_code, open as open_discovery, open_invite, preview_nagbar};
@@ -277,7 +278,7 @@ fn label(t: impl Into<String>, p: &Palette) -> El {
 fn footer<S: 'static>(st: &ShellState, action: &str, danger: bool, key: &str, acc: ShellAccess<S>, go: impl Fn(&mut S) + 'static, p: &Palette) -> El {
     row()
         .gap(8.0)
-        .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close(acc)).el(p))
+        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close(acc)).el(p))
         .child(Button::new(action).variant(if danger { ButtonVariant::Danger } else { ButtonVariant::Primary }).submitting(st.form.busy).key(key.to_string()).on_press(go).el(p))
 }
 

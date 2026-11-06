@@ -11,6 +11,7 @@ use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Checkbox, Placement, mix, over};
 use crate::ui::overlay::{anchor, popout_shadow};
+use crate::i18n::t;
 
 /// Popup id, and the key of the header row it hangs off.
 pub const HEADER_MENU: &str = "guild-header";
@@ -46,26 +47,26 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     let channels = can(store, g, Permissions::MANAGE_CHANNELS);
     let mut items: Vec<El> = Vec::new();
     if let Some(ch) = invitable_channel(store, st, g) {
-        items.push(item("Invite members", &icons::USER_PLUS, false, p).on_press(move |s: &mut S| open_invite(acc(s), ch)));
+        items.push(item(t("Invite members"), &icons::USER_PLUS, false, p).on_press(move |s: &mut S| open_invite(acc(s), ch)));
     }
     if let Some(tab) = first_settings_tab(store, g) {
-        items.push(item("Community settings", &icons::GEAR, false, p).on_press(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
+        items.push(item(t("Community settings"), &icons::GEAR, false, p).on_press(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
     }
     if channels {
-        items.push(item("Create channel", &icons::PLUS_CIRCLE, false, p).on_press(move |s: &mut S| {
+        items.push(item(t("Create channel"), &icons::PLUS_CIRCLE, false, p).on_press(move |s: &mut S| {
             acc(s).open_dialog(Dialog::CreateChannel { guild: g, parent: None, category: false })
         }));
-        items.push(item("Create category", &icons::FOLDER_PLUS, false, p).on_press(move |s: &mut S| {
+        items.push(item(t("Create category"), &icons::FOLDER_PLUS, false, p).on_press(move |s: &mut S| {
             acc(s).open_dialog(Dialog::CreateChannel { guild: g, parent: None, category: true })
         }));
     }
-    items.push(item("Notification settings", &icons::BELL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))));
-    items.push(item("Privacy settings", &icons::SHIELD, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))));
-    items.push(item("Edit community profile", &icons::USER_CIRCLE, false, p).on_press(move |s: &mut S| acc(s).open_community_profile(g)));
+    items.push(item(t("Notification settings"), &icons::BELL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))));
+    items.push(item(t("Privacy settings"), &icons::SHIELD, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))));
+    items.push(item(t("Edit community profile"), &icons::USER_CIRCLE, false, p).on_press(move |s: &mut S| acc(s).open_community_profile(g)));
     let hide = store.guild_settings.get(&Some(g)).is_some_and(|s| s.hide_muted_channels);
     let toggle_hide = move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: json!({ "hide_muted_channels": !hide }) });
     items.push(
-        item_shell("Hide muted channels", p)
+        item_shell(t("Hide muted channels"), p)
             .role("menuitemcheckbox")
             .checked(hide)
             .on_press(toggle_hide)
@@ -73,7 +74,7 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     );
     // shortcut: "Delete my messages" (bulk-delete-mine) isn't offered yet.
     if !owner {
-        items.push(item("Leave community", &icons::SIGN_OUT, true, p).on_press(move |s: &mut S| {
+        items.push(item(t("Leave community"), &icons::SIGN_OUT, true, p).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.popups.close();
             sh.confirm_leave = Some(g);

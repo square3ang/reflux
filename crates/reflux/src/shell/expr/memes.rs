@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::{For, Fetched, ShellAccess, ShellState, close, search_bar};
 use crate::shell::Intent;
 use crate::theme::{Palette, font};
+use crate::i18n::t;
 
 const FILTERS: [&str; 3] = ["All", "Images", "Videos"];
 
@@ -36,7 +37,7 @@ fn pick(st: &mut ShellState, m: &Value) {
 }
 
 pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S>) -> (El, El) {
-    let field = search_bar(st, "Search saved media".into(), p, acc, move |s: &mut S, k, _| {
+    let field = search_bar(st, t("Search saved media").into(), p, acc, move |s: &mut S, k, _| {
         if k.key == rune::Key::Escape {
             close(acc(s));
             return true;
@@ -61,7 +62,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         Some(Fetched::Done(v)) => {
             let list = filtered(v.as_array().map_or(&[][..], Vec::as_slice), st.expr.meme_filter, &st.expr.query.text);
             if list.is_empty() {
-                col().w_full().h_full().child(super::empty_state("No saved media", None, p))
+                col().w_full().h_full().child(super::empty_state(t("No saved media"), None, p))
             } else {
                 let (cols, w) = super::gif::columns();
                 let tiles = list
@@ -88,7 +89,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
             }
         }
         Some(Fetched::Failed(_)) => col().w_full().h_full().child(super::empty_state("Couldn't load saved media", None, p)),
-        _ => col().w_full().h_full().center().child(text("Loading…").font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        _ => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     (bar, body)
 }

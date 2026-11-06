@@ -9,6 +9,7 @@ use crate::shell::voice::{Modal, Op, Settings};
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Button, ButtonVariant, RadioGroup, Select, Slider, Switch};
+use crate::i18n::t;
 
 /// Changes a setting, then saves and applies it.
 fn set<S: 'static>(acc: ShellAccess<S>, f: impl Fn(&mut Settings) + 'static) -> impl Fn(&mut S) + 'static {
@@ -52,12 +53,12 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
                     })
                     .el(&st.popups, pops, p, layer)
             };
-            let a = pick("voice-input", "Input device", &ins, &v.input, false);
-            let b = pick("voice-output", "Output device", &outs, &v.output, true);
+            let a = pick("voice-input", t("Input device"), &ins, &v.input, false);
+            let b = pick("voice-output", t("Output device"), &outs, &v.output, true);
             col().w_full().gap(16.0).child(a).child(b)
         }
     };
-    let mut out = col().w_full().child(section("Devices", devices, true, p));
+    let mut out = col().w_full().child(section(t("Devices"), devices, true, p));
 
     // ---- Volume
     // shortcut: input/output volume are stored but not applied (the Rust SDK has no device
@@ -72,13 +73,13 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
                 .el(p),
         )
     };
-    out = out.child(section("Volume", col().w_full().gap(20.0).child(vol("voice-in-vol", "Input volume", set_.input_volume, true)).child(vol("voice-out-vol", "Output volume", set_.output_volume, false)), false, p));
+    out = out.child(section(t("Volume"), col().w_full().gap(20.0).child(vol("voice-in-vol", t("Input volume"), set_.input_volume, true)).child(vol("voice-out-vol", t("Output volume"), set_.output_volume, false)), false, p));
 
     // ---- Voice processing
     let profiles = [
-        ("voice", "Focused voice", Some("Recommended. Cleans up your mic for clear speech.")),
-        ("studio", "Direct input", Some("Sends your audio untouched. Best if you're using external audio software.")),
-        ("custom", "Custom", Some("Adjust noise suppression, echo cancellation, and gain yourself.")),
+        ("voice", "Focused voice", Some(t("Recommended. Cleans up your mic for clear speech."))),
+        ("studio", "Direct input", Some(t("Sends your audio untouched. Best if you're using external audio software."))),
+        ("custom", "Custom", Some(t("Adjust noise suppression, echo cancellation, and gain yourself."))),
     ];
     let mut processing = col().w_full().gap(20.0).child(
         RadioGroup::new(&profiles, Some(set_.processing.as_str()))
@@ -89,17 +90,17 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
             .el(p),
     );
     if set_.processing != "studio" {
-        processing = processing.child(Switch::new(set_.push_to_talk).label("Push-to-talk").on_toggle(set(acc, |st: &mut Settings| st.push_to_talk ^= true)).el(p));
+        processing = processing.child(Switch::new(set_.push_to_talk).label(t("Push-to-talk")).on_toggle(set(acc, |st: &mut Settings| st.push_to_talk ^= true)).el(p));
         if set_.push_to_talk {
-            let key = if v.recording_key { "Press a key…".to_string() } else { set_.ptt_key.clone().unwrap_or_else(|| "No keybind set".into()) };
-            let record = Button::new(if v.recording_key { "Cancel" } else { "Edit keybind" })
+            let key = if v.recording_key { "Press a key…".to_string() } else { set_.ptt_key.clone().unwrap_or_else(|| t("No keybind set").into()) };
+            let record = Button::new(if v.recording_key { t("Cancel") } else { t("Edit keybind") })
                 .variant(ButtonVariant::Secondary)
                 .key("ptt-record")
                 .on_press(move |s: &mut S| acc(s).voice.recording_key ^= true)
                 .el(p);
             processing = processing
                 .child(
-                    col().w_full().gap(8.0).child(label("Keybind", p)).child(
+                    col().w_full().gap(8.0).child(label(t("Keybind"), p)).child(
                         row()
                             .w_full()
                             .gap(12.0)
@@ -113,8 +114,8 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
                     col()
                         .w_full()
                         .gap(8.0)
-                        .child(label("Release delay", p))
-                        .child(desc("Keep transmitting briefly after release.", p))
+                        .child(label(t("Release delay"), p))
+                        .child(desc(t("Keep transmitting briefly after release."), p))
                         .child(
                             Slider::new("ptt-release", set_.ptt_release_ms as f32, 0.0, 2000.0)
                                 .step(20.0)
@@ -127,21 +128,21 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         processing = processing
             .child(
                 Switch::new(set_.auto_gain_control)
-                    .label("Automatic gain control")
-                    .description("Evens out your mic volume so you are not too quiet.")
+                    .label(t("Automatic gain control"))
+                    .description(t("Evens out your mic volume so you are not too quiet."))
                     .on_toggle(set(acc, |st: &mut Settings| st.auto_gain_control ^= true))
                     .el(p),
             )
-            .child(Switch::new(set_.stereo).label("Stereo microphone").on_toggle(set(acc, |st: &mut Settings| st.stereo ^= true)).el(p));
+            .child(Switch::new(set_.stereo).label(t("Stereo microphone")).on_toggle(set(acc, |st: &mut Settings| st.stereo ^= true)).el(p));
     }
     if !set_.ptt() && set_.processing != "studio" {
-        processing = processing.child(Switch::new(set_.vad_auto).label("Auto-set activity threshold").on_toggle(set(acc, |st: &mut Settings| st.vad_auto ^= true)).el(p));
+        processing = processing.child(Switch::new(set_.vad_auto).label(t("Auto-set activity threshold")).on_toggle(set(acc, |st: &mut Settings| st.vad_auto ^= true)).el(p));
         if !set_.vad_auto {
             processing = processing.child(
                 col()
                     .w_full()
                     .gap(8.0)
-                    .child(label("Activity threshold", p))
+                    .child(label(t("Activity threshold"), p))
                     .child(meter(v.mic_test, v.level, Some(set_.vad_threshold), p))
                     .child(Slider::new("vad-threshold", set_.vad_threshold, -100.0, 0.0).step(1.0).on_change(move |s: &mut S, x| set(acc, move |st: &mut Settings| st.vad_threshold = x)(s)).el(p)),
             );
@@ -149,13 +150,13 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     }
     if set_.processing == "custom" {
         processing = processing
-            .child(Switch::new(set_.noise_suppression).label("Noise suppression").on_toggle(set(acc, |st: &mut Settings| st.noise_suppression ^= true)).el(p))
-            .child(Switch::new(set_.echo_cancellation).label("Echo cancellation").on_toggle(set(acc, |st: &mut Settings| st.echo_cancellation ^= true)).el(p));
+            .child(Switch::new(set_.noise_suppression).label(t("Noise suppression")).on_toggle(set(acc, |st: &mut Settings| st.noise_suppression ^= true)).el(p))
+            .child(Switch::new(set_.echo_cancellation).label(t("Echo cancellation")).on_toggle(set(acc, |st: &mut Settings| st.echo_cancellation ^= true)).el(p));
     }
-    out = out.child(section("Voice processing", processing, false, p));
+    out = out.child(section(t("Voice processing"), processing, false, p));
 
     // ---- Mic test
-    let test = Button::new(if v.mic_test { "Stop mic test" } else { "Start mic test" })
+    let test = Button::new(if v.mic_test { t("Stop mic test") } else { t("Start mic test") })
         .key("mic-test")
         .on_press({
             let on = !v.mic_test;
@@ -165,7 +166,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     let threshold = (!set_.vad_auto && !set_.ptt()).then_some(set_.vad_threshold);
     out = out.child(section(
         "Mic test",
-        col().w_full().gap(12.0).child(desc("Check how loud your microphone is.", p)).child(row().w_full().gap(16.0).center_y().child(test).child(meter(v.mic_test, v.level, threshold, p))),
+        col().w_full().gap(12.0).child(desc(t("Check how loud your microphone is."), p)).child(row().w_full().gap(16.0).center_y().child(test).child(meter(v.mic_test, v.level, threshold, p))),
         false,
         p,
     ));
@@ -174,7 +175,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     // ---- Voice channels
     out = out.child(section(
         "Voice channels",
-        Switch::new(set_.show_connection_ids).label("Show connection IDs").on_toggle(set(acc, |st: &mut Settings| st.show_connection_ids ^= true)).el(p),
+        Switch::new(set_.show_connection_ids).label(t("Show connection IDs")).on_toggle(set(acc, |st: &mut Settings| st.show_connection_ids ^= true)).el(p),
         false,
         p,
     ));
@@ -184,7 +185,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     let cam_opts: Vec<(&str, &str)> = std::iter::once(("", "Default")).chain(cams.iter().map(|n| (n.as_str(), n.as_str()))).collect();
     let cam_ok = crate::gst::available();
     let camera = Select::new("settings-camera", &cam_opts, Some(set_.camera.as_deref().unwrap_or("")))
-        .label("Camera")
+        .label(t("Camera"))
         .width(340.0)
         .disabled(!cam_ok)
         .on_choose(move |s: &mut S, val| {
@@ -192,7 +193,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
             set(acc, move |st: &mut Settings| st.camera = val.clone())(s)
         })
         .el(&st.popups, pops, p, layer);
-    let preview = Button::new("Start camera test and configure effects")
+    let preview = Button::new(t("Start camera test and configure effects"))
         .variant(ButtonVariant::Secondary)
         .key("camera-test")
         .disabled(!cam_ok)
@@ -205,7 +206,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         .el(p);
     let quality = [("low", "480p"), ("medium", "720p"), ("high", "1080p")];
     let cam_quality = Select::new("camera-quality", &quality, Some(set_.camera_quality.as_str()))
-        .label("Camera quality")
+        .label(t("Camera quality"))
         .width(340.0)
         .on_choose(move |s: &mut S, val| {
             let val = val.to_string();
@@ -217,10 +218,10 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         video = video.child(desc("Camera needs Reflux built with GStreamer.", p));
     }
     video = video
-        .child(Switch::new(set_.mirror_camera).label("Mirror camera").on_toggle(set(acc, |st: &mut Settings| st.mirror_camera ^= true)).el(p))
+        .child(Switch::new(set_.mirror_camera).label(t("Mirror camera")).on_toggle(set(acc, |st: &mut Settings| st.mirror_camera ^= true)).el(p))
         .child(row().child(preview))
         .child(cam_quality);
-    out = out.child(section("Video", video, false, p));
+    out = out.child(section(t("Video"), video, false, p));
 
     // ---- Screen share
     let res = [("720", "720p"), ("1080", "1080p"), ("1440", "1440p"), ("source", "Source")];
@@ -230,7 +231,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     let fps_v = set_.screen_fps.to_string();
     let rate_v = set_.screen_bitrate.map_or("auto".to_string(), |b| b.to_string());
     let r = Select::new("settings-share-res", &res, Some(&res_v))
-        .label("Screen share quality")
+        .label(t("Screen share quality"))
         .width(220.0)
         .on_choose(move |s: &mut S, val| {
             let h = val.parse().ok();
@@ -238,7 +239,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         })
         .el(&st.popups, pops, p, layer);
     let f = Select::new("settings-share-fps", &fps, Some(&fps_v))
-        .label("Frame rate")
+        .label(t("Frame rate"))
         .width(220.0)
         .on_choose(move |s: &mut S, val| {
             let n = val.parse().unwrap_or(30);
@@ -246,7 +247,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         })
         .el(&st.popups, pops, p, layer);
     let b = Select::new("settings-share-bitrate", &rates, Some(&rate_v))
-        .label("Bitrate")
+        .label(t("Bitrate"))
         .width(220.0)
         .on_choose(move |s: &mut S, val| {
             let b = val.parse().ok();
@@ -258,8 +259,8 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         .gap(20.0)
         .child(row().w_full().gap(16.0).child(r).child(f))
         .child(b)
-        .child(desc("With Automatic, the bitrate follows your resolution and frame rate. Higher values keep fast motion sharper and use more upload bandwidth.", p));
-    out = out.child(section("Screen share", share, false, p));
+        .child(desc(t("With Automatic, the bitrate follows your resolution and frame rate. Higher values keep fast motion sharper and use more upload bandwidth."), p));
+    out = out.child(section(t("Screen share"), share, false, p));
 
     // ---- Encoder
     let encoders = [

@@ -10,6 +10,7 @@ use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, over, rgb};
+use crate::i18n::t;
 
 /// An invite's preview while it loads, once loaded, or when it doesn't resolve.
 pub enum Preview {
@@ -119,8 +120,8 @@ fn loading(p: &Palette) -> El {
 /// `InviteNotFoundError`.
 fn unknown(p: &Palette) -> El {
     let face = row().size(48.0, 48.0).center().radius(24.0).fill(p.background_tertiary).child(icon(&icons::QUESTION, 28.0).color(p.text_tertiary));
-    let header = col().gap(2.4).child(title("Unknown invite", p.status_danger)).child(text("Try asking for a new invite.").font(font(12.8, 400.0).lh(15.36)).color(p.text_tertiary));
-    let button = Button::<()>::new("Invite unavailable").fit_container().disabled(true).el(p);
+    let header = col().gap(2.4).child(title(t("Unknown invite"), p.status_danger)).child(text(t("Try asking for a new invite.")).font(font(12.8, 400.0).lh(15.36)).color(p.text_tertiary));
+    let button = Button::<()>::new(t("Invite unavailable")).fit_container().disabled(true).el(p);
     card(face, header, Some(button), p)
 }
 
@@ -147,10 +148,10 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
             let members = inv.member_count.unwrap_or(0);
             let stats = row()
                 .gap(9.6)
-                .child(stat(Some(p.status_online), format!("{} online", count(inv.presence_count.unwrap_or(0))), p))
+                .child(stat(Some(p.status_online), crate::i18n::tf("{onlineCount} online", &[("onlineCount", &(count(inv.presence_count.unwrap_or(0))).to_string())]), p))
                 .child(stat(Some(p.text_tertiary_secondary), format!("{} {}", count(members), if members == 1 { "member" } else { "members" }), p));
             let joined = store.guilds.contains_key(&g.id);
-            (face, g.name.clone(), stats, if joined { "Go to community" } else { "Join community" }, joined)
+            (face, g.name.clone(), stats, if joined { t("Go to community") } else { t("Join community") }, joined)
         }
         None => {
             // A group DM invite: the inviter's face and the group's name.
@@ -164,9 +165,9 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
                 None => el().size(48.0, 48.0).radius(24.0).fill(p.background_tertiary),
             };
             let members = inv.member_count.unwrap_or(0);
-            let stats = row().child(stat(Some(p.text_tertiary_secondary), format!("{} {}", count(members), if members == 1 { "Member" } else { "Members" }), p));
+            let stats = row().child(stat(Some(p.text_tertiary_secondary), format!("{} {}", count(members), if members == 1 { "Member" } else { t("Members") }), p));
             let joined = inv.channel_id.or(ch.map(|c| c.id)).is_some_and(|c| store.channels.contains_key(&c));
-            (face, name, stats, if joined { "Already joined" } else { "Join group" }, joined)
+            (face, name, stats, if joined { t("Already joined") } else { t("Join group") }, joined)
         }
     };
     let (code, guild, channel) = (inv.code.clone(), inv.guild.as_ref().map(|g| g.id), inv.channel.as_ref().map(|c| c.id));

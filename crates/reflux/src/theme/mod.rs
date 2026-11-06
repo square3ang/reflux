@@ -1,8 +1,9 @@
+pub mod custom;
 mod palette;
 
 use std::sync::LazyLock;
 
-pub use palette::{Palette, dim};
+pub use palette::{NAMES, Palette, dim};
 use rune::tok::TextStyle;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -14,8 +15,8 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// The palette for a user settings `theme` value. `dark_legacy` and `system` have no palette
-    /// here yet and use dark.
+    /// The base palette for a user settings `theme` value (`dark_legacy` and `system` are
+    /// resolved by [`custom::effective`]).
     pub fn from_setting(value: &str) -> Kind {
         match value {
             "light" => Kind::Light,

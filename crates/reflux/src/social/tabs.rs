@@ -16,6 +16,7 @@ use crate::settings::tabs::section;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Modal as Dialog, RadioGroup, Select, Switch, popup_access};
+use crate::i18n::t;
 
 /// Fetches what a community tab of this module lists.
 pub fn load_guild_tab(st: &mut ShellState, g: Snowflake, tab: &str) {
@@ -83,7 +84,7 @@ fn cur(st: &ShellState, key: &str, saved: Value) -> Value {
 }
 
 fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let Some(info) = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()) else { return empty("Loading…", p) };
+    let Some(info) = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()) else { return empty(t("Loading…"), p) };
     let me = store.my_id();
     let can = store.guild_permissions(g).contains(P::MANAGE_GUILD);
     let owner = info.owner_id == me;
@@ -99,23 +100,23 @@ fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Pale
     let mut verification = col()
         .w_full()
         .gap(12.0)
-        .child(heading("Member verification", "Choose what members must have before they can post or DM community members. Members with roles can bypass these checks. For public spaces, we recommend enabling verification.", p));
+        .child(heading(t("Member verification"), t("Choose what members must have before they can post or DM community members. Members with roles can bypass these checks. For public spaces, we recommend enabling verification."), p));
     if discoverable {
-        verification = verification.child(small("Communities listed in Explore need at least email verification. You can't pick \"None\" while your community is listed in Explore.", p).wrap());
+        verification = verification.child(small(t("Communities listed in Explore need at least email verification. You can't pick \"None\" while your community is listed in Explore."), p).wrap());
     }
     verification = verification.child(RadioGroup::new(&VERIFICATION, Some(&vl)).disabled(!can).on_change(set("verification_level")).el(p));
     let filter = col()
         .w_full()
         .gap(12.0)
-        .child(heading("Content filtering", "Automatically check images and videos for explicit content in channels not marked for mature content.", p))
+        .child(heading(t("Content filtering"), t("Automatically check images and videos for explicit content in channels not marked for mature content."), p))
         .child(RadioGroup::new(&FILTER, Some(&ef)).disabled(!can || discoverable).on_change(set("explicit_content_filter")).el(p));
     let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
     let mut mature = col()
         .w_full()
         .gap(12.0)
-        .child(heading("Mature content & content warnings", "", p))
+        .child(heading(t("Mature content & content warnings"), "", p))
         .child(
-            row().w_full().center_y().child(text("Mature content").font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0)).child(
+            row().w_full().center_y().child(text(t("Mature content")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0)).child(
                 Select::new("mod-mature", &MATURE, Some(if nsfw { "on" } else { "off" }))
                     .width(160.0)
                     .disabled(!can)
@@ -125,11 +126,11 @@ fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Pale
                     .el(&st.popups, pops, p, &mut Vec::new()),
             ),
         )
-        .child(Switch::new(cw).label("Show a content warning").disabled(!can).on_toggle(move |s: &mut S| {
+        .child(Switch::new(cw).label(t("Show a content warning")).disabled(!can).on_toggle(move |s: &mut S| {
             acc(s).form.data.insert("content_warning_level".into(), json!(if cw { 0 } else { 1 }));
         }).el(p));
     if cw {
-        mature = mature.child(field(st, acc, "content_warning_text", info.content_warning_text.as_deref().unwrap_or(""), "Custom warning text", "This contains sensitive content.", p));
+        mature = mature.child(field(st, acc, "content_warning_text", info.content_warning_text.as_deref().unwrap_or(""), t("Custom warning text"), t("This contains sensitive content."), p));
     }
     let mut content = col().w_full().gap(32.0).child(verification).child(filter).child(mature);
     if owner {
@@ -137,8 +138,8 @@ fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Pale
             col()
                 .w_full()
                 .gap(12.0)
-                .child(heading("2FA requirement", "Require two-factor authentication for moderators before they can ban, kick, time out, or remove messages.", p))
-                .child(Switch::new(mfa).label("Require 2FA for moderation actions").on_toggle(move |s: &mut S| {
+                .child(heading(t("2FA requirement"), t("Require two-factor authentication for moderators before they can ban, kick, time out, or remove messages."), p))
+                .child(Switch::new(mfa).label(t("Require 2FA for moderation actions")).on_toggle(move |s: &mut S| {
                     acc(s).form.data.insert("mfa_level".into(), json!(if mfa { 0 } else { 1 }));
                 }).el(p)),
         );
@@ -172,7 +173,7 @@ fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Pale
     } else if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    section("Moderation", content, true, p)
+    section(t("Moderation"), content, true, p)
 }
 
 // ---- Vanity URL -----------------------------------------------------------------------------
@@ -180,7 +181,7 @@ fn moderation<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Pale
 fn vanity<S: 'static>(_store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let v = match st.form.data.get("vanity") {
         Some(v) => v.clone(),
-        None => return section("Vanity URL", error(st, p).unwrap_or_else(|| empty("Loading…", p)), true, p),
+        None => return section(t("Vanity URL"), error(st, p).unwrap_or_else(|| empty(t("Loading…"), p)), true, p),
     };
     let code = v["code"].as_str().unwrap_or_default().to_string();
     let uses = v["uses"].as_u64().unwrap_or(0);
@@ -197,17 +198,17 @@ fn vanity<S: 'static>(_store: &Store, st: &ShellState, g: Snowflake, p: &Palette
     let mut buttons = row().gap(8.0);
     let code2 = code.clone();
     if !code.is_empty() {
-        buttons = buttons.child(Button::new("Remove").variant(ButtonVariant::Secondary).key("vanity-remove").on_press(move |s: &mut S| {
+        buttons = buttons.child(Button::new(t("Remove")).variant(ButtonVariant::Secondary).key("vanity-remove").on_press(move |s: &mut S| {
             acc(s).social(Method::PATCH, format!("/guilds/{g}/vanity-url"), Some(json!({ "code": null })), Done::Reload("vanity".into(), format!("/guilds/{g}/vanity-url")))
         }).el(p));
     }
-    buttons = buttons.child(Button::new("Save").submitting(st.form.busy).disabled(edit.trim() == code2 || edit.trim().is_empty()).key("vanity-save").on_press(move |s: &mut S| {
+    buttons = buttons.child(Button::new(t("Save")).submitting(st.form.busy).disabled(edit.trim() == code2 || edit.trim().is_empty()).key("vanity-save").on_press(move |s: &mut S| {
         let sh = acc(s);
         let c = sh.form.value("vanity_code", &code).trim().to_string();
         sh.social(Method::PATCH, format!("/guilds/{g}/vanity-url"), Some(json!({ "code": c })), Done::Reload("vanity".into(), format!("/guilds/{g}/vanity-url")));
     }).el(p));
     content = content.child(buttons).children(error(st, p));
-    section("Vanity URL", content, true, p)
+    section(t("Vanity URL"), content, true, p)
 }
 
 // ---- Webhooks -------------------------------------------------------------------------------
@@ -220,7 +221,7 @@ fn webhook_url(st: &ShellState, w: &Value) -> Option<String> {
 fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> El {
     let list: Vec<Value> = match loaded(st, "webhooks", p) {
         Ok(l) => l,
-        Err(e) => return section("Webhooks", e, true, p),
+        Err(e) => return section(t("Webhooks"), e, true, p),
     };
     let reload = match channel {
         Some(c) => format!("/channels/{c}/webhooks"),
@@ -243,24 +244,24 @@ fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: O
             if let Some(url) = url {
                 r = r.child(Button::<S>::new("Copy URL").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(format!("webhook-copy-{id}")).el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(url.clone())));
             }
-            r.child(Button::new("Edit").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(format!("webhook-edit-{id}")).on_press(move |s: &mut S| {
+            r.child(Button::new(t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(format!("webhook-edit-{id}")).on_press(move |s: &mut S| {
                 let sh = acc(s);
                 sh.open_social(Modal::Webhook { guild: g, id });
                 sh.form.data.insert("webhook".into(), w2.clone());
             }).el(p))
-                .child(Button::new("Delete").variant(ButtonVariant::Danger).size(ButtonSize::Compact).key(format!("webhook-delete-{id}")).on_press(move |s: &mut S| {
+                .child(Button::new(t("Delete")).variant(ButtonVariant::Danger).size(ButtonSize::Compact).key(format!("webhook-delete-{id}")).on_press(move |s: &mut S| {
                     acc(s).social(Method::DELETE, format!("/webhooks/{id}"), None, Done::Reload("webhooks".into(), reload.clone()))
                 }).el(p))
         })
         .collect();
-    let mut content = col().w_full().gap(16.0).child(small(if channel.is_some() { "Webhooks post messages to this channel from other apps." } else { "View and manage every webhook configured across your community." }, p).wrap());
+    let mut content = col().w_full().gap(16.0).child(small(if channel.is_some() { "Webhooks post messages to this channel from other apps." } else { t("View and manage every webhook configured across your community.") }, p).wrap());
     if let Some(c) = channel {
-        content = content.child(row().child(Button::new("Create webhook").size(ButtonSize::Small).key("webhook-create").on_press(move |s: &mut S| {
+        content = content.child(row().child(Button::new(t("Create webhook")).size(ButtonSize::Small).key("webhook-create").on_press(move |s: &mut S| {
             acc(s).social(Method::POST, format!("/channels/{c}/webhooks"), Some(json!({ "name": "New webhook" })), Done::Reload("webhooks".into(), format!("/channels/{c}/webhooks")))
         }).el(p)));
     }
-    content = content.children(error(st, p)).child(if rows.is_empty() { empty("No webhooks", p) } else { card(rows, p) });
-    section("Webhooks", content, true, p)
+    content = content.children(error(st, p)).child(if rows.is_empty() { empty(t("No webhooks"), p) } else { card(rows, p) });
+    section(t("Webhooks"), content, true, p)
 }
 
 /// Name, channel and avatar of one webhook (`form.data["webhook"]`).
@@ -286,17 +287,17 @@ pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, 
         None => "Default avatar",
     };
     let mut items = vec![
-        field(st, acc, "name", &name, "Name", "Webhook", p),
-        Select::new("webhook-channel", &opts, Some(&pick)).label("Channel").width(406.0).on_choose(move |s: &mut S, v: &str| {
+        field(st, acc, "name", &name, t("Name"), "Webhook", p),
+        Select::new("webhook-channel", &opts, Some(&pick)).label(t("Channel")).width(406.0).on_choose(move |s: &mut S, v: &str| {
             acc(s).form.data.insert("channel".into(), json!(v));
         }).el(&st.popups, pops, p, layer),
-        col().gap(8.0).child(label("Avatar", p)).child(
+        col().gap(8.0).child(label(t("Avatar"), p)).child(
             row()
                 .gap(8.0)
                 .center_y()
                 .child(small(avatar, p))
-                .child(Button::<S>::new("Change avatar").variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::guild::pick_image(acc, "avatar")))
-                .child(Button::new("Remove avatar").variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {
+                .child(Button::<S>::new(t("Change avatar")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::guild::pick_image(acc, "avatar")))
+                .child(Button::new(t("Remove avatar")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {
                     acc(s).form.data.insert("avatar".into(), Value::Null);
                 }).el(p)),
         ),
@@ -306,7 +307,7 @@ pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, 
         let sh = acc(s);
         let n = sh.form.value("name", &name).trim().to_string();
         if n.is_empty() {
-            sh.form.error = Some("Name is required".into());
+            sh.form.error = Some(t("Name is required").into());
             return;
         }
         let mut b = json!({ "name": n });
@@ -320,8 +321,8 @@ pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, 
     };
     let footer = row()
         .gap(8.0)
-        .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(back).el(p))
-        .child(Button::new("Save").submitting(st.form.busy).key("webhook-save").on_press(save).el(p));
+        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(back).el(p))
+        .child(Button::new(t("Save")).submitting(st.form.busy).key("webhook-save").on_press(save).el(p));
     Dialog::new("Edit webhook", back).body(body(items)).footer(footer).el(p)
 }
 
@@ -341,7 +342,7 @@ const CATEGORIES: [(&str, &str); 9] = [
 
 fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let Some(status) = st.form.data.get("discovery").cloned() else {
-        return section("Explore", error(st, p).unwrap_or_else(|| empty("Loading…", p)), true, p);
+        return section(t("Explore"), error(st, p).unwrap_or_else(|| empty(t("Loading…"), p)), true, p);
     };
     let app = &status["application"];
     let state = app["status"].as_str().unwrap_or("");
@@ -351,23 +352,23 @@ fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAcc
     let (badge, line) = match state {
         "pending" => ("Pending review", "An instance admin will review your application."),
         "approved" => ("Listed", "Your community is listed in Explore."),
-        "rejected" => ("Rejected", "You can change your listing and apply again."),
-        "removed" => ("Removed", "An instance admin removed the listing. You can apply again."),
+        "rejected" => (t("Rejected"), "You can change your listing and apply again."),
+        "removed" => (t("Removed"), "An instance admin removed the listing. You can apply again."),
         _ if eligible => ("Not listed", "Fill in a description and category to apply."),
         _ => ("Not eligible", ""),
     };
     content = content.child(row().gap(8.0).center_y().child(text(badge).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary)).child(small(line, p)));
     if !eligible && app.is_null() {
         content = content.child(small(format!("Communities need at least {min} members to apply."), p));
-        return section("Explore", content, true, p);
+        return section(t("Explore"), content, true, p);
     }
     let desc0 = app["description"].as_str().unwrap_or_default().to_string();
     let cat0 = app["category_type"].as_u64().map_or("8".to_string(), |c| c.to_string());
     let cat = st.form.data.get("category").and_then(Value::as_str).unwrap_or(&cat0).to_string();
     let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
     content = content
-        .child(field(st, acc, "description", &desc0, "Description", "What is your community about? (10-300 characters)", p))
-        .child(Select::new("explore-category", &CATEGORIES, Some(&cat)).label("Category").width(320.0).on_choose(move |s: &mut S, v: &str| {
+        .child(field(st, acc, "description", &desc0, t("Description"), "What is your community about? (10-300 characters)", p))
+        .child(Select::new("explore-category", &CATEGORIES, Some(&cat)).label(t("Category")).width(320.0).on_choose(move |s: &mut S, v: &str| {
             acc(s).form.data.insert("category".into(), json!(v));
         }).el(&st.popups, pops, p, layer))
         .children(error(st, p));
@@ -386,13 +387,13 @@ fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAcc
         let method = if apply { Method::POST } else { Method::PATCH };
         sh.social(method, format!("/guilds/{g}/discovery"), Some(json!({ "description": d, "category_type": c })), r2.clone());
     };
-    let mut buttons = row().gap(8.0).child(Button::new(if apply { "Apply" } else { "Save" }).submitting(st.form.busy).key("explore-submit").on_press(submit).el(p));
+    let mut buttons = row().gap(8.0).child(Button::new(if apply { t("Apply") } else { t("Save") }).submitting(st.form.busy).key("explore-submit").on_press(submit).el(p));
     if matches!(state, "pending" | "approved") {
-        buttons = buttons.child(Button::new(if state == "approved" { "Remove listing" } else { "Withdraw" }).variant(ButtonVariant::Danger).key("explore-delete").on_press(move |s: &mut S| {
+        buttons = buttons.child(Button::new(if state == "approved" { "Remove listing" } else { t("Withdraw") }).variant(ButtonVariant::Danger).key("explore-delete").on_press(move |s: &mut S| {
             acc(s).social(Method::DELETE, format!("/guilds/{g}/discovery"), None, reload.clone())
         }).el(p));
     }
-    section("Explore", content.child(buttons), true, p)
+    section(t("Explore"), content.child(buttons), true, p)
 }
 
 // ---- Invites --------------------------------------------------------------------------------
@@ -400,13 +401,13 @@ fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAcc
 fn channel_invites<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let list: Vec<Invite> = match loaded(st, "invites", p) {
         Ok(l) => l,
-        Err(e) => return section("Invites", e, true, p),
+        Err(e) => return section(t("Invites"), e, true, p),
     };
     let rows: Vec<El> = list
         .iter()
         .map(|i| {
             let code = i.code.clone();
-            let by = i.inviter.as_ref().map(|u| u.global_name.clone().unwrap_or_else(|| u.username.clone())).unwrap_or_else(|| "Unknown".into());
+            let by = i.inviter.as_ref().map(|u| u.global_name.clone().unwrap_or_else(|| u.username.clone())).unwrap_or_else(|| t("Unknown").into());
             let uses = if i.max_uses == 0 { format!("{} uses", i.uses) } else { format!("{}/{} uses", i.uses, i.max_uses) };
             let expires = i.expires_at.as_deref().map_or("Never expires".to_string(), |t| format!("Expires {}", t.get(..10).unwrap_or(t)));
             row()
@@ -414,7 +415,7 @@ fn channel_invites<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: 
                 .gap(12.0)
                 .center_y()
                 .child(col().grow(1.0).min_w(0.0).child(title(code.clone(), p)).child(small(format!("by {by} · {uses} · {expires}"), p)))
-                .child(Button::new("Revoke").variant(ButtonVariant::Danger).size(ButtonSize::Compact).key(format!("invite-revoke-{code}")).on_press(move |s: &mut S| {
+                .child(Button::new(t("Revoke")).variant(ButtonVariant::Danger).size(ButtonSize::Compact).key(format!("invite-revoke-{code}")).on_press(move |s: &mut S| {
                     acc(s).social(Method::DELETE, format!("/invites/{code}"), None, Done::Reload("invites".into(), format!("/channels/{c}/invites")))
                 }).el(p))
         })
@@ -424,7 +425,7 @@ fn channel_invites<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: 
         content = content.children(pause_invites(store, g, p, acc));
     }
     content = content.children(error(st, p)).child(if rows.is_empty() { empty("No invites yet.", p) } else { card(rows, p) });
-    section("Invites", content, true, p)
+    section(t("Invites"), content, true, p)
 }
 
 /// "Pause invites": toggles the `INVITES_DISABLED` feature (needs `MANAGE_GUILD`).
@@ -437,7 +438,7 @@ pub fn pause_invites<S: 'static>(store: &Store, g: Snowflake, p: &Palette, acc: 
     let next: Vec<String> = if paused { features.into_iter().filter(|f| f != "INVITES_DISABLED").collect() } else { features.into_iter().chain(["INVITES_DISABLED".to_string()]).collect() };
     Some(
         Switch::new(paused)
-            .label("Pause invites")
+            .label(t("Pause invites"))
             .description("Nobody can join with an invite while this is on.")
             .on_toggle(move |s: &mut S| acc(s).social(Method::PATCH, format!("/guilds/{g}"), Some(json!({ "features": next.clone() })), Done::Nothing))
             .el(p),

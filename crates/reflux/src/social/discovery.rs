@@ -14,6 +14,7 @@ use crate::icons;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Input, Modal as Dialog, scroller, spinner};
+use crate::i18n::t;
 
 const CATEGORIES: [&str; 9] = ["Gaming", "Music", "Entertainment", "Education", "Science & Technology", "Content Creator", "Anime & Manga", "Movies & TV", "Other"];
 
@@ -60,7 +61,7 @@ fn compact(n: u64) -> String {
 
 pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let search_box = Input::new("discovery-search", &st.social.discovery_query, move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).social.discovery_query })
-        .placeholder("Search communities")
+        .placeholder(t("Search communities"))
         .el(p)
         .w(360.0)
         .on_key(move |s: &mut S, k: &rune::KeyEvent, _: &mut rune::Tx| {
@@ -78,7 +79,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         .center_y()
         .child(rune::el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
         .child(icon(&icons::COMPASS_FILL, 20.0).color(p.text_primary_muted))
-        .child(text("Explore").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .child(text(t("Explore")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
         .child(search_box);
     let pill = |label: &str, cat: Option<u8>| {
         let on = st.social.discovery_category == cat;
@@ -99,7 +100,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
                 search(st);
             })
     };
-    let mut cats = row().w_full().gap(8.0).flex_wrap().child(pill("All", None));
+    let mut cats = row().w_full().gap(8.0).flex_wrap().child(pill(t("All"), None));
     for (i, c) in CATEGORIES.iter().enumerate() {
         cats = cats.child(pill(c, Some(i as u8)));
     }
@@ -115,9 +116,9 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
                     .center()
                     .gap(8.0)
                     .child(icon(&icons::COMPASS_FILL, 64.0).color(p.text_primary_muted))
-                    .child(text(if searching { "No communities match." } else { "Nothing to explore yet" }).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary))
+                    .child(text(if searching { t("No communities match.") } else { t("Nothing to explore yet") }).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary))
                     .child(
-                        text(if searching { "Try another search term, or pick a different category or language." } else { "No communities are listed right now. Check back a little later." })
+                        text(if searching { t("Try another search term, or pick a different category or language.") } else { t("No communities are listed right now. Check back a little later.") })
                             .font(font(14.0, 400.0).lh(20.0))
                             .color(p.text_primary_muted),
                     )
@@ -169,7 +170,7 @@ fn card<S: 'static>(g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
         .border(1.0, p.background_modifier_accent)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(format!("Preview {name}"))
+        .label(crate::i18n::tf("Preview {communityName}", &[("communityName", &name.to_string())]))
         .key(format!("discovery-guild-{id}"))
         .on_press(move |s: &mut S| {
             let st = acc(s);
@@ -195,7 +196,7 @@ fn card<S: 'static>(g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
                     row()
                         .gap(16.0)
                         .center_y()
-                        .child(row().gap(6.0).center_y().child(dot(p.status_online)).child(text(format!("{} online", compact(online))).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted)))
+                        .child(row().gap(6.0).center_y().child(dot(p.status_online)).child(text(crate::i18n::tf("{onlineCount} online", &[("onlineCount", &(compact(online)).to_string())])).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted)))
                         .child(row().gap(6.0).center_y().child(dot(p.text_tertiary)).child(text(if members == 1 { "1 member".to_string() } else { format!("{} members", compact(members)) }).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))),
                 ),
         )
@@ -206,14 +207,14 @@ pub fn preview_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
     let g = st.guild?;
     let gs = store.guilds.get(&g).filter(|gs| gs.visiting)?;
     let name = gs.info.as_ref().map_or(String::new(), |i| i.name.clone());
-    let join = Button::new("Join")
+    let join = Button::new(t("Join"))
         .variant(ButtonVariant::Inverted)
         .size(ButtonSize::SuperCompact)
         .submitting(st.form.busy && st.dialog.is_none())
         .key("nagbar-visit-join")
         .on_press(move |s: &mut S| acc(s).social(Method::POST, format!("/users/@me/guild-visits/{g}/join"), None, Done::Nothing))
         .el(p);
-    let stop = Button::new("Stop previewing")
+    let stop = Button::new(t("Stop previewing"))
         .variant(ButtonVariant::Secondary)
         .size(ButtonSize::SuperCompact)
         .key("nagbar-visit-stop")
@@ -245,7 +246,7 @@ pub fn invite_accept<S: 'static>(_store: &Store, st: &ShellState, code: &str, p:
     let Some(inv) = inv else {
         let mut items = vec![if st.form.error.is_some() { desc("This invite may be expired, or you might not have permission to join.", p) } else { row().w_full().h(80.0).center().child(spinner(p.text_primary_muted)) }];
         items.extend(error(st, p));
-        return Dialog::new("Join community", close(acc)).body(body(items)).el(p);
+        return Dialog::new(t("Join community"), close(acc)).body(body(items)).el(p);
     };
     let name = inv["guild"]["name"].as_str().or(inv["channel"]["name"].as_str()).unwrap_or("this community").to_string();
     let by = inv["inviter"]["global_name"].as_str().or(inv["inviter"]["username"].as_str()).map(str::to_string);
@@ -261,13 +262,13 @@ pub fn invite_accept<S: 'static>(_store: &Store, st: &ShellState, code: &str, p:
         .child(
             row()
                 .gap(16.0)
-                .children(online.map(|o| text(format!("{} online", compact(o))).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)))
+                .children(online.map(|o| text(crate::i18n::tf("{onlineCount} online", &[("onlineCount", &(compact(o)).to_string())])).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)))
                 .children(members.map(|m| text(format!("{} members", compact(m))).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted))),
         )];
     items.extend(error(st, p));
     let code = code.to_string();
-    let join = Button::new("Join community").submitting(st.form.busy).key("invite-accept").on_press(move |s: &mut S| acc(s).social(Method::POST, format!("/invites/{code}"), Some(json!({})), Done::Enter)).el(p);
-    Dialog::new("Join community", close(acc)).body(body(items)).footer(row().w_full().child(join.grow(1.0))).el(p)
+    let join = Button::new(t("Join community")).submitting(st.form.busy).key("invite-accept").on_press(move |s: &mut S| acc(s).social(Method::POST, format!("/invites/{code}"), Some(json!({})), Done::Enter)).el(p);
+    Dialog::new(t("Join community"), close(acc)).body(body(items)).footer(row().w_full().child(join.grow(1.0))).el(p)
 }
 
 /// The code of an invite link on this instance (`{invite}/code` or `{webapp}/invite/code`).

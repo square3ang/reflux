@@ -13,6 +13,7 @@ use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonVariant, MenuEntry, MenuItem, Modal as Dialog, RadioGroup, Select, popup_access};
+use crate::i18n::t;
 
 /// Queues a request carrying an audit-log reason (blank = none).
 fn send(st: &mut ShellState, method: Method, path: String, body: Option<Value>, reason: &str, done: Done) {
@@ -50,7 +51,7 @@ pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u:
     // Your own nickname is the shell's (`status::open`); this is MANAGE_NICKNAMES on others.
     let nick_ok = u != me && can_moderate(store, g, u, P::MANAGE_NICKNAMES);
     if nick_ok && member {
-        out.push(MenuEntry::Item(MenuItem::new("change-nickname", "Change nickname").icon(&icons::IDENTIFICATION_CARD_FILL).on_select(open(Modal::Nickname { guild: g, user: u }))));
+        out.push(MenuEntry::Item(MenuItem::new("change-nickname", t("Change nickname")).icon(&icons::IDENTIFICATION_CARD_FILL).on_select(open(Modal::Nickname { guild: g, user: u }))));
     }
     if have.contains(P::MANAGE_ROLES) && member {
         let mine = rank(store, g, me);
@@ -73,21 +74,21 @@ pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u:
     let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == me);
     let mut mods = Vec::new();
     if owner && u != me && member && store.users.get(&u).is_none_or(|x| !x.bot) {
-        mods.push(MenuItem::new("transfer", "Transfer ownership").icon(&icons::CROWN_FILL).danger().on_select(open(Modal::TransferOwnership { guild: g, user: u })));
+        mods.push(MenuItem::new("transfer", t("Transfer ownership")).icon(&icons::CROWN_FILL).danger().on_select(open(Modal::TransferOwnership { guild: g, user: u })));
     }
     if member && can_moderate(store, g, u, P::MODERATE_MEMBERS) {
         let now = iso(st.now_ms);
         mods.push(if timed_out(store, g, u, &now) {
-            MenuItem::new("remove-timeout", "Remove timeout").icon(&icons::TIMER_FILL).danger().on_select(open(Modal::RemoveTimeout { guild: g, user: u }))
+            MenuItem::new("remove-timeout", t("Remove timeout")).icon(&icons::TIMER_FILL).danger().on_select(open(Modal::RemoveTimeout { guild: g, user: u }))
         } else {
-            MenuItem::new("timeout", "Timeout").icon(&icons::TIMER_FILL).danger().on_select(open(Modal::Timeout { guild: g, user: u }))
+            MenuItem::new("timeout", t("Timeout")).icon(&icons::TIMER_FILL).danger().on_select(open(Modal::Timeout { guild: g, user: u }))
         });
     }
     if member && can_moderate(store, g, u, P::KICK_MEMBERS) {
-        mods.push(MenuItem::new("kick", "Kick member").icon(&icons::SIGN_OUT_FILL).danger().on_select(open(Modal::Kick { guild: g, user: u })));
+        mods.push(MenuItem::new("kick", t("Kick member")).icon(&icons::SIGN_OUT_FILL).danger().on_select(open(Modal::Kick { guild: g, user: u })));
     }
     if can_moderate(store, g, u, P::BAN_MEMBERS) {
-        mods.push(MenuItem::new("ban", "Ban member").icon(&icons::GAVEL_FILL).danger().on_select(open(Modal::Ban { guild: g, user: u })));
+        mods.push(MenuItem::new("ban", t("Ban member")).icon(&icons::GAVEL_FILL).danger().on_select(open(Modal::Ban { guild: g, user: u })));
     }
     if !mods.is_empty() {
         out.push(MenuEntry::Separator);
@@ -97,7 +98,7 @@ pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u:
     if u != me {
         out.push(MenuEntry::Separator);
         let m = Modal::Report { target: "user", guild: Some(g), channel: None, id: u };
-        out.push(MenuEntry::Item(MenuItem::new("report-user", "Report profile").icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| open_report(acc(s), m.clone()))));
+        out.push(MenuEntry::Item(MenuItem::new("report-user", t("Report profile")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| open_report(acc(s), m.clone()))));
     }
     out
 }
@@ -144,7 +145,7 @@ pub fn kick<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowfla
     let mut items = vec![desc(format!("Are you sure you want to kick {tag} from the community? They will be able to rejoin with a new invite."), p)];
     items.extend(error(st, p));
     let go = move |s: &mut S| send(acc(s), Method::DELETE, format!("/guilds/{g}/members/{u}"), None, "", Done::Close);
-    Dialog::new("Kick member", close(acc)).body(body(items)).footer(footer(st, "Kick", true, "kick-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Kick member"), close(acc)).body(body(items)).footer(footer(st, t("Kick"), true, "kick-confirm", acc, go, p)).el(p)
 }
 
 const BAN_DURATIONS: [(&str, &str); 9] = [
@@ -185,9 +186,9 @@ pub fn ban<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflak
     let duration = col()
         .w_full()
         .gap(8.0)
-        .child(Select::new("ban-duration", &BAN_DURATIONS, Some(&dur)).label("Ban duration").width(406.0).on_choose(set(acc, "duration")).el(&st.popups, pops, p, layer))
-        .child(text("How long they stay banned.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
-    let history = col().w_full().gap(8.0).child(label("Delete message history", p)).child(RadioGroup::new(&BAN_DELETE, Some(&del)).on_change(set(acc, "delete")).el(p));
+        .child(Select::new("ban-duration", &BAN_DURATIONS, Some(&dur)).label(t("Ban duration")).width(406.0).on_choose(set(acc, "duration")).el(&st.popups, pops, p, layer))
+        .child(text(t("How long they stay banned.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
+    let history = col().w_full().gap(8.0).child(label(t("Delete message history"), p)).child(RadioGroup::new(&BAN_DELETE, Some(&del)).on_change(set(acc, "delete")).el(p));
     let mut items = vec![duration, history, field(st, acc, "reason", "", "Reason (optional)", "Enter a reason for the ban", p)];
     items.extend(error(st, p));
     let go = move |s: &mut S| {
@@ -200,7 +201,7 @@ pub fn ban<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflak
         }
         send(sh, Method::PUT, format!("/guilds/{g}/bans/{u}"), Some(b), &reason, Done::Close);
     };
-    Dialog::new(format!("Ban {}", user_name(store, u)), close(acc)).body(body(items)).footer(footer(st, "Ban", true, "ban-confirm", acc, go, p)).el(p)
+    Dialog::new(format!("Ban {}", user_name(store, u)), close(acc)).body(body(items)).footer(footer(st, t("Ban"), true, "ban-confirm", acc, go, p)).el(p)
 }
 
 /// `TimeoutMemberOptions`: seconds.
@@ -213,12 +214,12 @@ pub fn timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snow
     let select = col()
         .w_full()
         .gap(8.0)
-        .child(Select::new("timeout-duration", &TIMEOUTS, Some(&dur)).label("Timeout duration").width(406.0).on_choose(set(acc, "duration")).el(&st.popups, pops, p, layer))
-        .child(text("How long they stay timed out.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
+        .child(Select::new("timeout-duration", &TIMEOUTS, Some(&dur)).label(t("Timeout duration")).width(406.0).on_choose(set(acc, "duration")).el(&st.popups, pops, p, layer))
+        .child(text(t("How long they stay timed out.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
     let mut items = vec![
         desc(format!("Prevent {tag} from sending messages, reacting, and joining voice channels for the specified duration."), p),
         select,
-        field(st, acc, "reason", "", "Reason (optional)", "", p),
+        field(st, acc, "reason", "", t("Reason (optional)"), "", p),
         text("This reason will be displayed in the activity log in Community settings > Activity log.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap(),
     ];
     items.extend(error(st, p));
@@ -233,7 +234,7 @@ pub fn timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snow
         }
         send(sh, Method::PATCH, format!("/guilds/{g}/members/{u}"), Some(b), &reason, Done::Close);
     };
-    Dialog::new(format!("Time out {tag}"), close(acc)).body(body(items)).footer(footer(st, "Timeout", true, "timeout-confirm", acc, go, p)).el(p)
+    Dialog::new(crate::i18n::tf("Time out {tag}", &[("tag", &tag.to_string())]), close(acc)).body(body(items)).footer(footer(st, t("Timeout"), true, "timeout-confirm", acc, go, p)).el(p)
 }
 
 pub fn remove_timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -241,30 +242,30 @@ pub fn remove_timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, 
     let mut items = vec![desc(format!("Removing the timeout will allow {tag} to send messages, react, and join voice channels again."), p)];
     items.extend(error(st, p));
     let go = move |s: &mut S| send(acc(s), Method::PATCH, format!("/guilds/{g}/members/{u}"), Some(json!({ "communication_disabled_until": null })), "", Done::Close);
-    Dialog::new("Remove timeout", close(acc)).body(body(items)).footer(footer(st, "Remove timeout", true, "untimeout-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Remove timeout"), close(acc)).body(body(items)).footer(footer(st, t("Remove timeout"), true, "untimeout-confirm", acc, go, p)).el(p)
 }
 
 /// `BanDetailsModal`, from the Bans tab (its list is in `form.data["bans"]`).
 pub fn ban_details<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let ban = st.form.data.get("ban").cloned().unwrap_or(Value::Null);
     let row_of = |k: &str, v: String| col().gap(4.0).child(text(k.to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary)).child(text(v).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).wrap());
-    let reason = ban["reason"].as_str().filter(|r| !r.is_empty()).map_or("No reason provided".to_string(), str::to_string);
-    let on = ban["banned_at"].as_str().map_or("Unknown".to_string(), |t| t.get(..10).unwrap_or(t).to_string());
-    let by = ban["moderator_id"].as_str().and_then(|i| i.parse().ok()).map_or("Unknown".to_string(), |m| user_name(store, m));
+    let reason = ban["reason"].as_str().filter(|r| !r.is_empty()).map_or(t("No reason provided").to_string(), str::to_string);
+    let on = ban["banned_at"].as_str().map_or(t("Unknown").to_string(), |t| t.get(..10).unwrap_or(t).to_string());
+    let by = ban["moderator_id"].as_str().and_then(|i| i.parse().ok()).map_or(t("Unknown").to_string(), |m| user_name(store, m));
     let name = ban["user"]["global_name"].as_str().or(ban["user"]["username"].as_str()).map_or_else(|| user_name(store, u), str::to_string);
     let head = row()
         .gap(12.0)
         .center_y()
         .child(crate::shell::avatar(store, st, u, 40.0, None, p.background_secondary, p))
         .child(col().child(text(name).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary)).child(text(ban["user"]["username"].as_str().unwrap_or_default().to_string()).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted)));
-    let mut items = vec![head, row_of("Reason", reason), row().gap(24.0).child(row_of("Banned on", on)).child(row_of("Banned by", by))];
+    let mut items = vec![head, row_of(t("Reason"), reason), row().gap(24.0).child(row_of(t("Banned on"), on)).child(row_of(t("Banned by"), by))];
     items.extend(error(st, p));
-    let revoke = Button::new("Revoke ban").variant(ButtonVariant::Danger).submitting(st.form.busy).key("revoke-ban").on_press(move |s: &mut S| {
+    let revoke = Button::new(t("Revoke ban")).variant(ButtonVariant::Danger).submitting(st.form.busy).key("revoke-ban").on_press(move |s: &mut S| {
         let sh = acc(s);
         sh.social(Method::DELETE, format!("/guilds/{g}/bans/{u}"), None, Done::Close);
     });
     let back = move |s: &mut S| acc(s).open_guild_settings(g, "bans");
-    Dialog::new("Ban details", back).body(body(items)).footer(revoke.el(p)).el(p)
+    Dialog::new(t("Ban details"), back).body(body(items)).footer(revoke.el(p)).el(p)
 }
 
 /// `BaseChangeNicknameModal`.
@@ -278,13 +279,13 @@ pub fn nickname<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Sno
         let sh = acc(s);
         let nick = sh.form.value("nick", &cur).trim().to_string();
         if nick.chars().count() > 32 {
-            sh.form.error = Some("Nickname must not exceed 32 characters".into());
+            sh.form.error = Some(t("Nickname must not exceed 32 characters").into());
             return;
         }
         let who = if u == me { "@me".to_string() } else { u.to_string() };
         sh.social(Method::PATCH, format!("/guilds/{g}/members/{who}"), Some(json!({ "nick": nick })), Done::Close);
     };
-    Dialog::new("Change nickname", close(acc)).body(body(items)).footer(footer(st, "Save", false, "nick-save", acc, go, p)).el(p)
+    Dialog::new(t("Change nickname"), close(acc)).body(body(items)).footer(footer(st, t("Save"), false, "nick-save", acc, go, p)).el(p)
 }
 
 /// `TransferOwnershipModal` (sudo: the password).
@@ -292,7 +293,7 @@ pub fn transfer<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Sno
     let who = store.display_name(Some(g), u);
     let mut items = vec![
         desc(format!("You are about to transfer ownership of this community to {who}. Once you do this, you will lose all owner privileges."), p),
-        field(st, acc, "password", "", "Password", "", p),
+        field(st, acc, "password", "", t("Password"), "", p),
     ];
     items.extend(error(st, p));
     let go = move |s: &mut S| {
@@ -300,7 +301,7 @@ pub fn transfer<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Sno
         let b = json!({ "new_owner_id": u, "password": sh.form.value("password", "") });
         sh.social(Method::POST, format!("/guilds/{g}/transfer-ownership"), Some(b), Done::Close);
     };
-    Dialog::new("Transfer community ownership", close(acc)).body(body(items)).footer(footer(st, "Transfer ownership", true, "transfer-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Transfer community ownership"), close(acc)).body(body(items)).footer(footer(st, t("Transfer ownership"), true, "transfer-confirm", acc, go, p)).el(p)
 }
 
 // ---- Report flow ----------------------------------------------------------------------------
@@ -350,13 +351,13 @@ pub fn answer(flow: &Value, steps: &mut Vec<Value>, screen: &str, option: Option
 
 pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowflake>, ch: Option<Snowflake>, id: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let title = match target {
-        "message" => "Report message",
+        "message" => t("Report message"),
         "guild" => "Report community",
-        _ => "Report profile",
+        _ => t("Report profile"),
     };
     let f = &st.form;
     let Some(flow) = f.data.get("flow").cloned() else {
-        let mut items = vec![desc(if f.error.is_some() { "" } else { "Loading…" }, p)];
+        let mut items = vec![desc(if f.error.is_some() { "" } else { t("Loading…") }, p)];
         items.extend(error(st, p));
         return Dialog::new(title, close(acc)).body(body(items)).el(p);
     };
@@ -365,9 +366,9 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
         let notice = done.as_str().and_then(|n| flow["notices"].as_array()?.iter().find(|x| x["id"] == n).cloned());
         let (t, b) = match &notice {
             Some(n) => (n["title"].as_str().unwrap_or_default().to_string(), n["body"].as_str().unwrap_or_default().to_string()),
-            None => ("Report sent".to_string(), "Thanks for letting us know. Our safety team will review it.".to_string()),
+            None => (t("Report sent").to_string(), "Thanks for letting us know. Our safety team will review it.".to_string()),
         };
-        return Dialog::new(title, close(acc)).body(body(vec![label(t, p), desc(b, p)])).footer(Button::new("Done").key("report-done").on_press(close(acc)).el(p)).el(p);
+        return Dialog::new(title, close(acc)).body(body(vec![label(t, p), desc(b, p)])).footer(Button::new(crate::i18n::t("Done")).key("report-done").on_press(close(acc)).el(p)).el(p);
     }
     let screen = f.data.get("screen").and_then(Value::as_str).or(flow["start_screen_id"].as_str()).unwrap_or_default().to_string();
     let Some(sc) = flow["screens"].as_array().and_then(|a| a.iter().find(|s| s["id"] == screen.as_str())).cloned() else {
@@ -469,7 +470,7 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
             })));
         }
         let s2 = step.clone();
-        footer_btn = Some(Button::new("Next").submitting(st.form.busy).key("report-next").on_press(move |s: &mut S| s2(s, None, None)).el(p));
+        footer_btn = Some(Button::new(t("Next")).submitting(st.form.busy).key("report-next").on_press(move |s: &mut S| s2(s, None, None)).el(p));
     }
     if sc["urgent"].as_bool() == Some(true) {
         items.push(desc("If someone is in immediate danger, contact your local emergency services.", p));

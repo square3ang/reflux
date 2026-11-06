@@ -9,12 +9,13 @@ use super::{ShellAccess, ShellState, Target, avatar, presence, role_color};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Placement, Status, rgb, scroller};
+use crate::i18n::t;
 
 /// A list group's label: its hoisted role's name, `Online` or `Offline`.
 pub fn group_label(store: &Store, guild: Snowflake, g: &MemberListGroup) -> String {
     match g.id.as_str() {
-        "online" => "Online".into(),
-        "offline" => "Offline".into(),
+        "online" => t("Online").into(),
+        "offline" => t("Offline").into(),
         id => store.guilds.get(&guild).and_then(|gs| gs.roles.iter().find(|r| r.id.to_string() == id)).map_or_else(|| id.to_string(), |r| r.name.clone()),
     }
 }

@@ -150,7 +150,7 @@ pub(crate) fn dir() -> Option<PathBuf> {
     std::env::var_os("REFLUX_CONFIG_DIR").map(PathBuf::from).or_else(|| Some(dirs::config_dir()?.join("reflux")))
 }
 
-fn path() -> Option<PathBuf> {
+pub(crate) fn path() -> Option<PathBuf> {
     Some(dir()?.join("session.json"))
 }
 

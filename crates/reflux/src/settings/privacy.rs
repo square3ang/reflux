@@ -226,9 +226,9 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
         let at = day(h["created_at"].as_str().unwrap_or_default());
         let status = h["status"].as_str().unwrap_or_default();
         let msg = match status {
-            "completed" => format!("Your export from {at} is ready."),
-            "failed" => format!("Your export from {at} failed. You can request a new one."),
-            _ => format!("Your export from {at} is being prepared ({}%).", h["progress_percent"].as_f64().unwrap_or(0.0) as u32),
+            "completed" => crate::i18n::tf("Your export from {requestedAt} is ready.", &[("requestedAt", &at.to_string())]),
+            "failed" => crate::i18n::tf("Your export from {requestedAt} failed. You can request a new one.", &[("requestedAt", &at.to_string())]),
+            _ => crate::i18n::tf("Your export from {requestedAt} is being prepared ({progress}%).", &[("requestedAt", &at.to_string()), ("progress", &(h["progress_percent"].as_f64().unwrap_or(0.0) as u32).to_string())]),
         };
         export = export.child(muted(msg, p));
         if status == "completed"
@@ -378,7 +378,7 @@ pub(super) fn connections<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
         let (kind, id) = (c["type"].as_str().unwrap_or_default().to_string(), c["id"].as_str().unwrap_or_default().to_string());
         let vis = c["visibility_flags"].as_u64().unwrap_or(VIS_EVERYONE);
         let path = format!("/users/@me/connections/{kind}/{id}");
-        let label = format!("{} ({})", c["name"].as_str().unwrap_or_default(), if kind == "bsky" { "Bluesky" } else { t("Domain") });
+        let label = format!("{} ({})", c["name"].as_str().unwrap_or_default(), if kind == "bsky" { t("Bluesky") } else { t("Domain") });
         let toggles = row().gap(12.0).children([(VIS_EVERYONE, t("Everyone")), (VIS_FRIENDS, t("Friends")), (VIS_GUILDS, t("Community members"))].map(|(bit, l)| {
             let on = vis & bit != 0;
             let path = path.clone();

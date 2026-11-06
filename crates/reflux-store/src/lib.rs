@@ -605,10 +605,11 @@ impl Store {
             return self.is_thread_muted(c);
         }
         let Some(s) = self.guild_settings.get(&c.guild_id) else { return false };
+        let now = now_ms();
         let ov = |id: Option<Snowflake>| {
-            id.and_then(|id| s.channel_overrides.as_ref()?.get(&id)).is_some_and(|o| o.muted)
+            id.and_then(|id| s.channel_overrides.as_ref()?.get(&id)).is_some_and(|o| mute_active(o.muted, o.mute_config.as_ref(), now))
         };
-        (c.guild_id.is_some() && s.muted) || ov(Some(c.id)) || ov(c.parent_id)
+        (c.guild_id.is_some() && mute_active(s.muted, s.mute_config.as_ref(), now)) || ov(Some(c.id)) || ov(c.parent_id)
     }
 
     /// Fluxer `resolveEffectiveMessageNotifications`: the channel override, its category's, the
@@ -1040,3 +1041,52 @@ fn parse_iso_ms(s: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests;
+
+/// `isMuteActive`: muted, and its `mute_config.end_time` (if any) still ahead of `now`.
+pub fn mute_active(muted: bool, config: Option<&reflux_model::MuteConfig>, now: u64) -> bool {
+    muted && config.and_then(|c| c.end_time.as_deref()).and_then(parse_ms).is_none_or(|end| end > now)
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Milliseconds since the epoch of an RFC 3339 UTC time (`2026-01-02T03:04:05.678Z`).
+fn parse_ms(t: &str) -> Option<u64> {
+    let b = t.as_bytes();
+    let num = |r: std::ops::Range<usize>| t.get(r)?.parse::<i64>().ok();
+    if b.len() < 19 || b[4] != b'-' || b[10] != b'T' {
+        return None;
+    }
+    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    let frac = t[19..].strip_prefix('.').map_or(0, |f| {
+        let digits: String = f.chars().take_while(char::is_ascii_digit).take(3).collect();
+        format!("{digits:0<3}").parse().unwrap_or(0)
+    });
+    // Days from civil (Howard Hinnant).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(((days * 24 + h) * 60 + mi) * 60 + sec).ok().map(|s| s * 1000 + frac)
+}
+
+#[cfg(test)]
+mod mute_tests {
+    use reflux_model::MuteConfig;
+
+    #[test]
+    fn timed_mutes_expire() {
+        assert_eq!(super::parse_ms("1970-01-01T00:15:00.000Z"), Some(900_000));
+        assert_eq!(super::parse_ms("2026-11-07T00:00:00Z"), Some(1_794_009_600_000));
+        let cfg = |end: &str| MuteConfig { end_time: Some(end.into()), selected_time_window: 900_000 };
+        assert!(super::mute_active(true, None, 5));
+        assert!(!super::mute_active(false, None, 5));
+        assert!(super::mute_active(true, Some(&cfg("1970-01-01T00:15:00.000Z")), 899_999));
+        assert!(!super::mute_active(true, Some(&cfg("1970-01-01T00:15:00.000Z")), 900_000));
+        assert!(super::mute_active(true, Some(&cfg("garbage")), 1));
+    }
+}

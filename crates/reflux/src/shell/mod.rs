@@ -8,6 +8,7 @@
 pub mod attachments;
 mod autocomplete;
 mod chat;
+mod compact;
 mod embeds;
 mod highlight;
 pub mod invite_embed;
@@ -50,6 +51,7 @@ use rune::{Color, El, Icon, Image, ImageCache, TextEdit, Waker, col, el, row};
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim};
 use crate::ui::{Avatar, Placement, PopupAccess, Popups, Status, over, popup_access, rgb};
+use crate::i18n::t;
 
 /// What the shell asks the runtime to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,9 +146,9 @@ fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let me = store.me.as_ref().filter(|u| !u.verified && u.email.is_some())?;
     let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
     let (message, button) = if me.email_bounced {
-        (format!("Hey {name}, we can't deliver email to your address. Add a working email to verify your account."), None)
+        (crate::i18n::tf("Hey {displayName}, we can't deliver email to your address. Add a working email to verify your account.", &[("displayName", &name.to_string())]), None)
     } else {
-        let label = if st.verify_sent { "Email sent" } else { "Resend email" };
+        let label = if st.verify_sent { "Email sent" } else { t("Resend email") };
         let b = crate::ui::Button::new(label)
             .variant(crate::ui::ButtonVariant::Inverted)
             .size(crate::ui::ButtonSize::SuperCompact)
@@ -158,7 +160,7 @@ fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
                 sh.intents.push(Intent::ResendVerification);
             })
             .el(p);
-        (format!("Hey {name}, please confirm your email address."), Some(b))
+        (crate::i18n::tf("Hey {displayName}, please confirm your email address.", &[("displayName", &name.to_string())]), Some(b))
     };
     Some(
         row()

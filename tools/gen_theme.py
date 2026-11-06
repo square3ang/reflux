@@ -56,6 +56,16 @@ for t, data in themes.items():
         out.append(f"        {ident(n)}: c({float(r):.5f}, {float(g):.5f}, {float(b):.5f}, {float(a):.4f}),")
     out += ["    }", "}", ""]
 
+out.append("/// The CSS variable names, in field order.")
+out.append("pub const NAMES: &[&str] = &[" + ", ".join(f'"{n}"' for n in names) + "];")
+out.append("")
+out.append("impl Palette {")
+out.append("    /// The field for a CSS variable name (`--text-link`).")
+out.append("    pub fn get_mut(&mut self, name: &str) -> Option<&mut Color> {")
+out.append("        Some(match name {")
+out += [f'            "{n}" => &mut self.{ident(n)},' for n in names]
+out += ["            _ => return None,", "        })", "    }", "}", ""]
+
 out.append("/// Dimension CSS variables of the web app, in CSS pixels (1rem = 16px).")
 out.append("pub mod dim {")
 for n in lens:

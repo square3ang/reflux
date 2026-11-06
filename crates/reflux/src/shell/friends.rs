@@ -9,6 +9,7 @@ use super::{Intent, ShellAccess, ShellState, Target, avatar, pops, presence};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Button, ButtonSize, Menu, MenuItem, Placement, Status, Tooltip, mention_badge, mix, over, rgba, scroller};
+use crate::i18n::t;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FriendsTab {
@@ -82,10 +83,10 @@ fn header<S: 'static>(active: FriendsTab, pending: usize, p: &Palette, acc: Shel
         .gap(8.0)
         .padding(4.0)
         .center_y()
-        .child(tab(FriendsTab::Online, "Online", 0))
-        .child(tab(FriendsTab::All, "All", 0))
-        .child(tab(FriendsTab::Pending, "Pending", pending))
-        .child(tab(FriendsTab::Add, "Add friend", 0));
+        .child(tab(FriendsTab::Online, t("Online"), 0))
+        .child(tab(FriendsTab::All, t("All"), 0))
+        .child(tab(FriendsTab::Pending, t("Pending"), pending))
+        .child(tab(FriendsTab::Add, t("Add friend"), 0));
     row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
@@ -98,7 +99,7 @@ fn header<S: 'static>(active: FriendsTab, pending: usize, p: &Palette, acc: Shel
                 .gap(8.0)
                 .center_y()
                 .child(icon(&icons::USERS_THREE_FILL, 24.0).color(p.text_primary))
-                .child(text("My friends").font(font(16.0, 600.0).lh(24.0)).color(p.text_primary)),
+                .child(text(t("My friends")).font(font(16.0, 600.0).lh(24.0)).color(p.text_primary)),
         )
         .child(el().size(1.0, 24.0).fill(p.background_modifier_accent))
         .child(tabs)
@@ -108,9 +109,9 @@ fn header<S: 'static>(active: FriendsTab, pending: usize, p: &Palette, acc: Shel
 /// `<Input leftIcon>`: 44 tall, radius 8, a 20px bold magnifier.
 fn search<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let placeholder = match st.friends_tab {
-        FriendsTab::Online => "Search online friends",
-        FriendsTab::Pending => "Search pending requests",
-        _ => "Search friends",
+        FriendsTab::Online => t("Search online friends"),
+        FriendsTab::Pending => t("Search pending requests"),
+        _ => t("Search friends"),
     };
     let border = if st.friends_query.focused { p.background_modifier_accent_focus } else { p.background_modifier_accent };
     row()
@@ -153,17 +154,17 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
             let on = of(RelationshipType::FRIEND).into_iter().filter(|r| presence(store, r.id) != Status::Offline).collect();
             vec![("Online", on)]
         }
-        FriendsTab::All => vec![("All friends", of(RelationshipType::FRIEND))],
-        _ => vec![("Incoming friend requests", of(RelationshipType::INCOMING_REQUEST)), ("Outgoing friend requests", of(RelationshipType::OUTGOING_REQUEST))],
+        FriendsTab::All => vec![(t("All friends"), of(RelationshipType::FRIEND))],
+        _ => vec![(t("Incoming friend requests"), of(RelationshipType::INCOMING_REQUEST)), ("Outgoing friend requests", of(RelationshipType::OUTGOING_REQUEST))],
     };
     let any = sections.iter().any(|s| !s.1.is_empty());
     if !any {
         let (title, sub) = match (tab, q.is_empty()) {
-            (FriendsTab::Pending, true) => ("No pending requests", "Pending friend requests show up here."),
-            (FriendsTab::Pending, false) => ("No pending requests match that search", "Try a different name."),
-            (_, false) => ("No friends match that search", "Try another name or check your spelling."),
-            (FriendsTab::Online, true) => ("Your friends are stuck in another timeline", "When they come online, they'll appear right here."),
-            _ => ("This friends list needs more power", "Where we're going, we need more friends."),
+            (FriendsTab::Pending, true) => (t("No pending requests"), "Pending friend requests show up here."),
+            (FriendsTab::Pending, false) => (t("No pending requests match that search"), "Try a different name."),
+            (_, false) => (t("No friends match that search"), "Try another name or check your spelling."),
+            (FriendsTab::Online, true) => (t("Your friends are stuck in another timeline"), "When they come online, they'll appear right here."),
+            _ => (t("This friends list needs more power"), t("Where we're going, we need more friends.")),
         };
         // shortcut: the empty state's illustration isn't drawn, only its title and subtitle.
         return col()
@@ -195,13 +196,13 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
     let status = presence(store, id);
     let friend = r.kind == RelationshipType::FRIEND;
     let sub = match r.kind {
-        RelationshipType::INCOMING_REQUEST => "Incoming friend request",
-        RelationshipType::OUTGOING_REQUEST => "Friend request sent",
+        RelationshipType::INCOMING_REQUEST => t("Incoming friend request"),
+        RelationshipType::OUTGOING_REQUEST => t("Friend request sent"),
         _ => match status {
-            Status::Online => "Online",
-            Status::Idle => "Idle",
+            Status::Online => t("Online"),
+            Status::Idle => t("Idle"),
             Status::Dnd => "Do Not Disturb",
-            _ => "Offline",
+            _ => t("Offline"),
         },
     };
     let custom = friend.then(|| store.presences.get(&id).and_then(|pr| pr.custom_status.as_ref()?.text.clone())).flatten().filter(|t| !t.is_empty());
@@ -275,12 +276,12 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
     };
     let buttons = match r.kind {
         RelationshipType::FRIEND => vec![
-            action(format!("friend-msg-{id}"), "Send message", &icons::CHAT_TEARDROP_FILL, neutral, Some(Intent::OpenDm(id)), layer),
-            action(format!("friend-more-{id}"), "More", &icons::DOTS_THREE_VERTICAL_BOLD, neutral, None, layer),
+            action(format!("friend-msg-{id}"), t("Send message"), &icons::CHAT_TEARDROP_FILL, neutral, Some(Intent::OpenDm(id)), layer),
+            action(format!("friend-more-{id}"), t("More"), &icons::DOTS_THREE_VERTICAL_BOLD, neutral, None, layer),
         ],
         RelationshipType::INCOMING_REQUEST => vec![
-            action(format!("friend-accept-{id}"), "Accept", &icons::CHECK_BOLD, accept, Some(Intent::AddFriend(id)), layer),
-            action(format!("friend-ignore-{id}"), "Ignore", &icons::X_BOLD, ignore, Some(Intent::RemoveRelationship(id)), layer),
+            action(format!("friend-accept-{id}"), t("Accept"), &icons::CHECK_BOLD, accept, Some(Intent::AddFriend(id)), layer),
+            action(format!("friend-ignore-{id}"), t("Ignore"), &icons::X_BOLD, ignore, Some(Intent::RemoveRelationship(id)), layer),
         ],
         RelationshipType::OUTGOING_REQUEST => {
             vec![action(format!("friend-cancel-{id}"), "Cancel", &icons::X_BOLD, cancel, Some(Intent::RemoveRelationship(id)), layer)]
@@ -292,7 +293,7 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
     if st.popups.is_open(&more) {
         // shortcut: the voice and video call items aren't listed until calls exist.
         Menu::new(more)
-            .item(MenuItem::new("remove", "Remove friend").icon(&icons::USER_MINUS_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::RemoveRelationship(id))))
+            .item(MenuItem::new("remove", t("Remove friend")).icon(&icons::USER_MINUS_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::RemoveRelationship(id))))
             .el(&st.popups, pops(acc), p, layer);
     }
 
@@ -327,7 +328,7 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                 st.intents.push(Intent::FriendRequest(t));
                 st.add_friend_result = None;
             }
-            None => st.add_friend_result = Some(Err("No user found with that username.".into())),
+            None => st.add_friend_result = Some(Err(crate::i18n::t("No user found with that username.").into())),
         }
     };
     let empty = st.add_friend.text.trim().is_empty();
@@ -359,7 +360,7 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                 .color(p.text_primary)
                 .placeholder("Fluxer#0000", p.text_tertiary)
                 .caret(p.text_primary, p.background_modifier_selected)
-                .label("Friend's username")
+                .label(t("Friend's username"))
                 .on_edit(move |s: &mut S| -> &mut TextEdit {
                     let st = acc(s);
                     st.add_friend_result = None;
@@ -367,11 +368,11 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                 })
                 .on_submit(move |s: &mut S, _| send(s)),
         )
-        .child(Button::new("Send request").size(ButtonSize::Compact).disabled(empty).key("add-friend-send").on_press(send).el(p));
+        .child(Button::new(t("Send request")).size(ButtonSize::Compact).disabled(empty).key("add-friend-send").on_press(send).el(p));
     let mut form = col().w_full().child(field);
     match &st.add_friend_result {
         Some(Err(e)) => form = form.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).mt(8.0).wrap()),
-        Some(Ok(())) => form = form.child(text("Friend request sent").font(font(14.0, 400.0).lh(20.0)).color(p.status_online).mt(8.0)),
+        Some(Ok(())) => form = form.child(text(t("Friend request sent")).font(font(14.0, 400.0).lh(20.0)).color(p.status_online).mt(8.0)),
         None => {}
     }
     let card = col()
@@ -380,8 +381,8 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .padding(32.0)
         .items_center()
         .child(icon(&icons::USER_CIRCLE_PLUS_FILL, 64.0).color(if crate::ui::is_light(p) { p.brand_primary_foreground } else { p.brand_primary_light }).mb(16.0))
-        .child(text("Add friend").font(font(24.0, 700.0).lh(32.0)).color(p.text_primary).mb(8.0))
-        .child(text("You can add friends with their username.").font(font(15.0, 400.0).lh(22.0)).color(p.text_secondary).mb(24.0))
+        .child(text(t("Add friend")).font(font(24.0, 700.0).lh(32.0)).color(p.text_primary).mb(8.0))
+        .child(text(t("You can add friends with their username.")).font(font(15.0, 400.0).lh(22.0)).color(p.text_secondary).mb(24.0))
         .child(form);
     col()
         .w_full()

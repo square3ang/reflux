@@ -10,6 +10,7 @@ use crate::media::Load;
 use crate::shell::Intent;
 use crate::theme::{Palette, font};
 use crate::ui::scroller;
+use crate::i18n::t;
 
 /// Search waits this long after the last keystroke.
 const DEBOUNCE_MS: u64 = 300;
@@ -97,7 +98,7 @@ fn tiles(st: &ShellState) -> Result<Vec<Tile>, &'static str> {
             Some(Fetched::Done(f)) => {
                 let fav = st.expr.saved.favorite_gifs.first().and_then(preview).map(|p| p.0);
                 let trend = f["gifs"].get(0).and_then(preview).map(|p| p.0);
-                let mut v = vec![Tile::Page("Favorites".into(), fav, GifView::Favorites), Tile::Page("Trending GIFs".into(), trend, GifView::Trending)];
+                let mut v = vec![Tile::Page(t("Favorites").into(), fav, GifView::Favorites), Tile::Page(t("Trending GIFs").into(), trend, GifView::Trending)];
                 for c in f["categories"].as_array().into_iter().flatten() {
                     let name = c["name"].as_str().unwrap_or_default().to_string();
                     let src = c["proxy_src"].as_str().or(c["src"].as_str()).map(str::to_string);
@@ -180,7 +181,7 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
                 .fill(Color { a: 0.6, ..Color::BLACK })
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label(if fav { "Remove from favorites" } else { "Add to favorites" })
+                .label(if fav { crate::i18n::t("Remove from favorites") } else { crate::i18n::t("Add to favorites") })
                 .child(icon(if fav { &icons::STAR_FILL } else { &icons::STAR }, 18.0).color(if fav { p.status_idle } else { Color::WHITE }))
                 .on_press(move |s: &mut S| toggle_favorite(acc(s), &g2));
             let mut e = el()
@@ -228,8 +229,8 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         false
     });
     let title = match &st.expr.gif {
-        GifView::Trending => "Trending GIFs",
-        GifView::Favorites => "Favorite GIFs",
+        GifView::Trending => t("Trending GIFs"),
+        GifView::Favorites => t("Favorite GIFs"),
         _ => "",
     };
     let bar = if title.is_empty() {
@@ -248,7 +249,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                     .hover(p.background_modifier_hover)
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
-                    .label("Back to GIF categories")
+                    .label(t("Back to GIF categories"))
                     .child(icon(&icons::ARROW_LEFT, 20.0).color(p.text_primary))
                     .on_press(move |s: &mut S| acc(s).expr.gif = GifView::Categories),
             )
@@ -257,11 +258,11 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
     let (cols, w) = columns();
     let body = match tiles(st) {
         Ok(v) if v.is_empty() => {
-            let line = if st.expr.gif == GifView::Favorites { "No favorite GIFs yet" } else { "No GIFs match that search" };
+            let line = if st.expr.gif == GifView::Favorites { t("No favorite GIFs yet") } else { "No GIFs match that search" };
             col().w_full().h_full().child(super::empty_state(line, None, p))
         }
         Ok(v) => masonry(cols, w, v.iter().map(|t| tile(st, t, w, p, acc)).collect(), p),
-        Err("") => col().w_full().h_full().center().child(text("Loading…").font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        Err("") => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
         Err(msg) => col().w_full().h_full().child(super::empty_state(msg, None, p)),
     };
     (bar, body)

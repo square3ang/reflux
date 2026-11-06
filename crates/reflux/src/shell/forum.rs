@@ -19,6 +19,7 @@ use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::overlay::{anchor, popout_shadow};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Placement, RadioGroup, over, scroller, spinner};
+use crate::i18n::t;
 
 const SORT: &str = "forum-sort";
 const TAG_PICKER: &str = "forum-tag-picker";
@@ -111,7 +112,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     let a = st.threads.archived.get(&(c.id, Tab::Archived)).cloned().unwrap_or_default();
     if !old.is_empty() {
         content = content
-            .child(text("Older posts").font(font(12.0, 600.0)).color(p.text_tertiary).pt(8.0))
+            .child(text(t("Older posts")).font(font(12.0, 600.0)).color(p.text_tertiary).pt(8.0))
             .child(cards(store, st, c, &old, is_grid, p, acc));
     }
     if a.loading {
@@ -122,7 +123,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     if !a.loading && a.has_more {
         let fid = c.id;
         content = content.child(row().w_full().padding(12.0).center().child(
-            Button::new("Load older posts")
+            Button::new(t("Load older posts"))
                 .variant(ButtonVariant::Secondary)
                 .size(ButtonSize::Small)
                 .key("forum-older")
@@ -150,10 +151,10 @@ fn guidelines<S: 'static>(store: &Store, st: &ShellState, c: &Channel, topic: &s
             .center_y()
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label(if open { "Hide guidelines" } else { "Show guidelines" })
+            .label(if open { t("Hide guidelines") } else { t("Show guidelines") })
             .key("forum-guidelines")
             .on_press(move |s: &mut S| acc(s).threads.forum.guidelines ^= true)
-            .child(text("Post guidelines").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+            .child(text(t("Post guidelines")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
             .child(icon(if open { &icons::CARET_UP_BOLD } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_secondary)),
     );
     if open {
@@ -174,7 +175,7 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
         .grow(1.0)
         .shrink()
         .color(p.text_primary)
-        .placeholder(if posting { "Search or create a post..." } else { "Search posts" }, p.text_tertiary)
+        .placeholder(if posting { t("Search or create a post...") } else { t("Search posts") }, p.text_tertiary)
         .caret(p.text_primary, p.background_modifier_selected)
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).threads.forum.query })
         .on_input_key(move |s: &mut S, k, _| {
@@ -199,14 +200,14 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                 .hover_group()
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Clear search")
+                .label(t("Clear search"))
                 .on_press(move |s: &mut S| acc(s).threads.forum.query = TextEdit::new(""))
                 .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary)),
         );
     }
     if posting {
         entry = entry.child(
-            Button::new("New post")
+            Button::new(t("New post"))
                 .size(ButtonSize::Small)
                 .key("forum-new-post")
                 .on_press(move |s: &mut S| {
@@ -223,7 +224,7 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
         let n = posts(store, st, c);
         let n = n.0.len() + n.1.len();
         let status = match n {
-            0 => "No matching posts".to_string(),
+            0 => t("No matching posts").to_string(),
             1 => "1 matching post".to_string(),
             n => format!("{n} matching posts"),
         };
@@ -239,7 +240,7 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                     .gap(8.0)
                     .center_y()
                     .child(text(status).font(small).color(p.text_primary_muted))
-                    .child(text("Clear").font(font(13.0, 500.0).lh(16.0)).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).threads.forum.query = TextEdit::new(""))),
+                    .child(text(t("Clear")).font(font(13.0, 500.0).lh(16.0)).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).threads.forum.query = TextEdit::new(""))),
             )
             .child(el().grow(1.0));
         if posting {
@@ -274,7 +275,7 @@ fn filter_row<S: 'static>(st: &ShellState, c: &Channel, p: &Palette, acc: ShellA
         .key(SORT)
         .on_press(move |s: &mut S| acc(s).popups.toggle(SORT))
         .child(icon(&icons::SORT_ASCENDING_BOLD, 16.0).color(p.text_primary))
-        .child(text("Sort & view").font(font(14.0, 500.0).lh(18.0)).color(p.text_primary))
+        .child(text(t("Sort & view")).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary))
         .child(icon(&icons::CARET_DOWN_BOLD, 12.0).color(p.text_primary));
     let mut r = row().w_full().flex_wrap().gaps(8.0, 8.0).center_y().child(sort_b);
     if !c.available_tags.is_empty() {
@@ -302,7 +303,7 @@ fn filter_row<S: 'static>(st: &ShellState, c: &Channel, p: &Palette, acc: ShellA
                     .hover(p.background_modifier_hover)
                     .hover_group()
                     .cursor(rune::Cursor::Pointer)
-                    .child(text("Clear").font(font(12.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
+                    .child(text(t("Clear")).font(font(12.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
                     .on_press(move |s: &mut S| {
                         acc(s).threads.forum.tag_filter.remove(&fid);
                     }),
@@ -332,11 +333,11 @@ fn sort_panel<S: 'static>(st: &ShellState, c: &Channel, p: &Palette, acc: ShellA
         .fill(p.background_secondary)
         .border(1.0, over(p.background_modifier_accent, p.background_secondary))
         .box_shadow(popout_shadow(p, 0.24, 0.14))
-        .child(col().gap(4.0).child(heading("Sort by")).child(RadioGroup::new(&sorts, Some(&sort)).on_change(move |s: &mut S, v| {
+        .child(col().gap(4.0).child(heading(t("Sort by"))).child(RadioGroup::new(&sorts, Some(&sort)).on_change(move |s: &mut S, v| {
             acc(s).threads.forum.sort.insert(fid, v.parse().unwrap_or(0));
         }).el(p)));
     if c.kind != reflux_model::ChannelType::GUILD_MEDIA {
-        panel = panel.child(col().gap(4.0).child(heading("View as")).child(RadioGroup::new(&layouts, Some(layout)).on_change(move |s: &mut S, v| {
+        panel = panel.child(col().gap(4.0).child(heading(t("View as"))).child(RadioGroup::new(&layouts, Some(layout)).on_change(move |s: &mut S, v| {
             acc(s).threads.forum.layout.insert(fid, v.parse().unwrap_or(1));
         }).el(p)));
     }
@@ -427,7 +428,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     let tags: Vec<&ForumTag> = post.applied_tags.iter().filter_map(|id| forum.available_tags.iter().find(|t| t.id == *id)).collect();
     let mut header = row().flex_wrap().gaps(6.0, 6.0).center_y();
     if pinned {
-        header = header.child(icon(&icons::PUSH_PIN_SIMPLE_FILL, 16.0).color(p.text_tertiary).label("Pinned"));
+        header = header.child(icon(&icons::PUSH_PIN_SIMPLE_FILL, 16.0).color(p.text_tertiary).label(t("Pinned")));
     }
     for t in tags.iter().take(MAX_CARD_TAGS) {
         header = header.child(tag_pill(st, t, None, false, p));
@@ -466,7 +467,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     }
     footer = footer.child(row().gap(4.0).center_y().child(icon(&icons::CHAT_CIRCLE_FILL, 14.0).color(p.text_primary_muted)).child(text(threads::message_count(post.message_count)).font(small).color(p.text_primary_muted)));
     if unread {
-        footer = footer.child(text("New messages").font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light));
+        footer = footer.child(text(t("New messages")).font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light));
     }
     footer = footer.child(text(format_relative(rules::last_activity(post).timestamp_ms(), st.now_ms)).font(small).color(p.text_primary_muted));
     body = body.child(footer);
@@ -541,9 +542,9 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
         .grow(1.0)
         .shrink()
         .color(p.text_primary)
-        .placeholder("Give your post a title", p.text_tertiary)
+        .placeholder(t("Give your post a title"), p.text_tertiary)
         .caret(p.text_primary, p.background_modifier_selected)
-        .label("Post title")
+        .label(t("Post title"))
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut draft(acc(s)).title })
         .on_input_key(move |s: &mut S, k, _| {
             if k.key != rune::Key::Enter {
@@ -559,7 +560,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
         .gap(8.0)
         .items_start()
         .child(row().grow(1.0).min_w(0.0).py(4.0).child(title))
-        .child(icon_button(&icons::X_BOLD, "Discard post", false).key("forum-post-discard").on_press(move |s: &mut S| acc(s).threads.forum.draft = None));
+        .child(icon_button(&icons::X_BOLD, t("Discard post"), false).key("forum-post-discard").on_press(move |s: &mut S| acc(s).threads.forum.draft = None));
     let mut card = col()
         .w_full()
         .gap(8.0)
@@ -575,7 +576,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
     if d.preview {
         let md = super::markdown::Md::new(store, &st.media, c.guild_id, p, "forum-preview");
         let inner = if d.body.text.trim().is_empty() {
-            text("Nothing to preview yet.").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)
+            text(t("Nothing to preview yet.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)
         } else {
             super::markdown::render(&d.body.text, &md)
         };
@@ -588,7 +589,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                 .gap(6.0)
                 .radius(6.0)
                 .border(1.0, p.background_modifier_accent)
-                .child(text("Preview").font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted))
+                .child(text(t("Preview")).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted))
                 .child(inner),
         );
     } else {
@@ -596,7 +597,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
             .key("forum-post-body")
             .w_full()
             .color(p.text_chat)
-            .placeholder(if c.kind == reflux_model::ChannelType::GUILD_MEDIA { "Add a description (optional)" } else { "Enter a message" }, p.text_tertiary_secondary)
+            .placeholder(if c.kind == reflux_model::ChannelType::GUILD_MEDIA { t("Add a description (optional)") } else { t("Enter a message") }, p.text_tertiary_secondary)
             .caret(p.text_primary, p.text_selection)
             .on_edit(move |s: &mut S| -> &mut TextEdit { &mut draft(acc(s)).body });
         card = card.child(col().w_full().min_h(48.0).child(body));
@@ -617,7 +618,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                     .child(icon(&icons::FILE_TEXT, 16.0).color(p.text_tertiary))
                     .child(text(u.name.clone()).font(font(13.0, 500.0).lh(16.0)).color(p.text_primary).truncate().max_w(200.0))
                     .child(
-                        row().size(20.0, 20.0).center().radius(4.0).hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).label("Remove").child(icon(&icons::X_BOLD, 12.0).color(p.text_tertiary)).on_press(move |s: &mut S| acc(s).threads.uploads.retain(|x| x.id != uid)),
+                        row().size(20.0, 20.0).center().radius(4.0).hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).label(t("Remove")).child(icon(&icons::X_BOLD, 12.0).color(p.text_tertiary)).on_press(move |s: &mut S| acc(s).threads.uploads.retain(|x| x.id != uid)),
                     ),
             );
         }
@@ -628,7 +629,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
     }
     // `.composerBar`.
     let mut start = row().flex_wrap().gaps(4.0, 4.0).center_y().min_w(0.0).grow(1.0).shrink();
-    start = start.child(icon_button(&icons::IMAGE_SQUARE_BOLD, "Add images or files", false).key("forum-post-attach").on_press_tx(move |_: &mut S, tx: &mut Tx| {
+    start = start.child(icon_button(&icons::IMAGE_SQUARE_BOLD, t("Add images or files"), false).key("forum-post-attach").on_press_tx(move |_: &mut S, tx: &mut Tx| {
         let options = rune::FileDialogOptions { title: "Upload file".into(), ..Default::default() };
         tx.open_file(options, move |s: &mut S, r, _| match r {
             Ok(Some(path)) => {
@@ -641,16 +642,16 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
             Err(e) => acc(s).notice = Some(("Upload failed".into(), e.to_string())),
         });
     }));
-    start = start.child(icon_button(&icons::SMILEY_BOLD, "Add emoji", false));
+    start = start.child(icon_button(&icons::SMILEY_BOLD, t("Add emoji"), false));
     if !c.available_tags.is_empty() {
         let mut tags = row().flex_wrap().gaps(6.0, 6.0).center_y().ml(4.0).min_w(0.0);
-        tags = tags.child(Button::new("Add tags").variant(ButtonVariant::Secondary).size(ButtonSize::Small).key(TAG_PICKER).on_press(move |s: &mut S| acc(s).popups.toggle(TAG_PICKER)).el(p));
+        tags = tags.child(Button::new(t("Add tags")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key(TAG_PICKER).on_press(move |s: &mut S| acc(s).popups.toggle(TAG_PICKER)).el(p));
         for t in d.tags.iter().filter_map(|id| c.available_tags.iter().find(|x| x.id == *id)) {
             let tid = t.id;
             tags = tags.child(tag_pill(st, t, Some(true), false, p).on_press(move |s: &mut S| draft(acc(s)).tags.retain(|x| *x != tid)));
         }
         if require_tag(c) && d.tags.is_empty() {
-            tags = tags.child(text("Required").font(font(12.0, 400.0)).color(p.text_primary_muted));
+            tags = tags.child(text(t("Required")).font(font(12.0, 400.0)).color(p.text_primary_muted));
         }
         start = start.child(tags);
         if st.popups.is_open(TAG_PICKER) {
@@ -662,8 +663,8 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
     let end = row()
         .gap(4.0)
         .center_y()
-        .child(icon_button(&icons::EYE_BOLD, "Preview", d.preview).key("forum-post-preview").on_press(move |s: &mut S| draft(acc(s)).preview ^= true))
-        .child(Button::new("Post").size(ButtonSize::Small).disabled(!ready).key("forum-post-submit").on_press(move |s: &mut S| submit(acc(s), fid)).el(p));
+        .child(icon_button(&icons::EYE_BOLD, t("Preview"), d.preview).key("forum-post-preview").on_press(move |s: &mut S| draft(acc(s)).preview ^= true))
+        .child(Button::new(t("Post")).size(ButtonSize::Small).disabled(!ready).key("forum-post-submit").on_press(move |s: &mut S| submit(acc(s), fid)).el(p));
     card.child(
         row()
             .w_full()
@@ -688,7 +689,7 @@ fn submit(st: &mut ShellState, forum: Snowflake) {
     let Some(d) = st.threads.forum.draft.as_mut() else { return };
     let name: String = d.title.text.trim().chars().take(100).collect();
     if name.is_empty() {
-        d.error = Some("Give the post a title before you send.".into());
+        d.error = Some(t("Give the post a title before you send.").into());
         return;
     }
     let (content, tags) = (d.body.text.trim().to_string(), d.tags.clone());
@@ -729,7 +730,7 @@ fn tag_picker<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft
         .border(1.0, over(p.background_modifier_accent, p.background_secondary))
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .child(pills)
-        .child(text(format!("You can pick up to {MAX_TAGS} tags.")).font(font(12.0, 400.0)).color(p.text_primary_muted))
+        .child(text(crate::i18n::tf("You can pick up to {count} tags.", &[("count", &MAX_TAGS.to_string())])).font(font(12.0, 400.0)).color(p.text_primary_muted))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     anchor(surface, TAG_PICKER, Placement::Top, 8.0)
 }

@@ -260,8 +260,8 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
     let friends = prof.and_then(|v| v["mutual_friends"].as_array()).cloned().unwrap_or_default();
     let tabs: Vec<(&'static str, String)> = vec![
         ("overview", t("Overview").to_string()),
-        ("guilds", format!("Mutual communities ({})", guilds.len())),
-        ("friends", format!("Mutual friends ({})", friends.len())),
+        ("guilds", crate::i18n::tf("Mutual communities ({count})", &[("count", &(guilds.len()).to_string())])),
+        ("friends", crate::i18n::tf("Mutual friends ({count})", &[("count", &(friends.len()).to_string())])),
     ];
     let tab_bar = row().w_full().gap(16.0).children(tabs.into_iter().map(|(id, label)| {
         let on = id == tab;

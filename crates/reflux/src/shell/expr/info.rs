@@ -11,6 +11,7 @@ use crate::icons;
 use crate::theme::{Palette, font};
 use crate::ui::overlay::{anchor, popout_shadow};
 use crate::ui::{Placement, mix, over};
+use crate::i18n::t;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Info {
@@ -158,8 +159,8 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
             _ => row().w_full().min_h(40.0).center_y().child(
                 col()
                     .gap(2.0)
-                    .child(text("Invite-only community").font(font(14.0, 600.0).lh(17.5)).color(p.text_primary))
-                    .child(text("A community that is either invite-only or unavailable.").font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted)),
+                    .child(text(t("Invite-only community")).font(font(14.0, 600.0).lh(17.5)).color(p.text_primary))
+                    .child(text(t("A community that is either invite-only or unavailable.")).font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted)),
             ),
         };
         c = c.child(section(from, body));
@@ -169,7 +170,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
         let fav = st.expr.is_favorite(&key);
         let mut actions = col().w_full().gap(2.0).child(action(
             if fav { &icons::STAR_FILL } else { &icons::STAR },
-            if fav { "Remove from favorites" } else { "Add to favorites" },
+            if fav { t("Remove from favorites") } else { t("Add to favorites") },
             p,
             move |s: &mut S| acc(s).expr.toggle_favorite(&key),
         ));

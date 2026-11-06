@@ -24,6 +24,7 @@ use serde_json::Value;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Input, mix};
+use crate::i18n::t;
 
 pub use channel::first_tab as first_channel_tab;
 pub use settings::tab_ids;
@@ -187,7 +188,7 @@ fn error(st: &ShellState, p: &Palette) -> Option<El> {
 /// A press handler that asks for an image and keeps it in `form.data[key]` as a data URL.
 pub(crate) fn pick_image<S: 'static>(acc: ShellAccess<S>, key: &'static str) -> impl Fn(&mut S, &mut Tx) + 'static {
     move |_: &mut S, tx: &mut Tx| {
-        let options = FileDialogOptions { title: "Choose an image".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
+        let options = FileDialogOptions { title: "Choose an image".into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
         tx.open_file(options, move |s: &mut S, r, _| {
             let form = &mut acc(s).form;
             match r.map_err(|e| e.to_string()).and_then(|p| p.map(|p| std::fs::read(&p).map(|b| data_url(&p, &b)).map_err(|e| e.to_string())).transpose()) {

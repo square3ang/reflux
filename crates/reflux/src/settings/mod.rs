@@ -8,6 +8,7 @@
 
 mod account;
 mod desktop_tabs;
+mod look_tabs;
 mod privacy;
 mod profile;
 pub mod sudo;
@@ -129,10 +130,10 @@ enum Cat {
 impl Cat {
     fn label(self) -> &'static str {
         t(match self {
-            Cat::Account => "Your account",
-            Cat::Billing => "Billing",
-            Cat::App => "App settings",
-            Cat::Developer => "Developer",
+            Cat::Account => t("Your account"),
+            Cat::Billing => t("Billing"),
+            Cat::App => t("App settings"),
+            Cat::Developer => t("Developer"),
         })
     }
 }
@@ -195,7 +196,7 @@ fn visible(t: &TabDef, store: &Store, premium: bool) -> bool {
 }
 
 fn label_of(id: &str) -> &'static str {
-    t(TABS.iter().find(|tab| tab.id == id).map_or("User settings", |tab| tab.label))
+    t(TABS.iter().find(|tab| tab.id == id).map_or(t("User settings"), |tab| tab.label))
 }
 
 // ---- Settings changes ----------------------------------------------------------------------
@@ -556,9 +557,9 @@ fn os_name() -> &'static str {
 /// A nav category: its uppercase 11/600 title (if any) over its items.
 pub(crate) fn nav_group(title: Option<&str>, items: impl IntoIterator<Item = El>, p: &Palette) -> El {
     let mut group = col().w_full().gap(3.0).mb(8.0);
-    if let Some(t) = title {
+    if let Some(title) = title {
         group = group.child(
-            text(t.to_string())
+            text(t(title))
                 .font(font(11.0, 600.0).lh(16.0).tracking(0.22))
                 .text_case(rune::TextCase::Uppercase)
                 .color(p.text_tertiary)
@@ -573,6 +574,7 @@ pub(crate) fn nav_group(title: Option<&str>, items: impl IntoIterator<Item = El>
 
 /// `.sidebarItem`: 34 tall, padding 5 10, a 20 icon, 13/500 label.
 pub(crate) fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, danger: bool, p: &Palette, c: &Colors) -> El {
+    let label = t(label);
     let (fg, icon_fg, hover_fg) = if danger {
         (c.danger, c.danger, c.danger)
     } else if selected {

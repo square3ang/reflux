@@ -7,6 +7,7 @@ use super::{Intent, ShellAccess, ShellState};
 use crate::icons;
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonVariant, Checkbox, Modal, rgb};
+use crate::i18n::t;
 
 /// `BUILT_IN_TRUST_PATTERNS`.
 const BUILT_IN: [&str; 10] =
@@ -63,13 +64,13 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
         .child(
             col()
                 .items_center()
-                .child(text(format!("You are about to leave {product}")).font(font(16.0, 600.0).lh(24.0)).color(p.text_primary))
-                .child(text("External links can be dangerous. Be careful.").font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).mt(4.0)),
+                .child(text(crate::i18n::tf("You are about to leave {productName}", &[("productName", product)])).font(font(16.0, 600.0).lh(24.0)).color(p.text_primary))
+                .child(text(t("External links can be dangerous. Be careful.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).mt(4.0)),
         );
     let dest = col()
         .w_full()
         .gap(8.0)
-        .child(text("Destination URL:").font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary))
+        .child(text(t("Destination URL:")).font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary))
         .child(
             col()
                 .w_full()
@@ -104,16 +105,16 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
     };
     let footer = row()
         .gap(8.0)
-        .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("link-cancel").on_press(close).el(p))
+        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("link-cancel").on_press(close).el(p))
         .child(
-            Button::new("Visit site")
+            Button::new(t("Visit site"))
                 .icon_right(&icons::ARROW_RIGHT_BOLD)
                 .key("link-visit")
                 .on_press_tx(visit)
                 .el(p),
         );
     // shortcut: the title "External link warning" is for screen readers only in Fluxer; ours shows.
-    Some(Modal::new("External link warning", close).body(body).footer(footer).el(p))
+    Some(Modal::new(t("External link warning"), close).body(body).footer(footer).el(p))
 }
 
 #[cfg(test)]

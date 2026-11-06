@@ -4,6 +4,7 @@ mod guild;
 mod gst;
 mod i18n;
 mod keybinds;
+mod look;
 mod icons;
 mod login;
 mod media;

@@ -201,7 +201,8 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
     };
     let mut words = col().grow(1.0).shrink().min_w(0.0);
     let mut line = row().w_full().gap(16.0).center_y().child(label_text(&it.label, fg));
-    if let Some(k) = &it.shortcut {
+    // "Show context menu keybinds" (Accessibility → Keyboard).
+    if let Some(k) = it.shortcut.as_ref().filter(|_| crate::look::with(|l| l.menu_shortcuts)) {
         let kc = if it.danger { fg } else { p.text_primary_muted };
         line = line.child(text(k.clone()).font(font(12.0, 400.0).mono()).color(kc));
     }

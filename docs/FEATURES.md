@@ -18,12 +18,12 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
 | Devices | DONE | | tabs/DevicesTab.tsx |
 | Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | MISSING | | tabs/PlutoniumTab.tsx etc. |
-| Appearance | PARTIAL | cozy/compact, spacing, hide avatars, font size, typing in channel list, unread on muted (zoom + streaming privacy done) | tabs/AppearanceTab.tsx |
-| Themes | PARTIAL | legacy dark, system, custom colours/fonts, Quick CSS, sharing | F/theme_settings/* |
-| Notifications | PARTIAL | unread badge toggle, per-sound toggles, custom sounds, TTS | tabs/NotificationsTab.tsx |
-| Chat (Messages & media) | MISSING | embeds/link previews/reactions/spoilers display, input behaviour | tabs/ChatSettingsTab.tsx |
+| Appearance | DONE | (device prefs in session.json, not the synced-preferences protobuf; Active now has no panel to show) | tabs/AppearanceTab.tsx |
+| Themes | PARTIAL | theme library/saved themes and backups; font and non-colour variables can't be overridden; Quick CSS applies only `:root` colour variables (the rest is counted and reported) | F/theme_settings/* |
+| Notifications | PARTIAL | per-sound volume overrides | tabs/NotificationsTab.tsx |
+| Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
 | Voice & video | PARTIAL | input/output volume stored but not applied (no SDK volume); EC/NS/AGC only switch hardware processors; no entrance sound, no camera effects; mic test/VAD always use the default input | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
-| Accessibility | MISSING | reduced motion, animated emoji, saturation, link underline, keyboard mode | tabs/AccessibilityTab.tsx |
+| Accessibility | PARTIAL | keyboard mode (so "Escape exits keyboard mode" is stored only); keep-animating-under-reduced-motion flags | tabs/AccessibilityTab.tsx |
 | Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
 | Keybinds | PARTIAL | custom keybinds, recorder, PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
@@ -108,10 +108,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Topic modal | MISSING | | ChannelTopicModal.tsx |
 | DM call buttons | DONE | | CallButtons.tsx |
 | Announcement follow | MISSING | | ChannelFollowModal.tsx |
-| Compact layout | MISSING | | CompactMessageLayout.tsx |
+| Compact layout | PARTIAL | text wraps under its own start, not 32px under the name (no negative text-indent in Rune) | CompactMessageLayout.tsx |
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
-| Typing indicator tiers | PARTIAL | | ChannelTyping.tsx |
+| Typing indicator tiers | PARTIAL | channel-list dots don't animate | ChannelTyping.tsx |
 | Rich composer (pills, toolbar) | MISSING | | F/lexical/* |
 | Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
@@ -125,7 +125,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
 | NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
 | Guild members page | MISSING | | GuildMembersPage.tsx |
-| DM list | PARTIAL | pinned DMs, previews | DirectMessageList.tsx |
+| DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
 | Group DM management | PARTIAL | member add/remove only from the user menu | EditGroupModal.tsx |
 | Active Now | MISSING | | ActiveNowSidebar.tsx |
@@ -160,7 +160,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Timed mute expiry | DONE | | useMuteSheet.ts |
 | Per-channel overrides | MISSING | | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
-| TTS | MISSING | | TextToSpeech.tsx |
+| TTS | PARTIAL | speaks through the OS tool (spd-say/espeak-ng/say/PowerShell); no queue, no TtsTextFormatter simplification, replies not announced as such | TextToSpeech.tsx |
 | Auto-idle | MISSING | | LocalPresence.ts |
 | Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
 
@@ -234,9 +234,9 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Search UI chips/suggestions, history | PARTIAL/MISSING | | F/search/* |
 | Quick switcher recents | PARTIAL | | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | MISSING/PARTIAL | | F/input/* |
-| Custom themes, Quick CSS, theme sharing | MISSING | | F/theme*/* |
-| i18n coverage, plurals, RTL, locale dates | PARTIAL | plurals, RTL (locale dates + 12/24h done) | F/i18n/* |
-| Reduced motion, screen reader announcements | MISSING/PARTIAL | | F/accessibility/* |
+| Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
+| i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
+| Reduced motion, screen reader announcements | DONE | | F/accessibility/* |
 | Streamer mode | PARTIAL | names masked via Store::display_name, account gate, invite link, sounds, notifications; notes in profile not hidden | F/streamer_mode/* |
 | Debug modals, experiments, account engine cache, premium *(low)* | MISSING | | |
 

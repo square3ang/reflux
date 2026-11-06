@@ -10,6 +10,7 @@ use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Status, mention_badge, mix, over, rgb, rgba, scroller};
+use crate::i18n::t;
 
 fn header_bar(p: &Palette) -> El {
     // `border-bottom: 1px solid var(--user-area-divider-color)`, drawn as a child row.
@@ -78,7 +79,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
             if hide_muted && !selected && store.is_muted(c) {
                 continue;
             }
-            groups = groups.child(channel_row(store, c, selected, p, acc));
+            groups = groups.child(channel_row(store, st, c, selected, p, acc));
             groups = groups.children(super::threads::sidebar_rows(store, st, c, p, acc));
             if c.kind == ChannelType::GUILD_VOICE {
                 groups = groups.child(voice_users(store, st, c, p, acc));
@@ -138,7 +139,7 @@ fn category<S: 'static>(cat: &Channel, collapsed: bool, p: &Palette, acc: ShellA
     )
 }
 
-fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let unread = store.has_unread(c.id);
     let muted = store.is_muted(c);
     let mentions = store.mention_count(c.id);
@@ -175,6 +176,20 @@ fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palet
                 .grow(1.0)
                 .shrink(),
         );
+    // `channelTypingIndicatorMode`: the typing dots, with the typers' avatars unless "only".
+    let mode = crate::look::with(|l| l.typing_indicator);
+    let typers: Vec<_> = if mode < 2 { store.typing_users(c.id, st.now_ms).into_iter().filter(|u| *u != store.my_id()).collect() } else { Vec::new() };
+    if !typers.is_empty() {
+        let dot_c = if selected { p.surface_interactive_selected_color } else { p.text_chat };
+        let mut t = row().gap(4.0).center_y().child(typing_dots(dot_c));
+        if mode == 0 {
+            // `AvatarStack` of 12px avatars, at most 5, overlapping by 4.
+            t = t.child(row().children(typers.iter().take(5).enumerate().map(|(i, u)| {
+                super::avatar(store, st, *u, 12.0, None, p.background_secondary, p).ml(if i == 0 { 0.0 } else { -4.0 })
+            })));
+        }
+        item = item.child(t);
+    }
     if let Some(b) = mention_badge(mentions as u64, true, p) {
         item = item.child(b);
     }
@@ -194,7 +209,9 @@ fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palet
         item = item.opacity(0.5);
     }
     let mut container = row().w_full().pt(1.0).child(item);
-    if unread && !selected {
+    // Muted channels show their (faded) unread pill only with "Show unread indicator on muted
+    // channels".
+    if unread && !selected && (!muted || crate::look::with(|l| l.faded_unread_muted)) {
         // `.unreadIndicator`: an 8px half-pill hanging off the list's left edge.
         container = container.child(
             el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted { 0.4 } else { 1.0 }),
@@ -239,7 +256,7 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                 .fill(rgb(220, 38, 38))
                 .child(text("LIVE").font(font(10.0, 600.0).lh(10.0)).color(Color::WHITE));
             if u != me {
-                badge = badge.cursor(rune::Cursor::Pointer).role("button").label("Watch stream").on_press(move |s: &mut S| {
+                badge = badge.cursor(rune::Cursor::Pointer).role("button").label(t("Watch stream")).on_press(move |s: &mut S| {
                     let sh = acc(s);
                     sh.voice.watching = Some(u);
                     sh.intents.push(super::Intent::Watch(Some(u)));
@@ -291,7 +308,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                 .center_y()
                 .radius(dim::RADIUS_MD)
                 .hover(p.background_modifier_hover)
-                .child(text("Quick switcher").font(font(13.0, 500.0)).color(p.text_primary_muted).group_color(p.text_primary).truncate().grow(1.0).shrink())
+                .child(text(t("Quick switcher")).font(font(13.0, 500.0)).color(p.text_primary_muted).group_color(p.text_primary).truncate().grow(1.0).shrink())
                 .child(row().gap(2.0).child(kbd("Ctrl")).child(kbd("K"))),
         )
         .child(header_bar(p));
@@ -299,7 +316,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let pending = store.relationships.values().filter(|r| r.kind == reflux_model::RelationshipType::INCOMING_REQUEST).count();
     let friends_on = st.guild.is_none() && st.channel.is_none();
     let mut rows = col().w_full().px(dim::SPACING_2).gap(1.0).child(el().h(dim::SPACING_2));
-    rows = rows.child(special(&icons::USERS_THREE_FILL, "Friends", friends_on && !st.social.discovery, pending, p).on_press(move |s: &mut S| {
+    rows = rows.child(special(&icons::USERS_THREE_FILL, t("Friends"), friends_on && !st.social.discovery, pending, p).on_press(move |s: &mut S| {
         let st = acc(s);
         st.channel = None;
         st.social.discovery = false;
@@ -315,7 +332,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                 .mb(8.0)
                 .px(8.0)
                 .center_y()
-                .child(text("Direct messages").font(font(13.0, 500.0).lh(16.0)).color(p.text_primary_muted).grow(1.0))
+                .child(text(t("Direct messages")).font(font(13.0, 500.0).lh(16.0)).color(p.text_primary_muted).grow(1.0))
                 .child(
                     row()
                         .size(16.0, 16.0)
@@ -323,7 +340,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                         .hover_group()
                         .cursor(rune::Cursor::Pointer)
                         .role("button")
-                        .label("Create DM")
+                        .label(t("Create DM"))
                         .key("create-dm")
                         .on_press(move |s: &mut S| crate::social::open_create_dm(acc(s)))
                         .child(icon(&icons::PLUS_BOLD, 16.0).color(p.text_primary_muted).group_color(p.text_primary)),
@@ -386,9 +403,9 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     let sub_c = mix(if selected { p.surface_interactive_selected_color } else { p.text_primary_muted }, Color::TRANSPARENT, 85.0);
     let subtext = if group {
         let n = c.recipients.len() + 1;
-        Some(if n == 1 { "1 member".to_string() } else { format!("{n} members") })
+        Some(crate::i18n::tp("{count, plural, one {# member} other {# members}}", n as i64, &[]))
     } else {
-        other.and_then(|u| store.presences.get(&u)?.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty())
+        dm_preview(store, c, unread).or_else(|| other.and_then(|u| store.presences.get(&u)?.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty()))
     };
     let mut info = col().grow(1.0).min_w(0.0).gap(1.0).child(
         text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate(),
@@ -402,7 +419,7 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .radius(dim::RADIUS_FULL)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(format!("Close direct message with {name}"))
+        .label(crate::i18n::tf("Close direct message with {displayName}", &[("displayName", &name)]))
         .group_opacity(0.0, 1.0)
         .on_press(move |s: &mut S| {
             let st = acc(s);
@@ -452,11 +469,11 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let name = user.map_or(String::new(), |u| u.global_name.clone().unwrap_or_else(|| u.username.clone()));
     let status = store.sessions.first().map(|s| s.status).unwrap_or(store.settings.status);
     let (dot, label) = match status {
-        reflux_model::Status::Idle => (Status::Idle, "Idle"),
+        reflux_model::Status::Idle => (Status::Idle, t("Idle")),
         reflux_model::Status::Dnd => (Status::Dnd, "Do Not Disturb"),
-        reflux_model::Status::Invisible => (Status::Offline, "Invisible"),
-        reflux_model::Status::Online => (Status::Online, "Online"),
-        _ => (Status::Online, "Online"),
+        reflux_model::Status::Invisible => (Status::Offline, t("Invisible")),
+        reflux_model::Status::Online => (Status::Online, t("Online")),
+        _ => (Status::Online, t("Online")),
     };
     let surface = p.panel_control_bg;
     // `.controlButton`; `.active` (muted / deafened) turns it danger-red, `.disabled` halves it.
@@ -509,7 +526,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     if !mic_locked {
         mic = mic.on_press(move |s: &mut S| acc(s).toggle_mute());
     }
-    let deaf_label = if server_deaf { "Deafened by moderators" } else if v.self_deaf { "Undeafen" } else { "Deafen" };
+    let deaf_label = if server_deaf { t("Deafened by moderators") } else if v.self_deaf { t("Undeafen") } else { t("Deafen") };
     let mut speaker = control(if deaf { &icons::SPEAKER_SLASH } else { &icons::SPEAKER_HIGH }, deaf_label, deaf && !server_deaf, server_deaf);
     if !server_deaf {
         speaker = speaker.on_press(move |s: &mut S| acc(s).toggle_deaf());
@@ -579,4 +596,34 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .pb(dim::FOOTER_BOX_INSET + 1.0)
         .fill(p.background_secondary)
         .child(inner)
+}
+
+/// `Typing`: three 4px dots, 2 apart (Rune draws them still).
+// shortcut: the dots don't bounce.
+fn typing_dots(c: Color) -> El {
+    row().gap(2.0).center_y().children((0..3).map(|i| el().size(4.0, 4.0).radius(2.0).fill(c).opacity(if i == 1 { 0.7 } else { 0.45 + 0.2 * i as f32 })))
+}
+
+/// `DMListItem` `getMessagePreview`, per "DM message previews" (0 all, 1 unread, 2 none):
+/// "Name: text" or "You: Sent an attachment" from the cached last message.
+// shortcut: plain text (markdown isn't rendered, the attachment line isn't italic) and system
+// messages give no preview.
+fn dm_preview(store: &Store, c: &Channel, unread: bool) -> Option<String> {
+    let mode = crate::look::with(|l| l.dm_previews);
+    if mode == 2 || (mode == 1 && !unread) {
+        return None;
+    }
+    let m = store.messages.get(&c.id)?.messages.last()?;
+    if !matches!(m.kind, reflux_model::MessageType::DEFAULT | reflux_model::MessageType::REPLY) {
+        return None;
+    }
+    let who = if m.author.id == store.my_id() { crate::i18n::t("You").to_string() } else { store.display_name(None, m.author.id) };
+    let body = if !m.content.is_empty() {
+        m.content.replace('\n', " ")
+    } else if !m.attachments.is_empty() {
+        crate::i18n::t("Sent an attachment").to_string()
+    } else {
+        return None;
+    };
+    Some(format!("{who}: {body}"))
 }

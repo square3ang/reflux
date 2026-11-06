@@ -244,8 +244,10 @@ impl Run {
             self.spans.splice(i..=i, parts);
         }
         let mut t = rich(self.text, self.spans).font(font(size, weight).lh(lh)).color(color).w_full();
+        // `--markup-strikethrough-color`: dimmed to 55% unless turned off.
+        let strike = crate::look::with(|l| l.dim_strikethrough).then(|| mix(color, Color::TRANSPARENT, 55.0));
         for (a, b) in self.strikes {
-            t = t.strike(a, b, None);
+            t = t.strike(a, b, strike);
         }
         if let Some(f) = md.on_link.as_ref().filter(|_| !self.links.is_empty()) {
             let p_link = md.p.text_link;
@@ -304,7 +306,7 @@ pub fn render(content: &str, md: &Md) -> El {
 fn emoji_image(kind: &EmojiKind, md: &Md) -> Load {
     match kind {
         // `AnimateEmoji`: animated emoji move unless the user turned it off.
-        EmojiKind::Custom { id, animated, .. } if *animated && md.store.settings.animate_emoji => {
+        EmojiKind::Custom { id, animated, .. } if *animated && md.store.settings.animate_emoji && !crate::look::reduced_motion() => {
             md.media.asset(|b, _| crate::media::emoji_url_animated(b, id))
         }
         EmojiKind::Custom { id, .. } => md.media.asset(|b, _| crate::media::emoji_url(b, id)),
@@ -362,7 +364,14 @@ pub fn inline_text(content: &str, md: &Md, style: rune::tok::TextStyle, color: C
     rich(t, run.spans).font(style).color(color).truncate()
 }
 
+/// The body text size and line height: 16/22 scaled by the chat font size setting.
+fn body_size() -> (f32, f32) {
+    let k = crate::look::with(|l| l.text_scale());
+    (16.0 * k, (22.0 * k).round())
+}
+
 fn blocks(nodes: &[Node], md: &Md, color: Color) -> El {
+    let (size, lh) = body_size();
     let mut out = col().w_full();
     let mut run = Run::default();
     let n = nodes.len();
@@ -371,12 +380,12 @@ fn blocks(nodes: &[Node], md: &Md, color: Color) -> El {
             inline(node, Style::default(), &mut run, md);
             continue;
         }
-        if let Some(e) = std::mem::take(&mut run).el(16.0, 22.0, 400.0, color, md) {
+        if let Some(e) = std::mem::take(&mut run).el(size, lh, 400.0, color, md) {
             out = out.child(e);
         }
         out = out.child(block(node, md, color, i == 0, i + 1 == n));
     }
-    if let Some(e) = run.el(16.0, 22.0, 400.0, color, md) {
+    if let Some(e) = run.el(size, lh, 400.0, color, md) {
         out = out.child(e);
     }
     out
@@ -389,7 +398,8 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
             let mut run = Run::default();
             children.iter().for_each(|c| inline(c, Style::default(), &mut run, md));
             // h1 1.375em, h2 1.25em, h3 1.125em; line-height 1.2; margin 20 0 12 (4 on top when first).
-            let size = match level {
+            let k = crate::look::with(|l| l.text_scale());
+            let size = k * match level {
                 1 => 22.0,
                 2 => 20.0,
                 3 => 18.0,
@@ -451,7 +461,7 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                                 .ml(-20.0)
                                 .justify_end()
                                 .pr(6.0)
-                                .child(text(marker).font(font(16.0, 400.0).lh(22.0)).color(color)),
+                                .child(text(marker).font(font(body_size().0, 400.0).lh(body_size().1)).color(color)),
                         )
                         .child(col().grow(1.0).min_w(0.0).child(blocks(&item.children, md, color))),
                 );
@@ -501,11 +511,12 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
         }
         Node::InlineCode { content } => {
             // `code.inline`: mono at 85%, `text-code` on `bg-code`.
-            run.push_span(content, |s| s.mono().size(13.6).color(p.text_code).bg(p.bg_code, 2.0))
+            run.push_span(content, |s| s.mono().size(13.6 * crate::look::with(|l| l.text_scale())).color(p.text_code).bg(p.bg_code, 2.0))
         }
-        Node::CodeBlock { content, .. } => run.push_span(content, |s| s.mono().size(13.6).color(p.text_code).bg(p.bg_code, 2.0)),
+        Node::CodeBlock { content, .. } => run.push_span(content, |s| s.mono().size(13.6 * crate::look::with(|l| l.text_scale())).color(p.text_code).bg(p.bg_code, 2.0)),
         Node::Link { text: label, url, .. } => {
-            let st = Style { color: Some(p.text_link), ..st };
+            // `--link-decoration`: "Always underline links".
+            let st = Style { color: Some(p.text_link), underline: st.underline || crate::look::with(|l| l.underline_links), ..st };
             let start = run.text.len();
             match label {
                 Some(t) => inline(t, st, run, md),

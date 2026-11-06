@@ -18,6 +18,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::{over, rgba};
+use crate::i18n::t;
 
 /// `EMBED_MAX_WIDTH` × `EMBED_MAX_HEIGHT` (and `EMBED_TALL_MAX_HEIGHT`).
 const EMBED_W: f32 = 400.0;
@@ -111,7 +112,12 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
             valid(x).filter(|x| !(flagged(x) && level == 2))
         }
         let key = format!("emb-{}-{i}", m.id);
+        // `inlineEmbedMedia` off: links to media stay links, and rich embeds drop their images.
+        let inline = store.settings.inline_embed_media;
         if !has_rich(e) {
+            if !inline {
+                continue;
+            }
             let thumb = blocked(&e.thumbnail, level);
             let el = if let (Some(a), "audio") = (e.audio.as_ref().filter(|a| a.proxy_url.is_some()), e.kind.as_str()) {
                 Some(audio(st, &key, a, e.title.as_deref(), p, acc))
@@ -138,7 +144,7 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
             .embeds
             .iter()
             .enumerate()
-            .filter(|(j, _)| urls[i].is_some() && urls[*j] == urls[i])
+            .filter(|(j, _)| inline && urls[i].is_some() && urls[*j] == urls[i])
             .filter_map(|(_, x)| blocked(&x.image, level).or_else(|| blocked(&x.thumbnail, level)))
             .filter(|x| seen.insert(x.content_hash.clone().unwrap_or_else(|| x.url.clone())))
             .take(MAX_GALLERY)
@@ -196,8 +202,8 @@ fn youtube<S: 'static>(st: &ShellState, e: &Embed, v: &EmbedMedia, p: &Palette, 
         .fill(rgba(3, 3, 4, 0.86))
         .border(1.0, rgba(255, 255, 255, 0.12))
         .backdrop_blur(16.0)
-        .child(button(&icons::PLAY_FILL, "Play video", url.clone()))
-        .child(button(&icons::ARROW_SQUARE_OUT, "Open in new tab", url));
+        .child(button(&icons::PLAY_FILL, t("Play video"), url.clone()))
+        .child(button(&icons::ARROW_SQUARE_OUT, t("Open in new tab"), url));
     super::picture(poster, w, h, 4.0, p).fill(p.background_primary).child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(group))
 }
 

@@ -33,9 +33,10 @@ fn switch_if<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, labe
     .el(p)
 }
 
-pub fn notifications<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+/// "Enable desktop notifications" (`Notifications.tsx`).
+pub fn notifications_switch<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let product = [("productName", "Fluxer")];
-    let notes = switch(
+    switch(
         st,
         p,
         acc,
@@ -43,9 +44,7 @@ pub fn notifications<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<
         Some(tf("Get notified when you receive messages. You may need to allow notifications for {productName} in your device settings. For per-channel/per-community controls, open notification settings from a community's menu.", &product)),
         |p| p.notifications,
         |p, v| p.notifications = v,
-    );
-    let sounds = switch(st, p, acc, t("Disable all notification sounds"), Some(t("Your existing notification sound settings will be preserved.").into()), |p| !p.sounds, |p, v| p.sounds = !v);
-    col().w_full().child(section(t("Notifications"), notes, true, p)).child(section(t("Sounds"), sounds, false, p))
+    )
 }
 
 pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -78,8 +77,8 @@ pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
     col().w_full().child(section(t("Desktop window"), window, true, p)).child(section(t("Keybinds"), global, false, p))
 }
 
-/// Appearance → Scaling (`AppZoomLevelTabContent`) and Streaming privacy (`StreamerModeTab`).
-pub fn appearance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+/// Appearance → Scaling (`AppZoomLevelTabContent`).
+pub fn scaling<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     use crate::desktop::window::{ZOOM_MAX, ZOOM_MIN, clamp_zoom};
     let pct = (st.prefs.zoom * 100.0).round();
     let slider = crate::ui::Slider::new("app-zoom", pct, ZOOM_MIN * 100.0, ZOOM_MAX * 100.0)
@@ -114,6 +113,11 @@ pub fn appearance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
                     sh.intents.push(Intent::Prefs(prefs));
                 })),
         );
+    section(t("App zoom level"), zoom, false, p)
+}
+
+/// Appearance → Streaming privacy (`StreamerModeTab`).
+pub fn streaming<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let s = &st.prefs.streamer;
     let off = !s.manual && !s.auto;
     let privacy = col()
@@ -132,7 +136,7 @@ pub fn appearance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
         .child(switch_if(st, p, acc, t("Mask community invite links"), None, off, |p| p.streamer.hide_invites, |p, v| p.streamer.hide_invites = v))
         .child(switch_if(st, p, acc, t("Mute app sound effects"), None, off, |p| p.streamer.disable_sounds, |p, v| p.streamer.disable_sounds = v))
         .child(switch_if(st, p, acc, t("Pause notifications"), None, off, |p| p.streamer.disable_notifications, |p, v| p.streamer.disable_notifications = v));
-    col().w_full().child(section(t("Scaling"), zoom, false, p)).child(section(t("Streaming privacy"), privacy, false, p))
+    section(t("Streaming privacy"), privacy, false, p)
 }
 
 /// `StreamerModeGate`: account details stay hidden while streaming privacy is on.

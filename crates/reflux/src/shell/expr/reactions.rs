@@ -12,6 +12,7 @@ use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::overlay::{anchor, popout_shadow};
 use crate::ui::{Avatar, Button, ButtonVariant, Menu, MenuEntry, MenuItem, Modal, ModalSize, Placement, over, scroller};
+use crate::i18n::t;
 
 /// `useHoverFloatingTooltip(500)`, and how long it outlives the pointer.
 const OPEN_MS: u64 = 500;
@@ -174,9 +175,9 @@ fn tooltip<S: 'static>(st: &ShellState, c: Snowflake, m: Snowflake, r: &reflux_m
         .shrink()
         .child(match line {
             Some(l) => text(l).font(font(13.0, 500.0).lh(16.25)).color(p.text_primary).wrap(),
-            None => text("Loading…").font(font(13.0, 500.0).lh(16.25)).color(p.text_primary_muted),
+            None => text(t("Loading…")).font(font(13.0, 500.0).lh(16.25)).color(p.text_primary_muted),
         })
-        .child(text("Click to view all reactions").font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted));
+        .child(text(t("Click to view all reactions")).font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted));
     row()
         .max_w(288.0)
         .padding(12.0)
@@ -254,7 +255,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                             .radius(4.0)
                             .cursor(rune::Cursor::Pointer)
                             .role("button")
-                            .label("Remove reaction")
+                            .label(t("Remove reaction"))
                             .group_opacity(0.0, 1.0)
                             .child(rune::icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted))
                             .on_press(move |s: &mut S| remove(acc(s), c, mid, &e, &sel, uid, me)),
@@ -264,7 +265,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
             }
             scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(l), false, p)
         }
-        _ => col().w_full().h_full().center().child(text("Loading reactions").font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        _ => col().w_full().h_full().center().child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     let body = row()
         .w_full()
@@ -274,7 +275,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
         .fill(p.background_primary)
         .child(col().w(96.0).h_full().fill(p.background_secondary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(filters), false, p)))
         .child(col().grow(1.0).min_w(0.0).h_full().padding(8.0).child(list));
-    Modal::new("Reactions", move |s: &mut S| acc(s).expr.reactions = None).size(ModalSize::Medium).body(body).el(p)
+    Modal::new(t("Reactions"), move |s: &mut S| acc(s).expr.reactions = None).size(ModalSize::Medium).body(body).el(p)
 }
 
 /// Removes one reactor: `@me` for your own, the user's ID with Manage Messages.
@@ -288,14 +289,14 @@ fn remove(st: &mut ShellState, c: Snowflake, m: Snowflake, e: &ReactionEmoji, ke
 
 fn confirm<S: 'static>(c: Snowflake, m: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).expr.confirm_clear = None;
-    Modal::new("Remove all reactions", close)
+    Modal::new(t("Remove all reactions"), close)
         .body(text("Are you sure you want to remove all reactions from this message?").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
                 .child(
-                    Button::new("Remove all")
+                    Button::new(t("Remove all"))
                         .variant(ButtonVariant::Danger)
                         .key("clear-reactions-confirm")
                         .on_press(move |s: &mut S| {
@@ -317,7 +318,7 @@ pub fn message_menu_items<S: 'static>(mut menu: Menu<S>, store: &Store, m: &Mess
     }
     let (c, mid) = (m.channel_id, m.id);
     let first = m.reactions[0].emoji.clone();
-    menu = menu.item(MenuItem::new("view-reactions", "View reactions").icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| open(acc(s), c, mid, &first)));
+    menu = menu.item(MenuItem::new("view-reactions", t("View reactions")).icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| open(acc(s), c, mid, &first)));
     if !store.permissions(c).contains(Permissions::MANAGE_MESSAGES) {
         return menu;
     }
@@ -332,8 +333,8 @@ pub fn message_menu_items<S: 'static>(mut menu: Menu<S>, store: &Store, m: &Mess
             }))
         })
         .collect();
-    menu.submenu(format!("remove-reactions-{mid}"), "Remove reactions", one).item(
-        MenuItem::new("remove-all-reactions", "Remove all reactions").icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).expr.confirm_clear = Some((c, mid))),
+    menu.submenu(format!("remove-reactions-{mid}"), t("Remove reactions"), one).item(
+        MenuItem::new("remove-all-reactions", t("Remove all reactions")).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).expr.confirm_clear = Some((c, mid))),
     )
 }
 

@@ -119,7 +119,7 @@ pub fn crop(bytes: &[u8], aspect: f32) -> Result<Vec<u8>, String> {
 
 fn pick<S: 'static>(acc: ShellAccess<S>, key: &'static str, aspect: f32) -> impl Fn(&mut S, &mut Tx) + 'static {
     move |_: &mut S, tx: &mut Tx| {
-        let options = FileDialogOptions { title: t("Choose an image").into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]);
+        let options = FileDialogOptions { title: t("Choose an image").into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp"]);
         tx.open_file(options, move |s: &mut S, r, _| {
             let form = &mut acc(s).form;
             let read = r.map_err(|e| e.to_string()).and_then(|p| {
@@ -357,7 +357,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
     let preview = col().child(crate::shell::profile::preview(store, st, card, p));
 
     let title = match guild.and_then(|g| store.guilds.get(&g)?.info.as_ref()) {
-        Some(i) => format!("Profile customization for {}", i.name),
+        Some(i) => crate::i18n::tf("Profile customization for {selectedGuildName}", &[("selectedGuildName", &i.name.to_string())]),
         None => t("Profile customization").to_string(),
     };
     let content = col()

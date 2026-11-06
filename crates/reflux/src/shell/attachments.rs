@@ -16,6 +16,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, dim, font};
 use crate::ui::{over, rgba};
+use crate::i18n::t;
 
 /// Media UI state: the lightbox, revealed spoilers, the clip playing inline, invite previews.
 #[derive(Default)]
@@ -90,7 +91,7 @@ pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
         "community"
     };
     let id = c.id;
-    let proceed = crate::ui::Button::new("Proceed")
+    let proceed = crate::ui::Button::new(t("Proceed"))
         .variant(crate::ui::ButtonVariant::Danger)
         .key("mature-proceed")
         .on_press(move |s: &mut S| {
@@ -103,7 +104,7 @@ pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
             col()
                 .padding(32.0)
                 .items_center()
-                .child(text("Mature content").font(font(24.0, 600.0).lh(32.0)).color(p.text_primary).mb(12.0))
+                .child(text(t("Mature content")).font(font(24.0, 600.0).lh(32.0)).color(p.text_primary).mb(12.0))
                 .child(text(body).font(font(16.0, 400.0).lh(24.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center).max_w(448.0).mb(16.0))
                 .child(proceed),
         ),
@@ -202,7 +203,12 @@ pub struct Tile<'a> {
 /// its other attachments as players, previews or file cards.
 pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
     let level = filter_level(store, m.channel_id);
-    let media: Vec<&Attachment> = m.attachments.iter().filter(|a| is_media(a) && !(flagged(a.nsfw, a.flags) && level == 2)).collect();
+    // `inlineAttachmentMedia` off: images and videos are file cards like other files.
+    let inline = store.settings.inline_attachment_media;
+    let shown = |a: &&Attachment| inline && is_media(a);
+    let media: Vec<&Attachment> = m.attachments.iter().filter(|a| shown(a) && !(flagged(a.nsfw, a.flags) && level == 2)).collect();
+    // `render_spoilers` 2 ("in channels I moderate") shows them where I can manage messages.
+    let unspoil = store.settings.render_spoilers == 2 && store.permissions(m.channel_id).contains(reflux_model::Permissions::MANAGE_MESSAGES);
     let items: Rc<Vec<Item>> = Rc::new(media.iter().map(|a| item(a)).collect());
     let hovered = st.hover_msg == Some(m.id);
     let mut out = Vec::new();
@@ -216,7 +222,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             video: a.content_type.starts_with("video/"),
             animated: is_animated(&a.content_type, a.flags),
             alt: a.description.as_deref(),
-            spoiler: is_spoiler(a),
+            spoiler: is_spoiler(a) && !unspoil,
             mature: flagged(a.nsfw, a.flags) && level == 1,
         };
         let (items, msg) = (items.clone(), (m.channel_id, m.id));
@@ -246,7 +252,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             out.push(grid);
         }
     }
-    for a in m.attachments.iter().filter(|a| !is_media(a)) {
+    for a in m.attachments.iter().filter(|a| !shown(a)) {
         out.push(if a.waveform.is_some() && a.url.is_some() {
             super::voice_message::player(st, a, p, acc)
         } else if a.content_type.starts_with("audio/") && a.url.is_some() {
@@ -280,11 +286,13 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
         return super::clip::video(c, (w, h), p, acc, Some(full));
     }
     let ui = &st.media_ui;
-    // `render_spoilers` 0 shows spoilers outright; on click and moderator-only both blur.
+    // `render_spoilers` 0 shows spoilers outright; 1 blurs them; 2 too, outside the channels I
+    // moderate (cleared by the caller).
     let hidden_spoiler = t.spoiler && store.settings.render_spoilers != 0 && !ui.revealed.contains(&t.key);
     let hidden_mature = t.mature && !ui.revealed.contains(&format!("{}-mature", t.key));
     let hidden = hidden_spoiler || hidden_mature;
-    let auto = store.settings.gif_auto_play;
+    // Reduced motion pauses autoplay (`resolveMotionPreferencesModel`).
+    let auto = store.settings.gif_auto_play && !crate::look::reduced_motion();
     let animate = t.animated && !t.video && !hidden && (auto || hovered);
     let load = match t.proxy {
         Some(u) if animate => st.media.get(&crate::media::fit_url_animated(u, w, st.media.scale())),
@@ -305,7 +313,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     let fill = || el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
     if hidden_spoiler {
         let key = t.key.clone();
-        let pill = text("Spoiler".to_uppercase()).font(font(15.0, 600.0).lh(20.0)).color(Color::WHITE);
+        let pill = text(crate::i18n::t("Spoiler").to_uppercase()).font(font(15.0, 600.0).lh(20.0)).color(Color::WHITE);
         tile = tile.child(
             fill()
                 .fill(rgba(255, 255, 255, 0.1))
@@ -315,7 +323,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
                 })
                 .child(row().w_full().h_full().center().child(row().py(6.0).px(12.0).radius(20.0).fill(rgba(0, 0, 0, 0.6)).hover(rgba(0, 0, 0, 0.8)).child(pill))),
         );
-        return tile.role("button").label("Spoiler");
+        return tile.role("button").label(crate::i18n::t("Spoiler"));
     }
     if hidden_mature {
         let key = format!("{}-mature", t.key);
@@ -326,8 +334,8 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
             .fill(p.background_modifier_accent)
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label("Click to reveal")
-            .child(text("Reveal").font(font(12.0, 600.0).lh(12.0)).color(p.text_primary))
+            .label(crate::i18n::t("Click to reveal"))
+            .child(text(crate::i18n::t("Reveal")).font(font(12.0, 600.0).lh(12.0)).color(p.text_primary))
             .on_press(move |s: &mut S| {
                 acc(s).media_ui.revealed.insert(key.clone());
             });
@@ -406,7 +414,7 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
             .hover(rgba(255, 255, 255, 0.22))
             .cursor(rune::Cursor::Pointer)
             .child(icon(&icons::ARROW_SQUARE_OUT, 16.0).color(Color::WHITE))
-            .child(text("Open in browser").font(font(13.0, 600.0).lh(16.0)).color(Color::WHITE))
+            .child(text(crate::i18n::t("Open in browser")).font(font(13.0, 600.0).lh(16.0)).color(Color::WHITE))
             .on_press_tx(move |_: &mut S, tx: &mut Tx| {
                 let _ = tx.open_url(&url);
             });
@@ -434,12 +442,12 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
         .gap(4.0)
         .center_y()
         .fill(rgba(0, 0, 0, 0.6))
-        .child(hud_button(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, if playing { "Pause" } else { "Play" }, move |_: &mut S| {
+        .child(hud_button(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, if playing { crate::i18n::t("Pause") } else { crate::i18n::t("Play") }, move |_: &mut S| {
             if c1.state() == PlayerState::Playing { c1.pause() } else { c1.play() }
         }))
         .child(text(format!("{} / {}", clock(clip.time()), clock(dur))).font(font(12.0, 500.0).mono().lh(16.0)).color(Color::WHITE))
         .child(el().grow(1.0).min_w(0.0).px(8.0).child(seek))
-        .child(hud_button(if clip.muted() { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL }, "Mute", move |_: &mut S| c3.set_muted(!c3.muted())))
+        .child(hud_button(if clip.muted() { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL }, crate::i18n::t("Mute"), move |_: &mut S| c3.set_muted(!c3.muted())))
         .child(hud_button(&icons::CORNERS_OUT, "Full screen", move |s: &mut S| {
             acc(s).media_ui.playing = None;
             open(s)
@@ -488,7 +496,7 @@ pub fn audio_player<S: 'static>(st: &ShellState, key: &str, a: &Attachment, p: &
         .fill(p.brand_primary)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(if playing { "Pause" } else { "Play" })
+        .label(if playing { t("Pause") } else { t("Play") })
         .child(icon(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, 16.0).color(p.text_on_brand_primary))
         .on_press(toggle);
     let size = super::upload::format_size(a.size);
@@ -564,14 +572,14 @@ fn download_button<S: 'static>(a: &Attachment, size: f32, p: &Palette, acc: Shel
     let b = row().size(size, size).center().radius(8.0);
     let url = a.proxy_url.clone().or_else(|| a.url.clone());
     match url.filter(|_| !a.expired) {
-        None => b.fill(p.brand_primary).opacity(0.4).label("Attachment expired").child(icon(&icons::WARNING_CIRCLE_BOLD, 20.0).color(p.text_on_brand_primary)),
+        None => b.fill(p.brand_primary).opacity(0.4).label(t("Attachment expired")).child(icon(&icons::WARNING_CIRCLE_BOLD, 20.0).color(p.text_on_brand_primary)),
         Some(url) => {
             let name = a.filename.clone();
             b.fill(p.brand_primary)
                 .hover(p.brand_secondary)
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Download")
+                .label(t("Download"))
                 .child(icon(&icons::DOWNLOAD_SIMPLE_BOLD, 20.0).color(p.text_on_brand_primary))
                 .on_press_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))
         }
@@ -650,7 +658,7 @@ fn text_preview<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: S
         .fill(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(if open { "Collapse" } else { "Expand" })
+        .label(if open { t("Collapse") } else { t("Expand") })
         .child(icon(if open { &icons::CARET_UP_BOLD } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_secondary))
         .on_press(move |s: &mut S| {
             let e = &mut acc(s).media_ui.expanded;

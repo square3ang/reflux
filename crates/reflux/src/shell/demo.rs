@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::{ShellState, load_default_avatars};
 use crate::State;
-use crate::theme::{self, Kind};
+use crate::theme;
 
 pub struct Demo {
     pub store: Store,
@@ -320,13 +320,21 @@ impl Demo {
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
         let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, gif_provider: "Klipy".into(), ..ShellState::default() };
-        // `--settings[=tab]` opens user settings; `--theme=light|coal` sets the account theme.
+        // `--settings[=tab]` opens user settings; `--theme=light|coal|dark_legacy|system` sets the
+        // account theme; `--compact` the dense message layout.
         for a in rune::extra_args() {
             if let Some(t) = a.strip_prefix("--theme=") {
                 store.settings.theme = t.to_owned();
+            } else if a == "--compact" {
+                store.settings.message_display_compact = true;
             } else if a == "--settings" || a.starts_with("--settings=") {
                 shell.open_settings(a.strip_prefix("--settings="));
             }
+        }
+        // `REFLUX_LOOK='{"saturation":0.5}'`: appearance / accessibility preferences for snapshots.
+        if let Some(look) = std::env::var("REFLUX_LOOK").ok().and_then(|j| serde_json::from_str::<crate::look::Prefs>(&j).ok()) {
+            crate::look::set(&look);
+            shell.prefs.look = look;
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--threads")) {
             thread_scene(&mut shell, &mut store, sc.trim_start_matches('='));
@@ -1008,7 +1016,10 @@ fn acc(s: &mut State) -> &mut ShellState {
 }
 
 pub fn view(d: &Demo) -> El {
-    super::view(&d.store, &d.shell, theme::palette(Kind::from_setting(&d.store.settings.theme)), acc)
+    let look = &d.shell.prefs.look;
+    crate::look::set_reduced_motion(look.reduced(false));
+    let p = theme::custom::effective(&d.store.settings.theme, std::env::var("REFLUX_SYSTEM_LIGHT").is_err(), look.saturation, &look.css);
+    super::view(&d.store, &d.shell, &p, acc)
 }
 
 #[cfg(test)]

@@ -614,6 +614,19 @@ impl RateLimits {
     }
 }
 
+/// Percent-encodes what a header value can't carry (non-ASCII, controls, `%`).
+fn urlencoding_min(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_graphic() && b != b'%' || b == b' ' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,17 +714,4 @@ mod tests {
         assert_eq!(rl.wait("GET /a", t + ms(1000)), None);
         assert!(rl.routes.is_empty() && rl.global.is_none(), "expired entries are dropped");
     }
-}
-
-/// Percent-encodes what a header value can't carry (non-ASCII, controls, `%`).
-fn urlencoding_min(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        if b.is_ascii_graphic() && b != b'%' || b == b' ' {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
 }

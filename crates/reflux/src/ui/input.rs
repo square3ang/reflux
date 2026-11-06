@@ -5,6 +5,7 @@ use rune::{El, TextEdit, col, icon, row, text, text_input};
 use super::{mix, over};
 use crate::icons;
 use crate::theme::{Palette, font};
+use crate::i18n::t;
 
 pub struct Input<'a, S: 'static> {
     edit: &'a TextEdit,
@@ -78,7 +79,7 @@ impl<'a, S: 'static> Input<'a, S> {
                     .hover(p.background_modifier_hover)
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
-                    .label(if revealed { "Hide password" } else { "Show password" })
+                    .label(if revealed { t("Hide password") } else { t("Show password") })
                     .on_press(move |s: &mut S| toggle(s))
                     .child(icon(eye, 18.0).color(p.text_tertiary)),
             );

@@ -13,6 +13,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal, Placement, mix, over};
+use crate::i18n::t;
 
 /// Where a file's bytes come from.
 #[derive(Clone, PartialEq)]
@@ -155,9 +156,9 @@ pub fn add(st: &mut ShellState, files: Vec<(String, u64, Source)>) {
     if big > 0 {
         let max = format_size(l.file_size);
         let body = if big > 1 {
-            format!("Some files you're trying to upload exceed the maximum size limit of {max} per file.")
+            crate::i18n::tf("Some files you're trying to upload exceed the maximum size limit of {maxSizeFormatted} per file.", &[("maxSizeFormatted", &max.to_string())])
         } else {
-            format!("The file you're trying to upload exceeds the maximum size limit of {max}.")
+            crate::i18n::tf("The file you're trying to upload exceeds the maximum size limit of {maxSizeFormatted}.", &[("maxSizeFormatted", &max.to_string())])
         };
         st.notice = Some(("File size too large".into(), format!("{body} This limit is configured by your instance administrator.")));
     }
@@ -190,7 +191,7 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
 pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     Menu::new("composer-plus")
         .placement(Placement::Top)
-        .item(MenuItem::new("upload", "Upload file").icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+        .item(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
             let options = rune::FileDialogOptions { title: "Upload file".into(), ..Default::default() };
             tx.open_file(options, move |s: &mut S, r, _| match r {
                 Ok(Some(path)) => add_paths(acc(s), &[path]),
@@ -198,7 +199,7 @@ pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                 Err(e) => acc(s).notice = Some(("Upload failed".into(), e.to_string())),
             });
         }))
-        .item(MenuItem::new("voice-message", "Send voice message").icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
+        .item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
             let sh = acc(s);
             if let Some(c) = sh.channel {
                 sh.intents.push(super::Intent::Voice(super::voice::Op::RecordStart(c)));
@@ -271,7 +272,7 @@ fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S
             .hover(if danger { mix(p.status_danger, p.surface_interactive_hover_bg, 6.0) } else { p.surface_interactive_hover_bg })
             .child(icon(glyph, 18.0).color(fg).group_color(if danger { fg } else { p.text_primary }))
     };
-    let (spoiler_icon, spoiler_label) = if u.spoiler { (&icons::EYE_FILL, "Remove spoiler") } else { (&icons::EYE_SLASH_FILL, "Spoiler attachment") };
+    let (spoiler_icon, spoiler_label) = if u.spoiler { (&icons::EYE_FILL, t("Remove spoiler")) } else { (&icons::EYE_SLASH_FILL, t("Spoiler attachment")) };
     let bar = row()
         .padding(3.0)
         .radius(8.0)
@@ -283,14 +284,14 @@ fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S
                 u.spoiler ^= true;
             }
         }))
-        .child(button(&icons::PENCIL_SIMPLE_FILL, "Edit attachment", false).key(format!("upload-edit-{id}")).on_press(move |s: &mut S| {
+        .child(button(&icons::PENCIL_SIMPLE_FILL, t("Edit attachment"), false).key(format!("upload-edit-{id}")).on_press(move |s: &mut S| {
             let st = acc(s);
             let d = st.uploads.iter().find(|u| u.id == id).map(|u| u.description.clone()).unwrap_or_default();
             let mut e = TextEdit::new(d);
             e.focused = true;
             st.upload_edit = Some((id, e));
         }))
-        .child(button(&icons::TRASH_FILL, "Remove attachment", true).key(format!("upload-remove-{id}")).on_press(move |s: &mut S| acc(s).uploads.retain(|u| u.id != id)));
+        .child(button(&icons::TRASH_FILL, t("Remove attachment"), true).key(format!("upload-remove-{id}")).on_press(move |s: &mut S| acc(s).uploads.retain(|u| u.id != id)));
     col()
         .size(200.0, 200.0)
         .padding(8.0)
@@ -343,13 +344,13 @@ pub fn edit_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
         .child(text("Description (alt text)").font(font(12.0, 600.0)).color(p.text_primary))
         .child(field);
     Some(
-        Modal::new("Edit attachment", close)
+        Modal::new(t("Edit attachment"), close)
             .body(body)
             .footer(
                 row()
                     .gap(8.0)
-                    .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("upload-edit-cancel").on_press(close).el(p))
-                    .child(Button::new("Save").key("upload-edit-save").on_press(save).el(p)),
+                    .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("upload-edit-cancel").on_press(close).el(p))
+                    .child(Button::new(t("Save")).key("upload-edit-save").on_press(save).el(p)),
             )
             .el(p),
     )
@@ -362,7 +363,7 @@ pub fn notice_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
     Some(
         Modal::new(title.clone(), close)
             .body(text(body.clone()).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
-            .footer(Button::new("Okay").key("notice-ok").on_press(close).el(p))
+            .footer(Button::new(t("Okay")).key("notice-ok").on_press(close).el(p))
             .el(p),
     )
 }

@@ -8,6 +8,7 @@ use std::rc::Rc;
 use rune::{Color, El, Shadow, col, el, icon, row, text};
 
 use super::{is_light, mix, rgb, rgba};
+use crate::i18n::t;
 use crate::icons;
 use crate::theme::{Palette, font};
 
@@ -160,6 +161,8 @@ impl<'a, S: 'static> RadioGroup<'a, S> {
 
     pub fn el(self, p: &Palette) -> El {
         col().gap(6.0).focus_group().role("radiogroup").children(self.options.iter().map(|&(value, label, desc)| {
+            // Option tables are often `const`; their text is translated here.
+            let (label, desc) = (t(label), desc.map(t));
             let on = self.value == Some(value);
             let dot = radio_dot(on, p).mt(2.0);
             let mut words = col()

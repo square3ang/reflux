@@ -14,6 +14,7 @@ use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::{anchor, popout_shadow};
 use crate::ui::{Button, ButtonSize, ButtonVariant, over, scroller, spinner};
+use crate::i18n::t;
 
 const PER_PAGE: u32 = 25;
 
@@ -75,7 +76,7 @@ pub fn bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         .grow(1.0)
         .single_line()
         .color(p.text_primary)
-        .placeholder("Search", p.text_tertiary)
+        .placeholder(t("Search"), p.text_tertiary)
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).search.query })
         .on_input_key(move |s: &mut S, k, _| {
@@ -112,7 +113,7 @@ pub fn bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
                 .center()
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Clear search")
+                .label(t("Clear search"))
                 .hover_group()
                 .child(icon(&icons::X_CIRCLE_FILL, 16.0).color(p.text_tertiary).group_color(p.text_primary))
                 .on_press(move |s: &mut S| {
@@ -178,13 +179,13 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         .child(icon(&icons::X_BOLD, 18.0).color(p.text_primary_muted))
         .on_press(move |s: &mut S| acc(s).search.results = None);
     let title = match r {
-        Results::Loading => "Searching".to_string(),
-        Results::Indexing => "Indexing".to_string(),
+        Results::Loading => t("Searching").to_string(),
+        Results::Indexing => t("Indexing").to_string(),
         Results::Done { total: 1, .. } => "1 result".to_string(),
         Results::Done { total, .. } => format!("{total} results"),
-        Results::Failed => "Search results".to_string(),
+        Results::Failed => t("Search results").to_string(),
     };
-    let sort = Button::new(if st.search.oldest { "Oldest" } else { "Newest" })
+    let sort = Button::new(if st.search.oldest { t("Oldest") } else { t("Newest") })
         .variant(ButtonVariant::Secondary)
         .size(ButtonSize::Compact)
         .key("search-sort")
@@ -217,9 +218,9 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     };
     let body = match r {
         Results::Loading => col().w_full().grow(1.0).center().child(spinner(p.text_primary_muted)),
-        Results::Indexing => message_state(&icons::CIRCLE_NOTCH, "Indexing channel", "This channel is being indexed. Try again in a moment."),
-        Results::Failed => message_state(&icons::WARNING_CIRCLE, "Error", "An error occurred while searching."),
-        Results::Done { messages, .. } if messages.is_empty() => message_state(&icons::MAGNIFYING_GLASS, "No results", "Try a different search query."),
+        Results::Indexing => message_state(&icons::CIRCLE_NOTCH, t("Indexing channel"), "This channel is being indexed. Try again in a moment."),
+        Results::Failed => message_state(&icons::WARNING_CIRCLE, t("Error"), t("An error occurred while searching.")),
+        Results::Done { messages, .. } if messages.is_empty() => message_state(&icons::MAGNIFYING_GLASS, t("No results"), t("Try a different search query.")),
         Results::Done { messages, total } => {
             let mut list = col().w_full().pt(8.0).px(8.0).pb(12.0);
             let mut last = None;
@@ -258,9 +259,9 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
                         .py(8.0)
                         .gap(8.0)
                         .center()
-                        .child(Button::new("Previous").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page <= 1).key("search-prev").on_press(go(page.saturating_sub(1).max(1))).el(p))
+                        .child(Button::new(t("Previous")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page <= 1).key("search-prev").on_press(go(page.saturating_sub(1).max(1))).el(p))
                         .child(text(format!("{page} / {pages}")).font(font(13.0, 500.0)).color(p.text_primary_muted))
-                        .child(Button::new("Next").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page >= pages).key("search-next").on_press(go(page + 1)).el(p)),
+                        .child(Button::new(t("Next")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page >= pages).key("search-next").on_press(go(page + 1)).el(p)),
                 );
             }
             col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("search-results").child(list), false, p))
@@ -292,7 +293,7 @@ fn result<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, 
         .role("button")
         .hover_group()
         .key(format!("search-jump-{id}"))
-        .child(text("Jump").font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
+        .child(text(t("Jump")).font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
         .on_press(move |s: &mut S| super::jump(acc(s), guild, ch, id));
     col()
         .w_full()

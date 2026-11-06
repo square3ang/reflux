@@ -10,6 +10,7 @@ use super::{CellCx, For, Grid, Item, ShellAccess, ShellState, close, grid_key, g
 use crate::media::Load;
 use crate::shell::Intent;
 use crate::theme::Palette;
+use crate::i18n::t;
 
 /// `STICKER_PICKER_ITEM_SIZE` (+ the 8px gap) over four columns.
 const GRID: Grid = Grid { cell: 126.0, row_h: 134.0, cols: 4, kind: "sticker" };
@@ -86,12 +87,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     let rows = Rc::new(super::build_rows(search, sections, GRID.cols, &x.collapsed, "sticker:"));
     let hovered = st.expr.hover.as_ref().and_then(|k| all.iter().find(|i| i.key() == *k).cloned());
     let keys = rows.clone();
-    let bar = search_bar(st, "Find the perfect sticker".into(), p, acc, move |s: &mut S, k, tx| grid_key(acc(s), &keys, k, tx, "sticker-grid", pick));
+    let bar = search_bar(st, t("Find the perfect sticker").into(), p, acc, move |s: &mut S, k, tx| grid_key(acc(s), &keys, k, tx, "sticker-grid", pick));
     let mut grid = col().grow(1.0).min_w(0.0).h_full().child(grid_list(store, st, rows.clone(), GRID, p, acc, cell));
     if rows.is_empty() {
         grid = grid.child(match (all.is_empty(), q.is_empty()) {
-            (true, true) => super::empty_state("No stickers yet", Some("Stickers added to your communities show up here."), p),
-            _ => super::empty_state("No stickers match that search", None, p),
+            (true, true) => super::empty_state(t("No stickers yet"), Some(t("Stickers added to your communities show up here.")), p),
+            _ => super::empty_state(t("No stickers match that search"), None, p),
         });
     }
     let glyph = hovered.as_ref().and_then(|i| if let Item::Sticker { id, .. } = i { Some((i, image(&st.media, *id, 28.0))) } else { None });

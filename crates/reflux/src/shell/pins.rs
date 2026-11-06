@@ -13,6 +13,7 @@ use crate::theme::{Palette, font};
 use crate::ui::overlay::popout_shadow;
 use crate::ui::overlay::anchor;
 use crate::ui::{Button, ButtonVariant, Modal, Placement, over, scroller, spinner};
+use crate::i18n::t;
 
 pub const POPOUT: &str = "header-pins";
 
@@ -63,13 +64,13 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         .gap(4.0)
         .center_y()
         .child(icon(&icons::PUSH_PIN, 24.0).color(p.text_primary_muted))
-        .child(text("Pinned messages").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary));
+        .child(text(t("Pinned messages")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary));
     let mut list = col().w_full().pt(8.0).px(12.0).pb(12.0);
     if pins.items.is_empty() && pins.loading {
         list = list.child(row().w_full().h(400.0).center().child(spinner(p.text_primary_muted)));
     } else if pins.items.is_empty() {
         let hint = if dm { "Pin messages here for everyone to see.".to_string() } else { "Members with \"Pin Messages\" can pin messages for everyone.".to_string() };
-        list = list.child(state(&icons::SPARKLE, 80.0, if pins.failed { "Couldn't load pins" } else { "No pinned messages" }, &hint, 400.0, p));
+        list = list.child(state(&icons::SPARKLE, 80.0, if pins.failed { "Couldn't load pins" } else { t("No pinned messages") }, &hint, 400.0, p));
     } else {
         for (m, _) in &pins.items {
             list = list.child(card(store, st, c, m, can_unpin, p, acc));
@@ -80,7 +81,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
             let ch = c.id;
             list = list.child(
                 row().w_full().py(8.0).center().child(
-                    Button::new("Load more")
+                    Button::new(t("Load more"))
                         .variant(ButtonVariant::Secondary)
                         .key("pins-more")
                         .on_press(move |s: &mut S| {
@@ -92,7 +93,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
                 ),
             );
         } else {
-            list = list.child(state(&icons::FLAG_CHECKERED, 48.0, "You're at the end", "Pinned messages show up here.", 200.0, p));
+            list = list.child(state(&icons::FLAG_CHECKERED, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p));
         }
     }
     let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p);
@@ -104,7 +105,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         .clip_rounded(8.0)
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
-        .label("Pinned messages")
+        .label(t("Pinned messages"))
         .child(header)
         .child(col().w_full().grow(1.0).min_h(0.0).child(body))
         .modal(true, move |s: &mut S| acc(s).popups.close());
@@ -136,7 +137,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m: &Message, ca
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .hover_group()
-        .child(text("Jump").font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
+        .child(text(t("Jump")).font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary))
         .key(format!("pin-jump-{id}"))
         .on_press(move |s: &mut S| {
             let st = acc(s);
@@ -153,7 +154,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m: &Message, ca
                 .fill(p.background_primary)
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Unpin message")
+                .label(t("Unpin message"))
                 .hover_group()
                 .child(icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted).group_color(p.text_primary))
                 .key(format!("pin-unpin-{id}"))
@@ -188,7 +189,7 @@ fn confirm<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette,
     let body = col()
         .w_full()
         .gap(16.0)
-        .child(text("Send this pin back in time?").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+        .child(text(t("Send this pin back in time?")).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
         .child(
             col()
                 .w_full()
@@ -201,14 +202,14 @@ fn confirm<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette,
                 .inert()
                 .child(super::chat::message_preview(store, st, m, &md, p, acc)),
         );
-    Modal::new("Unpin message", close)
+    Modal::new(t("Unpin message"), close)
         .body(body)
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("unpin-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("unpin-cancel").on_press(close).el(p))
                 .child(
-                    Button::new("Unpin it")
+                    Button::new(t("Unpin it"))
                         .variant(ButtonVariant::Danger)
                         .key("unpin-confirm")
                         .on_press(move |s: &mut S| {

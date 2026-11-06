@@ -17,6 +17,7 @@ use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::overlay::popout_shadow;
 use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, MenuEntry, MenuItem, Modal as Dialog, Select, over, popup_access, scroller, spinner};
+use crate::i18n::t;
 
 pub const INBOX: &str = "header-inbox";
 
@@ -56,7 +57,7 @@ pub fn inbox_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
         .hover_group()
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label("Inbox")
+        .label(t("Inbox"))
         .key(INBOX)
         .child(icon(&INBOX_ICON, 20.0).color(if open { p.text_primary } else { p.text_primary_muted }).group_color(p.text_primary))
         .on_press(move |s: &mut S| {
@@ -102,11 +103,11 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         0 => {
             let unread = unread_channels(store);
             let acks: Vec<(Snowflake, Snowflake)> = unread.iter().filter_map(|c| Some((c.id, c.last_message_id?))).collect();
-            let b = (!acks.is_empty()).then(|| Button::new("Mark all as read").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key("inbox-read-all").on_press(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone()))).el(p));
+            let b = (!acks.is_empty()).then(|| Button::new(t("Mark all as read")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key("inbox-read-all").on_press(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone()))).el(p));
             ("Unread", b)
         }
-        1 => ("Bookmarks", None),
-        _ => ("Mentions", Some(filter_button(p, acc))),
+        1 => (t("Bookmarks"), None),
+        _ => (t("Mentions"), Some(filter_button(p, acc))),
     };
     let head = row().w_full().h(48.0).px(16.0).gap(8.0).center_y().child(rune::el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary)).child(text(title).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0)).children(action);
     let list = match tab {
@@ -124,7 +125,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .clip_rounded(8.0)
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
-        .label("Inbox")
+        .label(t("Inbox"))
         .child(tabs)
         .child(content)
         .modal(true, move |s: &mut S| acc(s).social.inbox_open = false);
@@ -148,7 +149,7 @@ pub fn filter_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         .placement(crate::ui::Placement::BottomEnd)
         .item(item(0, "f-roles", "Include role mentions"))
         .item(item(1, "f-everyone", "Include @everyone and @here"))
-        .item(item(2, "f-guilds", "Include all community mentions"))
+        .item(item(2, "f-guilds", t("Include all community mentions")))
         .el(&st.popups, popup_access(move |s: &mut S| &mut acc(s).popups), p, layer);
 }
 
@@ -161,7 +162,7 @@ fn filter_button<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
         .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label("Filter mentions")
+        .label(t("Filter mentions"))
         .key("inbox-filter")
         .child(icon(&icons::FUNNEL_FILL, 18.0).color(p.text_primary_muted))
         .on_press(move |s: &mut S| acc(s).popups.toggle("inbox-filter"))
@@ -228,7 +229,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, m: &Message, remove: Option<
     let (ch, id) = (m.channel_id, m.id);
     let guild = store.channels.get(&ch).and_then(|c| c.guild_id);
     let small = |label: El, key: String| row().h(20.0).px(8.0).center().radius(4.0).fill(p.background_primary).cursor(rune::Cursor::Pointer).role("button").hover_group().key(key).child(label);
-    let jump = small(text("Jump").font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary), format!("inbox-jump-{id}")).on_press(move |s: &mut S| {
+    let jump = small(text(t("Jump")).font(font(11.0, 600.0).lh(20.0)).color(p.text_primary_muted).group_color(p.text_primary), format!("inbox-jump-{id}")).on_press(move |s: &mut S| {
         let st = acc(s);
         st.social.inbox_open = false;
         crate::shell::jump(st, guild, ch, id);
@@ -288,7 +289,7 @@ fn mention_list<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
     loading_or(st, "mentions", p, |v| {
         let ms = messages_of(Some(v)).unwrap_or_default();
         if ms.is_empty() {
-            return empty(&icons::AT_BOLD, "No mentions yet", "Messages that mention you show up here.", p);
+            return empty(&icons::AT_BOLD, t("No mentions yet"), "Messages that mention you show up here.", p);
         }
         col().w_full().children(ms.iter().map(|m| card(store, st, m, Some(("Remove mention", Method::DELETE, format!("/users/@me/mentions/{}", m.id))), p, acc)))
     })
@@ -299,7 +300,7 @@ fn bookmark_list<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         let entries = v.as_array().cloned().unwrap_or_default();
         let ms: Vec<Message> = entries.iter().filter_map(|e| serde_json::from_value(e["message"].clone()).ok()).collect();
         if ms.is_empty() {
-            return empty(&icons::BOOKMARK_SIMPLE_FILL, "No bookmarks", "Bookmark messages to save them for later.", p);
+            return empty(&icons::BOOKMARK_SIMPLE_FILL, t("No bookmarks"), t("Bookmark messages to save them for later."), p);
         }
         col().w_full().children(ms.iter().map(|m| card(store, st, m, Some(("Remove bookmark", Method::DELETE, format!("/users/@me/saved-messages/{}", m.id))), p, acc)))
     })
@@ -318,17 +319,17 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
     let me = store.my_id();
     let mut out = Vec::new();
     if is_user_message(m) {
-        out.push(MenuEntry::Item(MenuItem::new("forward", "Forward").icon(&icons::ARROW_BEND_UP_RIGHT_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::Forward { channel: ch, message: id }))));
+        out.push(MenuEntry::Item(MenuItem::new("forward", t("Forward")).icon(&icons::ARROW_BEND_UP_RIGHT_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::Forward { channel: ch, message: id }))));
     }
     let saved = st.social.saved.contains(&id);
     out.push(MenuEntry::Item(if saved {
-        MenuItem::new("unbookmark", "Remove bookmark").icon(&icons::BOOKMARK_SIMPLE_FILL).on_select(move |s: &mut S| {
+        MenuItem::new("unbookmark", t("Remove bookmark")).icon(&icons::BOOKMARK_SIMPLE_FILL).on_select(move |s: &mut S| {
             let st = acc(s);
             st.social.saved.remove(&id);
             st.social(Method::DELETE, format!("/users/@me/saved-messages/{id}"), None, Done::Nothing);
         })
     } else {
-        MenuItem::new("bookmark", "Bookmark message").icon(&icons::BOOKMARK_SIMPLE).on_select(move |s: &mut S| {
+        MenuItem::new("bookmark", t("Bookmark message")).icon(&icons::BOOKMARK_SIMPLE).on_select(move |s: &mut S| {
             let st = acc(s);
             st.social.saved.insert(id);
             st.social(Method::POST, "/users/@me/saved-messages", Some(json!({ "channel_id": ch, "message_id": id })), Done::Nothing);
@@ -338,21 +339,21 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
     if !m.embeds.is_empty() && (own || perms.contains(P::MANAGE_MESSAGES)) {
         let hidden = m.flags.contains(MessageFlags::SUPPRESS_EMBEDS);
         let flags = if hidden { m.flags.bits() & !MessageFlags::SUPPRESS_EMBEDS.bits() } else { m.flags.bits() | MessageFlags::SUPPRESS_EMBEDS.bits() };
-        out.push(MenuEntry::Item(MenuItem::new("suppress-embeds", if hidden { "Show embeds" } else { "Suppress embeds" }).icon(&icons::EYE_SLASH_FILL).on_select(move |s: &mut S| {
+        out.push(MenuEntry::Item(MenuItem::new("suppress-embeds", if hidden { t("Show embeds") } else { t("Suppress embeds") }).icon(&icons::EYE_SLASH_FILL).on_select(move |s: &mut S| {
             acc(s).social(Method::PATCH, format!("/channels/{ch}/messages/{id}"), Some(json!({ "flags": flags })), Done::Nothing)
         })));
     }
     if c.kind == ChannelType::GUILD_ANNOUNCEMENT && is_user_message(m) && !m.flags.contains(MessageFlags::CROSSPOSTED) && (own && perms.contains(P::SEND_MESSAGES) || perms.contains(P::MANAGE_MESSAGES)) {
-        out.push(MenuEntry::Item(MenuItem::new("publish", "Publish").icon(&icons::MEGAPHONE_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::Publish { channel: ch, message: id }))));
+        out.push(MenuEntry::Item(MenuItem::new("publish", t("Publish")).icon(&icons::MEGAPHONE_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::Publish { channel: ch, message: id }))));
     }
     if !m.reactions.is_empty() && c.guild_id.is_some() && perms.contains(P::MANAGE_MESSAGES) {
-        out.push(MenuEntry::Item(MenuItem::new("remove-reactions", "Remove all reactions").icon(&icons::SMILEY_SAD_FILL).danger().on_select(move |s: &mut S| {
+        out.push(MenuEntry::Item(MenuItem::new("remove-reactions", t("Remove all reactions")).icon(&icons::SMILEY_SAD_FILL).danger().on_select(move |s: &mut S| {
             acc(s).social(Method::DELETE, format!("/channels/{ch}/messages/{id}/reactions"), None, Done::Nothing)
         })));
     }
     if !own {
         let r = Modal::Report { target: "message", guild: c.guild_id, channel: Some(ch), id };
-        out.push(MenuEntry::Item(MenuItem::new("report-message", "Report message").icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| super::moderation::open_report(acc(s), r.clone()))));
+        out.push(MenuEntry::Item(MenuItem::new("report-message", t("Report message")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| super::moderation::open_report(acc(s), r.clone()))));
     }
     out
 }
@@ -431,7 +432,7 @@ pub fn forward<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, msg: S
     });
     let mut items = vec![field(st, acc, "q", "", "", "Search", p), col().w_full().h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().gap(2.0).children(rows))];
     items.extend(preview);
-    items.push(field(st, acc, "comment", "", "", "Add a comment (optional)", p));
+    items.push(field(st, acc, "comment", "", "", t("Add a comment (optional)"), p));
     items.extend(error(st, p));
     let go = move |s: &mut S| {
         let sh = acc(s);
@@ -450,8 +451,8 @@ pub fn forward<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, msg: S
             }
         }
     };
-    let action = format!("Send ({}/{FORWARD_MAX})", sel.len());
-    Dialog::new("Forward message", close(acc)).body(body(items)).footer(footer(st, &action, false, "forward-send", acc, go, p)).el(p)
+    let action = crate::i18n::tf("Send ({selectedCount}/{selectionLimit})", &[("selectedCount", &(sel.len()).to_string()), ("selectionLimit", &FORWARD_MAX.to_string())]);
+    Dialog::new(t("Forward message"), close(acc)).body(body(items)).footer(footer(st, &action, false, "forward-send", acc, go, p)).el(p)
 }
 
 pub fn publish<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, msg: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -461,7 +462,7 @@ pub fn publish<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, msg: S
     }
     items.extend(error(st, p));
     let go = move |s: &mut S| acc(s).social(Method::POST, format!("/channels/{ch}/messages/{msg}/crosspost"), None, Done::Close);
-    Dialog::new("Publish this message?", close(acc)).body(body(items)).footer(footer(st, "Publish", false, "publish-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Publish this message?"), close(acc)).body(body(items)).footer(footer(st, t("Publish"), false, "publish-confirm", acc, go, p)).el(p)
 }
 
 /// `ChannelFollowModal`: pick a community you manage webhooks in, then a text channel of it.
@@ -493,14 +494,14 @@ pub fn follow<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, p: &Pal
     let target = st.form.data.get("channel").and_then(Value::as_str).map(str::to_string);
     let mut items = vec![
         desc("Get this channel's published messages in a channel of your own.", p),
-        Select::new("follow-guild", &gopts, g.as_deref()).label("Community").placeholder("Select a community").width(406.0).on_choose(move |s: &mut S, v: &str| {
+        Select::new("follow-guild", &gopts, g.as_deref()).label(t("Community")).placeholder(t("Select a community")).width(406.0).on_choose(move |s: &mut S, v: &str| {
             let f = &mut acc(s).form;
             f.data.insert("guild".into(), json!(v));
             f.data.remove("channel");
         }).el(&st.popups, pops, p, layer),
     ];
     if g.is_some() {
-        items.push(Select::new("follow-channel", &copts, target.as_deref()).label("Channel").placeholder("Select a channel").width(406.0).on_choose(move |s: &mut S, v: &str| {
+        items.push(Select::new("follow-channel", &copts, target.as_deref()).label(t("Channel")).placeholder(t("Select a channel")).width(406.0).on_choose(move |s: &mut S, v: &str| {
             acc(s).form.data.insert("channel".into(), json!(v));
         }).el(&st.popups, pops, p, layer));
     }
@@ -513,7 +514,7 @@ pub fn follow<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, p: &Pal
         };
         sh.social(Method::POST, format!("/channels/{ch}/followers"), Some(json!({ "webhook_channel_id": t })), Done::Close);
     };
-    Dialog::new("Follow this channel", close(acc)).body(body(items)).footer(footer(st, "Follow", false, "follow-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Follow this channel"), close(acc)).body(body(items)).footer(footer(st, t("Follow"), false, "follow-confirm", acc, go, p)).el(p)
 }
 
 #[cfg(test)]

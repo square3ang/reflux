@@ -10,6 +10,7 @@ use rune::{Color, El, Key, ScrollSpec, TextEdit, col, el, icon, row, text, text_
 use super::{Intent, ShellAccess, ShellState, avatar, channel_icon};
 use crate::theme::{Palette, font};
 use crate::ui::{over, rgba, scroller};
+use crate::i18n::t;
 
 #[derive(Debug, Default)]
 pub struct Switcher {
@@ -164,7 +165,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .color(p.text_primary)
         .placeholder("Where would you like to go?", p.text_tertiary)
         .caret(p.text_primary, p.text_selection)
-        .label("Quick switcher search")
+        .label(t("Quick switcher search"))
         .on_edit(move |s: &mut S| -> &mut TextEdit {
             let st = acc(s);
             let sw = st.switcher.get_or_insert_with(Switcher::new);
@@ -202,8 +203,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                 .w_full()
                 .h(312.0)
                 .center()
-                .child(text("No matches found").font(font(14.0, 500.0).lh(20.0)).color(p.text_tertiary))
-                .child(text("Try a different name or use @ / # / ! / * prefixes to filter results.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).mt(4.0)),
+                .child(text(t("No matches found")).font(font(14.0, 500.0).lh(20.0)).color(p.text_tertiary))
+                .child(text(t("Try a different name or use @ / # / ! / * prefixes to filter results.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).mt(4.0)),
         );
     }
     for (i, h) in hits.iter().enumerate() {
@@ -267,10 +268,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .gap(12.0)
         .center_y()
         .fill(p.background_secondary)
-        .child(code("@", "People"))
-        .child(code("#", "Text channels"))
-        .child(code("!", "Voice channels"))
-        .child(code("*", "Communities"))
+        .child(code("@", t("People")))
+        .child(code("#", t("Text channels")))
+        .child(code("!", t("Voice channels")))
+        .child(code("*", t("Communities")))
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
     let card = col()
         .w(576.0)
@@ -280,7 +281,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .border(1.0, over(p.background_header_secondary, p.background_secondary))
         .box_shadow(rune::Shadow { x: 0.0, y: 20.0, blur: 25.0, spread: -5.0, color: rgba(0, 0, 0, 0.3), inset: false })
         .role("dialog")
-        .label("Quick switcher")
+        .label(t("Quick switcher"))
         .child(row().w_full().padding(12.0).child(input))
         .child(col().w_full().h(320.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p)))
         .child(footer)

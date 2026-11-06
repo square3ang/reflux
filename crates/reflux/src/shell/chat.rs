@@ -21,10 +21,11 @@ use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::anchor;
 use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal, Placement, PopupAccess, Tooltip, mix, over, popup_access, rgb, scroller};
+use crate::i18n::t;
 
 /// `MESSAGE_GROUP_TIMEOUT`.
 const GROUP_MS: u64 = 7 * 60 * 1000;
-/// `--message-group-spacing`.
+/// `--message-group-spacing` (the default; the Appearance setting picks the real one).
 const GROUP_SPACING: f32 = 16.0;
 /// Avatar column start: `--chat-horizontal-padding`.
 const PAD: f32 = dim::CHAT_HORIZONTAL_PADDING_DEFAULT;
@@ -68,6 +69,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     if st.drop_hover {
         chat = chat.child(drop_overlay(c, p));
     }
+    chat = chat.children(super::compact::announcer(store, c));
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
     if let Some(panel) = super::search::panel(store, st, p, acc) {
         content = content.child(panel);
@@ -105,7 +107,7 @@ fn drop_overlay(c: &Channel, p: &Palette) -> El {
             .radius(16.0)
             .fill(p.brand_primary)
             .child(icon(&icons::UPLOAD_SIMPLE_FILL, 48.0).color(Color::WHITE))
-            .child(text(format!("Upload to {name}")).font(font(20.0, 600.0)).color(Color::WHITE))
+            .child(text(crate::i18n::tf("Upload to {displayName}", &[("displayName", &name.to_string())])).font(font(20.0, 600.0)).color(Color::WHITE))
             .child(text("You can add comments before uploading.").font(font(14.0, 400.0)).color(Color::WHITE)),
     )
 }
@@ -296,7 +298,7 @@ pub fn format_full_date_time(ms: u64) -> String {
 }
 
 /// A message's time: its ISO timestamp, else its snowflake.
-fn message_ms(m: &Message) -> u64 {
+pub(super) fn message_ms(m: &Message) -> u64 {
     DateTime::parse_from_rfc3339(&m.timestamp).map_or_else(|_| m.id.timestamp_ms(), |d| d.timestamp_millis() as u64)
 }
 
@@ -304,7 +306,7 @@ fn same_day(a: u64, b: u64) -> bool {
     local(a).date_naive() == local(b).date_naive()
 }
 
-fn is_user_message(m: &Message) -> bool {
+pub(super) fn is_user_message(m: &Message) -> bool {
     m.kind == MessageType::DEFAULT || m.kind == MessageType::REPLY
 }
 
@@ -349,7 +351,7 @@ enum Item {
 
 /// The channel stream: date dividers, group heads and the spacing between groups
 /// (`createChannelStream` + `renderChannelStream`).
-fn stream(msgs: &[Message], first_unread: Option<Snowflake>) -> Vec<Item> {
+fn stream(msgs: &[Message], first_unread: Option<Snowflake>, spacing: f32) -> Vec<Item> {
     let mut out = Vec::new();
     let mut last_day: Option<u64> = None;
     let mut last_kind: Option<bool> = None; // Some(is_system) of the last rendered group
@@ -366,7 +368,7 @@ fn stream(msgs: &[Message], first_unread: Option<Snowflake>) -> Vec<Item> {
         let sys = !is_user_message(m);
         let space = match last_kind {
             Some(prev_sys) if head && !unread => {
-                if prev_sys && sys { GROUP_SPACING / 2.0 } else { GROUP_SPACING }
+                if prev_sys && sys { spacing / 2.0 } else { spacing }
             }
             _ => 0.0,
         };
@@ -409,7 +411,8 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     let perms = Perms::of(store, c);
     // The action bar's message: the hovered one, or the one whose menu or picker is open.
     let active = st.active_msg.filter(|_| st.popups.open.is_some());
-    let items = stream(msgs, first_unread);
+    let spacing = crate::look::with(|l| if store.settings.message_display_compact { l.compact_group_spacing } else { l.group_spacing });
+    let items = stream(msgs, first_unread, spacing);
     let n_items = items.len();
     let mut rows = Vec::with_capacity(n_items + 1);
     // `BlockedMessageGroups`: a run of blocked authors folds into one bar (rows stay one per item).
@@ -563,9 +566,9 @@ fn present_bar<S: 'static>(channel: Snowflake, pre: &str, p: &Palette, acc: Shel
         .fill(bg)
         .border(1.0, over(p.background_modifier_accent, bg))
         .key(format!("{pre}jump-present-bar"))
-        .child(text("You're viewing older messages").font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary).truncate().grow(1.0).shrink().min_w(0.0))
+        .child(text(t("You're viewing older messages")).font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary).truncate().grow(1.0).shrink().min_w(0.0))
         .child(
-            Button::new("Jump to present")
+            Button::new(t("Jump to present"))
                 .size(crate::ui::ButtonSize::Compact)
                 .key(format!("{pre}jump-present"))
                 .on_press(move |s: &mut S| {
@@ -582,7 +585,13 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 }
 
 fn start_reply(st: &mut ShellState, store_me: Snowflake, m: &Message) {
-    st.reply = Some(ReplyTo { channel: m.channel_id, message: m.id, mention: m.author.id != store_me });
+    // `getDefaultReplyMention`: the author's "Reply mention preference" (their community one
+    // first), else on; never for my own messages.
+    // shortcut: DM replies also default to mentioning (Fluxer leaves the toggle off there).
+    let member = m.member.as_ref().and_then(|g| g.mention_flags).map_or(0, |f| f.0);
+    let pref = if member != 0 { member } else { m.author.mention_flags.map_or(0, |f| f.0) };
+    let mention = m.author.id != store_me && pref != 2;
+    st.reply = Some(ReplyTo { channel: m.channel_id, message: m.id, mention });
     st.editing = None;
     st.composer.focused = true;
 }
@@ -654,20 +663,20 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
                 super::expr::open_react(st, ch, id);
             }
         });
-        bar = bar.child(tip(format!("react-{id}"), "Add reaction", b, layer));
+        bar = bar.child(tip(format!("react-{id}"), t("Add reaction"), b, layer));
     }
     if perms.can_edit(m) {
         let m2 = m.clone();
         let b = button(icon(&icons::PENCIL_SIMPLE_FILL, 20.0), false).on_press(move |s: &mut S| start_edit(acc(s), &m2));
-        bar = bar.child(tip(format!("edit-{id}"), "Edit message", b, layer));
+        bar = bar.child(tip(format!("edit-{id}"), t("Edit message"), b, layer));
     } else if perms.send && is_user_message(m) {
         let (m2, me) = (m.clone(), perms.me);
         let b = button(icon(&icons::ARROW_BEND_UP_LEFT_FILL, 20.0), false).on_press(move |s: &mut S| start_reply(acc(s), me, &m2));
-        bar = bar.child(tip(format!("reply-{id}"), "Reply", b, layer));
+        bar = bar.child(tip(format!("reply-{id}"), t("Reply"), b, layer));
     }
     if let Some(parent) = thread_from {
         let b = button(icon(&icons::CHATS_FILL, 20.0), false).on_press(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id)));
-        bar = bar.child(tip(format!("thread-{id}"), "Create thread", b, layer));
+        bar = bar.child(tip(format!("thread-{id}"), t("Create thread"), b, layer));
     }
     let more_id = format!("msg-more-{id}");
     let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
@@ -675,7 +684,7 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
         st.popups.toggle(&format!("msg-more-{id}"));
         st.active_msg = Some(id);
     });
-    bar = bar.child(tip(more_id, "More", b, layer));
+    bar = bar.child(tip(more_id, t("More"), b, layer));
     bar.pin(None, Some(-24.0), Some(14.0), None)
 }
 
@@ -687,26 +696,26 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
     let (id, ch) = (m.id, m.channel_id);
     if perms.react && is_user_message(m) {
         menu = menu
-            .item(MenuItem::new("add-reaction", "Add reaction").icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| {
+            .item(MenuItem::new("add-reaction", t("Add reaction")).icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| {
                 super::expr::open_react(acc(s), ch, id)
             }));
     }
     menu = super::expr::message_menu_items(menu, store, m, acc).separator();
     if perms.can_edit(m) {
         let m2 = m.clone();
-        menu = menu.item(MenuItem::new("edit", "Edit message").icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| start_edit(acc(s), &m2)));
+        menu = menu.item(MenuItem::new("edit", t("Edit message")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| start_edit(acc(s), &m2)));
     }
     if perms.send && is_user_message(m) {
         let (m2, me) = (m.clone(), perms.me);
-        menu = menu.item(MenuItem::new("reply", "Reply").icon(&icons::ARROW_BEND_UP_LEFT_FILL).on_select(move |s: &mut S| start_reply(acc(s), me, &m2)));
+        menu = menu.item(MenuItem::new("reply", t("Reply")).icon(&icons::ARROW_BEND_UP_LEFT_FILL).on_select(move |s: &mut S| start_reply(acc(s), me, &m2)));
     }
     if let Some(parent) = perms.thread_from.filter(|_| is_user_message(m)) {
-        menu = menu.item(MenuItem::new("create-thread", "Create thread").icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id))));
+        menu = menu.item(MenuItem::new("create-thread", t("Create thread")).icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id))));
     }
     menu = menu.separator();
     if !m.content.is_empty() {
         let t = m.content.clone();
-        menu = menu.item(MenuItem::new("copy-text", "Copy text").icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(t.clone())));
+        menu = menu.item(MenuItem::new("copy-text", crate::i18n::t("Copy text")).icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(t.clone())));
     }
     if perms.pin && is_user_message(m) {
         let pin = !m.pinned;
@@ -715,15 +724,15 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
         menu = menu.item(MenuItem::new("pin", label).icon(glyph).on_select(move |s: &mut S| acc(s).intents.push(Intent::Pin { channel: ch, message: id, pin })));
     }
     let ch = m.channel_id;
-    menu = menu.item(MenuItem::new("mark-unread", "Mark as unread").icon(&icons::ENVELOPE_OPEN_FILL).on_select(move |s: &mut S| {
+    menu = menu.item(MenuItem::new("mark-unread", t("Mark as unread")).icon(&icons::ENVELOPE_OPEN_FILL).on_select(move |s: &mut S| {
         acc(s).intents.push(Intent::MarkUnread { channel: ch, message: id })
     }));
     let link = message_link(st, c, m);
-    menu = menu.item(MenuItem::new("copy-link", "Copy message link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx| tx.copy(link.clone())));
+    menu = menu.item(MenuItem::new("copy-link", t("Copy message link")).icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx| tx.copy(link.clone())));
     if perms.can_delete(m) {
         let m2 = m.clone();
         menu = menu.separator().item(
-            MenuItem::new("delete", "Delete message")
+            MenuItem::new("delete", t("Delete message"))
                 .icon(&icons::TRASH_FILL)
                 .danger()
                 .on_select_tx(move |s: &mut S, tx: &mut Tx| request_delete(acc(s), &m2, tx.mods().shift)),
@@ -734,7 +743,7 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
     }
     // Developer mode only; Shift copies `channel-message`, as Fluxer's does.
     let (cid, mid) = (m.channel_id, m.id);
-    menu.separator().item(MenuItem::new("copy-id", "Copy message ID").icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+    menu.separator().item(MenuItem::new("copy-id", t("Copy message ID")).icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
         tx.copy(if tx.mods().shift { format!("{cid}-{mid}") } else { mid.to_string() })
     }))
 }
@@ -758,18 +767,18 @@ fn delete_modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pal
     let body = col()
         .w_full()
         .gap(16.0)
-        .child(text("Delete this message? Can't be undone.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+        .child(text(t("Delete this message? Can't be undone.")).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
         .child(preview)
         .child(rich(tip, spans).font(font(13.0, 400.0).lh(18.2)).color(p.text_primary_muted).wrap());
     let (ch, id) = (m.channel_id, m.id);
-    Modal::new("Delete message", close)
+    Modal::new(t("Delete message"), close)
         .body(body)
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("delete-cancel").on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("delete-cancel").on_press(close).el(p))
                 .child(
-                    Button::new("Delete")
+                    Button::new(t("Delete"))
                         .variant(ButtonVariant::Danger)
                         .key("delete-confirm")
                         .on_press(move |s: &mut S| {
@@ -811,18 +820,18 @@ fn new_divider(p: &Palette) -> El {
             .radius(3.0)
             .fill(p.status_danger)
             .opacity(0.9)
-            .child(text("NEW").font(font(10.0, 700.0).tracking(0.5)).color(Color::WHITE)),
+            .child(text(t("NEW")).font(font(10.0, 700.0).tracking(0.5)).color(Color::WHITE)),
     )
 }
 
-fn author_color(store: &Store, m: &Message, p: &Palette) -> Color {
+pub(super) fn author_color(store: &Store, m: &Message, p: &Palette) -> Color {
     m.guild_id
         .or_else(|| store.channels.get(&m.channel_id).and_then(|c| c.guild_id))
         .and_then(|g| store.member_color(g, m.author.id))
         .map_or(p.text_primary, role_color)
 }
 
-fn author_name(store: &Store, m: &Message) -> String {
+pub(super) fn author_name(store: &Store, m: &Message) -> String {
     let g = store.channels.get(&m.channel_id).and_then(|c| c.guild_id);
     let n = store.display_name(g, m.author.id);
     if n.is_empty() { m.author.global_name.clone().unwrap_or_else(|| m.author.username.clone()) } else { n }
@@ -838,9 +847,21 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     if !is_user_message(m) {
         return system_message(store, m, md, p);
     }
+    if store.settings.message_display_compact {
+        return super::compact::message(store, st, m, md, p, acc);
+    }
     let ms = message_ms(m);
+    let root = frame(store, st, m, col().w_full().pr(PAD + dim::MESSAGE_ACTION_BAR_OFFSET).py(dim::MESSAGE_SPACING_Y).hover_group(), p);
+    let mut root = root;
+    if head && m.kind == MessageType::REPLY {
+        root = root.child(reply_preview(store, st, m, md, p, acc, PAD + dim::MESSAGE_AVATAR_SIZE / 2.0, CONTENT_X));
+    }
+    message_rest(store, st, m, head, md, p, acc, root, ms)
+}
+
+/// A message's background: jumped-to, mentioning me, or hover.
+pub(super) fn frame(store: &Store, st: &ShellState, m: &Message, mut root: El, p: &Palette) -> El {
     let mentioned = m.mention_everyone || m.mentions.iter().any(|u| u.id == store.my_id());
-    let mut root = col().w_full().pr(PAD + dim::MESSAGE_ACTION_BAR_OFFSET).py(dim::MESSAGE_SPACING_Y).hover_group();
     if st.highlight == Some(m.id) {
         // `.messageHighlight`: the jumped-to message.
         root = root
@@ -854,10 +875,11 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     } else {
         root = root.hover(p.background_modifier_hover);
     }
-    if head && m.kind == MessageType::REPLY {
-        root = root.child(reply_preview(store, st, m, md, p, acc));
-    }
+    root
+}
 
+#[allow(clippy::too_many_arguments)]
+fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, md: &Md, p: &Palette, acc: ShellAccess<S>, root: El, ms: u64) -> El {
     // Avatar column: the avatar on a group head, the hover time on the rest.
     // The avatar and the name line open the author's profile; right-click opens their menu.
     let (author, guild, mid) = (m.author.id, store.channels.get(&m.channel_id).and_then(|c| c.guild_id), m.id);
@@ -913,7 +935,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     }
     if m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
         // shortcut: "(edited)" sits on its own line under the body instead of inline after it.
-        content = content.child(text("(edited)").font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
+        content = content.child(text(t("(edited)")).font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
     }
     let acc_el = accessories(store, st, m, p, acc);
     if let Some(a) = acc_el {
@@ -928,7 +950,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
 
 /// `EditingMessageInput`: the message's text in a composer-like box, then "escape to cancel •
 /// enter to save".
-fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
+pub(super) fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let (ch, id, original) = (m.channel_id, m.id, m.content.clone());
     let field = text_input(edit, font(16.0, 400.0).lh(22.0))
         .key("edit-field")
@@ -1012,13 +1034,16 @@ fn reference<'a>(store: &'a Store, m: &'a Message) -> Reference<'a> {
 }
 
 /// The reply bar above a reply: spine from the avatar, mini avatar, name and a one-line preview.
-fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
+/// `spine` / `content`: where the spine starts and the reply line begins (cozy: the avatar's
+/// centre and [`CONTENT_X`]; compact: `repliedMessageCompact`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>, spine: f32, content: f32) -> El {
     let h = dim::MESSAGE_REPLY_HEIGHT;
     let spine_c = mix(p.text_chat_muted, Color::BLACK, 82.0);
     let w = dim::MESSAGE_REPLY_SPINE_WIDTH;
     // `.repliedMessage:before`: from the avatar centre to 3px short of the reply, curving down to
     // 3px under it. Rune borders draw every side, so the box is clipped to its top-left corner.
-    let (x0, x1) = (PAD + dim::MESSAGE_AVATAR_SIZE / 2.0, CONTENT_X - 3.0);
+    let (x0, x1) = (spine, content - 3.0);
     let (y0, y1) = (h / 2.0 - w / 2.0, h + dim::MESSAGE_REPLY_SPACING + 3.0);
     let spine = el()
         .absolute(x0, y0)
@@ -1060,7 +1085,7 @@ fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &M
                         .child(icon(&icons::ARROW_BEND_UP_LEFT_BOLD, 10.0).color(p.text_primary)),
                 )
                 .child(
-                    text(if failed { "Original message failed to load" } else { "Original message was deleted" })
+                    text(if failed { t("Original message failed to load") } else { t("Original message was deleted") })
                         .font(font(14.0, 400.0).italic().lh(h))
                         .color(p.text_primary_muted),
                 );
@@ -1071,7 +1096,7 @@ fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &M
             }
         }
     }
-    row().w_full().h(h + dim::MESSAGE_REPLY_SPACING).items_start().child(spine).child(el().w(CONTENT_X)).child(line.shrink())
+    row().w_full().h(h + dim::MESSAGE_REPLY_SPACING).items_start().child(spine).child(el().w(content)).child(line.shrink())
 }
 
 /// System messages: an icon in the avatar column and one line of muted text.
@@ -1080,8 +1105,8 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
     let name = author_name(store, m);
     let (glyph, color, body) = match m.kind {
         MessageType::USER_JOIN => (&icons::ARROW_RIGHT_BOLD, p.status_online, format!("{name} joined the community.")),
-        MessageType::CHANNEL_PINNED_MESSAGE => (&icons::PUSH_PIN_FILL, p.text_primary_muted, format!("{name} pinned a message to this channel.")),
-        MessageType::RECIPIENT_ADD => (&icons::ARROW_RIGHT_BOLD, p.status_online, format!("{name} added someone to the group.")),
+        MessageType::CHANNEL_PINNED_MESSAGE => (&icons::PUSH_PIN_FILL, p.text_primary_muted, crate::i18n::tf("{username} pinned a message to this channel.", &[("username", &name.to_string())])),
+        MessageType::RECIPIENT_ADD => (&icons::ARROW_RIGHT_BOLD, p.status_online, crate::i18n::tf("{username} added someone to the group.", &[("username", &name.to_string())])),
         MessageType::RECIPIENT_REMOVE => (&icons::ARROW_LEFT_BOLD, p.status_danger, format!("{name} left the group.")),
         MessageType::CHANNEL_NAME_CHANGE => (&icons::PENCIL_SIMPLE_BOLD, p.text_primary_muted, format!("{name} changed the channel name: {}", m.content)),
         MessageType::CALL => {
@@ -1110,7 +1135,7 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
 }
 
 /// `.container`: invites, stickers, attachments, embeds, reactions; row-gap 4, padding-block 2.
-fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+pub(super) fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let invites = super::invite_embed::embeds(store, st, m, p, acc);
     if invites.is_empty() && m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() && m.stickers.is_empty() && !st.progress.contains_key(&m.id) {
         return None;
@@ -1120,7 +1145,11 @@ fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pale
         // `.stickersContainer`: wrapping, 8 apart, 4 down; each 160×160 (`.stickerWrapper`), contained.
         // `animate_stickers`: 0 always, 1 on hover, 2 never.
         let hovered = st.hover_msg == Some(m.id);
-        let mode = store.settings.animate_stickers;
+        // Reduced motion turns "always" into "on interaction".
+        let mode = match store.settings.animate_stickers {
+            0 if crate::look::reduced_motion() => 1,
+            m => m,
+        };
         let one = |s: &reflux_model::StickerItem| {
             let animated = s.animated && (mode == 0 || (mode == 1 && hovered));
             let img = match st.media.asset(|b, _| crate::media::sticker_url(b, s.id, animated)) {
@@ -1137,10 +1166,10 @@ fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pale
     if let Some(&f) = st.progress.get(&m.id) {
         c = c.child(row().w(432.0).h(4.0).radius(2.0).fill(p.background_modifier_accent).child(el().w(432.0 * f).h(4.0).radius(2.0).fill(p.brand_primary)));
     }
-    if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
+    if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) && store.settings.render_embeds {
         c = c.children(super::embeds::embeds(store, st, m, p, acc));
     }
-    if !m.reactions.is_empty() {
+    if !m.reactions.is_empty() && store.settings.render_reactions {
         c = c.child(reactions(st, m, p, acc));
     }
     Some(c)
@@ -1201,10 +1230,10 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
 fn typing_rail(store: &Store, guild: Option<Snowflake>, users: &[Snowflake], p: &Palette) -> El {
     let names: Vec<String> = users.iter().map(|u| store.display_name(guild, *u)).collect();
     let line = match names.as_slice() {
-        [a] => format!("{a} is typing…"),
-        [a, b] => format!("{a} and {b} are typing…"),
-        [a, b, c] => format!("{a}, {b} and {c} are typing…"),
-        _ => "Several people are typing…".into(),
+        [a] => crate::i18n::tf("{a} is typing...", &[("a", a)]),
+        [a, b] => crate::i18n::tf("{a} and {b} are typing...", &[("a", a), ("b", b)]),
+        [a, b, c] => crate::i18n::tf("{a}, {b} and {c} are typing...", &[("a", a), ("b", b), ("c", c)]),
+        _ => t("Several people are typing...").into(),
     };
     row()
         .pin(Some(PAD), None, Some(PAD), Some(0.0))
@@ -1255,11 +1284,11 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     };
     let post = c.kind.is_thread() && c.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| reflux_store::threads::is_forum(p.kind));
     let placeholder = match c.kind {
-        _ if slot == Slot::Create => "Enter a message to start the conversation!".to_string(),
-        _ if post => format!("Send a message in \"{}\"", c.name.clone().unwrap_or_default()),
-        ChannelType::DM => format!("Message @{}", channel_title(store, c)),
-        ChannelType::GROUP_DM => format!("Message {}", channel_title(store, c)),
-        _ => format!("Message #{}", c.name.clone().unwrap_or_default()),
+        _ if slot == Slot::Create => t("Enter a message to start the conversation!").to_string(),
+        _ if post => crate::i18n::tf("Send a message in \"{name}\"", &[("name", &(c.name.clone().unwrap_or_default()).to_string())]),
+        ChannelType::DM => crate::i18n::tf("Message @{userName}", &[("userName", &(channel_title(store, c)).to_string())]),
+        ChannelType::GROUP_DM => crate::i18n::tf("Message {groupName}", &[("groupName", &(channel_title(store, c)).to_string())]),
+        _ => crate::i18n::tf("Message #{channelName}", &[("channelName", &(c.name.clone().unwrap_or_default()).to_string())]),
     };
     let cid = c.id;
     // The newest own user message, for Up-arrow editing.
@@ -1332,7 +1361,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             }
         });
     // shortcut: the thread panels have no upload tray; files go through the full view.
-    let plus = button(&icons::PLUS_BOLD, "Upload").key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
+    let plus = button(&icons::PLUS_BOLD, t("Upload")).key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
     let plus = if slot == Slot::Main { plus } else { el().size(32.0, 32.0) };
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
@@ -1352,16 +1381,16 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 .gap(dim::COMPOSER_ACTION_GAP)
                 .center_y()
                 .key("composer-expr")
-                .children(super::expr::gif::enabled(st).then(|| button(&icons::GIF, "GIFs").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
+                .children(super::expr::gif::enabled(st).then(|| button(&icons::GIF, t("GIFs")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
                 .child(button(&icons::IMAGE_SQUARE, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes)))
-                .child(button(&icons::STICKER, "Stickers").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers)))
-                .child(button(&icons::SMILEY, "Emojis").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))),
+                .child(button(&icons::STICKER, t("Stickers")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers)))
+                .child(button(&icons::SMILEY, t("Emojis")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))),
         );
     let mut boxed = col()
         .w_full()
         .radius(dim::FOOTER_BOX_RADIUS)
         .fill(p.background_textarea)
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if draft.focused { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
+        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if draft.focused && crate::look::with(|l| l.focus_ring) { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
     if let Some(r) = st.reply.filter(|r| r.channel == cid && slot != Slot::Create)
         && let Some(target) = find(store, cid, r.message)
     {
@@ -1379,7 +1408,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             text(left.to_string())
                 .font(font(12.0, 400.0).mono())
                 .color(if left < 50 { p.status_danger } else { p.text_tertiary })
-                .label(if left < 0 { format!("Character limit exceeded by {}", -left) } else { format!("{left} characters left") })
+                .label(if left < 0 { crate::i18n::tf("Character limit exceeded by {remaining}", &[("remaining", &(-left).to_string())]) } else { format!("{left} characters left") })
                 .pin(None, None, Some(12.0), Some(4.0)),
         );
     }
@@ -1431,13 +1460,16 @@ pub(super) fn send_now(st: &mut ShellState, channel: Snowflake) {
 }
 
 fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
-    let content = autocomplete::apply_command(st.composer.text.trim());
+    let mut content = autocomplete::apply_command(st.composer.text.trim());
+    if crate::look::with(|l| l.convert_emoticons) {
+        content = crate::look::convert_emoticons(&content);
+    }
     if (content.is_empty() && st.uploads.is_empty()) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
         return;
     }
     let len = content.chars().count();
     if len > limit {
-        st.notice = Some(("Message is too long".into(), format!("Character limit exceeded by {}", len - limit)));
+        st.notice = Some(("Message is too long".into(), crate::i18n::tf("Character limit exceeded by {remaining}", &[("remaining", &(len - limit).to_string())])));
         return;
     }
     let reply = st.reply.take().filter(|r| r.channel == channel).map(|r| (r.message, r.mention));
@@ -1543,7 +1575,7 @@ fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palett
             .center()
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label("Cancel reply")
+            .label(t("Cancel reply"))
             .hover_group()
             .child(icon(&icons::X_CIRCLE_FILL, 16.0).color(p.text_primary_muted).group_color(p.text_primary))
             .on_press(move |s: &mut S| acc(s).reply = None),
@@ -1616,7 +1648,7 @@ mod tests {
             msg(3, 10, "2026-11-06T12:01:00Z"),
             msg(4, 11, "2026-11-06T12:02:00Z"),
         ];
-        let s = stream(&ms, Some(Snowflake(4)));
+        let s = stream(&ms, Some(Snowflake(4)), GROUP_SPACING);
         assert!(matches!(s[0], Item::Date(_)));
         assert_eq!(s[1], Item::Msg { i: 0, head: true, space: 0.0, unread: false });
         assert!(matches!(s[2], Item::Date(_)), "new day");

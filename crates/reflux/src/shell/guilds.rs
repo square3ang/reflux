@@ -9,6 +9,7 @@ use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{mention_badge, mix, scroller};
+use crate::i18n::t;
 
 const ICON: f32 = dim::GUILD_ICON_SIZE;
 /// `.guildListReorderTarget`: box size plus the item gap.
@@ -215,7 +216,7 @@ fn explore_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
             .hover_group()
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label("Explore")
+            .label(t("Explore"))
             .key("rail-explore")
             .on_press(move |s: &mut S| {
                 let st = acc(s);

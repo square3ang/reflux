@@ -8,6 +8,7 @@ use super::{ShellAccess, ShellState};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::rgba;
+use crate::i18n::t;
 
 pub struct GstClip {
     pub key: String,
@@ -86,8 +87,11 @@ fn hud<S: 'static>(glyph: &'static rune::Icon, label: &str, f: impl Fn(&mut S) +
         .on_press(f)
 }
 
+/// Opens the media viewer.
+type Opener<S> = std::rc::Rc<dyn Fn(&mut S)>;
+
 /// An inline video at `(w, h)`: the frames and the control bar. `full`: open the media viewer.
-pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellAccess<S>, full: Option<std::rc::Rc<dyn Fn(&mut S)>>) -> El {
+pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellAccess<S>, full: Option<Opener<S>>) -> El {
     let (w, h) = size;
     let key = c.key.clone();
     let frame = el().size(w, h).radius(dim::MEDIA_BORDER_RADIUS).clip_rounded(dim::MEDIA_BORDER_RADIUS).fill(Color::BLACK);
@@ -121,10 +125,10 @@ pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellA
         .gap(4.0)
         .center_y()
         .fill(rgba(0, 0, 0, 0.6))
-        .child(hud(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, if playing { "Pause" } else { "Play" }, move |s: &mut S| toggle(acc, &k1, s)))
+        .child(hud(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, if playing { t("Pause") } else { t("Play") }, move |s: &mut S| toggle(acc, &k1, s)))
         .child(text(format!("{} / {}", super::attachments::clock(now), super::attachments::clock(dur))).font(font(12.0, 500.0).mono().lh(16.0)).color(Color::WHITE))
         .child(el().grow(1.0).min_w(0.0).px(8.0).child(seek))
-        .child(hud(mute_icon, "Mute", move |s: &mut S| {
+        .child(hud(mute_icon, t("Mute"), move |s: &mut S| {
             with(acc, &k3, s, |c| {
                 c.muted = !c.muted;
                 c.player.set_volume(c.volume as f64, c.muted);

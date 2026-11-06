@@ -10,6 +10,7 @@ use super::{Intent, ShellAccess, ShellState};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::{Button, ButtonVariant, Modal, mix};
+use crate::i18n::t;
 
 /// `WAVEFORM_BAR_COUNT`.
 const BARS: usize = 32;
@@ -61,10 +62,10 @@ pub fn player<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: She
         .fill(p.brand_primary)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(if playing { "Pause" } else { "Play" })
+        .label(if playing { t("Pause") } else { t("Play") })
         .child(icon(if playing { &icons::PAUSE_FILL } else { &icons::PLAY_FILL }, 14.0).color(p.text_on_brand_primary))
         .on_press(move |s: &mut S| if has { super::clip::toggle(acc, &k1, s) } else { super::clip::start(acc(s), k1.clone(), u1.clone(), true) });
-    let wave = bars(&values, played.min(BARS), false, p).cursor(rune::Cursor::Pointer).role("slider").label("Voice message").on_drag(move |s: &mut S, d, _| {
+    let wave = bars(&values, played.min(BARS), false, p).cursor(rune::Cursor::Pointer).role("slider").label(t("Voice message")).on_drag(move |s: &mut S, d, _| {
         if d.w > 0.0 && dur > 0.0 {
             super::clip::seek(acc, &k2, s, (d.x / d.w).clamp(0.0, 1.0) as f64 * dur);
         }
@@ -81,7 +82,7 @@ pub fn player<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: She
         .fill(p.background_secondary)
         .border(1.0, p.background_modifier_accent)
         .role("group")
-        .label("Voice message")
+        .label(t("Voice message"))
         .child(button)
         .child(wave)
         .child(text(super::attachments::clock(shown)).font(font(11.0, 500.0).lh(14.0)).color(p.text_secondary))
@@ -116,17 +117,17 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
     let footer = if vm.recording {
         row()
             .gap(8.0)
-            .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("vm-cancel").on_press(close).el(p))
+            .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("vm-cancel").on_press(close).el(p))
             .child(Button::new("Stop recording").key("vm-stop").on_press(move |s: &mut S| op(s, Op::RecordStop)).el(p))
     } else {
         let ch = vm.channel;
         row()
             .gap(8.0)
-            .child(Button::new("Discard").variant(ButtonVariant::Secondary).key("vm-discard").on_press(close).el(p))
+            .child(Button::new(t("Discard")).variant(ButtonVariant::Secondary).key("vm-discard").on_press(close).el(p))
             .child(Button::new("Record again").variant(ButtonVariant::Secondary).key("vm-again").on_press(move |s: &mut S| op(s, Op::RecordStart(ch))).el(p))
-            .child(Button::new("Send").key("vm-send").on_press(move |s: &mut S| op(s, Op::RecordSend)).el(p))
+            .child(Button::new(t("Send")).key("vm-send").on_press(move |s: &mut S| op(s, Op::RecordSend)).el(p))
     };
-    Some(Modal::new("Voice message", close).body(body).footer(footer).el(p))
+    Some(Modal::new(t("Voice message"), close).body(body).footer(footer).el(p))
 }
 
 #[cfg(test)]

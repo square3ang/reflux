@@ -8,6 +8,7 @@ use rune::{Color, El, Shadow, col, el, icon, row, text};
 use super::{over, rgba};
 use crate::icons;
 use crate::theme::{Palette, font};
+use crate::i18n::t;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModalSize {
@@ -55,7 +56,7 @@ impl<S: 'static> Modal<S> {
             .hover(p.background_modifier_hover)
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label("Close")
+            .label(t("Close"))
             .on_press(move |s: &mut S| close(s))
             .child(icon(&icons::X_BOLD, 24.0).color(p.text_primary_muted).group_color(p.text_primary).group_opacity(0.5, 1.0));
         let header = row()

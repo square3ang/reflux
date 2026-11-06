@@ -14,6 +14,7 @@ use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Modal, ModalSize, RadioGroup, Select, Switch, over, radio_dot};
+use crate::i18n::t;
 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, d: &Dialog, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let start = layer.len();
@@ -76,21 +77,21 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
         sh.form.error = None;
         sh.dialog = Some(Dialog::Add(v));
     };
-    let back = Button::new("Back").variant(ButtonVariant::Secondary).on_press(go(AddView::Landing)).el(p);
+    let back = Button::new(t("Back")).variant(ButtonVariant::Secondary).on_press(go(AddView::Landing)).el(p);
     match v {
         // shortcut: "Import template" (a third-party platform's template API) isn't offered.
-        AddView::Landing => Modal::new("Add a community", close(acc))
+        AddView::Landing => Modal::new(t("Add a community"), close(acc))
             .body(
                 col()
                     .w_full()
                     .gap(24.0)
-                    .child(desc("Create a new community or join an existing one.", p))
+                    .child(desc(t("Create a new community or join an existing one."), p))
                     .child(
                         row()
                             .w_full()
                             .gap(12.0)
-                            .child(action(&icons::HOUSE, "Create community", p, go(AddView::Create)))
-                            .child(action(&icons::LINK_BOLD, "Join community", p, go(AddView::Join))),
+                            .child(action(&icons::HOUSE, t("Create community"), p, go(AddView::Create)))
+                            .child(action(&icons::LINK_BOLD, t("Join community"), p, go(AddView::Join))),
                     ),
             )
             .el(p),
@@ -114,11 +115,11 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                 face
             };
             let mut icon_buttons = row().gap(8.0).child(
-                Button::<S>::new(if icon_set { "Change icon" } else { "Upload icon" }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(pick_image(acc, "icon")),
+                Button::<S>::new(if icon_set { t("Change icon") } else { t("Upload icon") }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(pick_image(acc, "icon")),
             );
             if icon_set {
                 icon_buttons = icon_buttons.child(
-                    Button::new("Remove icon")
+                    Button::new(t("Remove icon"))
                         .variant(ButtonVariant::Secondary)
                         .size(ButtonSize::Small)
                         .on_press(move |s: &mut S| {
@@ -130,8 +131,8 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
             let mut body = col()
                 .w_full()
                 .gap(16.0)
-                .child(col().gap(8.0).child(label("Community icon", 500.0, p)).child(row().gap(16.0).center_y().child(face).child(icon_buttons)))
-                .child(field(st, acc, "name", "", "Community name", "", p))
+                .child(col().gap(8.0).child(label(t("Community icon"), 500.0, p)).child(row().gap(16.0).center_y().child(face).child(icon_buttons)))
+                .child(field(st, acc, "name", "", t("Community name"), "", p))
                 .child(text("By creating a community, you agree to follow and uphold the community guidelines.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap());
             if let Some(e) = error(st, p) {
                 body = body.child(e);
@@ -149,17 +150,17 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                 }
                 sh.api(Method::POST, "/guilds", Some(b), Then::Enter);
             };
-            Modal::new("Create a community", close(acc))
+            Modal::new(t("Create a community"), close(acc))
                 .body(body)
-                .footer(buttons(vec![back, Button::new("Create community").submitting(st.form.busy).key("create-guild").on_press(create).el(p)]))
+                .footer(buttons(vec![back, Button::new(t("Create community")).submitting(st.form.busy).key("create-guild").on_press(create).el(p)]))
                 .el(p)
         }
         AddView::Join => {
             let mut body = col()
                 .w_full()
                 .gap(12.0)
-                .child(desc("Enter the invite link to join a community.", p))
-                .child(field(st, acc, "invite", "", "Invite link", &format!("{}/AbCdEf", st.invite_base.trim_end_matches('/')), p));
+                .child(desc(t("Enter the invite link to join a community."), p))
+                .child(field(st, acc, "invite", "", t("Invite link"), &format!("{}/AbCdEf", st.invite_base.trim_end_matches('/')), p));
             if let Some(e) = error(st, p) {
                 body = body.child(e);
             }
@@ -170,9 +171,9 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                     None => sh.form.error = Some("Enter an invite link or code.".into()),
                 }
             };
-            Modal::new("Join a community", close(acc))
+            Modal::new(t("Join a community"), close(acc))
                 .body(body)
-                .footer(buttons(vec![back, Button::new("Join community").submitting(st.form.busy).key("join-guild").on_press(join).el(p)]))
+                .footer(buttons(vec![back, Button::new(t("Join community")).submitting(st.form.busy).key("join-guild").on_press(join).el(p)]))
                 .el(p)
         }
     }
@@ -199,7 +200,7 @@ fn num(st: &ShellState, key: &str, default: u64) -> u64 {
 fn expiry_text(max_age: u64) -> String {
     let plural = |n: u64, unit: &str| format!("Your invite link expires in {n} {unit}{}.", if n == 1 { "" } else { "s" });
     match max_age {
-        0 => "This invite link never expires.".into(),
+        0 => t("This invite link never expires.").into(),
         s if s % 86_400 == 0 => plural(s / 86_400, "day"),
         s if s % 3600 == 0 => plural(s / 3600, "hour"),
         s if s % 60 == 0 => plural(s / 60, "minute"),
@@ -221,12 +222,12 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
         let body = col()
             .w_full()
             .gap(16.0)
-            .child(Select::new("invite-expiry", &EXPIRY, Some(&age_s)).label("Expire after").width(406.0).on_choose(set("max_age")).el(&st.popups, pops, p, layer))
-            .child(Select::new("invite-uses", &USES, Some(&uses_s)).label("Max number of uses").width(406.0).on_choose(set("max_uses")).el(&st.popups, pops, p, layer))
+            .child(Select::new("invite-expiry", &EXPIRY, Some(&age_s)).label(t("Expire after")).width(406.0).on_choose(set("max_age")).el(&st.popups, pops, p, layer))
+            .child(Select::new("invite-uses", &USES, Some(&uses_s)).label(t("Max number of uses")).width(406.0).on_choose(set("max_uses")).el(&st.popups, pops, p, layer))
             .child(
                 Switch::new(temporary)
-                    .label("Temporary membership")
-                    .description("Members are removed when offline unless given a role.")
+                    .label(t("Temporary membership"))
+                    .description(t("Members are removed when offline unless given a role."))
                     .on_toggle(move |s: &mut S| {
                         acc(s).form.data.insert("temporary".into(), json!(!temporary));
                     })
@@ -238,11 +239,11 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
             sh.form.data.remove("invite");
             create_invite(sh, ch, max_age as u32, max_uses as u32, temporary);
         };
-        return Modal::new("Invite link settings", close(acc))
+        return Modal::new(t("Invite link settings"), close(acc))
             .body(body)
             .footer(buttons(vec![
-                Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(move |s: &mut S| acc(s).dialog = Some(Dialog::Invite(ch, false))).el(p),
-                Button::new("Create new link").key("invite-generate").on_press(generate).el(p),
+                Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(move |s: &mut S| acc(s).dialog = Some(Dialog::Invite(ch, false))).el(p),
+                Button::new(t("Create new link")).key("invite-generate").on_press(generate).el(p),
             ]))
             .el(p);
     }
@@ -251,7 +252,7 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
     let shown = if hide { crate::i18n::t("Link hidden while sharing").to_string() } else { link.clone().unwrap_or_default() };
     // `CopyLinkSection`: the link in a read-only field with a Copy button inside it.
     let bg = p.form_surface_background;
-    let copy = Button::<S>::new("Copy").size(ButtonSize::Compact).disabled(link.is_none()).key("invite-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
+    let copy = Button::<S>::new(t("Copy")).size(ButtonSize::Compact).disabled(link.is_none()).key("invite-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
         if let Some(l) = &link {
             tx.copy(l.clone());
         }
@@ -276,7 +277,7 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
                 .shrink(),
         )
         .child(copy);
-    let edit_link = text("Edit invite link")
+    let edit_link = text(t("Edit invite link"))
         .font(font(12.0, 400.0).lh(16.0))
         .color(p.text_link)
         .cursor(rune::Cursor::Pointer)
@@ -292,7 +293,7 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
         body = body.child(e);
     }
     // shortcut: Fluxer also lists friends to send the invite to directly; that list isn't here.
-    Modal::new(format!("Invite friends to {gname}"), close(acc)).body(body).el(p)
+    Modal::new(crate::i18n::tf("Invite friends to {guildName}", &[("guildName", &gname.to_string())]), close(acc)).body(body).el(p)
 }
 
 // ---- Create channel / category --------------------------------------------------------------
@@ -310,6 +311,7 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
     let mut body = col().w_full().gap(20.0);
     if !category {
         let options = TYPES.iter().map(|&(t, name, sub)| {
+            let (name, sub) = (crate::i18n::t(name), crate::i18n::t(sub));
             let on = t == kind;
             row()
                 .w_full()
@@ -339,9 +341,9 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
                         ),
                 )
         });
-        body = body.child(col().w_full().gap(8.0).child(label("Channel type", 500.0, p)).child(col().w_full().gap(6.0).role("radiogroup").children(options)));
+        body = body.child(col().w_full().gap(8.0).child(label(t("Channel type"), 500.0, p)).child(col().w_full().gap(6.0).role("radiogroup").children(options)));
     }
-    body = body.child(field(st, acc, "name", "", if category { "Name" } else { "Channel name" }, if category { "New category" } else { "" }, p));
+    body = body.child(field(st, acc, "name", "", if category { t("Name") } else { t("Channel name") }, if category { t("New category") } else { "" }, p));
     let link = kind == ChannelType::GUILD_LINK;
     if link && !category {
         body = body.child(field(st, acc, "url", "", "URL", "https://", p));
@@ -349,8 +351,8 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
     if !link {
         body = body.child(
             Switch::new(private)
-                .label("Private channel")
-                .description("Only selected members and roles will be able to view this channel.")
+                .label(t("Private channel"))
+                .description(t("Only selected members and roles will be able to view this channel."))
                 .on_toggle(move |s: &mut S| {
                     acc(s).form.data.insert("private".into(), json!(!private));
                 })
@@ -364,7 +366,7 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
         let sh = acc(s);
         let name = sh.form.value("name", "").trim().to_string();
         if name.is_empty() {
-            sh.form.error = Some("Name is required.".into());
+            sh.form.error = Some(t("Name is required.").into());
             return;
         }
         let kind = if category { ChannelType::GUILD_CATEGORY } else { kind };
@@ -382,11 +384,11 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
         }
         sh.api(Method::POST, format!("/guilds/{guild}/channels"), Some(b), if category { Then::Close } else { Then::Enter });
     };
-    let title = if category { "Create category" } else { "Create channel" };
+    let title = if category { t("Create category") } else { t("Create channel") };
     Modal::new(title, close(acc))
         .body(body)
         .footer(buttons(vec![
-            Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close(acc)).el(p),
+            Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close(acc)).el(p),
             Button::new(title).submitting(st.form.busy).key("create-channel").on_press(create).el(p),
         ]))
         .el(p)
@@ -423,8 +425,8 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
     let now = st.now_ms;
     let mut mute = col().w_full().gap(12.0).child(
         Switch::new(s.muted)
-            .label(format!("Mute {name}"))
-            .description("Muting a community hides its unread badge and prevents notifications from appearing")
+            .label(crate::i18n::tf("Mute {displayLabel}", &[("displayLabel", &name.to_string())]))
+            .description(t("Muting a community hides its unread badge and prevents notifications from appearing"))
             .on_toggle(patch(json!({ "muted": !s.muted, "mute_config": null })))
             .el(p),
     );
@@ -455,17 +457,17 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
         .w_full()
         .gap(24.0)
         .child(mute)
-        .child(col().w_full().gap(12.0).child(label("Community notification settings", 600.0, p)).child(levels))
+        .child(col().w_full().gap(12.0).child(label(t("Community notification settings"), 600.0, p)).child(levels))
         .child(
             col()
                 .w_full()
                 .gap(16.0)
                 .child(Switch::new(s.suppress_everyone).label("Suppress @everyone and @here").on_toggle(patch(json!({ "suppress_everyone": !s.suppress_everyone }))).el(p))
-                .child(Switch::new(s.suppress_roles).label("Suppress all role mentions").on_toggle(patch(json!({ "suppress_roles": !s.suppress_roles }))).el(p)),
+                .child(Switch::new(s.suppress_roles).label(t("Suppress all role mentions")).on_toggle(patch(json!({ "suppress_roles": !s.suppress_roles }))).el(p)),
         )
-        .child(Switch::new(s.mobile_push).label("Mobile push notifications").on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p));
+        .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p));
     // shortcut: unread badges, the reply mention preference and per-channel overrides aren't here.
-    Modal::new("Notification settings", close(acc)).size(ModalSize::Medium).body(body).el(p)
+    Modal::new(t("Notification settings"), close(acc)).size(ModalSize::Medium).body(body).el(p)
 }
 
 // ---- Privacy --------------------------------------------------------------------------------
@@ -481,9 +483,9 @@ fn privacy<S: 'static>(store: &Store, g: Snowflake, p: &Palette, acc: ShellAcces
     let body = col()
         .w_full()
         .gap(16.0)
-        .child(Switch::new(dms).label("Direct messages").description("Let members of this community DM you").on_toggle(dm_toggle).el(p))
-        .child(Switch::new(bots).label("Bot direct messages").description("Let bots in this community DM you").on_toggle(bot_toggle).el(p));
-    Modal::new("Privacy settings", close(acc)).body(body).el(p)
+        .child(Switch::new(dms).label(t("Direct messages")).description(t("Let members of this community DM you")).on_toggle(dm_toggle).el(p))
+        .child(Switch::new(bots).label(t("Bot direct messages")).description(t("Let bots in this community DM you")).on_toggle(bot_toggle).el(p));
+    Modal::new(t("Privacy settings"), close(acc)).body(body).el(p)
 }
 
 // ---- Confirmation ---------------------------------------------------------------------------
@@ -519,7 +521,7 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
     if matches!(c, Confirm::DeleteGuild(_)) {
         // `POST /guilds/{id}/delete` needs sudo mode: the account password.
         // shortcut: no authenticator or passkey sudo verification yet.
-        content = content.child(field(st, acc, "password", "", "Password", "", p));
+        content = content.child(field(st, acc, "password", "", t("Password"), "", p));
     }
     if let Some(e) = error(st, p) {
         content = content.child(e);
@@ -535,7 +537,7 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
     Modal::new(title, cancel)
         .body(content)
         .footer(buttons(vec![
-            Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(cancel).el(p),
+            Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(cancel).el(p),
             Button::new(action).variant(ButtonVariant::Danger).submitting(st.form.busy).key("confirm-action").on_press(go).el(p),
         ]))
         .el(p)

@@ -15,6 +15,7 @@ use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Menu, MenuEntry, MenuItem, Modal as Dialog, Placement, popup_access};
+use crate::i18n::t;
 
 pub const BELL: &str = "notif-bell";
 
@@ -34,8 +35,8 @@ const MUTE_FOR: [(u64, &str); 9] = [
 /// `getMutedText`: "Muted until …" for a timed mute.
 fn muted_text(end: Option<&str>) -> String {
     match end.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()) {
-        Some(d) => format!("Muted until {}", d.with_timezone(&chrono::Local).format("%-m/%-d/%Y, %-I:%M %p")),
-        None => "Muted".into(),
+        Some(d) => crate::i18n::tf("Muted until {mutedUntil}", &[("mutedUntil", &(d.with_timezone(&chrono::Local).format("%-m/%-d/%Y, %-I:%M %p")).to_string())]),
+        None => t("Muted").into(),
     }
 }
 
@@ -59,7 +60,7 @@ pub fn mute_entry<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snow
     };
     if muted {
         let p = patch(false, Value::Null);
-        return MenuEntry::Item(MenuItem::new("unmute", format!("Unmute {noun}")).icon(&icons::BELL_FILL).hint(muted_text(end.as_deref())).on_select(move |s: &mut S| {
+        return MenuEntry::Item(MenuItem::new("unmute", crate::i18n::tf("Unmute {label}", &[("label", noun)])).icon(&icons::BELL_FILL).hint(muted_text(end.as_deref())).on_select(move |s: &mut S| {
             acc(s).intents.push(Intent::PatchGuildSettings { guild, patch: p.clone() })
         }));
     }
@@ -71,15 +72,15 @@ pub fn mute_entry<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snow
             MenuEntry::Item(MenuItem::new(format!("mute-{ms}"), label).on_select(move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild, patch: p.clone() })))
         })
         .collect();
-    MenuEntry::Submenu("mute".into(), format!("Mute {noun}"), items)
+    MenuEntry::Submenu("mute".into(), crate::i18n::tf("Mute {displayLabel}", &[("displayLabel", noun)]), items)
 }
 
 /// `NOTIFICATION_LEVEL_*` labels.
 fn level_label(l: u8) -> &'static str {
     match l {
-        0 => "All messages",
-        1 => "Only @mentions",
-        _ => "Nothing",
+        0 => t("All messages"),
+        1 => t("Only @mentions"),
+        _ => t("Nothing"),
     }
 }
 
@@ -98,7 +99,7 @@ fn level_entries<S: 'static>(store: &Store, c: &Channel, acc: ShellAccess<S>) ->
         let p = override_patch(store, guild, cid, |o| o["message_notifications"] = json!(l));
         move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild, patch: p.clone() })
     };
-    let main = if parent.is_some() { "Use category default" } else { "Use community default" };
+    let main = if parent.is_some() { t("Use category default") } else { "Use community default" };
     let mut out = vec![MenuEntry::Item(MenuItem::new("level-default", main).hint(level_label(default)).radio(cur == 3).on_select(set(3)))];
     for l in 0..3u8 {
         out.push(MenuEntry::Item(MenuItem::new(format!("level-{l}"), level_label(l)).radio(cur == l).on_select(set(l))));
@@ -154,7 +155,7 @@ pub fn topic<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &Palet
 
 /// "Duplicate channel": a copy with the same type, topic, permissions and category.
 pub fn duplicate<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let Some(ch) = store.channels.get(&c).cloned() else { return Dialog::new("Duplicate channel", close(acc)).el(p) };
+    let Some(ch) = store.channels.get(&c).cloned() else { return Dialog::new(t("Duplicate channel"), close(acc)).el(p) };
     let name = ch.name.clone().unwrap_or_default();
     let mut items = vec![desc(format!("Create a copy of #{name} with the same permissions and settings."), p), super::field(st, acc, "name", &name, "Channel name", "", p)];
     items.extend(error(st, p));
@@ -174,7 +175,7 @@ pub fn duplicate<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &P
         }
         sh.social(Method::POST, format!("/guilds/{g}/channels"), Some(b), Done::Enter);
     };
-    Dialog::new("Duplicate channel", close(acc)).body(body(items)).footer(footer(st, "Duplicate", false, "duplicate-confirm", acc, go, p)).el(p)
+    Dialog::new(t("Duplicate channel"), close(acc)).body(body(items)).footer(footer(st, t("Duplicate"), false, "duplicate-confirm", acc, go, p)).el(p)
 }
 
 // ---- Welcome sections ------------------------------------------------------------------------
@@ -195,7 +196,7 @@ pub fn welcome<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
         _ => {
             let name = format!("#{}", c.name.clone().unwrap_or_default());
             let visiting = c.guild_id.and_then(|g| store.guilds.get(&g)).is_some_and(|g| g.visiting);
-            let line = if visiting { "Older messages are visible after you join.".to_string() } else { format!("This is the start of {name}.") };
+            let line = if visiting { "Older messages are visible after you join.".to_string() } else { crate::i18n::tf("This is the start of {channelDisplayName}.", &[("channelDisplayName", &name.to_string())]) };
             col()
                 .w_full()
                 .mx(16.0)
@@ -204,7 +205,7 @@ pub fn welcome<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                 .gap(4.0)
                 .key("welcome")
                 .child(row().size(80.0, 80.0).center().radius(40.0).fill(p.guild_list_foreground).child(icon(crate::shell::channel_icon(c.kind), 48.0).color(p.text_primary)))
-                .child(text(format!("Welcome to {name}")).font(font(30.0, 600.0).lh(38.0)).color(p.text_primary).wrap().mt(12.0))
+                .child(text(crate::i18n::tf("Welcome to {channelDisplayName}", &[("channelDisplayName", &name.to_string())])).font(font(30.0, 600.0).lh(38.0)).color(p.text_primary).wrap().mt(12.0))
                 .child(text(line).font(font(18.0, 400.0).lh(26.0)).color(p.text_primary_muted).wrap())
         }
     }
@@ -221,15 +222,15 @@ fn dm_welcome<S: 'static>(store: &Store, st: &ShellState, u: Snowflake, p: &Pale
         None
     } else {
         match kind {
-            None => Some(small("Send friend request", ButtonVariant::Primary, "dm-add-friend").on_press(push(Intent::AddFriend(u))).el(p)),
+            None => Some(small(t("Send friend request"), ButtonVariant::Primary, "dm-add-friend").on_press(push(Intent::AddFriend(u))).el(p)),
             Some(RelationshipType::INCOMING_REQUEST) => Some(
                 row()
                     .gap(8.0)
-                    .child(small("Accept", ButtonVariant::Primary, "dm-accept").on_press(push(Intent::AddFriend(u))).el(p))
-                    .child(small("Ignore", ButtonVariant::Secondary, "dm-ignore").on_press(push(Intent::RemoveRelationship(u))).el(p)),
+                    .child(small(t("Accept"), ButtonVariant::Primary, "dm-accept").on_press(push(Intent::AddFriend(u))).el(p))
+                    .child(small(t("Ignore"), ButtonVariant::Secondary, "dm-ignore").on_press(push(Intent::RemoveRelationship(u))).el(p)),
             ),
-            Some(RelationshipType::OUTGOING_REQUEST) => Some(small("Cancel friend request", ButtonVariant::Secondary, "dm-cancel").on_press(push(Intent::RemoveRelationship(u))).el(p)),
-            Some(RelationshipType::FRIEND) => Some(small("Remove friend", ButtonVariant::Secondary, "dm-remove").on_press(push(Intent::RemoveRelationship(u))).el(p)),
+            Some(RelationshipType::OUTGOING_REQUEST) => Some(small(t("Cancel friend request"), ButtonVariant::Secondary, "dm-cancel").on_press(push(Intent::RemoveRelationship(u))).el(p)),
+            Some(RelationshipType::FRIEND) => Some(small(t("Remove friend"), ButtonVariant::Secondary, "dm-remove").on_press(push(Intent::RemoveRelationship(u))).el(p)),
             _ => None,
         }
     };
@@ -251,9 +252,9 @@ fn dm_welcome<S: 'static>(store: &Store, st: &ShellState, u: Snowflake, p: &Pale
 fn group_welcome<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let cid = c.id;
     let full = c.recipients.len() + 1 >= 10;
-    let mut buttons = row().gap(8.0).child(Button::new("Edit group").variant(ButtonVariant::Secondary).icon(&icons::NOTE_PENCIL_BOLD).key("group-edit").on_press(move |s: &mut S| acc(s).open_social(Modal::EditGroup(cid))).el(p));
+    let mut buttons = row().gap(8.0).child(Button::new(t("Edit group")).variant(ButtonVariant::Secondary).icon(&icons::NOTE_PENCIL_BOLD).key("group-edit").on_press(move |s: &mut S| acc(s).open_social(Modal::EditGroup(cid))).el(p));
     if !full {
-        buttons = buttons.child(Button::new("Add friends to group").icon(&icons::USER_PLUS_BOLD).key("group-add").on_press(move |s: &mut S| acc(s).open_social(Modal::AddToGroup(cid))).el(p));
+        buttons = buttons.child(Button::new(t("Add friends to group")).icon(&icons::USER_PLUS_BOLD).key("group-add").on_press(move |s: &mut S| acc(s).open_social(Modal::AddToGroup(cid))).el(p));
     }
     col()
         .w_full()
@@ -278,8 +279,8 @@ fn notes_welcome(p: &Palette) -> El {
         .items_center()
         .key("welcome")
         .child(row().size(80.0, 80.0).center().radius(40.0).fill(p.guild_list_foreground).child(icon(&icons::NOTE_PENCIL_FILL, 40.0).color(p.text_primary)))
-        .child(text("Personal notes").font(font(24.0, 600.0).lh(30.0)).color(p.text_primary))
-        .child(text("Your private space for thoughts and reminders").font(font(18.0, 400.0).lh(28.0)).color(p.text_primary_muted).align(rune::Align::Center).wrap())
+        .child(text(t("Personal notes")).font(font(24.0, 600.0).lh(30.0)).color(p.text_primary))
+        .child(text(t("Your private space for thoughts and reminders")).font(font(18.0, 400.0).lh(28.0)).color(p.text_primary_muted).align(rune::Align::Center).wrap())
 }
 
 // ---- Blocked message groups -----------------------------------------------------------------
@@ -356,13 +357,13 @@ pub fn mass_popout<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         crate::shell::send_confirmed(sh, ch);
     };
     layer.push(
-        Dialog::new(format!("Mention {mention}?"), cancel)
+        Dialog::new(crate::i18n::tf("Mention {mention}?", &[("mention", mention)]), cancel)
             .body(desc(line, p))
             .footer(
                 row()
                     .gap(8.0)
-                    .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("mass-cancel").on_press(cancel).el(p))
-                    .child(Button::new("Continue").key("mass-confirm").on_press(go).el(p)),
+                    .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("mass-cancel").on_press(cancel).el(p))
+                    .child(Button::new(t("Continue")).key("mass-confirm").on_press(go).el(p)),
             )
             .el(p),
     );

@@ -125,10 +125,31 @@ See `git log` for details. Crates:
   hardware processors, P2P calls refused, no portal source thumbnails, no Linux stream audio, no
   entrance sound, mic test/VAD/recording use the default input. PTT = the in-window key OR
   `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the desktop). Nothing here was exercised in a real call (no test channel).
+- Look & feel (`look.rs`, `theme/custom.rs`, `settings/look_tabs.rs`, `shell/compact.rs`,
+  `desktop/{sound,tts}.rs`): Appearance (font size, group spacing, cozy/dense, hide compact
+  avatars, channel-list typing indicator, unread on muted), Chat (inline media/embeds, link
+  previews, reactions, spoiler mode incl. "channels I moderate", emoticon conversion),
+  Accessibility (saturation, link underline, dim strikethrough, DM previews, screen-reader
+  announcements via a polite live region, TTS rate + sample, focus ring, menu keybind hints,
+  confirm before DM calls, animated emoji/GIF/sticker modes, reduced motion synced with the OS),
+  Notifications (unread badge, reply-mention preference PATCH, master volume, all 18 Fluxer sounds
+  with toggles, preview and custom files under the config dir, TTS narration modes), Themes (dark,
+  legacy dark from `GenerateColorSystem.ts`, coal, light, system; colour editor + Quick CSS that
+  apply `:root` variable overrides only and report the rest; share via `POST /users/@me/themes`,
+  import a theme link or CSS). Device prefs are `desktop::Prefs.look` in session.json (not synced).
+  The compact (Dense) layout is `shell/compact.rs`, entered from `chat::message` when
+  `message_display_compact`. Timed mutes expire (`reflux_store::mute_active`). Demo flags:
+  `--compact`, `--theme=dark_legacy|system`, `REFLUX_LOOK='{json prefs}'`, `REFLUX_SYSTEM_LIGHT=1`.
+- i18n: UI literals go through `t`/`tf`/`tp` (ICU plural/selectordinal/select with CLDR rules);
+  `RadioGroup`, `Select`, settings nav and section headings translate their own labels, so `const`
+  tables stay plain. Re-run `python3 scripts/i18n-extract.py` after adding strings. RTL is text-only
+  (Rune can't mirror layouts). Check with `REFLUX_LOCALE=ko`.
 - Workflow that worked: each subagent in its own `git worktree` with shared
-  `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
-- Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining
-  UI strings to `t()`; and live testing (needs an account or a self-hosted instance).
+  `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master. When several
+  worktrees build at once the shared target can give stale `reflux_store` errors; touching the
+  dependency crates' sources or a per-worktree target dir fixes it.
+- Next: composer uploads, pins, search, threads/forums, quick switcher; and live testing (needs
+  an account or a self-hosted instance).
 
 ## Design-fidelity status
 - Reference: the live login page (`web.fluxer.app/login`, dark theme, 1020×893 viewport). The

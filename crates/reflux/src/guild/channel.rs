@@ -16,6 +16,7 @@ use crate::settings::{colors, frame, nav_group, nav_item};
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Select, Switch, mix, popup_access};
+use crate::i18n::t;
 
 /// (id, label, icon, permission needed).
 const TABS: &[(&str, &str, &Icon, P)] = &[
@@ -83,10 +84,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
         .collect();
     let mut nav = col().w_full().gap(3.0).child(nav_group(None, items, p));
     if have.contains(P::MANAGE_CHANNELS) {
-        let label = if ch.kind == ChannelType::GUILD_CATEGORY { "Delete category" } else { "Delete channel" };
+        let label = if ch.kind == ChannelType::GUILD_CATEGORY { t("Delete category") } else { t("Delete channel") };
         nav = nav.child(nav_item(&icons::TRASH, label, false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteChannel(channel))));
     }
-    let label = TABS.iter().find(|t| t.0 == tab).map_or("Channel settings", |t| t.1);
+    let label = TABS.iter().find(|t| t.0 == tab).map_or(t("Channel settings"), |x| t(x.1));
     let body = match tab {
         "overview" => overview(store, st, channel, p, acc, &mut popups),
         "permissions" => match target {
@@ -95,7 +96,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
         },
         _ => crate::social::channel_tab(store, st, channel, tab, p, acc).unwrap_or_else(|| not_available(p)),
     };
-    let mut modal = frame("Channel settings", label, vec![head], nav, body, close, p);
+    let mut modal = frame(t("Channel settings"), label, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {
         modal = modal.child(confirm(store, st, cf, p, acc));
     }
@@ -112,7 +113,7 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palet
     let cur_name = ch.name.clone().unwrap_or_default();
     let cur_topic = ch.topic.clone().unwrap_or_default();
     let texty = matches!(ch.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT);
-    let mut content = col().w_full().gap(20.0).child(field(st, acc, "name", &cur_name, "Channel name", "", p));
+    let mut content = col().w_full().gap(20.0).child(field(st, acc, "name", &cur_name, t("Channel name"), "", p));
     let mut patch = serde_json::Map::new();
     let name = f.value("name", &cur_name);
     if name.trim() != cur_name && !name.trim().is_empty() {
@@ -129,7 +130,7 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palet
         content = content.child(
             col().w_full().gap(8.0).child(
                 Select::new("slowmode", &SLOWMODE, Some(&slow))
-                    .label("Slowmode")
+                    .label(t("Slowmode"))
                     .width(340.0)
                     .on_choose(move |s: &mut S, v| {
                         acc(s).form.data.insert("slowmode".into(), json!(v));
@@ -157,7 +158,7 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palet
     if reflux_store::threads::is_forum(ch.kind) {
         content = super::forum::fields(st, ch, p, acc, layer, content, &mut patch);
     }
-    let mut body = col().w_full().child(section("Overview", content, true, p));
+    let mut body = col().w_full().child(section(t("Overview"), content, true, p));
     if !patch.is_empty() {
         let patch = Value::Object(patch);
         body = body.child(save_bar(st, p, acc, move |s: &mut S| {
@@ -219,7 +220,7 @@ fn overwrites<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Pal
                 .center_y()
                 .child(lead)
                 .child(col().grow(1.0).min_w(0.0).child(title(subject_name(store, g, t), p)).child(small(sub, p)))
-                .child(Button::new("Edit").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| edit_target(acc(s), id, Some(t))).el(p))
+                .child(Button::new(crate::i18n::t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| edit_target(acc(s), id, Some(t))).el(p))
         })
         .collect();
     // Roles, and members the client knows, without an overwrite yet.
@@ -248,7 +249,7 @@ fn overwrites<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Pal
         content = content.child(e);
     }
     // shortcut: members to add come from the client's cache; there's no member search.
-    section("Permissions", content.child(if rows.is_empty() { empty("No overwrites yet.", p) } else { card(rows, p) }), true, p)
+    section(t("Permissions"), content.child(if rows.is_empty() { empty("No overwrites yet.", p) } else { card(rows, p) }), true, p)
 }
 
 /// Deny / inherit / allow for one bit.
@@ -311,8 +312,9 @@ fn overwrite_editor<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, t
     }
     let mut groups = col().w_full().gap(24.0);
     for (gt, entries) in perms::channel(ch.kind) {
-        let mut list = col().w_full().gap(12.0).child(text(gt.to_string()).font(font(12.0, 600.0).lh(16.0)).text_case(rune::TextCase::Uppercase).color(p.text_tertiary));
+        let mut list = col().w_full().gap(12.0).child(text(crate::i18n::t(gt)).font(font(12.0, 600.0).lh(16.0)).text_case(rune::TextCase::Uppercase).color(p.text_tertiary));
         for &(bit, name, desc) in entries {
+            let (name, desc) = (crate::i18n::t(name), crate::i18n::t(desc));
             let now = tri(allow, deny, bit);
             let seg = |state: Tri, glyph: &'static Icon, on_color: rune::Color, label: &str| {
                 let on = now == state;
@@ -336,9 +338,9 @@ fn overwrite_editor<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, t
             let control = row()
                 .radius(6.0)
                 .border(1.0, p.background_modifier_accent)
-                .child(seg(Tri::Deny, &icons::X_BOLD, p.status_danger, "Deny"))
-                .child(seg(Tri::Inherit, &icons::MINUS_BOLD, mix(p.text_primary_muted, p.background_tertiary, 60.0), "Inherit"))
-                .child(seg(Tri::Allow, &icons::CHECK_BOLD, p.status_online, "Allow"));
+                .child(seg(Tri::Deny, &icons::X_BOLD, p.status_danger, crate::i18n::t("Deny")))
+                .child(seg(Tri::Inherit, &icons::MINUS_BOLD, mix(p.text_primary_muted, p.background_tertiary, 60.0), crate::i18n::t("Inherit")))
+                .child(seg(Tri::Allow, &icons::CHECK_BOLD, p.status_online, crate::i18n::t("Allow")));
             list = list.child(
                 row()
                     .w_full()
@@ -356,7 +358,7 @@ fn overwrite_editor<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, t
         .gap(16.0)
         .child(header)
         .child(row().gap(8.0).center_y().child(lead).child(text(subject_name(store, g, t)).font(font(20.0, 600.0).lh(24.0)).color(p.text_primary)))
-        .child(section("Permissions", groups, true, p));
+        .child(section(crate::i18n::t("Permissions"), groups, true, p));
     // An overwrite that doesn't exist yet is saved even when empty, so it shows in the list.
     if existing.is_none() || (allow, deny) != (cur_allow, cur_deny) {
         body = body.child(save_bar(st, p, acc, move |s: &mut S| {

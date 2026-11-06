@@ -14,6 +14,7 @@ use super::{Intent, ShellAccess, ShellState};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::mix;
+use crate::i18n::t;
 
 /// What the user area and sidebar show about voice (`MediaEngine` + `LocalVoiceState`).
 #[derive(Default)]
@@ -188,6 +189,8 @@ pub enum Modal {
     Refused(String),
     /// `CallNotRingableModal`.
     NotRingable,
+    /// `requestStartCall`'s confirm, with "Confirm before starting calls" on.
+    StartCall { channel: Snowflake, video: bool },
 }
 
 /// The voice message being recorded or reviewed (`VoiceMessageComposerModal`).
@@ -342,8 +345,8 @@ fn signal_icon(v: &Voice, p: &Palette) -> El {
         glyph = glyph.child(icon(arc, 16.0).color(c).absolute(0.0, 0.0));
     }
     let label = match v.ping {
-        Some(ms) => format!("Ping: {ms}ms"),
-        None => "Measuring latency...".into(),
+        Some(ms) => crate::i18n::tf("Ping: {currentLatency}ms", &[("currentLatency", &ms.to_string())]),
+        None => t("Measuring latency...").into(),
     };
     row().size(24.0, 24.0).center().role("img").label(label).child(glyph)
 }
@@ -422,14 +425,14 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .gap(8.0)
             .center_y()
             .child(status("Connection failed", p.status_danger).cursor(rune::Cursor::Pointer).on_press(retry))
-            .child(control_button(&icons::ARROW_CLOCKWISE_BOLD, "Try again", p, retry))
-            .child(control_button(&icons::X_BOLD, "Dismiss", p, move |s: &mut S| acc(s).voice.failed = None));
+            .child(control_button(&icons::ARROW_CLOCKWISE_BOLD, t("Try again"), p, retry))
+            .child(control_button(&icons::X_BOLD, t("Dismiss"), p, move |s: &mut S| acc(s).voice.failed = None));
         return Some(shell.child(status_row).child(divider));
     };
     let (label, color) = match (v.connected, v.reconnecting) {
-        (_, true) => ("Reconnecting...", p.status_idle),
-        (true, _) => ("In voice chat", p.status_online),
-        _ => ("Connecting...", p.status_idle),
+        (_, true) => (t("Reconnecting..."), p.status_idle),
+        (true, _) => (t("In voice chat"), p.status_online),
+        _ => (t("Connecting..."), p.status_idle),
     };
     let mut status_row = row().w_full().h(32.0).gap(8.0).center_y();
     if v.connected {
@@ -442,7 +445,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     if v.encrypted {
         status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted"));
     }
-    status_row = status_row.child(control_button(&icons::PHONE_X_FILL, "Disconnect", p, move |s: &mut S| acc(s).leave_voice()));
+    status_row = status_row.child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()));
     let channel_name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
     let source = match guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()) {
         Some(g) => format!("{channel_name} / {}", g.name),
@@ -466,18 +469,18 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     );
     let can_stream = can(store, v, Permissions::STREAM);
     let screen_label = match (v.connected, can_stream, v.screen) {
-        (false, _, _) => "Waiting for connection...",
+        (false, _, _) => t("Waiting for connection..."),
         (_, false, _) => "You don't have permission to stream in this channel",
         (_, _, true) => "Stop sharing your screen",
-        _ => "Share your screen",
+        _ => t("Share your screen"),
     };
     let cam_ok = crate::gst::available();
     let camera_label = match (v.connected, can_stream && cam_ok, v.camera) {
-        (false, _, _) => "Waiting for connection...",
+        (false, _, _) => t("Waiting for connection..."),
         (_, false, _) if !cam_ok => "Camera needs Reflux built with GStreamer",
         (_, false, _) => "You don't have permission to use video in this channel",
-        (_, _, true) => "Turn off camera",
-        _ => "Turn on camera",
+        (_, _, true) => t("Turn off camera"),
+        _ => t("Turn on camera"),
     };
     let media = row()
         .w_full()
@@ -508,12 +511,12 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .gap(dim::SPACING_2)
         .center_y()
         .child(icon(&icons::MONITOR_PLAY_FILL, 20.0).color(p.text_tertiary))
-        .child(text(format!("{name}'s screen")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
+        .child(text(crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name.to_string())])).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
         .child(spectators(store, st, guild, user, p))
         .child(control_button(if st.voice.stream_fullscreen { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }, "Full screen", p, move |s: &mut S| {
             acc(s).voice.stream_fullscreen ^= true;
         }))
-        .child(control_button(&icons::X_BOLD, "Stop watching", p, move |s: &mut S| {
+        .child(control_button(&icons::X_BOLD, t("Stop watching"), p, move |s: &mut S| {
             let sh = acc(s);
             (sh.voice.watching, sh.voice.stream_fullscreen) = (None, false);
             sh.intents.push(Intent::Watch(None));

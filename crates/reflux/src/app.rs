@@ -832,7 +832,12 @@ pub(crate) fn iso8601(ms: u64) -> String {
 
 /// Auth, connecting screen, or the shell.
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let p = theme::palette(theme::Kind::from_setting(&s.app.store.settings.theme));
+    let look = &s.app.saved.desktop.look;
+    let reduced = look.reduced(cx.system_reduced_motion());
+    cx.reduced_motion(reduced);
+    crate::look::set_reduced_motion(reduced);
+    let pal = theme::custom::effective(&s.app.store.settings.theme, cx.system_dark(), look.saturation, &look.css);
+    let p = &pal;
     let body = match s.app.route {
         Route::Auth => return crate::login::view(s, cx),
         Route::Connecting => {

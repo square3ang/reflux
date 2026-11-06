@@ -29,6 +29,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::{mix, over, scroller};
+use crate::i18n::t;
 
 pub use info::{Info, open_emoji_info, open_sticker_info};
 pub use reactions::{message_menu_items, pill_hover, reactor_tip_key};
@@ -49,10 +50,10 @@ impl Tab {
     const ALL: [Tab; 4] = [Tab::Gifs, Tab::Memes, Tab::Stickers, Tab::Emojis];
     fn label(self) -> &'static str {
         match self {
-            Tab::Gifs => "GIFs",
-            Tab::Memes => "Media",
-            Tab::Stickers => "Stickers",
-            Tab::Emojis => "Emojis",
+            Tab::Gifs => t("GIFs"),
+            Tab::Memes => t("Media"),
+            Tab::Stickers => t("Stickers"),
+            Tab::Emojis => t("Emojis"),
         }
     }
 }
@@ -367,7 +368,7 @@ fn popout<S: 'static>(store: &Store, st: &ShellState, t: For, p: &Palette, acc: 
     };
     let mut header = col().w_full().padding(12.0).gap(12.0);
     if tabs.len() > 1 {
-        let mut nav = row().gap(8.0).role("tablist").label("Expression picker categories");
+        let mut nav = row().gap(8.0).role("tablist").label(crate::i18n::t("Expression picker categories"));
         for tab in tabs {
             let on = st.expr.tab == tab;
             let mut b = row()
@@ -622,7 +623,7 @@ fn search_bar<S: 'static>(st: &ShellState, placeholder: String, p: &Palette, acc
                 .radius(4.0)
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label("Clear search")
+                .label(t("Clear search"))
                 .hover_group()
                 .child(icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted).group_color(p.text_primary))
                 .on_press(move |s: &mut S| {

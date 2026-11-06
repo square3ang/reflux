@@ -3,6 +3,9 @@
 "Add to favorites": "Add to favourites",
 "Authorized": "Authorised",
 "Authorized apps": "Authorised apps",
+"Change single colors and fonts of the base theme. Your changes are saved in the quick CSS of the theme you're editing.": "Change single colours and fonts of the base theme. Your changes are saved in the quick CSS of the theme you're editing.",
+"Click the upload icon next to any sound to customize it with your own audio file. Max {customSoundMaxSizeLabel}.": "Click the upload icon next to any sound to customise it with your own audio file. Max {customSoundMaxSizeLabel}.",
+"Colors and fonts": "Colours and fonts",
 "Cozy": "Cosy",
 "Customizes the border and banner color on your profile": "Customises the border and banner colour on your profile",
 "Favorite GIFs": "Favourite GIFs",
@@ -10,11 +13,15 @@
 "Favorites": "Favourites",
 "Give the post a title before you send.": "Give the post a title before you send it.",
 "Invite-only community": "Community accessible by invite only",
+"Maximizes visible messages with minimal spacing.": "Maximises visible messages with minimal spacing.",
 "No favorite GIFs yet": "No favourite GIFs yet",
 "Profile customization": "Profile customisation",
+"Profile customization for {selectedGuildName}": "Profile customisation for {selectedGuildName}",
 "Remove from favorites": "Remove from favourites",
 "Review signed-in devices and sign out of sessions you don't recognize.": "Review signed-in devices and sign out of sessions you don't recognise.",
+"Search colors and fonts…": "Search colours and fonts…",
 "Search or create a post...": "Search or create a post…",
 "Start minimized": "Start minimised",
-"This thread is closed. Sending a message will open it again.": "This thread is closed. Sending a message will reopen it."
+"This thread is closed. Sending a message will open it again.": "This thread is closed. Sending a message will reopen it.",
+"Use this device's system reduced motion preference, or customize it below.": "Use this device's system reduced motion preference, or customise it below."
 }

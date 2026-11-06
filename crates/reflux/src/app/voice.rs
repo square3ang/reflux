@@ -19,6 +19,7 @@ use crate::State;
 use crate::shell::Intent;
 use crate::shell::voice::{Modal, Op, Settings, VoiceMessage};
 use crate::voice_input::{Gate, Mic, Mode};
+use crate::i18n::t;
 
 const PING_EVERY: Duration = Duration::from_secs(2);
 
@@ -133,7 +134,7 @@ fn run_op(s: &mut State, op: Op) {
                 Some(m) => m.start_recording(),
                 None => {
                     if let Some(vm) = &mut s.app.shell.voice.voice_message {
-                        (vm.recording, vm.error) = (false, Some("No microphone found".into()));
+                        (vm.recording, vm.error) = (false, Some(t("No microphone found").into()));
                     }
                 }
             }
@@ -514,7 +515,7 @@ fn toggle_screen(s: &mut State) {
     if let Some(share) = s.app.voice.share.take() {
         s.app.shell.voice.screen = false;
         send_state(s);
-        crate::desktop::play(s, crate::desktop::Sound::StreamStop);
+        crate::desktop::play(s, crate::desktop::Sound::ScreenShareStop);
         return spawn(async move {
             if let Err(e) = call.stop_screen(share).await {
                 eprintln!("reflux: stop screen share: {e}");
@@ -532,7 +533,7 @@ fn toggle_screen(s: &mut State) {
         update(move |s| match r {
             Ok(share) if s.app.voice.generation == generation && s.app.shell.voice.screen => {
                 s.app.voice.share = Some(share);
-                crate::desktop::play(s, crate::desktop::Sound::StreamStart);
+                crate::desktop::play(s, crate::desktop::Sound::ScreenShareStart);
                 send_state(s);
             }
             Ok(share) => drop(share),

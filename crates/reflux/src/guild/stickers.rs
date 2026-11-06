@@ -15,6 +15,7 @@ use crate::settings::tabs::section;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::Palette;
 use crate::ui::{Button, ButtonSize, ButtonVariant};
+use crate::i18n::t;
 
 /// A sticker name from a file name: its stem, 2-30 characters (`GuildStickerCreateRequest`).
 pub fn sticker_name(path: &std::path::Path) -> String {
@@ -52,8 +53,8 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     let list: Vec<&Sticker> = store.guilds.get(&g).map(|gs| gs.stickers.iter().collect()).unwrap_or_default();
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
     let me = store.my_id();
-    let upload = Button::<S>::new("Upload sticker").size(ButtonSize::Small).key("upload-sticker").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
-        let options = rune::FileDialogOptions { title: "Upload sticker".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
+    let upload = Button::<S>::new(t("Upload sticker")).size(ButtonSize::Small).key("upload-sticker").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
+        let options = rune::FileDialogOptions { title: "Upload sticker".into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
         tx.open_file(options, move |s: &mut S, r, _| {
             let sh = acc(s);
             match r {
@@ -77,14 +78,14 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
             let img = crate::shell::picture(st.media.asset(|b, _| media::sticker_url(b, id, false)), 48.0, 48.0, 4.0, p);
             let mine = manage || x.user.as_ref().is_some_and(|u| u.id == me);
             if open == Some(id) {
-                let save = Button::<S>::new("Save").size(ButtonSize::Small).key("sticker-save").el(p).on_press(move |s: &mut S| {
+                let save = Button::<S>::new(t("Save")).size(ButtonSize::Small).key("sticker-save").el(p).on_press(move |s: &mut S| {
                     let sh = acc(s);
                     let (name, desc, t) = (sh.form.value("sticker-name", ""), sh.form.value("sticker-desc", ""), sh.form.value("sticker-tags", ""));
                     let body = json!({ "name": name.trim(), "description": Some(desc.trim()).filter(|d| !d.is_empty()), "tags": tags(&t) });
                     sh.form.data.remove("edit-sticker");
                     sh.api(Method::PATCH, format!("/guilds/{g}/stickers/{id}"), Some(body), Then::Nothing);
                 });
-                let cancel = Button::<S>::new("Cancel").size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
+                let cancel = Button::<S>::new(t("Cancel")).size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
                     acc(s).form.data.remove("edit-sticker");
                 });
                 return row().w_full().gap(12.0).items_start().child(img).child(
@@ -92,9 +93,9 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
                         .grow(1.0)
                         .min_w(0.0)
                         .gap(8.0)
-                        .child(field(st, acc, "sticker-name", &x.name, "Name", "2-30 characters", p))
-                        .child(field(st, acc, "sticker-desc", &x.description, "Description", "What it shows", p))
-                        .child(field(st, acc, "sticker-tags", &x.tags.join(", "), "Tags", "Comma-separated", p))
+                        .child(field(st, acc, "sticker-name", &x.name, t("Name"), "2-30 characters", p))
+                        .child(field(st, acc, "sticker-desc", &x.description, t("Description"), "What it shows", p))
+                        .child(field(st, acc, "sticker-tags", &x.tags.join(", "), t("Tags"), "Comma-separated", p))
                         .child(row().gap(8.0).justify_end().child(cancel).child(save)),
                 );
             }
@@ -102,14 +103,14 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
             let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(title(x.name.clone(), p)).children((!detail.is_empty()).then(|| small(detail, p).truncate())));
             if mine {
                 line = line
-                    .child(icon_button(&icons::PENCIL_SIMPLE, "Edit sticker", p, move |s: &mut S| {
+                    .child(icon_button(&icons::PENCIL_SIMPLE, t("Edit sticker"), p, move |s: &mut S| {
                         let f = &mut acc(s).form;
                         f.data.insert("edit-sticker".into(), Value::String(id.to_string()));
                         for k in ["sticker-name", "sticker-desc", "sticker-tags"] {
                             f.text.remove(k);
                         }
                     }))
-                    .child(icon_button(&icons::X_BOLD, "Delete sticker", p, move |s: &mut S| acc(s).api(Method::DELETE, format!("/guilds/{g}/stickers/{id}"), None, Then::Nothing)));
+                    .child(icon_button(&icons::X_BOLD, t("Delete sticker"), p, move |s: &mut S| acc(s).api(Method::DELETE, format!("/guilds/{g}/stickers/{id}"), None, Then::Nothing)));
             }
             line
         })

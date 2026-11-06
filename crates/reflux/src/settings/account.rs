@@ -186,8 +186,8 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
         let name = k["name"].as_str().unwrap_or_default();
         let created = day(k["created_at"].as_str().unwrap_or_default());
         let desc = match k["last_used_at"].as_str() {
-            Some(u) => format!("Added {created}, last used {}", day(u)),
-            None => format!("Added {created}, never used"),
+            Some(u) => crate::i18n::tf("Added {createdDate}, last used {lastUsedDate}", &[("createdDate", &created.to_string()), ("lastUsedDate", &(day(u)).to_string())]),
+            None => crate::i18n::tf("Added {createdDate}, never used", &[("createdDate", &created.to_string())]),
         };
         rows.push(card_row(
             name,
@@ -404,14 +404,14 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
             } else if let (Some(proof), Some(new)) = (proof.clone(), data(st, "m.new")) {
                 let to = new["new_email"].as_str().unwrap_or_default();
                 let verify = post(acc, "/users/@me/email-change/verify-new", move |sh| json!({ "ticket": tk, "code": val(sh, "m.code2"), "original_proof": proof }), Then::Keep("m.token".into()));
-                dialog(st, t("Change your email"), vec![desc(&format!("Enter the code we sent to {to}."), p), field("m.code2", t("Verification code"), "XXXX-XXXX", false)], Some((t("Verify"), false, verify)), p, acc)
+                dialog(st, t("Change your email"), vec![desc(&crate::i18n::tf("Enter the code we sent to {email}.", &[("email", to)]), p), field("m.code2", t("Verification code"), "XXXX-XXXX", false)], Some((t("Verify"), false, verify)), p, acc)
             } else if let Some(proof) = proof {
                 let req = post(acc, "/users/@me/email-change/request-new", move |sh| json!({ "ticket": tk, "new_email": val(sh, "m.email"), "original_proof": proof }), Then::Keep("m.new".into()));
                 dialog(st, t("Change your email"), vec![field("m.email", t("New email address"), "", false)], Some((t("Send code"), false, req)), p, acc)
             } else {
                 let to = start.and_then(|v| v["original_email"].as_str()).unwrap_or_default();
                 let verify = post(acc, "/users/@me/email-change/verify-original", move |sh| json!({ "ticket": tk, "code": val(sh, "m.code") }), Then::Keep("m.orig".into()));
-                dialog(st, t("Change your email"), vec![desc(&format!("Enter the code we sent to {to}."), p), field("m.code", t("Verification code"), "XXXX-XXXX", false)], Some((t("Verify"), false, verify)), p, acc)
+                dialog(st, t("Change your email"), vec![desc(&crate::i18n::tf("Enter the code we sent to {email}.", &[("email", to)]), p), field("m.code", t("Verification code"), "XXXX-XXXX", false)], Some((t("Verify"), false, verify)), p, acc)
             }
         }
         AccountModal::Password => {

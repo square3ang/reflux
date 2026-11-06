@@ -13,6 +13,7 @@ use crate::icons;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, MenuEntry, MenuItem, Modal as Dialog, over};
+use crate::i18n::t;
 
 /// `max_group_dm_recipients` minus you.
 const MAX_PICK: usize = 9;
@@ -85,7 +86,7 @@ pub fn create_dm<S: 'static>(store: &Store, st: &ShellState, group: Option<Snowf
         })
         .collect();
     let list = if rows.is_empty() {
-        text(if store.relationships.values().any(|r| r.kind == RelationshipType::FRIEND) { "No friends found" } else { "You have no friends yet" })
+        text(if store.relationships.values().any(|r| r.kind == RelationshipType::FRIEND) { t("No friends found") } else { t("You have no friends yet") })
             .font(font(14.0, 400.0).lh(20.0))
             .color(p.text_primary_muted)
             .py(24.0)
@@ -94,7 +95,7 @@ pub fn create_dm<S: 'static>(store: &Store, st: &ShellState, group: Option<Snowf
     } else {
         col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(col().w_full().gap(2.0).children(rows))
     };
-    let mut items = vec![desc("Choose friends to message.", p), field(st, acc, "q", "", "", "Search friends", p), list];
+    let mut items = vec![desc(t("Choose friends to message."), p), field(st, acc, "q", "", "", "Search friends", p), list];
     if let Some(c) = group {
         items.push(invite_section(st, c, p, acc));
     }
@@ -115,11 +116,11 @@ pub fn create_dm<S: 'static>(store: &Store, st: &ShellState, group: Option<Snowf
         }
     };
     let action = match (group, sel.len()) {
-        (Some(_), _) => "Add",
-        (None, 1) => "Create DM",
-        _ => "Create group DM",
+        (Some(_), _) => t("Add"),
+        (None, 1) => t("Create DM"),
+        _ => t("Create group DM"),
     };
-    Dialog::new("Select friends", close(acc)).body(body(items)).footer(footer(st, action, false, "create-dm", acc, go, p)).el(p)
+    Dialog::new(t("Select friends"), close(acc)).body(body(items)).footer(footer(st, action, false, "create-dm", acc, go, p)).el(p)
 }
 
 /// "or send an invite to a friend:" with a 24-hour group invite link.
@@ -129,16 +130,16 @@ fn invite_section<S: 'static>(st: &ShellState, c: Snowflake, p: &Palette, acc: S
     let action = match &link {
         Some(l) => {
             let l = l.clone();
-            Button::<S>::new("Copy").size(ButtonSize::Compact).key("group-invite-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(l.clone()))
+            Button::<S>::new(t("Copy")).size(ButtonSize::Compact).key("group-invite-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(l.clone()))
         }
-        None => Button::new("Generate invite link").size(ButtonSize::Compact).key("group-invite").on_press(move |s: &mut S| {
+        None => Button::new(t("Generate invite link")).size(ButtonSize::Compact).key("group-invite").on_press(move |s: &mut S| {
             acc(s).social(Method::POST, format!("/channels/{c}/invites"), Some(json!({ "max_age": 86400 })), Done::Form("invite".into()))
         }).el(p),
     };
     col()
         .w_full()
         .gap(8.0)
-        .child(label("or send an invite to a friend:", p))
+        .child(label(t("or send an invite to a friend:"), p))
         .child(
             row()
                 .w_full()
@@ -153,12 +154,12 @@ fn invite_section<S: 'static>(st: &ShellState, c: Snowflake, p: &Palette, acc: S
                 .child(text(link.clone().unwrap_or_default()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).selectable(true).truncate().grow(1.0).shrink())
                 .child(action),
         )
-        .children(link.map(|_| text("Your invite expires in 24 hours").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)))
+        .children(link.map(|_| text(t("Your invite expires in 24 hours")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)))
 }
 
 /// `EditGroupModal`: icon and name.
 pub fn edit_group<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let Some(ch) = store.channels.get(&c) else { return Dialog::new("Edit group", close(acc)).el(p) };
+    let Some(ch) = store.channels.get(&c) else { return Dialog::new(t("Edit group"), close(acc)).el(p) };
     let cur = ch.name.clone().unwrap_or_default();
     let icon_pick = st.form.data.get("icon").cloned();
     let face = match &icon_pick {
@@ -166,23 +167,23 @@ pub fn edit_group<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &
         _ => crate::shell::group_avatar(store, st, ch, 80.0, p.background_secondary, p),
     };
     let has_icon = matches!(icon_pick, Some(Value::String(_))) || (icon_pick.is_none() && ch.icon.is_some());
-    let mut buttons = row().gap(8.0).child(Button::<S>::new(if has_icon { "Change icon" } else { "Upload icon" }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::guild::pick_image(acc, "icon")));
+    let mut buttons = row().gap(8.0).child(Button::<S>::new(if has_icon { t("Change icon") } else { t("Upload icon") }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::guild::pick_image(acc, "icon")));
     if has_icon {
-        buttons = buttons.child(Button::new("Remove icon").variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {
+        buttons = buttons.child(Button::new(t("Remove icon")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {
             acc(s).form.data.insert("icon".into(), Value::Null);
         }).el(p));
     }
     let placeholder = if cur.is_empty() { crate::shell::channel_title(store, ch) } else { "My group".into() };
     let mut items = vec![
-        col().gap(8.0).child(label("Group icon", p)).child(row().gap(16.0).center_y().child(face).child(buttons)),
-        field(st, acc, "name", &cur, "Group name", &placeholder, p),
+        col().gap(8.0).child(label(t("Group icon"), p)).child(row().gap(16.0).center_y().child(face).child(buttons)),
+        field(st, acc, "name", &cur, t("Group name"), &placeholder, p),
     ];
     items.extend(error(st, p));
     let go = move |s: &mut S| {
         let sh = acc(s);
         let name = sh.form.value("name", &cur).trim().to_string();
         if name.chars().count() > 100 {
-            sh.form.error = Some("Group name must not exceed 100 characters".into());
+            sh.form.error = Some(t("Group name must not exceed 100 characters").into());
             return;
         }
         let mut b = json!({ "name": if name.is_empty() { Value::Null } else { json!(name) } });
@@ -191,7 +192,7 @@ pub fn edit_group<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &
         }
         sh.social(Method::PATCH, format!("/channels/{c}"), Some(b), Done::Close);
     };
-    Dialog::new("Edit group", close(acc)).body(body(items)).footer(footer(st, "Save", false, "group-save", acc, go, p)).el(p)
+    Dialog::new(t("Edit group"), close(acc)).body(body(items)).footer(footer(st, t("Save"), false, "group-save", acc, go, p)).el(p)
 }
 
 /// `ChangeFriendNicknameModal`: a private name for a friend.
@@ -203,12 +204,12 @@ pub fn friend_nickname<S: 'static>(store: &Store, st: &ShellState, u: Snowflake,
         let sh = acc(s);
         let nick = sh.form.value("nick", &cur).trim().to_string();
         if nick.chars().count() > 32 {
-            sh.form.error = Some("Nickname must not exceed 32 characters".into());
+            sh.form.error = Some(t("Nickname must not exceed 32 characters").into());
             return;
         }
         sh.social(Method::PATCH, format!("/users/@me/relationships/{u}"), Some(json!({ "nickname": if nick.is_empty() { Value::Null } else { json!(nick) } })), Done::Close);
     };
-    Dialog::new("Change friend nickname", close(acc)).body(body(items)).footer(footer(st, "Save", false, "friend-nick-save", acc, go, p)).el(p)
+    Dialog::new(t("Change friend nickname"), close(acc)).body(body(items)).footer(footer(st, t("Save"), false, "friend-nick-save", acc, go, p)).el(p)
 }
 
 /// `ChangeGroupDMNicknameModal`: the channel's `nicks` map, replaced whole.
@@ -228,7 +229,7 @@ pub fn group_nickname<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, 
         }
         sh.social(Method::PATCH, format!("/channels/{c}"), Some(json!({ "nicks": all })), Done::Close);
     };
-    Dialog::new("Change group nickname", close(acc)).body(body(items)).footer(footer(st, "Save", false, "group-nick-save", acc, go, p)).el(p)
+    Dialog::new(t("Change group nickname"), close(acc)).body(body(items)).footer(footer(st, t("Save"), false, "group-nick-save", acc, go, p)).el(p)
 }
 
 /// The user menu's items for a member of the group DM on screen (owner only), and Change
@@ -237,7 +238,7 @@ pub fn group_items<S: 'static>(store: &Store, st: &ShellState, u: Snowflake, acc
     let me = store.my_id();
     let mut out = Vec::new();
     if u != me && store.relationships.get(&u).is_some_and(|r| r.kind == RelationshipType::FRIEND) {
-        out.push(MenuEntry::Item(MenuItem::new("friend-nick", "Change friend nickname").icon(&icons::IDENTIFICATION_CARD_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::FriendNickname(u)))));
+        out.push(MenuEntry::Item(MenuItem::new("friend-nick", t("Change friend nickname")).icon(&icons::IDENTIFICATION_CARD_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::FriendNickname(u)))));
     }
     let Some(c) = st.channel.and_then(|c| store.channels.get(&c)).filter(|c| c.kind == ChannelType::GROUP_DM) else { return out };
     let cid = c.id;
@@ -246,9 +247,9 @@ pub fn group_items<S: 'static>(store: &Store, st: &ShellState, u: Snowflake, acc
         return out;
     }
     out.push(MenuEntry::Separator);
-    out.push(MenuEntry::Item(MenuItem::new("group-nick", "Change group nickname").icon(&icons::IDENTIFICATION_CARD_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::GroupNickname { channel: cid, user: u }))));
+    out.push(MenuEntry::Item(MenuItem::new("group-nick", t("Change group nickname")).icon(&icons::IDENTIFICATION_CARD_FILL).on_select(move |s: &mut S| acc(s).open_social(Modal::GroupNickname { channel: cid, user: u }))));
     if c.owner_id == Some(me) && u != me {
-        out.push(MenuEntry::Item(MenuItem::new("group-remove", "Remove from group").icon(&icons::USER_MINUS_FILL).danger().on_select(move |s: &mut S| acc(s).social(Method::DELETE, format!("/channels/{cid}/recipients/{u}"), None, Done::Nothing))));
+        out.push(MenuEntry::Item(MenuItem::new("group-remove", t("Remove from group")).icon(&icons::USER_MINUS_FILL).danger().on_select(move |s: &mut S| acc(s).social(Method::DELETE, format!("/channels/{cid}/recipients/{u}"), None, Done::Nothing))));
         if store.users.get(&u).is_none_or(|x| !x.bot) {
             out.push(MenuEntry::Item(MenuItem::new("group-owner", "Make group owner").icon(&icons::CROWN_FILL).danger().on_select(move |s: &mut S| acc(s).social(Method::PATCH, format!("/channels/{cid}"), Some(json!({ "owner_id": u })), Done::Nothing))));
         }

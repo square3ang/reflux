@@ -12,6 +12,7 @@ pub mod sound;
 pub mod spell;
 pub mod streamer;
 pub mod time;
+pub mod tts;
 mod tray;
 pub mod updater;
 pub mod window;
@@ -58,6 +59,8 @@ pub struct Prefs {
     /// The guild (`None` = home) and channel open last, reopened on start.
     pub last: Option<(Option<Snowflake>, Snowflake)>,
     pub streamer: streamer::Prefs,
+    /// Appearance, accessibility, chat input, sounds and quick CSS.
+    pub look: crate::look::Prefs,
     /// The update version whose bar was dismissed.
     pub skipped_update: Option<String>,
 }
@@ -81,6 +84,7 @@ impl Default for Prefs {
             global_shortcuts: true,
             last: None,
             streamer: Default::default(),
+            look: Default::default(),
             skipped_update: None,
         }
     }
@@ -168,9 +172,12 @@ pub struct Desktop {
     update_checked: Option<std::time::Instant>,
 }
 
+/// `Sound.playSound`: unless all sounds, this sound or streaming privacy mutes it; the user's
+/// custom file and master volume apply.
 pub fn play(s: &State, sound: Sound) {
-    if s.app.saved.desktop.sounds && !streamer::mute_sounds(&s.app.saved.desktop.streamer, s.desktop.capture_app) {
-        sound::play(sound);
+    let p = &s.app.saved.desktop;
+    if p.sounds && p.look.sound_on(sound.id()) && !streamer::mute_sounds(&p.streamer, s.desktop.capture_app) {
+        sound::play(sound, p.look.volume / 100.0, p.look.custom_sounds.get(sound.id()).map(String::as_str));
     }
 }
 
@@ -179,6 +186,7 @@ pub fn play(s: &State, sound: Sound) {
 pub fn boot(s: &mut State) {
     let p = &mut s.app.saved.desktop;
     window::set_zoom(p.zoom);
+    crate::look::set(&p.look);
     spell::configure(p);
     shortcuts::start(p.global_shortcuts);
     if !rune::is_headless() && p.autostart != autostart::is_enabled() {
@@ -235,7 +243,10 @@ pub fn ready(s: &mut State) {
 /// After a dispatch was applied: alerts for new messages and calls.
 pub fn on_dispatch(s: &mut State, d: &DispatchEvent) {
     match d {
-        DispatchEvent::MessageCreate(m) => on_message(s, m),
+        DispatchEvent::MessageCreate(m) => {
+            tts::on_message(s, m);
+            on_message(s, m)
+        }
         DispatchEvent::CallCreate(c) | DispatchEvent::CallUpdate(c) if c.ringing.contains(&s.app.store.my_id()) => {
             play(s, Sound::IncomingRing)
         }
@@ -247,14 +258,22 @@ pub fn on_dispatch(s: &mut State, d: &DispatchEvent) {
 fn on_message(s: &mut State, m: &Message) {
     let store = &s.app.store;
     let viewing = s.app.shell.channel == Some(m.channel_id) && s.desktop.focused;
-    if viewing || s.desktop.notified.contains(&m.id) || !store.should_notify(m) {
-        return; // the same-channel sound is off by default in Fluxer
+    if s.desktop.notified.contains(&m.id) || !store.should_notify(m) {
+        return;
+    }
+    if viewing {
+        // Off by default in Fluxer; on, it plays for messages in the open, focused channel.
+        if m.author.id != store.my_id() {
+            play(s, Sound::SameChannelMessage);
+        }
+        return;
     }
     s.desktop.notified.push_back(m.id);
     if s.desktop.notified.len() > 500 {
         s.desktop.notified.pop_front();
     }
-    play(s, Sound::Message);
+    let dm = store.channels.get(&m.channel_id).is_none_or(|c| c.guild_id.is_none());
+    play(s, if dm { Sound::DirectMessage } else { Sound::Message });
     attention(s);
     if !s.app.saved.desktop.notifications || streamer::pause_notifications(&s.app.saved.desktop.streamer, s.desktop.capture_app) || rune::is_headless() {
         return;
@@ -340,7 +359,9 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     } else {
         0
     };
-    let badge = (mentions, mentions > 0 && !s.desktop.focused);
+    // "Enable unread message badge" off clears the dock count (urgency still flags mentions).
+    let shown = if s.app.saved.desktop.look.unread_badge { mentions } else { 0 };
+    let badge = (shown, mentions > 0 && !s.desktop.focused);
     if s.desktop.badge != Some(badge) {
         s.desktop.badge = Some(badge);
         set_badge(badge.0, badge.1);
@@ -349,7 +370,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     voice_sounds(s);
     let store = &s.app.store;
     let unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
-    let title = window::title(&s.app.store, &s.app.shell, mentions, unread);
+    let title = if s.app.saved.desktop.look.unread_badge { window::title(&s.app.store, &s.app.shell, mentions, unread) } else { window::title(&s.app.store, &s.app.shell, 0, false) };
     if s.desktop.title != title {
         tx.set_title(title.clone());
         s.desktop.title = title;
@@ -370,6 +391,7 @@ pub fn prefs_changed(old: &Prefs, new: &Prefs) {
         spell::configure(new);
     }
     window::set_zoom(new.zoom);
+    crate::look::set(&new.look);
 }
 
 /// Runs an [`Intent::Desktop`](crate::shell::Intent::Desktop).

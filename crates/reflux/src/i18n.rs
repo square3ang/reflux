@@ -2,12 +2,13 @@
 //! `scripts/i18n-extract.py` copies the entries Reflux uses into `assets/i18n/<locale>.json`, so
 //! `t("Welcome back")` is "다시 오신 것을 환영합니다" in Korean and the English text itself when a
 //! locale has no entry. Placeholders are lingui's `{name}`; [`tf`] fills them.
-// shortcut: only the login screens, settings chrome and the desktop tabs/tray/notifications call
-// `t` so far. Still English: shell/*.rs (chat, sidebar, members, menus, friends, voice, profile),
-// guild/*.rs, settings/tabs.rs bodies, ui/*, and app.rs/login.rs messages Fluxer has no msgid for
-// (dynamic errors, "Signing in to {host}"). Wrap literals in `t(...)` and re-run
-// scripts/i18n-extract.py when converting them.
-// shortcut: ICU plurals (`{count, plural, ...}`) aren't interpreted; strings with them stay English.
+// shortcut: UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
+// settings nav and section headings), but sentences Reflux builds with `format!` and Fluxer has
+// no msgid for (dynamic errors, "Delete '{name}'", "Signing in to {host}", some confirm bodies)
+// stay English, as do the component gallery and the shell demo. Wrap new literals in `t(...)`
+// and re-run scripts/i18n-extract.py.
+// shortcut: Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
+// mirrored: Rune has no layout-direction setting, so rows still run left to right.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
@@ -129,9 +130,162 @@ pub fn t(s: &str) -> &str {
     CURRENT.read().unwrap().catalog.and_then(|c| c.get(s).copied()).unwrap_or(s)
 }
 
-/// [`t`] with lingui `{name}` placeholders filled.
+/// [`t`] with lingui's ICU MessageFormat filled: `{name}` placeholders, `{n, plural, …}` (with
+/// `=N`, the locale's CLDR categories and `#`), `{n, selectordinal, …}` and `{x, select, …}`.
 pub fn tf(s: &str, args: &[(&str, &str)]) -> String {
-    args.iter().fold(t(s).to_string(), |out, (k, v)| out.replace(&format!("{{{k}}}"), v))
+    format(t(s), args, locale())
+}
+
+/// [`tf`] with `count` set (the usual name of the plural argument).
+pub fn tp(s: &str, count: i64, args: &[(&str, &str)]) -> String {
+    let n = count.to_string();
+    let mut all = vec![("count", n.as_str())];
+    all.extend_from_slice(args);
+    tf(s, &all)
+}
+
+fn format(msg: &str, args: &[(&str, &str)], locale: &str) -> String {
+    format_with(msg, args, locale, None)
+}
+
+/// `hash`: the number `#` stands for inside a plural branch.
+fn format_with(msg: &str, args: &[(&str, &str)], locale: &str, hash: Option<&str>) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut rest = msg;
+    while let Some(i) = rest.find(['{', '#']) {
+        out.push_str(&rest[..i]);
+        if rest.as_bytes()[i] == b'#' {
+            out.push_str(hash.unwrap_or("#"));
+            rest = &rest[i + 1..];
+            continue;
+        }
+        let Some(end) = matching(&rest[i..]) else {
+            out.push_str(&rest[i..]);
+            return out;
+        };
+        let inner = &rest[i + 1..i + end];
+        rest = &rest[i + end + 1..];
+        let mut parts = inner.splitn(3, ',');
+        let name = parts.next().unwrap_or("").trim();
+        let value = args.iter().find(|(k, _)| *k == name).map(|(_, v)| *v);
+        match (parts.next().map(str::trim), parts.next()) {
+            (Some(kind @ ("plural" | "selectordinal" | "select")), Some(options)) => {
+                let branches = branches(options);
+                let v = value.unwrap_or("");
+                let pick = |key: &str| branches.iter().find(|(k, _)| *k == key).map(|(_, m)| *m);
+                let chosen = if kind == "select" {
+                    pick(v).or_else(|| pick("other"))
+                } else {
+                    let n: f64 = v.parse().unwrap_or(0.0);
+                    let cat = if kind == "plural" { plural(locale, n) } else { "other" };
+                    pick(&format!("={v}")).or_else(|| pick(cat)).or_else(|| pick("other"))
+                };
+                let h = (kind != "select").then_some(v);
+                out.push_str(&format_with(chosen.unwrap_or(""), args, locale, h.or(hash)));
+            }
+            _ => match value {
+                Some(v) => out.push_str(v),
+                None => {
+                    out.push('{');
+                    out.push_str(inner);
+                    out.push('}');
+                }
+            },
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The length up to the `}` closing the `{` that `s` starts with.
+fn matching(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `key {message} key {message} …`.
+fn branches(options: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut rest = options;
+    while let Some(open) = rest.find('{') {
+        let key = rest[..open].trim();
+        let Some(end) = matching(&rest[open..]) else { break };
+        out.push((key, &rest[open + 1..open + end]));
+        rest = &rest[open + end + 1..];
+    }
+    out
+}
+
+/// CLDR cardinal plural category for the supported locales (integers and simple decimals).
+fn plural(locale: &str, n: f64) -> &'static str {
+    let lang = locale.split('-').next().unwrap_or(locale);
+    let int = n.fract() == 0.0;
+    let i = n.trunc() as i64;
+    let (m10, m100) = (i % 10, i % 100);
+    match lang {
+        "ja" | "ko" | "zh" | "th" | "vi" | "id" => "other",
+        "fr" | "hi" if i == 0 || i == 1 => "one",
+        "fr" | "hi" => "other",
+        "pt" if i == 0 || i == 1 => "one",
+        "pt" => "other",
+        "ar" if int => match (i, m100) {
+            (0, _) => "zero",
+            (1, _) => "one",
+            (2, _) => "two",
+            (_, 3..=10) => "few",
+            (_, 11..=99) => "many",
+            _ => "other",
+        },
+        "he" if int && i == 1 => "one",
+        "he" if int && i == 2 => "two",
+        "ru" | "uk" if int => match (m10, m100) {
+            (1, m) if m != 11 => "one",
+            (2..=4, m) if !(12..=14).contains(&m) => "few",
+            _ => "many",
+        },
+        "hr" if int => match (m10, m100) {
+            (1, m) if m != 11 => "one",
+            (2..=4, m) if !(12..=14).contains(&m) => "few",
+            _ => "other",
+        },
+        "pl" if int => match (i, m10, m100) {
+            (1, _, _) => "one",
+            (_, 2..=4, m) if !(12..=14).contains(&m) => "few",
+            _ => "many",
+        },
+        "cs" if int => match i {
+            1 => "one",
+            2..=4 => "few",
+            _ => "other",
+        },
+        "cs" | "pl" | "ru" | "uk" => "many",
+        "lt" if int => match (m10, m100) {
+            (1, m) if !(11..=19).contains(&m) => "one",
+            (2..=9, m) if !(11..=19).contains(&m) => "few",
+            _ => "other",
+        },
+        "lt" => "many",
+        "ro" if int => match (i, m100) {
+            (1, _) => "one",
+            (0, _) | (_, 2..=19) => "few",
+            _ => "other",
+        },
+        "ro" => "few",
+        _ if int && i == 1 => "one",
+        _ => "other",
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +310,24 @@ mod tests {
         assert_eq!(t("No such string in Fluxer"), "No such string in Fluxer");
         set_locale("en-US");
         assert_eq!(t("Welcome back"), "Welcome back");
+    }
+
+    #[test]
+    fn icu_plural_select_and_hash() {
+        let m = "{count, plural, one {{authorName} sent an attachment} other {{authorName} sent # attachments}}";
+        assert_eq!(format(m, &[("count", "1"), ("authorName", "Ann")], "en-US"), "Ann sent an attachment");
+        assert_eq!(format(m, &[("count", "3"), ("authorName", "Ann")], "en-US"), "Ann sent 3 attachments");
+        let ru = "{n, plural, one {# файл} few {# файла} many {# файлов} other {# файла}}";
+        assert_eq!(format(ru, &[("n", "21")], "ru"), "21 файл");
+        assert_eq!(format(ru, &[("n", "23")], "ru"), "23 файла");
+        assert_eq!(format(ru, &[("n", "11")], "ru"), "11 файлов");
+        assert_eq!(format("{n, plural, =0 {none} other {#}}", &[("n", "0")], "en-US"), "none");
+        assert_eq!(format("{g, select, f {she} m {he} other {they}}", &[("g", "x")], "en-US"), "they");
+        assert_eq!(format("{n, plural, other {# 개}}", &[("n", "5")], "ko"), "5 개");
+        assert_eq!(format("{a} and {b}", &[("a", "x")], "en-US"), "x and {b}");
+        assert_eq!(plural("ar", 0.0), "zero");
+        assert_eq!(plural("ar", 105.0), "few");
+        assert_eq!(plural("pl", 22.0), "few");
+        assert_eq!(plural("fr", 0.0), "one");
     }
 }

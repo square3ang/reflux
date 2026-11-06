@@ -14,6 +14,7 @@ use super::{Instance, Route, now_ms, spawn, update};
 use crate::State;
 use crate::shell::threads::{self, Op, Tab};
 use crate::shell::upload::Upload;
+use crate::i18n::t;
 
 /// `ATTACHMENT_FLAG_SPOILER`.
 const SPOILER: u32 = 1 << 3;
@@ -113,7 +114,7 @@ pub(super) fn run(s: &mut State, o: Op) {
                                 title: rune::TextEdit::new(title),
                                 body: rune::TextEdit::new(body),
                                 tags,
-                                error: Some(format!("Couldn't create the post: {}", crate::guild::describe(&e))),
+                                error: Some(crate::i18n::tf("Couldn't create the post: {detail}", &[("detail", &(crate::guild::describe(&e)).to_string())])),
                                 preview: false,
                             });
                             sh.threads.uploads = files;
@@ -125,27 +126,27 @@ pub(super) fn run(s: &mut State, o: Op) {
         Op::Patch { channel, body } => call::<Channel>(inst, generation, Method::PATCH, format!("/channels/{channel}"), Some(body), move |s, r| match r {
             Ok(c) if c.kind.is_thread() => s.app.store.add_threads(&[c], &[]),
             Ok(_) => {}
-            Err(e) => notice(s, "Something went wrong", e),
+            Err(e) => notice(s, t("Something went wrong"), e),
         }),
         Op::Delete(t) => call::<Value>(inst, generation, Method::DELETE, format!("/channels/{t}"), None, move |s, r| {
             if let Err(e) = r {
-                notice(s, "Something went wrong", e);
+                notice(s, crate::i18n::t("Something went wrong"), e);
             }
         }),
         Op::Join(t) => call::<Value>(inst, generation, Method::PUT, format!("/channels/{t}/thread-members/@me"), None, move |s, r| {
             if let Err(e) = r {
-                notice(s, "Something went wrong", e);
+                notice(s, crate::i18n::t("Something went wrong"), e);
             }
         }),
         Op::Leave(t) => call::<Value>(inst, generation, Method::DELETE, format!("/channels/{t}/thread-members/@me"), None, move |s, r| {
             if let Err(e) = r {
-                notice(s, "Something went wrong", e);
+                notice(s, crate::i18n::t("Something went wrong"), e);
             }
         }),
         Op::MemberSettings { thread, body } => {
             call::<Value>(inst, generation, Method::PATCH, format!("/channels/{thread}/thread-members/@me/settings"), Some(body), move |s, r| {
                 if let Err(e) = r {
-                    notice(s, "Something went wrong", e);
+                    notice(s, t("Something went wrong"), e);
                 }
             })
         }

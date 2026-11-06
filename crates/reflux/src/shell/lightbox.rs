@@ -12,6 +12,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::rgba;
+use crate::i18n::t;
 
 /// One picture or video the viewer can show.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -127,7 +128,7 @@ fn nav<S: 'static>(left: bool, acc: ShellAccess<S>) -> El {
         .hover(rgba(255, 255, 255, 0.13))
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(if left { "Previous attachment" } else { "Next attachment" })
+        .label(if left { t("Previous attachment") } else { t("Next attachment") })
         .child(icon(glyph, 24.0).color(rgba(255, 255, 255, 0.72)))
         .on_press(move |s: &mut S| go(acc(s), if left { -1 } else { 1 }));
     let side = if left { (Some(6.0), None) } else { (None, Some(6.0)) };
@@ -233,33 +234,33 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
         .pin(Some(16.0), None, None, Some(18.0))
         .gap(2.0)
         .center_y()
-        .child(control(&icons::X_BOLD, "Close", true, move |s: &mut S, _| close(acc(s))))
+        .child(control(&icons::X_BOLD, t("Close"), true, move |s: &mut S, _| close(acc(s))))
         .child(gap(6.0));
     let u1 = url.clone();
-    actions = actions.child(control(&icons::ARROW_SQUARE_OUT_BOLD, "Open in browser", !url.is_empty(), move |s: &mut S, tx| super::links::open(acc(s), &u1, tx)));
+    actions = actions.child(control(&icons::ARROW_SQUARE_OUT_BOLD, t("Open in browser"), !url.is_empty(), move |s: &mut S, tx| super::links::open(acc(s), &u1, tx)));
     let u2 = url.clone();
-    actions = actions.child(control(&icons::LINK_BOLD, "Copy link", !url.is_empty(), move |_: &mut S, tx| tx.copy(u2.clone())));
+    actions = actions.child(control(&icons::LINK_BOLD, t("Copy link"), !url.is_empty(), move |_: &mut S, tx| tx.copy(u2.clone())));
     if !it.video {
         let pr = proxy.clone();
-        actions = actions.child(control(&icons::COPY_SIMPLE_BOLD, "Copy image", true, move |s: &mut S, _| acc(s).media.copy_image(format!("{pr}{}format=png", if pr.contains('?') { '&' } else { '?' }))));
+        actions = actions.child(control(&icons::COPY_SIMPLE_BOLD, t("Copy image"), true, move |s: &mut S, _| acc(s).media.copy_image(format!("{pr}{}format=png", if pr.contains('?') { '&' } else { '?' }))));
     }
     let (pr, nm) = (if proxy.is_empty() { url.clone() } else { proxy.clone() }, name.clone());
-    actions = actions.child(control(&icons::DOWNLOAD_SIMPLE_BOLD, "Download", !pr.is_empty(), move |_: &mut S, tx| super::attachments::save_as(acc, pr.clone(), nm.clone(), tx)));
+    actions = actions.child(control(&icons::DOWNLOAD_SIMPLE_BOLD, t("Download"), !pr.is_empty(), move |_: &mut S, tx| super::attachments::save_as(acc, pr.clone(), nm.clone(), tx)));
     if zoomable {
         actions = actions
             .child(gap(6.0))
-            .child(control(&icons::ARROWS_IN_SIMPLE_BOLD, "Reset", z > 1.0, move |s: &mut S, _| {
+            .child(control(&icons::ARROWS_IN_SIMPLE_BOLD, t("Reset"), z > 1.0, move |s: &mut S, _| {
                 if let Some(v) = &mut acc(s).media_ui.viewer {
                     zoom_to(v, 1.0)
                 }
             }))
-            .child(control(&icons::MAGNIFYING_GLASS_PLUS_BOLD, "Zoom in", z * STEP <= MAX_ZOOM + 0.01, move |s: &mut S, _| {
+            .child(control(&icons::MAGNIFYING_GLASS_PLUS_BOLD, t("Zoom in"), z * STEP <= MAX_ZOOM + 0.01, move |s: &mut S, _| {
                 if let Some(v) = &mut acc(s).media_ui.viewer {
                     let z = v.zoom * STEP;
                     zoom_to(v, z)
                 }
             }))
-            .child(control(&icons::MAGNIFYING_GLASS_MINUS_BOLD, "Zoom out", z > 1.0, move |s: &mut S, _| {
+            .child(control(&icons::MAGNIFYING_GLASS_MINUS_BOLD, t("Zoom out"), z > 1.0, move |s: &mut S, _| {
                 if let Some(v) = &mut acc(s).media_ui.viewer {
                     let z = v.zoom / STEP;
                     zoom_to(v, z)
@@ -267,7 +268,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             }));
     }
     if let Some((channel, message)) = v.message {
-        actions = actions.child(gap(16.0)).child(control(&icons::ARROW_BEND_UP_LEFT_BOLD, "Reply", true, move |s: &mut S, _| {
+        actions = actions.child(gap(16.0)).child(control(&icons::ARROW_BEND_UP_LEFT_BOLD, t("Reply"), true, move |s: &mut S, _| {
             let st = acc(s);
             close(st);
             st.reply = Some(ReplyTo { channel, message, mention: true });

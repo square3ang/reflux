@@ -117,7 +117,7 @@ impl Errors {
     pub fn from_error(e: &reflux_net::Error) -> Self {
         let mut out = Self::default();
         let reflux_net::Error::Api { error, .. } = e else {
-            out.form = Some(format!("Something went wrong: {e}"));
+            out.form = Some(crate::i18n::tf("Something went wrong: {detail}", &[("detail", &e.to_string())]));
             return out;
         };
         for v in &error.errors {
