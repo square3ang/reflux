@@ -1,0 +1,13 @@
+[package]
+name = "reflux-voice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+livekit.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+log = "0.4"

@@ -1,0 +1,6 @@
+[env]
+# webrtc-sys compiles its NVENC encoder only if $CUDA_HOME/include/cuda.h exists (libcuda is
+# dlopened at runtime, so only the header is needed). Point the gitignored `.cuda` symlink at any
+# CUDA include root, e.g. `ln -s /usr/local/cuda .cuda` or pip's `.../site-packages/nvidia/cu13`.
+# Without it, the build just warns and skips NVENC. A CUDA_HOME set in the environment wins.
+CUDA_HOME = { value = ".cuda", relative = true, force = false }

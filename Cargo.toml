@@ -20,6 +20,8 @@ zstd = "0.13"
 thiserror = "2"
 tracing = "0.1"
 url = "2"
+# LiveKit Rust SDK; voice/video/screen share (reflux-voice).
+livekit = { git = "https://github.com/livekit/rust-sdks", rev = "052f089166b6864bc5f7e92906f6a7897b9f546c", default-features = false, features = ["native", "rustls-tls-native-roots"] }
 reflux-model = { path = "crates/reflux-model" }
 reflux-net = { path = "crates/reflux-net" }
 reflux-store = { path = "crates/reflux-store" }
