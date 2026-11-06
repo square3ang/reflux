@@ -124,5 +124,10 @@ See `git log` for details. Crates:
   --size 1280x800 --scale 1 [--at 1]` renders the real UI headless (`REFLUX_LIVE_GUILD=N`,
   `REFLUX_LIVE_TAB`, `REFLUX_LIVE_QUERY`, `REFLUX_LIVE_JUMP_FRAMES`). Snapshots hold private
   messages: never commit them.
+- Writes, in one channel only: `REFLUX_WRITE_CHANNEL=<channel id> reflux --live=write --snap ...
+  --at 1` (send, edit, react, reply, typing, ack, pin, uploads both ways, search, jump; each step
+  waits for its echo, then reads back from the server), then `--live=cleanup` (deletes the
+  `[reflux test` messages and pin notices, then checks none remain). The read-only guard lets
+  only `/channels/<that id>/...` writes and their upload PUTs through.
 - Shared target dir: other worktrees overwrite `target/debug/reflux`; copy the binary right after
   building (cargo's `--message-format=json` `executable`) before running it.

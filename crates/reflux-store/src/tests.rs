@@ -336,3 +336,19 @@ fn around_window_knows_if_it_is_the_newest() {
     s.set_around_messages(S(300), page(&[305, 311]), 50);
     assert!(!s.messages[&S(300)].has_more_after, "reaches the last message");
 }
+
+/// A reply's original deleted while loaded shows as deleted, as in Fluxer.
+#[test]
+fn deleting_an_original_marks_its_replies() {
+    let mut s = store();
+    let t = Snowflake::from_timestamp_ms(1_700_000_000_000).0;
+    s.set_latest_messages(S(101), vec![], 50);
+    apply(&mut s, "MESSAGE_CREATE", msg(t, 101, 6));
+    let mut reply = msg(t + 1, 101, 6);
+    reply["message_reference"] = json!({"channel_id": "101", "message_id": t.to_string()});
+    reply["referenced_message"] = msg(t, 101, 6);
+    apply(&mut s, "MESSAGE_CREATE", reply);
+    apply(&mut s, "MESSAGE_DELETE", json!({"id": t.to_string(), "channel_id": "101"}));
+    let r = s.messages(S(101)).iter().find(|m| m.id.0 == t + 1).expect("reply stays");
+    assert_eq!(r.referenced_message, Some(None));
+}

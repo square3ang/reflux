@@ -2,12 +2,13 @@
 //! names, through the app's own intents. `write` checks the channel (GET, kind, permissions),
 //! then sends, edits, reacts, replies, types, acks, pins, uploads both ways, searches and jumps,
 //! waiting for each step's gateway echo; it leaves the messages for the snapshot. `cleanup`
-//! deletes this account's `[reflux test` messages there and checks none remain.
+//! deletes this account's `[reflux test` messages there, and the pin notices pinning left, and
+//! checks none remain.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use reflux_model::{ChannelType, Message, Permissions, ReactionEmoji, Snowflake};
+use reflux_model::{ChannelType, Message, MessageType, Permissions, ReactionEmoji, Snowflake};
 
 use super::super::Instance;
 use crate::State;
@@ -121,6 +122,11 @@ impl Run {
         let echoed: Vec<_> = all.iter().filter(|m| m.nonce.as_deref() != Some(&m.id.to_string())).collect();
         // One copy only: the echo must have replaced the optimistic message (nonce dedupe).
         (echoed.len() == 1 && all.len() == 1).then(|| *echoed[0])
+    }
+
+    /// What cleanup deletes: labelled messages and this account's pin notices.
+    fn ours(m: &Message, me: Snowflake) -> bool {
+        m.author.id == me && (m.content.contains(LABEL) || m.kind == MessageType::CHANNEL_PINNED_MESSAGE)
     }
 
     fn first<'a>(&self, s: &'a State) -> Option<&'a Message> {
@@ -472,7 +478,8 @@ impl Run {
             }
             Step::Delete => {
                 // One at a time, each confirmed by the gateway.
-                let next = self.mine(s, LABEL).first().map(|m| m.id);
+                let me = s.app.store.my_id();
+                let next = s.app.store.messages(ch).iter().find(|m| Self::ours(m, me)).map(|m| m.id);
                 match next {
                     None => Some(true),
                     Some(id) if self.first != Some(id) => {
@@ -489,7 +496,7 @@ impl Run {
                     let me = s.app.store.my_id();
                     self.get(s, |i| async move {
                         let page = i.rest.messages(ch, reflux_net::MessagePage::Latest, 100).await.map_err(|e| e.to_string())?;
-                        let left = page.iter().filter(|m| m.author.id == me && m.content.contains(LABEL)).count();
+                        let left = page.iter().filter(|m| Self::ours(m, me)).count();
                         Ok(left.to_string())
                     });
                     return None;

@@ -846,6 +846,12 @@ impl Store {
     fn remove_messages(&mut self, channel: Snowflake, ids: &[Snowflake]) {
         if let Some(w) = self.messages.get_mut(&channel) {
             w.messages.retain(|m| !ids.contains(&m.id));
+            // Replies to them now show the original as deleted (fluxer `markReferenceDeleted`).
+            for m in &mut w.messages {
+                if m.message_reference.as_ref().and_then(|r| r.message_id).is_some_and(|r| ids.contains(&r)) {
+                    m.referenced_message = Some(None);
+                }
+            }
         }
     }
 

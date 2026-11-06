@@ -904,6 +904,28 @@ fn save_edit(st: &mut ShellState, id: Snowflake, original: &str) {
     }
 }
 
+/// What a reply's bar shows (fluxer `MessageReferences.getMessageReference`).
+#[derive(Debug, PartialEq)]
+enum Reference<'a> {
+    Loaded(&'a Message),
+    /// `referenced_message: null`, or deleted since.
+    Deleted,
+    /// Absent (search results leave it out) and not in the loaded messages.
+    NotLoaded,
+}
+
+fn reference<'a>(store: &'a Store, m: &'a Message) -> Reference<'a> {
+    let Some(r) = &m.message_reference else { return Reference::NotLoaded };
+    let loaded = r.message_id.and_then(|id| store.messages(r.channel_id).iter().find(|x| x.id == id));
+    match (&m.referenced_message, loaded) {
+        (Some(None), _) => Reference::Deleted,
+        // The loaded copy has later edits.
+        (_, Some(x)) => Reference::Loaded(x),
+        (Some(Some(x)), None) => Reference::Loaded(x),
+        (None, None) => Reference::NotLoaded,
+    }
+}
+
 /// The reply bar above a reply: spine from the avatar, mini avatar, name and a one-line preview.
 fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
     let h = dim::MESSAGE_REPLY_HEIGHT;
@@ -919,8 +941,9 @@ fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &M
         .clip_rounded(0.0)
         .child(el().absolute(0.0, 0.0).size(x1 - x0 + 10.0, y1 - y0 + 10.0).corners([10.0, 0.0, 0.0, 0.0]).border(w, spine_c));
     let mut line = row().h(h).min_w(0.0).center_y().gap(0.0);
-    match m.referenced_message.as_ref().and_then(|r| r.as_deref()) {
-        Some(r) => {
+    let g = store.channels.get(&m.channel_id).and_then(|c| c.guild_id);
+    match reference(store, m) {
+        Reference::Loaded(r) => {
             let name = author_name(store, r);
             line = line
                 .child(avatar(store, st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP))
@@ -936,10 +959,11 @@ fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &M
                 markdown::inline_text(&r.content, md, font(14.0, 400.0).lh(h), p.text_primary_muted)
             };
             // Clicking the preview jumps to the replied message.
-            let (g, ch, id) = (store.channels.get(&m.channel_id).and_then(|c| c.guild_id), m.channel_id, r.id);
+            let (ch, id) = (m.channel_id, r.id);
             line = line.child(preview.shrink().min_w(0.0)).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::jump(acc(s), g, ch, id));
         }
-        None => {
+        missing => {
+            let failed = missing == Reference::NotLoaded;
             line = line
                 .child(
                     row()
@@ -950,7 +974,16 @@ fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &M
                         .mr(dim::MESSAGE_CONTAINER_GAP)
                         .child(icon(&icons::ARROW_BEND_UP_LEFT_BOLD, 10.0).color(p.text_primary)),
                 )
-                .child(text("Original message was deleted").font(font(14.0, 400.0).italic().lh(h)).color(p.text_primary_muted));
+                .child(
+                    text(if failed { "Original message failed to load" } else { "Original message was deleted" })
+                        .font(font(14.0, 400.0).italic().lh(h))
+                        .color(p.text_primary_muted),
+                );
+            // A reply not loaded can still be jumped to.
+            if let Some(id) = m.message_reference.as_ref().and_then(|r| r.message_id).filter(|_| failed) {
+                let ch = m.message_reference.as_ref().map_or(m.channel_id, |r| r.channel_id);
+                line = line.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::jump(acc(s), g, ch, id));
+            }
         }
     }
     row().w_full().h(h + dim::MESSAGE_REPLY_SPACING).items_start().child(spine).child(el().w(CONTENT_X)).child(line.shrink())
@@ -1052,8 +1085,12 @@ fn attachment(st: &ShellState, a: &Attachment, p: &Palette) -> El {
     // A file card.
     // shortcut: approximates `AttachmentFile` (no download button or type-specific icons).
     let size = if a.size >= 1 << 20 { format!("{:.2} MB", a.size as f64 / (1 << 20) as f64) } else { format!("{:.2} KB", a.size as f64 / 1024.0) };
+    // `.attachmentContainer` is `width: 100%` of the 432-wide accessory column, so it narrows
+    // with the chat (seen live: it overflowed under the search panel).
     row()
-        .w(432.0)
+        .w_full()
+        .max_w(432.0)
+        .min_w(0.0)
         .padding(13.0)
         .gap(8.0)
         .center_y()
@@ -1453,6 +1490,22 @@ fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palett
 mod tests {
     use super::*;
     use reflux_model::PartialUser;
+
+    /// Found live: a reply in search results (which leave out `referenced_message`) said its
+    /// original was deleted.
+    #[test]
+    fn reply_reference_resolution() {
+        let mut store = Store::default();
+        let (ch, orig) = (Snowflake(10), msg(20, 1, "2026-01-01T00:00:00Z"));
+        let mut reply = msg(21, 1, "2026-01-01T00:01:00Z");
+        reply.channel_id = ch;
+        reply.message_reference = Some(reflux_model::MessageReference { channel_id: ch, message_id: Some(orig.id), ..Default::default() });
+        assert_eq!(reference(&store, &reply), Reference::NotLoaded, "absent and not loaded");
+        store.set_latest_messages(ch, vec![Message { channel_id: ch, ..orig.clone() }], 50);
+        assert!(matches!(reference(&store, &reply), Reference::Loaded(r) if r.id == orig.id), "absent but loaded");
+        reply.referenced_message = Some(None);
+        assert_eq!(reference(&store, &reply), Reference::Deleted, "null means deleted");
+    }
 
     fn msg(id: u64, author: u64, ts: &str) -> Message {
         Message {
