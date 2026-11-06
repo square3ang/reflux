@@ -225,6 +225,13 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.web_base = inst.discovery.endpoints.webapp.clone();
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
         s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
+        let gif = &inst.discovery.gif;
+        // Picker frecency, favorites and skin tone, once per sign-in.
+        if !s.app.shell.expr.persist {
+            s.app.shell.expr.saved = crate::shell::expr::load();
+            s.app.shell.expr.persist = true;
+        }
+        s.app.shell.gif_provider = if inst.discovery.services.gif_enabled { gif.display_name.clone() } else { String::new() };
     }
     if let Some(inst) = &s.app.instance {
         let traits = s.app.store.me.as_ref().map_or(&[][..], |m| &m.traits[..]);

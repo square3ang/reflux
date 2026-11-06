@@ -32,11 +32,16 @@ pub struct Md<'a> {
     texts: Cell<u32>,
     /// Makes a text's links pressable (adds its `on_link`); links are reported by URL.
     pub on_link: Option<std::rc::Rc<dyn Fn(El) -> El>>,
+    /// Makes an emoji image pressable: (image, emoji, the image's key).
+    pub on_emoji: Option<EmojiHook>,
 }
+
+/// See [`Md::on_emoji`].
+pub type EmojiHook = std::rc::Rc<dyn Fn(El, &EmojiKind, String) -> El>;
 
 impl<'a> Md<'a> {
     pub fn new(store: &'a Store, media: &'a crate::media::Media, guild: Option<Snowflake>, p: &'a Palette, key: impl Into<String>) -> Self {
-        Md { store, media, guild, p, key: key.into(), copy: None, texts: Cell::new(0), on_link: None }
+        Md { store, media, guild, p, key: key.into(), copy: None, texts: Cell::new(0), on_link: None, on_emoji: None }
     }
 
     /// The same markdown context for another body.
@@ -166,6 +171,7 @@ struct InlineEmoji {
     span: usize,
     px: Option<Pixels>,
     copy: String,
+    kind: EmojiKind,
 }
 
 /// One paragraph being built: text plus non-overlapping spans.
@@ -216,14 +222,15 @@ impl Run {
     }
 
     /// An emoji's placeholder; the image goes over it once the text is laid out.
-    fn push_emoji(&mut self, px: Option<Pixels>, copy: String, st: Style, md: &Md) {
+    fn push_emoji(&mut self, px: Option<Pixels>, kind: &EmojiKind, st: Style, md: &Md) {
+        let copy = emoji_text(kind);
         let start = self.text.len();
         self.push(PLACEHOLDER, st, md);
         let span = self.spans.len() - 1;
         if !st.spoiler {
             self.spans[span].color = Some(Color::TRANSPARENT);
         }
-        self.emoji.push(InlineEmoji { range: start..self.text.len(), span, px: px.filter(|_| !st.spoiler), copy });
+        self.emoji.push(InlineEmoji { range: start..self.text.len(), span, px: px.filter(|_| !st.spoiler), copy, kind: kind.clone() });
     }
 
     fn el(mut self, size: f32, lh: f32, weight: f32, color: Color, md: &Md) -> Option<El> {
@@ -260,7 +267,11 @@ impl Run {
         let base = baseline(size, lh);
         let imgs = self.emoji.iter().enumerate().filter_map(|(i, e)| {
             let [x, y, side] = emoji_rect(at?, rune::memo::layout(&hl(i))?, size, base);
-            Some(el().absolute(x, y).size(side, side).pixels_fit(e.px.as_ref()?, rune::SurfaceFit::Fit))
+            let img = el().absolute(x, y).size(side, side).pixels_fit(e.px.as_ref()?, rune::SurfaceFit::Fit).key(format!("{}-img", hl(i)));
+            Some(match &md.on_emoji {
+                Some(f) => f(img, &e.kind, format!("{}-img", hl(i))),
+                None => img,
+            })
         });
         Some(col().w_full().child(t).children(imgs.collect::<Vec<_>>()))
     }
@@ -324,12 +335,19 @@ fn jumbo(nodes: &[Node], md: &Md) -> Option<El> {
     if emoji.is_empty() || emoji.len() > 30 {
         return None;
     }
-    let one = |k: &&EmojiKind| match emoji_image(k, md) {
-        Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-        Load::Pending => el().size(48.0, 48.0),
-        Load::Failed => text(emoji_text(k)).font(font(48.0, 400.0).lh(48.0)),
+    let one = |(i, k): (usize, &&EmojiKind)| {
+        let e = match emoji_image(k, md) {
+            Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+            Load::Pending => el().size(48.0, 48.0),
+            Load::Failed => text(emoji_text(k)).font(font(48.0, 400.0).lh(48.0)),
+        };
+        let key = format!("{}-j{i}", md.key);
+        match &md.on_emoji {
+            Some(f) => f(e.key(key.clone()), k, key),
+            None => e,
+        }
     };
-    Some(row().w_full().flex_wrap().gaps(4.0, 4.0).children(emoji.iter().map(one)))
+    Some(row().w_full().flex_wrap().gaps(4.0, 4.0).children(emoji.iter().enumerate().map(one)))
 }
 
 /// A one-line inline rendering (reply previews): block syntax flattened.
@@ -531,8 +549,8 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
         Node::Emoji { kind } if run.plain_emoji => run.push(&emoji_text(kind), st, md),
         Node::Emoji { kind } => match emoji_image(kind, md) {
             Load::Failed => run.push(&emoji_text(kind), st, md),
-            Load::Pending => run.push_emoji(None, emoji_text(kind), st, md),
-            Load::Ready(px) => run.push_emoji(Some(px), emoji_text(kind), st, md),
+            Load::Pending => run.push_emoji(None, kind, st, md),
+            Load::Ready(px) => run.push_emoji(Some(px), kind, st, md),
         },
         Node::Timestamp { timestamp, .. } => {
             let s = super::chat::format_full_date_time(*timestamp * 1000);

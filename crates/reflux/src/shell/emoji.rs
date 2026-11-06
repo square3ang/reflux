@@ -1,29 +1,20 @@
-//! The reaction emoji picker: Fluxer's unicode emoji data (`assets/media/data/emojis.json`) in a
-//! searchable grid, opened from a message's add-reaction button (`EmojiPickerPopout`).
-// shortcut: unicode only, glyphs drawn from the font rather than the twemoji spritesheet, no
-// custom emoji, recents, skin tones or category tabs; port `EmojiPicker` fully later.
+//! Fluxer's unicode emoji data (`assets/media/data/emojis.json`, `UnicodeEmojis.ts`): names,
+//! categories, spritesheet cells and the markdown emoji context. The picker is `expr::emoji`.
 
 use std::sync::OnceLock;
 
-use reflux_model::{ReactionEmoji, Snowflake};
-use rune::{El, col, icon, row, text, text_input};
-
-use super::{Intent, ShellAccess, ShellState};
-use crate::icons;
-use crate::theme::{Palette, font};
-use crate::ui::overlay::popout_shadow;
-use crate::ui::{over, scroller};
-
+#[derive(Debug)]
 pub struct Emoji {
     pub name: String,
     pub glyph: String,
-    keywords: Vec<String>,
-    names: Vec<String>,
+    pub keywords: Vec<String>,
+    pub names: Vec<String>,
     /// The five skin-tone variants, when it has them.
-    skins: Vec<String>,
+    pub skins: Vec<String>,
 }
 
-const CATEGORIES: [(&str, &str); 8] = [
+/// (key, label) of each category, in Fluxer's order.
+pub const CATEGORIES: [(&str, &str); 8] = [
     ("people", "People"),
     ("nature", "Nature"),
     ("food", "Food & Drink"),
@@ -143,99 +134,21 @@ pub fn search(q: &str) -> Vec<&'static Emoji> {
         .collect()
 }
 
-const COLS: usize = 9;
-const CELL: f32 = 40.0;
-
-enum Row {
-    Head(&'static str),
-    Cells(Vec<&'static Emoji>),
-    Empty,
+/// The emoji's cell on the skin-tone sheets (`skinToneIndex`): its place among the emoji that
+/// have skin tones.
+pub fn skin_index(e: &Emoji) -> Option<usize> {
+    static INDEX: OnceLock<std::collections::HashMap<&'static str, usize>> = OnceLock::new();
+    INDEX.get_or_init(|| all().iter().flat_map(|(_, v)| v).filter(|e| !e.skins.is_empty()).enumerate().map(|(i, e)| (e.name.as_str(), i)).collect()).get(e.name.as_str()).copied()
 }
 
-fn cell<S: 'static>(e: &'static Emoji, p: &Palette, channel: Snowflake, message: Snowflake, acc: ShellAccess<S>) -> El {
-    row()
-        .size(CELL, CELL)
-        .center()
-        .radius(6.0)
-        .hover(p.surface_interactive_hover_bg)
-        .cursor(rune::Cursor::Pointer)
-        .role("button")
-        .label(format!(":{}:", e.name))
-        .child(text(e.glyph.clone()).font(font(28.0, 400.0).lh(32.0)))
-        .on_press(move |s: &mut S| {
-            let st = acc(s);
-            st.popups.close();
-            st.active_msg = None;
-            let emoji = ReactionEmoji { name: e.glyph.clone(), ..Default::default() };
-            st.intents.push(Intent::React { channel, message, emoji, add: true });
-        })
+/// The name of the emoji a surrogate (or a skin-tone variant) draws.
+pub fn name_of(glyph: &str) -> Option<&'static str> {
+    surrogates().0.get(glyph).copied()
 }
 
-fn build_row<S: 'static>(r: &Row, p: &Palette, channel: Snowflake, message: Snowflake, acc: ShellAccess<S>) -> El {
-    match r {
-        Row::Head(label) => text(label.to_uppercase()).font(font(12.0, 600.0).lh(16.0).tracking(0.24)).color(p.text_tertiary).px(4.0).pt(8.0).pb(4.0),
-        Row::Cells(c) => row().children(c.iter().map(|e| cell(e, p, channel, message, acc))),
-        Row::Empty => text("No emoji match that search.").font(font(14.0, 400.0)).color(p.text_tertiary).padding(16.0),
-    }
-}
-
-/// The picker surface for reacting to `message`; the caller anchors it.
-pub fn picker<S: 'static>(st: &ShellState, channel: Snowflake, message: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let bg = p.form_surface_background;
-    let cells = |list: Vec<&'static Emoji>| list.chunks(COLS).map(|c| Row::Cells(c.to_vec())).collect::<Vec<_>>();
-    let mut rows = Vec::new();
-    if st.emoji_query.text.trim().is_empty() {
-        for (label, list) in all() {
-            rows.push(Row::Head(label));
-            rows.extend(cells(list.iter().collect()));
-        }
-    } else {
-        let found = search(&st.emoji_query.text);
-        if found.is_empty() {
-            rows.push(Row::Empty);
-        }
-        rows.extend(cells(found));
-    }
-    let (n, pal, q) = (rows.len(), *p, st.emoji_query.text.trim().to_lowercase());
-    let list = col().w_full().key("emoji-grid").growth(rune::GrowthSpec::default()).virtual_rows(
-        n,
-        CELL,
-        move |_: &S, i| format!("emoji-{q}-{i}").into(),
-        move |_: &S, i| build_row(&rows[i], &pal, channel, message, acc),
-    );
-    let search = row()
-        .w_full()
-        .h(36.0)
-        .px(10.0)
-        .gap(8.0)
-        .center_y()
-        .radius(8.0)
-        .fill(p.background_textarea)
-        .border(1.0, over(p.background_modifier_accent, p.background_textarea))
-        .child(icon(&icons::MAGNIFYING_GLASS, 16.0).color(p.text_tertiary))
-        .child(
-            text_input(&st.emoji_query, font(14.0, 400.0).lh(20.0))
-                .key("emoji-search")
-                .grow(1.0)
-                .single_line()
-                .color(p.text_primary)
-                .placeholder("Find the perfect emoji", p.text_tertiary)
-                .caret(p.text_primary, p.text_selection)
-                .on_edit(move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).emoji_query }),
-        );
-    col()
-        .w(COLS as f32 * CELL + 2.0 * 9.0)
-        .h(420.0)
-        .padding(8.0)
-        .gap(8.0)
-        .fill(bg)
-        .border(1.0, over(p.background_modifier_accent, bg))
-        .radius(8.0)
-        .box_shadow(popout_shadow(p, 0.24, 0.14))
-        .role("dialog")
-        .label("Emoji picker")
-        .child(search)
-        .child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p)))
+/// A unicode emoji by any of its names.
+pub fn by_name(name: &str) -> Option<&'static Emoji> {
+    all().iter().flat_map(|(_, v)| v).find(|e| e.names.iter().any(|n| n == name))
 }
 
 #[cfg(test)]
@@ -266,5 +179,9 @@ mod tests {
         assert_eq!(super::sprite_index("😀"), Some(0));
         assert_eq!(super::sprite_index("❤"), super::sprite_index("❤️"));
         assert_eq!(super::sprite_index("👍🏽"), None, "skin tones aren't on the base sheet");
+        let clap = super::by_name("clap").expect("clap");
+        assert_eq!(clap.skins.len(), 5);
+        assert!(super::skin_index(clap).is_some());
+        assert_eq!(super::skin_index(super::by_name("grinning").expect("grinning")), None);
     }
 }

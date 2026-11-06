@@ -160,21 +160,31 @@ pub fn decode(cache: &ImageCache, bytes: Vec<u8>) -> Result<Image, String> {
     Ok(cache.rgba(img.width(), img.height(), img.into_raw()))
 }
 
-/// `EMOJI_SPRITES.BasePerRow` cells of 64 device px in `spritesheet-emoji@2x.png`.
+/// `EMOJI_SPRITES.BasePerRow` cells of 64 device px in `spritesheet-emoji@2x.png`; the
+/// skin-tone sheets (`spritesheet-1f3fb@2x.png` …) have `SkinTonePerRow` (10).
 const SPRITE_COLUMNS: u32 = 42;
+const SKIN_COLUMNS: u32 = 10;
 const SPRITE_CELL: u32 = 64;
 
-/// Cell `index` of Fluxer's unicode emoji spritesheet (`setSpriteSheetIndex` order).
-fn sprite_cell(cache: &ImageCache, index: usize) -> Result<Image, String> {
-    static SHEET: OnceLock<Option<image::RgbaImage>> = OnceLock::new();
-    let sheet = SHEET
-        .get_or_init(|| {
-            let png = include_bytes!("../../../assets/media/images/spritesheet-emoji@2x.png");
-            image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| i.into_rgba8())
-        })
+/// Cell `index` of Fluxer's unicode emoji spritesheet (`setSpriteSheetIndex` order); `tone`
+/// 1..=5 picks a skin-tone sheet, where `index` is the emoji's `skinToneIndex`.
+fn sprite_cell(cache: &ImageCache, index: usize, tone: u8) -> Result<Image, String> {
+    static SHEETS: [OnceLock<Option<image::RgbaImage>>; 6] = [const { OnceLock::new() }; 6];
+    const PNGS: [&[u8]; 6] = [
+        include_bytes!("../../../assets/media/images/spritesheet-emoji@2x.png"),
+        include_bytes!("../../../assets/media/images/spritesheet-1f3fb@2x.png"),
+        include_bytes!("../../../assets/media/images/spritesheet-1f3fc@2x.png"),
+        include_bytes!("../../../assets/media/images/spritesheet-1f3fd@2x.png"),
+        include_bytes!("../../../assets/media/images/spritesheet-1f3fe@2x.png"),
+        include_bytes!("../../../assets/media/images/spritesheet-1f3ff@2x.png"),
+    ];
+    let t = (tone as usize).min(5);
+    let sheet = SHEETS[t]
+        .get_or_init(|| image::load_from_memory_with_format(PNGS[t], image::ImageFormat::Png).ok().map(|i| i.into_rgba8()))
         .as_ref()
         .ok_or("spritesheet failed to decode")?;
-    let (x, y) = (index as u32 % SPRITE_COLUMNS * SPRITE_CELL, index as u32 / SPRITE_COLUMNS * SPRITE_CELL);
+    let cols = if t == 0 { SPRITE_COLUMNS } else { SKIN_COLUMNS };
+    let (x, y) = (index as u32 % cols * SPRITE_CELL, index as u32 / cols * SPRITE_CELL);
     if y + SPRITE_CELL > sheet.height() {
         return Err(format!("sprite {index} is off the sheet"));
     }
@@ -290,16 +300,21 @@ impl Media {
 
     /// A unicode emoji from the bundled spritesheet, by its [`crate::shell`] sprite index.
     pub fn sprite(&self, index: usize) -> Load {
-        let key = format!("sprite:{index}");
+        self.skin_sprite(index, 0)
+    }
+
+    /// [`Self::sprite`] from skin tone `tone`'s sheet (1..=5; 0 is the base sheet).
+    pub fn skin_sprite(&self, index: usize, tone: u8) -> Load {
+        let key = format!("sprite:{tone}:{index}");
         self.entry(&key, |cache| {
             if self.0.fixture.get().is_some() {
                 // Headless snapshots draw what's ready in the first frames, so crop in place.
-                return sprite_cell(cache, index).map_or(Slot::Failed, |img| {
+                return sprite_cell(cache, index, tone).map_or(Slot::Failed, |img| {
                     let _ = img.wait();
                     Slot::Ready(img)
                 });
             }
-            self.decode_later(key.clone(), move |cache| sprite_cell(cache, index).map(Decoded::Still));
+            self.decode_later(key.clone(), move |cache| sprite_cell(cache, index, tone).map(Decoded::Still));
             Slot::Pending
         })
     }
@@ -573,7 +588,8 @@ mod tests {
     #[test]
     fn sprite_cells_crop_the_sheet() {
         let c = cache();
-        assert_eq!(sprite_cell(&c, 0).unwrap().wait().unwrap(), [64, 64]);
-        assert!(sprite_cell(&c, 42 * 47).is_err());
+        assert_eq!(sprite_cell(&c, 0, 0).unwrap().wait().unwrap(), [64, 64]);
+        assert!(sprite_cell(&c, 42 * 47, 0).is_err());
+        assert!(sprite_cell(&c, 0, 3).is_ok());
     }
 }

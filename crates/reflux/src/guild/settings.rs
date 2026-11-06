@@ -101,6 +101,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
             None => roles(store, st, guild, p, acc),
         },
         "emoji" => emoji(store, st, guild, p, acc),
+        "stickers" => super::stickers::view(store, st, guild, p, acc),
         "members" => members(store, st, guild, p, acc, &mut popups),
         "invites" => invites(store, st, guild, p, acc),
         "bans" => bans(store, st, guild, p, acc),

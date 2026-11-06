@@ -15,6 +15,7 @@ pub mod lightbox;
 mod links;
 pub mod demo;
 mod emoji;
+pub mod expr;
 pub(crate) mod friends;
 mod guilds;
 mod markdown;
@@ -125,6 +126,10 @@ pub enum Intent {
     Account(crate::settings::Op),
     /// A thread or forum request (`threads::Op`).
     Thread(threads::Op),
+    /// A REST call whose answer lands in `expr.fetched[key]` (an empty key drops it).
+    Fetch { key: String, method: reqwest::Method, path: String, body: Option<serde_json::Value> },
+    /// A message carrying a sticker or a saved meme instead of text.
+    SendExtra { channel: Snowflake, sticker: Option<Snowflake>, meme: Option<Snowflake> },
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -212,7 +217,10 @@ pub struct ShellState {
     pub editing: Option<(Snowflake, TextEdit)>,
     /// The message waiting on the delete confirmation.
     pub confirm_delete: Option<Snowflake>,
-    pub emoji_query: TextEdit,
+    /// The expression pickers, who-reacted and the expression info card.
+    pub expr: expr::Expr,
+    /// The instance's GIF provider name (`Klipy`); empty when GIFs are off.
+    pub gif_provider: String,
     /// When the last typing notice went out, and for which channel (`TypingSendThrottle`).
     pub typing_sent: Option<(Snowflake, u64)>,
     /// The message list shows its newest row (read states may be acked).
@@ -317,7 +325,8 @@ impl Default for ShellState {
             reply: None,
             editing: None,
             confirm_delete: None,
-            emoji_query: TextEdit::new(""),
+            expr: expr::Expr::default(),
+            gif_provider: String::new(),
             typing_sent: None,
             at_bottom: true,
             sticky_unread: None,
@@ -447,7 +456,7 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 /// Once a frame, where the store and a `Tx` are at hand: runs a requested search, settles jumps
 /// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
-    let mut changed = false;
+    let mut changed = expr::poll(store, st, tx);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;
@@ -579,6 +588,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let body = col().w_full().h_full().children(verify_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
+    expr::layer(store, st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);

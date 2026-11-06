@@ -191,6 +191,10 @@ impl Demo {
             }),
         );
         hq["properties"]["icon"] = json!("demo");
+        hq["emojis"] = json!([{"id": "77", "name": "fluxer", "animated": false}, {"id": "78", "name": "flux_love", "animated": false},
+                              {"id": "79", "name": "shipit", "animated": false}]);
+        hq["stickers"] = json!([{"id": "88", "name": "wave", "description": "Hello there", "tags": ["hi"], "animated": false},
+                                {"id": "89", "name": "ship it", "description": "", "tags": ["release"], "animated": false}]);
         hq["properties"]["banner"] = json!("demo");
         let small = |id: u64, name: &str, ch: u64, last: u64| {
             guild(
@@ -204,6 +208,9 @@ impl Demo {
         };
         let old = Snowflake::from_timestamp_ms(at(-3, 12, 0)).0;
         let new = Snowflake::from_timestamp_ms(at(0, 12, 0)).0;
+        let mut rust = small(3000, "Rust Lang", 3001, new);
+        rust["emojis"] = json!([{"id": "81", "name": "ferris", "animated": false}, {"id": "82", "name": "borrowck", "animated": false}]);
+        rust["stickers"] = json!([{"id": "91", "name": "ferris dance", "description": "", "tags": ["crab"], "animated": false}]);
         apply(
             "READY",
             json!({
@@ -217,7 +224,7 @@ impl Demo {
                                   {"id": "1006", "type": 1}, {"id": "1005", "type": 3}, {"id": "1008", "type": 4},
                                   {"id": "1009", "type": 2}],
                 "notes": {"1001": "Wrote the first program"},
-                "guilds": [hq, small(3000, "Rust Lang", 3001, new), small(4000, "Design Crit", 4001, new),
+                "guilds": [hq, rust, small(4000, "Design Crit", 4001, new),
                            small(5000, "Ada's Lab", 5001, old), small(6000, "Weekend Hikes", 6001, old),
                            small(7000, "Retro Computing Club", 7001, old)],
                 "private_channels": [
@@ -311,7 +318,7 @@ impl Demo {
             "ops": [{"op": "SYNC", "range": [0, 99], "items": items}]}));
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
-        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, ..ShellState::default() };
+        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, gif_provider: "Klipy".into(), ..ShellState::default() };
         // `--settings[=tab]` opens user settings; `--theme=light|coal` sets the account theme.
         for a in rune::extra_args() {
             if let Some(t) = a.strip_prefix("--theme=") {
@@ -491,9 +498,54 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
 }
 
+/// The composer's expression picker on a tab, with fixture answers.
+fn expr_scene(st: &mut ShellState, scene: &str) {
+    use super::expr::{Fetched, Tab};
+    let tab = match scene {
+        "picker-sticker" => Tab::Stickers,
+        "picker-gif" | "picker-gif-search" => Tab::Gifs,
+        "picker-memes" => Tab::Memes,
+        _ => Tab::Emojis,
+    };
+    st.limits.global_expressions = true;
+    st.gif_provider = "Klipy".into();
+    let x = &mut st.expr.saved;
+    x.favorite_emojis = vec![format!("custom:{HQ}:77"), "unicode:heart".into()];
+    for (k, n) in [("unicode:thumbsup", 5), ("unicode:joy", 3), (&*format!("custom:{HQ}:79"), 2), ("unicode:tada", 1)] {
+        x.emoji_usage.insert(k.to_string(), super::expr::Usage { count: n, last_used: st.now_ms });
+    }
+    x.sticker_usage.insert("sticker:88".into(), super::expr::Usage { count: 2, last_used: st.now_ms });
+    super::expr::toggle(st, Snowflake(GENERAL), tab);
+    st.intents.clear();
+    let gif = |i: u32, w: u32, h: u32| {
+        json!({"id": i.to_string(), "url": format!("https://klipy.com/gifs/demo-{i}"), "title": "demo", "proxy_src": format!("https://media.fluxer.app/external/gif{i}.gif"),
+               "width": w, "height": h, "media": {}})
+    };
+    let gifs: Vec<Value> = (0..12).map(|i| gif(i, 220, [124, 220, 160, 300][i as usize % 4])).collect();
+    let cats: Vec<Value> = ["Happy", "Sad", "Thank you", "Dance", "Yes", "No", "Love", "Facepalm"]
+        .iter()
+        .enumerate()
+        .map(|(i, n)| json!({"name": n, "src": "", "proxy_src": format!("https://media.fluxer.app/external/cat{i}.gif")}))
+        .collect();
+    st.expr.fetched.insert("gif:featured".into(), Fetched::Done(json!({"categories": cats, "gifs": gifs.clone()})));
+    if scene == "picker-gif-search" {
+        st.expr.query = rune::TextEdit::new("dance");
+        st.expr.gif = super::expr::GifView::Search("dance".into());
+        st.expr.fetched.insert("gif:search:dance".into(), Fetched::Done(Value::Array(gifs)));
+    }
+    let meme = |i: u32, ct: &str| json!({"id": (500 + i).to_string(), "name": format!("meme {i}"), "content_type": ct, "tags": [],
+        "url": format!("https://media.fluxer.app/attachments/memes/{i}.png"), "width": 400, "height": ([300, 400, 520][i as usize % 3])});
+    st.expr.fetched.insert("memes".into(), Fetched::Done(json!([meme(1, "image/png"), meme(2, "image/png"), meme(3, "image/gif"), meme(4, "image/png"), meme(5, "image/png")])));
+    if tab == Tab::Emojis {
+        st.expr.hover = Some(format!("custom:{HQ}:77"));
+    }
+}
+
 /// `--msg-scene=hover|menu|more|emoji|reply|edit|delete`: message actions mid-use;
 /// `uploads|pins|search|search-options|switcher|autocomplete|jump|present|slowmode|counter`: the
 /// composer and navigation tools.
+/// `picker-emoji|picker-sticker|picker-gif|picker-gif-search|picker-memes|react-picker|
+/// reaction-tip|reactions-modal|expr-info|sticker-info`: the expression surfaces.
 fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
     let ids: Vec<Snowflake> = store.messages(Snowflake(GENERAL)).iter().map(|m| m.id).collect();
     let (shot, mine, ada) = (ids[6], ids[7], ids[8]);
@@ -562,6 +614,46 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
         m if m.starts_with("media-") => media_scene(st, store, &m[6..]),
+        "picker-emoji" | "picker-sticker" | "picker-gif" | "picker-gif-search" | "picker-memes" => expr_scene(st, scene),
+        "react-picker" => {
+            st.limits.global_expressions = true;
+            super::expr::open_react(st, Snowflake(GENERAL), shot);
+        }
+        "reaction-tip" | "reactions-modal" => {
+            use super::expr::Fetched;
+            // Linus's message is on screen; give it the screenshot's reactions.
+            let shot = ids[ids.len() - 2];
+            let rs = store.messages(Snowflake(GENERAL))[6].reactions.clone();
+            if let Some(m) = store.messages.get_mut(&Snowflake(GENERAL)).and_then(|w| w.messages.iter_mut().find(|m| m.id == shot)) {
+                m.reactions = rs;
+            }
+            let u = |id: u64, n: &str, g: &str| user(id, n, g);
+            let all = json!([u(ME, "square", "Square"), u(1001, "ada", "Ada Lovelace"), u(1003, "grace", "Grace Hopper")]);
+            st.expr.fetched.insert(format!("reactors:{shot}:👍:3"), Fetched::Done(all.clone()));
+            st.expr.fetched.insert(format!("reactors:{shot}:👍:100"), Fetched::Done(all));
+            if scene == "reaction-tip" {
+                st.expr.tip = Some((Snowflake(GENERAL), shot, "👍".into()));
+            } else {
+                st.expr.reactions = Some((Snowflake(GENERAL), shot, "👍".into()));
+            }
+        }
+        "expr-info" | "sticker-info" => {
+            use super::expr::Fetched;
+            if scene == "expr-info" {
+                // Linus's inline custom emoji (the first in his message body).
+                let linus = ids[ids.len() - 2];
+                let kind = reflux_markdown::EmojiKind::Custom { name: "fluxer".into(), id: "77".into(), animated: false };
+                super::expr::open_emoji_info(st, &kind, format!("m{linus}-t0-e0-img"));
+                st.expr.fetched.insert("meta:emoji:77".into(), Fetched::Done(json!({"guild_id": HQ.to_string(), "allow_cloning": true})));
+            } else {
+                let m = store.messages(Snowflake(GENERAL)).iter().find(|m| !m.stickers.is_empty()).cloned();
+                if let Some(m) = m {
+                    super::expr::open_sticker_info(st, &m.stickers[0], format!("sticker-{}-88", m.id));
+                    st.scroll_to = Some(format!("msg-{}", m.id));
+                }
+            }
+            st.intents.clear();
+        }
         "slowmode" | "counter" => {
             if let Some(c) = store.channels.get_mut(&Snowflake(GENERAL)) {
                 c.rate_limit_per_user = 90;

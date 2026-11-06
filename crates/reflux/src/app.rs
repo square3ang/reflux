@@ -22,6 +22,7 @@ use crate::{State, session};
 mod account;
 mod actions;
 mod chat;
+mod expr;
 mod guild;
 mod invites;
 mod threads;
@@ -759,6 +760,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::FetchInvite(code) => invites::fetch(s, code),
             Intent::Account(op) => account::run(s, op),
             Intent::Thread(o) => threads::run(s, o),
+            Intent::Fetch { key, method, path, body } => expr::fetch(s, key, method, path, body),
+            Intent::SendExtra { channel, sticker, meme } => expr::send(s, channel, sticker, meme),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {

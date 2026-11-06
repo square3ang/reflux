@@ -389,6 +389,10 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             None => super::links::open(acc(s), url, tx),
         })
     }));
+    md.on_emoji = Some(std::rc::Rc::new(move |e: El, kind: &reflux_markdown::EmojiKind, key: String| {
+        let kind = kind.clone();
+        e.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::expr::open_emoji_info(acc(s), &kind, key.clone()))
+    }));
     let copy = RefCell::new(markdown::CopyMap::new());
     let mut heads = HashSet::new();
     let perms = Perms::of(store, c);
@@ -442,14 +446,14 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         let open = st.popups.open.clone().unwrap_or_default();
         if open == format!("msg-menu-{}", m.id) || open == format!("msg-more-{}", m.id) {
             let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(m.id).is_none()), ..perms };
-            message_menu(&open, m, c, perms, st, acc).el(&st.popups, pops(acc), p, layer);
+            message_menu(store, &open, m, c, perms, st, acc).el(&st.popups, pops(acc), p, layer);
         } else if open == format!("emoji-{}", m.id) {
             let close = move |s: &mut S| {
                 let st = acc(s);
                 st.popups.close();
                 st.active_msg = None;
             };
-            let picker = emoji::picker(st, c.id, m.id, p, acc).modal(true, close);
+            let picker = super::expr::react_picker(store, st, c.id, m.id, p, acc).modal(true, close);
             layer.push(anchor(picker, &format!("react-{}", m.id), Placement::LeftStart, 8.0));
         }
     }
@@ -611,11 +615,14 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
             bar = bar.child(tip(format!("quick-{name}-{id}"), &format!(":{name}:"), b, layer));
         }
         let picking = open == Some(&*format!("emoji-{id}"));
+        let ch = m.channel_id;
         let b = button(icon(&icons::SMILEY_FILL, 20.0), picking).on_press(move |s: &mut S| {
             let st = acc(s);
-            st.popups.toggle(&format!("emoji-{id}"));
-            st.active_msg = Some(id);
-            st.emoji_query = TextEdit::new("");
+            if st.popups.is_open(&format!("emoji-{id}")) {
+                st.popups.close();
+            } else {
+                super::expr::open_react(st, ch, id);
+            }
         });
         bar = bar.child(tip(format!("react-{id}"), "Add reaction", b, layer));
     }
@@ -643,21 +650,18 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
 }
 
 /// `MessageContextMenu`, for a right-click and the action bar's More.
-// shortcut: no forward, threads, bookmarks, speak, suppress embeds, remove reactions, report or
+// shortcut: no forward, bookmarks, speak, suppress embeds, report or
 // media items.
-fn message_menu<S: 'static>(menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
+fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
     let mut menu = Menu::new(menu).placement(Placement::LeftStart);
-    let id = m.id;
+    let (id, ch) = (m.id, m.channel_id);
     if perms.react && is_user_message(m) {
         menu = menu
             .item(MenuItem::new("add-reaction", "Add reaction").icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| {
-                let st = acc(s);
-                st.popups.open = Some(format!("emoji-{id}"));
-                st.active_msg = Some(id);
-                st.emoji_query = TextEdit::new("");
-            }))
-            .separator();
+                super::expr::open_react(acc(s), ch, id)
+            }));
     }
+    menu = super::expr::message_menu_items(menu, store, m, acc).separator();
     if perms.can_edit(m) {
         let m2 = m.clone();
         menu = menu.item(MenuItem::new("edit", "Edit message").icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| start_edit(acc(s), &m2)));
@@ -1086,10 +1090,12 @@ fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pale
         let mode = store.settings.animate_stickers;
         let one = |s: &reflux_model::StickerItem| {
             let animated = s.animated && (mode == 0 || (mode == 1 && hovered));
-            match st.media.asset(|b, _| crate::media::sticker_url(b, s.id, animated)) {
+            let img = match st.media.asset(|b, _| crate::media::sticker_url(b, s.id, animated)) {
                 Load::Ready(px) => el().size(160.0, 160.0).pixels_fit(&px, rune::SurfaceFit::Fit),
                 _ => el().size(160.0, 160.0),
-            }
+            };
+            let (key, s2) = (format!("sticker-{}-{}", m.id, s.id), s.clone());
+            img.key(key.clone()).cursor(rune::Cursor::Pointer).on_press(move |st: &mut S| super::expr::open_sticker_info(acc(st), &s2, key.clone()))
         };
         c = c.child(row().flex_wrap().gaps(8.0, 8.0).mt(4.0).children(m.stickers.iter().map(one)));
     }
@@ -1139,8 +1145,9 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
             _ => text(r.emoji.name.clone()).font(font(16.0, 400.0).lh(20.0)),
         };
         let (m2, e) = (m.clone(), r.emoji.clone());
-        grid = grid.child(
-            row()
+        let tip = super::expr::reactor_tip_key(&r.emoji);
+        let pill = row()
+                .key(format!("pill-{}-{tip}", m.id))
                 .py(3.0)
                 .px(7.0)
                 .center_y()
@@ -1152,8 +1159,8 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
                 .role("button")
                 .child(row().min_w(20.0).h(24.0).center().child(glyph))
                 .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0))
-                .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone())),
-        );
+                .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone()));
+        grid = grid.child(super::expr::pill_hover(pill, m.channel_id, m.id, tip, acc));
     }
     grid
 }
@@ -1295,10 +1302,11 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             row()
                 .gap(dim::COMPOSER_ACTION_GAP)
                 .center_y()
-                .child(button(&icons::GIF, "GIFs"))
-                .child(button(&icons::IMAGE_SQUARE, "Memes"))
-                .child(button(&icons::STICKER, "Stickers"))
-                .child(button(&icons::SMILEY, "Emojis")),
+                .key("composer-expr")
+                .children(super::expr::gif::enabled(st).then(|| button(&icons::GIF, "GIFs").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
+                .child(button(&icons::IMAGE_SQUARE, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes)))
+                .child(button(&icons::STICKER, "Stickers").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers)))
+                .child(button(&icons::SMILEY, "Emojis").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))),
         );
     let mut boxed = col()
         .w_full()

@@ -11,6 +11,7 @@ mod menu;
 mod modals;
 mod perms;
 mod settings;
+mod stickers;
 
 use std::collections::HashMap;
 

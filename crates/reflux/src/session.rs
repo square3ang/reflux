@@ -143,9 +143,13 @@ fn secret_get(slot: &str) -> Option<String> {
     v
 }
 
+/// reflux's config directory (`$REFLUX_CONFIG_DIR`, else `~/.config/reflux`).
+pub(crate) fn dir() -> Option<PathBuf> {
+    std::env::var_os("REFLUX_CONFIG_DIR").map(PathBuf::from).or_else(|| Some(dirs::config_dir()?.join("reflux")))
+}
+
 fn path() -> Option<PathBuf> {
-    let dir = std::env::var_os("REFLUX_CONFIG_DIR").map(PathBuf::from).or_else(|| Some(dirs::config_dir()?.join("reflux")))?;
-    Some(dir.join("session.json"))
+    Some(dir()?.join("session.json"))
 }
 
 /// Reads the saved session, filling in the default instance and a new installation ID.

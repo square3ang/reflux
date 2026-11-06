@@ -41,7 +41,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Moderation | MISSING | | guild_tabs/GuildModerationTab.tsx |
 | Activity log | PARTIAL | filters, paging, change details | guild_tabs/GuildAuditLogTab.tsx |
 | Emoji | PARTIAL | rename, bulk upload | guild_tabs/GuildEmojiTab.tsx |
-| Stickers | MISSING | | guild_tabs/GuildStickersTab.tsx |
+| Stickers | PARTIAL | bulk upload, image crop | guild_tabs/GuildStickersTab.tsx |
 | Explore (discovery listing) | MISSING | | guild_tabs/GuildDiscoveryTab.tsx |
 | Vanity URL | MISSING | | guild_tabs/GuildVanityURLTab.tsx |
 | Webhooks | MISSING | | guild_tabs/GuildWebhooksTab.tsx, F/webhook/* |
@@ -110,8 +110,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Blocked message groups | MISSING | | BlockedMessageGroups.tsx |
 | Typing indicator tiers | PARTIAL | | ChannelTyping.tsx |
 | Rich composer (pills, toolbar) | MISSING | | F/lexical/* |
-| Emoji / GIF / sticker / memes pickers | MISSING | buttons inert | pickers/*, EmojiPickerPopout.tsx |
-| Reaction picker | PARTIAL | custom, recents, skin tones, tabs | emoji_picker/* |
+| Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
+| Reaction picker | DONE | | emoji_picker/* |
 | Composer context menu | MISSING | | TextareaContextMenu.tsx |
 | Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
 | @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
@@ -134,11 +134,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
 | Offline queue | PARTIAL | | MessageQueue.tsx |
-| Action bar / context menu | PARTIAL | shift layout; forward, bookmark, suppress embeds, remove reactions, report | MessageContextMenu.tsx |
+| Action bar / context menu | PARTIAL | shift layout; forward, bookmark, suppress embeds, report | MessageContextMenu.tsx |
 | Forward | MISSING | | ForwardModal.tsx |
 | Saved messages | MISSING | | SavedMessagesPage.tsx |
 | Inbox / recent mentions | MISSING | | InboxPopout.tsx |
-| Who reacted | MISSING | | ReactionTooltip.tsx, MessageReactionsModal.tsx |
+| Who reacted | PARTIAL | reactors past the first 100; filter right-click "Remove reaction" (it's in the message menu) | ReactionTooltip.tsx, MessageReactionsModal.tsx |
 | Media viewer | DONE | | MediaModal.tsx |
 | Edit alt text | MISSING | | EditAltTextModal.tsx |
 | External link warning | DONE | | ExternalLinkWarningModal.tsx |
@@ -222,7 +222,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Animated emoji/avatars/stickers | DONE | | |
-| Expression info popout, favorite memes, clone expression | MISSING | | F/expressions/* |
+| Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
 | Gifts *(low)* | MISSING | | F/gift/* |
 | Invite: friends list, accept preview, pause | PARTIAL/MISSING | | F/invite/* |
 | Discovery page | MISSING | | DiscoveryPage.tsx |
