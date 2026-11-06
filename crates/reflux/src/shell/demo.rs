@@ -56,7 +56,16 @@ fn fixture(cache: &ImageCache, url: &str) -> Option<Image> {
         }
         cache.rgba(w, h, px)
     };
-    let img = if url.contains("/icons/") || url.contains("/emojis/") {
+    let img = if url.contains("/stickers/") {
+        // A WebP, as the proxy serves stickers, through the app's own decoder.
+        let px = image::RgbaImage::from_fn(320, 320, |x, y| {
+            let d = ((x as f32 - 160.0).powi(2) + (y as f32 - 160.0).powi(2)).sqrt();
+            image::Rgba(if d < 150.0 { [88, 101, 242, 255] } else { [0, 0, 0, 0] })
+        });
+        let mut webp = Vec::new();
+        image::DynamicImage::ImageRgba8(px).write_to(&mut std::io::Cursor::new(&mut webp), image::ImageFormat::WebP).ok()?;
+        crate::media::decode(cache, webp).ok()?
+    } else if url.contains("/icons/") || url.contains("/emojis/") {
         cache.svg(&include_bytes!("../../../../assets/media/images/fluxer-logo-color.svg")[..], 96.0, 2.0)
     } else if url.contains("/avatars/") {
         gradient(128, 128, [250.0, 166.0, 26.0], [237.0, 66.0, 69.0])
@@ -263,6 +272,9 @@ impl Demo {
             message(t(11, 3), 0, 1005, "Hi all! Happy to be here. I brought `notes.txt`:", json!({
                 "attachments": [{"id": "9002", "filename": "notes.txt", "content_type": "text/plain", "size": 2048}]})),
             message(t(11, 4), 0, 1006, "<:fluxer:77> <:fluxer:77>", json!({})),
+            message(t(11, 5), 0, 1002, "Inline emoji: <:fluxer:77> custom, 😀 unicode and 🎉 party, in a sentence long enough to wrap \
+                onto a second line of the chat column, where 👍 and <:fluxer:77> have to land on the right spot too. **Bold 🚀** ends it.", json!({})),
+            message(t(11, 6), 0, 1004, "", json!({"stickers": [{"id": "88", "name": "wave", "animated": false}]})),
         ];
         let ack = msgs[7]["id"].as_str().unwrap_or_default().to_string();
         for m in msgs {
@@ -413,7 +425,7 @@ mod tests {
         let s = &d.store;
         assert_eq!(s.guilds.len(), 6);
         assert_eq!(first_channel(s, Snowflake(HQ)), Some(Snowflake(2001)));
-        assert_eq!(s.messages(Snowflake(GENERAL)).len(), 13);
+        assert_eq!(s.messages(Snowflake(GENERAL)).len(), 15);
         assert!(s.has_unread(Snowflake(GENERAL)));
         assert!(s.has_unread(Snowflake(2202)));
         assert!(s.is_muted(&s.channels[&Snowflake(2203)]));

@@ -2,6 +2,9 @@
 //! (`ChannelHeader`, `ChannelMessages`, `ChannelDivider`, `theme/styles/Message.module.css`,
 //! `MessageReactions`, `textarea/TextareaInput`).
 
+use std::cell::RefCell;
+use std::collections::HashSet;
+
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use reflux_model::{
     Attachment, Channel, ChannelType, Embed, Message, MessageFlags, MessageType, Permissions, ReactionEmoji, Snowflake,
@@ -148,7 +151,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         left = left
             .child(text("•").font(font(16.0, 400.0).lh(24.0)).color(p.background_modifier_hover).mx(dim::CHANNEL_HEADER_TOPIC_DIVIDER_GAP))
             .child(
-                markdown::inline_text(topic, &Md { store, media: &st.media, guild: c.guild_id, p }, font(13.0, 400.0).lh(18.0), p.text_tertiary)
+                markdown::inline_text(topic, &Md::new(store, &st.media, c.guild_id, p, "topic"), font(13.0, 400.0).lh(18.0), p.text_tertiary)
                     .grow(1.0)
                     .shrink()
                     .pr(dim::SPACING_5),
@@ -315,7 +318,9 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     } else {
         sticky
     };
-    let md = Md { store, media: &st.media, guild: c.guild_id, p };
+    let md = Md::new(store, &st.media, c.guild_id, p, "");
+    let copy = RefCell::new(markdown::CopyMap::new());
+    let mut heads = HashSet::new();
     let perms = Perms::of(store, c);
     // The action bar's message: the hovered one, or the one whose menu or picker is open.
     let active = st.active_msg.filter(|_| st.popups.open.is_some());
@@ -333,7 +338,10 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                 } else if space > 0.0 {
                     r = r.pt(space);
                 }
-                let mut body = message(store, st, m, head, &md, p, acc);
+                if head {
+                    heads.insert(m.id);
+                }
+                let mut body = message(store, st, m, head, &md.body(format!("m{}", m.id), Some((m.id, &copy))), p, acc);
                 if !is_pending(m) {
                     let id = m.id;
                     body = body
@@ -381,6 +389,14 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .growth(GrowthSpec::default())
         .virtualize(48.0)
         .children(rows)
+        .selection_group(true)
+        .selection_copy({
+            let copy = copy.into_inner();
+            move |sel| {
+                let texts = sel.texts().iter().filter(|t| t.is_selected()).map(|t| (t.key(), t.range(), t.text()));
+                Some(markdown::copy_selection(texts, &copy, &heads))
+            }
+        })
         // `--messages-bottom-clearance`: room for the typing rail over the list's end.
         .child(el().h(dim::MESSAGES_BOTTOM_CLEARANCE).key("msgs-end"))
         .on_visible_rows(move |s: &mut S, r| {
@@ -560,7 +576,7 @@ fn message_menu<S: 'static>(menu: &str, m: &Message, c: &Channel, perms: Perms, 
 /// `showDeleteConfirmation`: the `ConfirmModal` with a preview of the message.
 fn delete_modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).confirm_delete = None;
-    let md = Md { store, media: &st.media, guild: store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p };
+    let md = Md::new(store, &st.media, store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p, format!("del-m{}", m.id));
     let preview = col()
         .w_full()
         .max_h(220.0)
@@ -877,16 +893,24 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
 
 /// `.container`: attachments, embeds, reactions; row-gap 4, padding-block 2.
 fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() {
+    if m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() && m.stickers.is_empty() {
         return None;
     }
     let mut c = col().w_full().gap(dim::MESSAGE_CONTAINER_GAP).py(dim::MESSAGE_CONTAINER_PADDING_Y).items_start();
+    if !m.stickers.is_empty() {
+        // `.stickersContainer`: wrapping, 8 apart, 4 down; each 160×160 (`.stickerWrapper`), contained.
+        let one = |s: &reflux_model::StickerItem| match st.media.asset(|b, _| crate::media::sticker_url(b, s.id)) {
+            Load::Ready(px) => el().size(160.0, 160.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+            _ => el().size(160.0, 160.0),
+        };
+        c = c.child(row().flex_wrap().gaps(8.0, 8.0).mt(4.0).children(m.stickers.iter().map(one)));
+    }
     for a in &m.attachments {
         c = c.child(attachment(st, a, p));
     }
     if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
-        for e in &m.embeds {
-            c = c.child(embed(e, store, st, m, p));
+        for (i, e) in m.embeds.iter().enumerate() {
+            c = c.child(embed(e, i, store, st, m, p));
         }
     }
     if !m.reactions.is_empty() {
@@ -952,7 +976,7 @@ fn sized(m: &reflux_model::EmbedMedia) -> Option<(&reflux_model::EmbedMedia, u32
 
 // shortcut: rich embeds show provider, author, title, description, fields and image or
 // thumbnail; no author/footer icons, galleries or players.
-fn embed(e: &Embed, store: &Store, st: &ShellState, m: &Message, p: &Palette) -> El {
+fn embed(e: &Embed, i: usize, store: &Store, st: &ShellState, m: &Message, p: &Palette) -> El {
     let thumb = e.thumbnail.as_ref().and_then(sized);
     // An image or gifv link with nothing else is the bare media (`EMBED_MAX_*` 400×300).
     if matches!(e.kind.as_str(), "image" | "gifv") && e.title.is_none() && e.description.is_none()
@@ -965,7 +989,7 @@ fn embed(e: &Embed, store: &Store, st: &ShellState, m: &Message, p: &Palette) ->
     let image = e.image.as_ref().and_then(sized).or(thumb.filter(|_| promote || e.video.is_some()));
     let inline = thumb.filter(|_| image.is_none());
     let bar = e.color.map_or(p.background_modifier_accent, role_color);
-    let md = Md { store, media: &st.media, guild: m.guild_id, p };
+    let md = Md::new(store, &st.media, m.guild_id, p, format!("m{}-embed{i}", m.id));
     let mut body = col().grow(1.0).min_w(0.0).gap(8.0).pt(8.0).pr(16.0).pb(16.0).pl(12.0);
     if let Some(pr) = &e.provider {
         body = body.child(text(pr.name.clone()).font(font(12.0, 400.0)).color(p.text_tertiary));
@@ -1008,13 +1032,15 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
         } else {
             (p.background_secondary, Color::TRANSPARENT, p.text_tertiary)
         };
-        // `.emoji`: a 20px custom emoji image, or the unicode glyph.
-        let glyph = match r.emoji.id {
-            Some(id) => match st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())) {
-                Load::Ready(px) => el().size(20.0, 20.0).my(2.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-                _ => text(format!(":{}:", r.emoji.name)).font(font(16.0, 400.0).lh(20.0)),
-            },
-            None => text(r.emoji.name.clone()).font(font(16.0, 400.0).lh(20.0)),
+        // `.emoji`: a 20px image (custom, or unicode from the spritesheet), else its text.
+        let load = match r.emoji.id {
+            Some(id) => st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())),
+            None => emoji::sprite_index(&r.emoji.name).map_or(Load::Failed, |i| st.media.sprite(i)),
+        };
+        let glyph = match load {
+            Load::Ready(px) => el().size(20.0, 20.0).my(2.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+            _ if r.emoji.id.is_some() => text(format!(":{}:", r.emoji.name)).font(font(16.0, 400.0).lh(20.0)),
+            _ => text(r.emoji.name.clone()).font(font(16.0, 400.0).lh(20.0)),
         };
         let (m2, e) = (m.clone(), r.emoji.clone());
         grid = grid.child(

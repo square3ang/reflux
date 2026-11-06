@@ -1,20 +1,149 @@
 //! Message markdown (`reflux_markdown` AST) to Rune elements, styled after
 //! `theme/styles/Markup.module.css`.
 
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+
 use reflux_markdown::{EmojiKind, MentionKind, Node, Options, presets};
 use reflux_model::Snowflake;
 use reflux_store::Store;
-use rune::text::Span;
-use rune::{Color, El, col, el, rich, row, text};
+use rune::text::{Span, TextHighlight, TextSystem};
+use rune::{Color, El, Pixels, col, el, rich, row, text};
 
+use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::mix;
 
+/// What copying each selectable message text takes, by the text's key: its message and, for
+/// each emoji placeholder, the bytes it covers and what the emoji copies as.
+pub type CopyMap = HashMap<String, (Snowflake, Vec<(Range<usize>, String)>)>;
+
+#[derive(Clone)]
 pub struct Md<'a> {
     pub store: &'a Store,
     pub media: &'a crate::media::Media,
     pub guild: Option<Snowflake>,
     pub p: &'a Palette,
+    /// Prefix of the keys of the texts and emoji drawn, unique per markdown body on screen.
+    pub key: String,
+    /// A message body: its texts are selectable and note what they copy as here.
+    pub copy: Option<(Snowflake, &'a RefCell<CopyMap>)>,
+    texts: Cell<u32>,
+}
+
+impl<'a> Md<'a> {
+    pub fn new(store: &'a Store, media: &'a crate::media::Media, guild: Option<Snowflake>, p: &'a Palette, key: impl Into<String>) -> Self {
+        Md { store, media, guild, p, key: key.into(), copy: None, texts: Cell::new(0) }
+    }
+
+    /// The same markdown context for another body.
+    pub fn body(&self, key: impl Into<String>, copy: Option<(Snowflake, &'a RefCell<CopyMap>)>) -> Self {
+        Md { key: key.into(), copy, texts: Cell::new(0), ..self.clone() }
+    }
+
+    /// A key for the next text, and the text made selectable when this is a message body.
+    fn text(&self, t: El, subs: Vec<(Range<usize>, String)>) -> (El, String) {
+        let n = self.texts.get();
+        self.texts.set(n + 1);
+        let key = format!("{}-t{n}", self.key);
+        let mut t = t.key(key.clone());
+        if let Some((msg, map)) = self.copy {
+            t = t.selectable(true).selection_color(self.p.text_selection);
+            map.borrow_mut().insert(key.clone(), (msg, subs));
+        }
+        (t, key)
+    }
+}
+
+/// Stands in for an inline emoji in the text: no-break spaces sized (see [`placeholder_spans`])
+/// so they're as wide as the 1.5em image (`--emoji-size-emoji`) and make their line as tall as
+/// the image makes it in Fluxer; the image is drawn over them.
+const PLACEHOLDER: &str = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
+const NBSP: usize = '\u{a0}'.len_utf8();
+
+/// The width of a no-break space per point of font size.
+fn nbsp_em() -> f32 {
+    thread_local!(static EM: Cell<(u64, f32)> = const { Cell::new((u64::MAX, 0.0)) });
+    let epoch = rune::text::font_epoch();
+    EM.with(|c| match c.get() {
+        (e, em) if e == epoch => em,
+        _ => {
+            let em = rune::text::advance(&"\u{a0}".repeat(10), font(100.0, 400.0)) / 1000.0;
+            c.set((epoch, em));
+            em
+        }
+    })
+}
+
+/// `span` (over a [`PLACEHOLDER`] in `size`/`lh` text) split so the placeholder is 1.5em wide
+/// and its line `max(lh, 1.5em)` tall, as a 1.5em image with `vertical-align: -0.4em` makes it.
+/// A span's line height scales with its size, so the first spaces take the size that gives that
+/// line height, one more makes up the width, and the rest are too small to count.
+// shortcut: a scaled span keeps its half-leading even, so the line's baseline lands where that
+// gives (17.6 → 18 in message text, but 24.2 → 26.6 in an h1); the image follows the baseline.
+fn placeholder_spans(span: &Span, size: f32, lh: f32) -> [Span; 3] {
+    let (width, em) = (1.5 * size, nbsp_em().max(0.01));
+    let tall = size * lh.max(width) / lh;
+    let n = ((width / (em * tall)).floor() as usize).min(PLACEHOLDER.len() / NBSP - 1);
+    let rest = (width - n as f32 * em * tall) / em;
+    let at = |i: usize| span.start + (i * NBSP) as u32;
+    let part = |a: u32, b: u32, size: f32| Span { start: a, end: b, size: Some(size.max(0.01)), ..span.clone() };
+    [part(at(0), at(n), tall), part(at(n), at(n + 1), rest.min(tall)), part(at(n + 1), span.end, 0.01)]
+}
+
+/// The baseline of a line holding an emoji in `size`/`lh` text, from the line's top.
+fn baseline(size: f32, lh: f32) -> f32 {
+    thread_local!(static TS: RefCell<Option<TextSystem>> = const { RefCell::new(None) });
+    TS.with_borrow_mut(|ts| {
+        let ts = ts.get_or_insert_with(|| TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        let text = format!("x{PLACEHOLDER}");
+        let spans = placeholder_spans(&Span::new(1, text.len()), size, lh);
+        let l = ts.layout_rich(&text, &spans, font(size, 400.0).lh(lh), 1.0, None);
+        l.lines().next().map_or(lh * 0.75, |line| line.metrics().baseline)
+    })
+}
+
+/// Where an inline emoji image goes in its text box: centred on its placeholder's box `ph`
+/// (`[x, y, w, h]`, its line's top to bottom) and, as `vertical-align: -0.4em` puts it, its
+/// bottom 0.4em under the line's `baseline`. Returns `[x, y, side]`.
+fn emoji_rect(text: [f32; 4], ph: [f32; 4], size: f32, baseline: f32) -> [f32; 3] {
+    let side = 1.5 * size;
+    [ph[0] - text[0] + (ph[2] - side) / 2.0, ph[1] - text[1] + baseline + 0.4 * size - side, side]
+}
+
+/// Copy text for the selected parts of message texts (`MessageSelectionCopyUtils`): each
+/// emoji placeholder any of whose bytes are selected becomes the emoji's text, texts of one
+/// message join with a newline, and a message starting a group is set off by a blank line.
+/// `texts` are (key, selected range, selected text) in order.
+pub fn copy_selection<'s>(texts: impl IntoIterator<Item = (Option<&'s str>, Range<usize>, &'s str)>, map: &CopyMap, heads: &HashSet<Snowflake>) -> String {
+    let mut out = String::new();
+    let mut last: Option<Option<Snowflake>> = None;
+    for (key, r, sel) in texts {
+        let found = key.and_then(|k| map.get(k));
+        let msg = found.map(|f| f.0);
+        let piece = |a: usize, b: usize| sel.get(a.max(r.start) - r.start..b.min(r.end).max(r.start) - r.start).unwrap_or("");
+        let mut body = String::new();
+        let mut at = r.start;
+        for (ph, copy) in found.map_or(&[][..], |f| &f.1[..]) {
+            if ph.end <= r.start || ph.start >= r.end {
+                continue;
+            }
+            body += piece(at, ph.start);
+            body += copy;
+            at = ph.end;
+        }
+        body += piece(at, r.end);
+        if last.is_some() {
+            out += if last == Some(msg) || !msg.is_some_and(|m| heads.contains(&m)) { "\n" } else { "\n\n" };
+        }
+        out += &body;
+        last = Some(msg);
+    }
+    // `sanitiseCopiedText`.
+    let out = out.replace('\u{a0}', " ");
+    let lines: Vec<&str> = out.split('\n').map(|l| l.trim_end_matches([' ', '\t'])).collect();
+    lines.join("\n").trim_end().to_owned()
 }
 
 /// Inline style carried down the tree.
@@ -28,12 +157,24 @@ struct Style {
     color: Option<Color>,
 }
 
+/// An inline emoji in a [`Run`]: its placeholder's bytes and span, the image (none while
+/// hidden in a spoiler or loading) and what it copies as.
+struct InlineEmoji {
+    range: Range<usize>,
+    span: usize,
+    px: Option<Pixels>,
+    copy: String,
+}
+
 /// One paragraph being built: text plus non-overlapping spans.
 #[derive(Default)]
 struct Run {
     text: String,
     spans: Vec<Span>,
     strikes: Vec<(usize, usize)>,
+    emoji: Vec<InlineEmoji>,
+    /// One-line previews draw emoji as text.
+    plain_emoji: bool,
 }
 
 impl Run {
@@ -70,15 +211,47 @@ impl Run {
         self.spans.push(span(Span::new(start, self.text.len())));
     }
 
-    fn el(self, size: f32, lh: f32, weight: f32, color: Color) -> Option<El> {
+    /// An emoji's placeholder; the image goes over it once the text is laid out.
+    fn push_emoji(&mut self, px: Option<Pixels>, copy: String, st: Style, md: &Md) {
+        let start = self.text.len();
+        self.push(PLACEHOLDER, st, md);
+        let span = self.spans.len() - 1;
+        if !st.spoiler {
+            self.spans[span].color = Some(Color::TRANSPARENT);
+        }
+        self.emoji.push(InlineEmoji { range: start..self.text.len(), span, px: px.filter(|_| !st.spoiler), copy });
+    }
+
+    fn el(mut self, size: f32, lh: f32, weight: f32, color: Color, md: &Md) -> Option<El> {
         if self.text.is_empty() {
             return None;
         }
-        let mut e = rich(self.text, self.spans).font(font(size, weight).lh(lh)).color(color).w_full();
-        for (a, b) in self.strikes {
-            e = e.strike(a, b, None);
+        // Each placeholder's span becomes three; later spans shift by two per earlier emoji.
+        for (k, e) in self.emoji.iter().enumerate() {
+            let i = e.span + 2 * k;
+            let parts = placeholder_spans(&self.spans[i], size, lh);
+            self.spans.splice(i..=i, parts);
         }
-        Some(e)
+        let mut t = rich(self.text, self.spans).font(font(size, weight).lh(lh)).color(color).w_full();
+        for (a, b) in self.strikes {
+            t = t.strike(a, b, None);
+        }
+        let subs = self.emoji.iter().map(|e| (e.range.clone(), e.copy.clone())).collect();
+        if self.emoji.is_empty() {
+            return Some(md.text(t, subs).0);
+        }
+        let (mut t, key) = md.text(t, subs);
+        let hl = |i: usize| format!("{key}-e{i}");
+        t = t.text_highlights(self.emoji.iter().enumerate().map(|(i, e)| TextHighlight::new(e.range.clone(), Color::TRANSPARENT).key(hl(i))));
+        // Placeholders are found where the runtime laid them out last frame (so a new or
+        // re-wrapped text shows its emoji a frame late).
+        let at = rune::memo::layout(&key);
+        let base = baseline(size, lh);
+        let imgs = self.emoji.iter().enumerate().filter_map(|(i, e)| {
+            let [x, y, side] = emoji_rect(at?, rune::memo::layout(&hl(i))?, size, base);
+            Some(el().absolute(x, y).size(side, side).pixels_fit(e.px.as_ref()?, rune::SurfaceFit::Fit))
+        });
+        Some(col().w_full().child(t).children(imgs.collect::<Vec<_>>()))
     }
 }
 
@@ -98,13 +271,32 @@ fn is_block(n: &Node) -> bool {
 
 /// The message body: blocks stacked, inline runs as rich text (16/22, `text-chat`).
 pub fn render(content: &str, md: &Md) -> El {
-    let nodes = reflux_markdown::parse(content, &Options::new(presets::STANDARD));
+    let nodes = reflux_markdown::parse(content, &Options { flags: presets::STANDARD, emoji: super::emoji::context(content) });
     jumbo(&nodes, md).unwrap_or_else(|| blocks(&nodes, md, md.p.text_chat))
 }
 
-/// `shouldRenderAsJumboEmojis` (only emoji, at most 30) with a custom emoji among them: a row
-/// of 48px (`--emoji-size-jumbo-emoji`) emoji.
-// shortcut: custom emoji between words stay `:name:`; Rune rich text has no inline images.
+/// An emoji's image: custom ones from the media proxy, unicode ones from the bundled
+/// spritesheet (Fluxer draws twemoji for both). `Failed` when there is none.
+// shortcut: skin-tone variants and emoji missing from the base sheet fall back to the font
+// glyph; Fluxer loads their twemoji SVG from its static host.
+fn emoji_image(kind: &EmojiKind, md: &Md) -> Load {
+    match kind {
+        EmojiKind::Custom { id, .. } => md.media.asset(|b, _| crate::media::emoji_url(b, id)),
+        EmojiKind::Standard { raw, .. } => super::emoji::sprite_index(raw).map_or(Load::Failed, |i| md.media.sprite(i)),
+    }
+}
+
+/// What an emoji copies as, and draws as without an image.
+fn emoji_text(kind: &EmojiKind) -> String {
+    match kind {
+        EmojiKind::Standard { raw, .. } => raw.clone(),
+        EmojiKind::Custom { name, .. } => format!(":{name}:"),
+    }
+}
+
+/// `shouldRenderAsJumboEmojis` (only emoji, at most 30): a row of 48px
+/// (`--emoji-size-jumbo-emoji`) emoji.
+// shortcut: jumbo emoji can't be selected or copied (no text); "Copy text" has them.
 fn jumbo(nodes: &[Node], md: &Md) -> Option<El> {
     let mut emoji = Vec::new();
     for n in nodes {
@@ -114,23 +306,22 @@ fn jumbo(nodes: &[Node], md: &Md) -> Option<El> {
             _ => return None,
         }
     }
-    if emoji.len() > 30 || !emoji.iter().any(|k| matches!(k, EmojiKind::Custom { .. })) {
+    if emoji.is_empty() || emoji.len() > 30 {
         return None;
     }
-    let one = |k: &&EmojiKind| match k {
-        EmojiKind::Custom { id, .. } => match md.media.asset(|b, _| crate::media::emoji_url(b, id)) {
-            crate::media::Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-            _ => el().size(48.0, 48.0),
-        },
-        EmojiKind::Standard { raw, .. } => text(raw.clone()).font(font(48.0, 400.0).lh(48.0)),
+    let one = |k: &&EmojiKind| match emoji_image(k, md) {
+        Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+        Load::Pending => el().size(48.0, 48.0),
+        Load::Failed => text(emoji_text(k)).font(font(48.0, 400.0).lh(48.0)),
     };
     Some(row().w_full().flex_wrap().gaps(4.0, 4.0).children(emoji.iter().map(one)))
 }
 
 /// A one-line inline rendering (reply previews): block syntax flattened.
 pub fn inline_text(content: &str, md: &Md, style: rune::tok::TextStyle, color: Color) -> El {
-    let nodes = reflux_markdown::parse(content, &Options::new(presets::RESTRICTED_INLINE_REPLY));
-    let mut run = Run::default();
+    let nodes = reflux_markdown::parse(content, &Options { flags: presets::RESTRICTED_INLINE_REPLY, emoji: super::emoji::context(content) });
+    // shortcut: emoji in one-line previews stay text (Fluxer draws 1.25em images).
+    let mut run = Run { plain_emoji: true, ..Run::default() };
     for n in &nodes {
         inline(n, Style::default(), &mut run, md);
     }
@@ -147,12 +338,12 @@ fn blocks(nodes: &[Node], md: &Md, color: Color) -> El {
             inline(node, Style::default(), &mut run, md);
             continue;
         }
-        if let Some(e) = std::mem::take(&mut run).el(16.0, 22.0, 400.0, color) {
+        if let Some(e) = std::mem::take(&mut run).el(16.0, 22.0, 400.0, color, md) {
             out = out.child(e);
         }
         out = out.child(block(node, md, color, i == 0, i + 1 == n));
     }
-    if let Some(e) = run.el(16.0, 22.0, 400.0, color) {
+    if let Some(e) = run.el(16.0, 22.0, 400.0, color, md) {
         out = out.child(e);
     }
     out
@@ -171,13 +362,13 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                 3 => 18.0,
                 _ => 16.0,
             };
-            let e = run.el(size, (size * 1.2).round(), 600.0, p.text_primary).unwrap_or_else(el);
+            let e = run.el(size, (size * 1.2).round(), 600.0, p.text_primary, md).unwrap_or_else(el);
             e.mt(if first { 4.0 } else { 20.0 }).mb(if last { 0.0 } else { 12.0 })
         }
         Node::Subtext { children } => {
             let mut run = Run::default();
             children.iter().for_each(|c| inline(c, Style::default(), &mut run, md));
-            run.el(13.0, 18.0, 400.0, p.text_tertiary).unwrap_or_else(el)
+            run.el(13.0, 18.0, 400.0, p.text_tertiary, md).unwrap_or_else(el)
         }
         Node::CodeBlock { content, .. } => {
             // `.codeContainer`: radius 6, 1px border, padding 14; `pre` 12px mono, line-height 1.33.
@@ -189,7 +380,7 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                 .fill(p.bg_code_block)
                 .border(1.0, crate::ui::over(p.code_block_border, p.bg_code_block))
                 .mb(if last { 0.0 } else { 12.0 })
-                .child(text(body.to_string()).font(font(12.0, 400.0).mono().lh(16.0)).color(p.text_primary).wrap())
+                .child(md.text(text(body.to_string()).font(font(12.0, 400.0).mono().lh(16.0)).color(p.text_primary).wrap(), Vec::new()).0)
         }
         Node::Blockquote { children, .. } => row()
             .w_full()
@@ -248,14 +439,14 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                         inline(c, Style::default(), &mut run, md);
                     }
                 }
-                run.el(14.0, 20.0, 400.0, color).unwrap_or_else(el)
+                run.el(14.0, 20.0, 400.0, color, md).unwrap_or_else(el)
             };
             col().w_full().my(4.0).child(line(header).font(font(14.0, 600.0).lh(20.0))).children(rows.iter().map(line))
         }
         other => {
             let mut run = Run::default();
             inline(other, Style::default(), &mut run, md);
-            run.el(16.0, 22.0, 400.0, color).unwrap_or_else(el)
+            run.el(16.0, 22.0, 400.0, color, md).unwrap_or_else(el)
         }
     }
 }
@@ -318,10 +509,12 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
             };
             run.push_span(&label, |s| s.weight(500.0).color(fg).bg(bg, 2.0));
         }
-        Node::Emoji { kind } => match kind {
-            EmojiKind::Standard { raw, .. } => run.push(raw, st, md),
-            // shortcut: custom emoji show as `:name:` until emoji images load.
-            EmojiKind::Custom { name, .. } => run.push(&format!(":{name}:"), st, md),
+        // Copied as `renderEmojiToPlaintext` writes them; drawn as text when there's no image.
+        Node::Emoji { kind } if run.plain_emoji => run.push(&emoji_text(kind), st, md),
+        Node::Emoji { kind } => match emoji_image(kind, md) {
+            Load::Failed => run.push(&emoji_text(kind), st, md),
+            Load::Pending => run.push_emoji(None, emoji_text(kind), st, md),
+            Load::Ready(px) => run.push_emoji(Some(px), emoji_text(kind), st, md),
         },
         Node::Timestamp { timestamp, .. } => {
             let s = super::chat::format_full_date_time(*timestamp * 1000);
@@ -333,5 +526,72 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
             }
         }
         Node::Table { .. } | Node::TableRow { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholders_are_as_wide_and_tall_as_fluxers_emoji() {
+        let mut ts = TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES);
+        // Message text, an h1 and subtext.
+        for (size, lh) in [(16.0, 22.0), (22.0, 26.0), (13.0, 18.0)] {
+            let plain = ts.layout_rich("ab", &[], font(size, 400.0).lh(lh), 1.0, None).full_width();
+            let text = format!("a{PLACEHOLDER}b");
+            let spans = placeholder_spans(&Span::new(1, 1 + PLACEHOLDER.len()), size, lh);
+            let l = ts.layout_rich(&text, &spans, font(size, 400.0).lh(lh), 1.0, None);
+            let w = l.full_width() - plain;
+            assert!((w - 1.5 * size).abs() < 0.05, "{size}: placeholder {w} wide");
+            let h = l.height();
+            assert!((h - lh.max(1.5 * size)).abs() < 0.5, "{size}/{lh}: line {h} tall");
+        }
+        // In message text Fluxer's baseline sits 1.1em (17.6) under the top of the line the
+        // image fills; ours is within a point of it.
+        assert!((baseline(16.0, 22.0) - 17.6).abs() <= 1.0, "baseline {}", baseline(16.0, 22.0));
+    }
+
+    #[test]
+    fn emoji_images_centre_on_their_placeholder_and_sit_on_the_baseline() {
+        // Text box at (100, 200); placeholder on its second 24px line at x 40..64.
+        let [x, y, side] = emoji_rect([100.0, 200.0, 600.0, 48.0], [140.0, 224.0, 24.0, 24.0], 16.0, 18.0);
+        assert_eq!((x, side), (40.0, 24.0));
+        // Bottom 0.4em (6.4) under the baseline 18 down the line.
+        assert!((y + side - (24.0 + 18.0 + 6.4)).abs() < 1e-4, "{y}");
+        // A placeholder a little wider than the image (bold) centres it.
+        assert_eq!(emoji_rect([0.0; 4], [10.0, 0.0, 26.0, 24.0], 16.0, 18.0)[0], 11.0);
+    }
+
+    #[test]
+    fn copying_maps_placeholders_back_to_emoji() {
+        let ph = PLACEHOLDER;
+        let drawn = format!("hi {ph} there {ph}!");
+        let (a, b) = (3, 3 + ph.len());
+        let (c, d) = (b + 7, b + 7 + ph.len());
+        let mut map = CopyMap::new();
+        map.insert("m1-t0".into(), (Snowflake(1), vec![(a..b, "😀".into()), (c..d, ":fluxer:".into())]));
+        map.insert("m1-t1".into(), (Snowflake(1), vec![]));
+        map.insert("m2-t0".into(), (Snowflake(2), vec![]));
+        map.insert("m3-t0".into(), (Snowflake(3), vec![]));
+        let heads = HashSet::from([Snowflake(1), Snowflake(3)]);
+        let one = |r: Range<usize>| copy_selection([(Some("m1-t0"), r.clone(), &drawn[r])], &map, &heads);
+        assert_eq!(one(0..drawn.len()), "hi 😀 there :fluxer:!");
+        // A selection reaching into a placeholder takes the whole emoji, from either side.
+        assert_eq!(one(0..a + 2), "hi 😀");
+        assert_eq!(one(d - 2..drawn.len()), ":fluxer:!");
+        assert_eq!(one(a + 2..a + 4), "😀");
+        // Ending right at a placeholder's start leaves it out (and the trailing space).
+        assert_eq!(one(0..a), "hi");
+        // Across messages: a newline inside one, a blank line before a group's first message.
+        let texts = [
+            (Some("m1-t0"), b + 1..drawn.len(), &drawn[b + 1..]),
+            (Some("m1-t1"), 0..4, "code"),
+            (Some("m2-t0"), 0..3, "two"),
+            (Some("m3-t0"), 0..5, "three"),
+        ];
+        assert_eq!(copy_selection(texts, &map, &heads), "there :fluxer:!\ncode\ntwo\n\nthree");
+        // Texts the map doesn't know copy as drawn.
+        assert_eq!(copy_selection([(None, 0..4, "a\u{a0}b")], &map, &heads), "a b");
     }
 }
