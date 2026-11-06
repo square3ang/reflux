@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows). Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -100,14 +100,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Channel list, header, message list, composer, member list, friends, notes, pins, uploads | DONE | | |
-| Channel-list typing / unread on muted | MISSING | | InterfaceTab.tsx |
-| Header bell dropdown | MISSING | | ChannelNotificationSettingsDropdown.tsx |
+| Channel-list typing / unread on muted | DONE | | InterfaceTab.tsx |
+| Header bell dropdown | DONE | | ChannelNotificationSettingsDropdown.tsx |
 | Topic modal | DONE | | ChannelTopicModal.tsx |
-| DM call buttons | MISSING | | CallButtons.tsx |
 | Announcement follow | DONE | | ChannelFollowModal.tsx |
-| Topic modal | MISSING | | ChannelTopicModal.tsx |
 | DM call buttons | DONE | | CallButtons.tsx |
-| Announcement follow | MISSING | | ChannelFollowModal.tsx |
 | Compact layout | PARTIAL | text wraps under its own start, not 32px under the name (no negative text-indent in Rune) | CompactMessageLayout.tsx |
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
@@ -118,8 +115,6 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Composer context menu | DONE | | TextareaContextMenu.tsx |
 | Slash commands | DONE | no option hints | useCommands.ts |
 | @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
-| Attachments | PARTIAL | video/audio play only where Rune's `Player` does (macOS); elsewhere "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
-| @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
 | Attachments | PARTIAL | video/audio play through GStreamer on Linux (`gst` feature, default) and Rune's `Player` on macOS; Windows keeps "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
 | Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
@@ -127,7 +122,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Guild members page | MISSING | | GuildMembersPage.tsx |
 | DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
-| Group DM management | PARTIAL | member add/remove only from the user menu | EditGroupModal.tsx |
+| Group DM management | DONE | | EditGroupModal.tsx |
 | Active Now | MISSING | | ActiveNowSidebar.tsx |
 | Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
@@ -141,7 +136,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Offline queue | PARTIAL | | MessageQueue.tsx |
 | Action bar / context menu | PARTIAL | shift layout | MessageContextMenu.tsx |
 | Forward | DONE | | ForwardModal.tsx |
-| Saved messages | MISSING | | SavedMessagesPage.tsx |
+| Saved messages | DONE | (the inbox's Bookmarks tab, bookmark/unbookmark in the message menu) | SavedMessagesPage.tsx |
 | Inbox / recent mentions | PARTIAL | no paging past 25; unread tab lists channels only | InboxPopout.tsx |
 | Who reacted | PARTIAL | reactors past the first 100; filter right-click "Remove reaction" (it's in the message menu) | ReactionTooltip.tsx, MessageReactionsModal.tsx |
 | Media viewer | DONE | | MediaModal.tsx |
@@ -158,7 +153,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Sounds, status select, custom status display | DONE | | |
 | Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
 | Timed mute expiry | DONE | | useMuteSheet.ts |
-| Per-channel overrides | MISSING | | GuildNotificationSettingsModal.tsx |
+| Per-channel overrides | PARTIAL | set from the header bell only; the notification modal has no overrides section | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
 | TTS | PARTIAL | speaks through the OS tool (spd-say/espeak-ng/say/PowerShell); no queue, no TtsTextFormatter simplification, replies not announced as such | TextToSpeech.tsx |
 | Auto-idle | MISSING | | LocalPresence.ts |
@@ -169,7 +164,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Friends actions, notes | DONE | | |
 | Friend nicknames | DONE | | ChangeFriendNicknameModal.tsx |
-| Add friends to group | MISSING | | AddFriendsToGroupModal.tsx |
+| Add friends to group | DONE | | AddFriendsToGroupModal.tsx |
 | Profile popout | DONE | | UserProfilePopout.tsx |
 | Full profile modal | DONE | | UserProfileModal.tsx |
 | Change own nickname | DONE | | ChangeNicknameModal.tsx |
@@ -183,7 +178,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Notification modal | PARTIAL | channel overrides | GuildNotificationSettingsModal.tsx |
 | Edit community profile | DONE | | MyProfileTab.tsx |
 | Delete my messages | MISSING | | useDeleteMyMessagesInGuild.tsx |
-| Preview nagbar | MISSING | | GuildPreviewNagbar.tsx |
+| Preview nagbar | DONE | (Join / Stop previewing; visiting permissions in `compute_permissions`) | GuildPreviewNagbar.tsx |
 | Role icons | DONE | | RoleIcon.tsx |
 | Folder settings | DONE | | GuildFolderSettingsModal.tsx |
 
@@ -194,7 +189,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Timeout | DONE | | TimeoutMemberModal.tsx |
 | Ban details | DONE | | BanDetailsModal.tsx |
 | Report | PARTIAL | untested against a live server | ReportFlowModal.tsx |
-| Voice moderation | DONE |  | | VoiceParticipantMenuItems.tsx |
+| Voice moderation | DONE | (community mute/deafen, move, disconnect) | VoiceParticipantMenuItems.tsx |
 
 ### voice
 | Feature | Status | Missing | Official source |
@@ -229,10 +224,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Animated emoji/avatars/stickers | DONE | | |
 | Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
 | Gifts *(low)* | MISSING | | F/gift/* |
-| Invite: friends list, accept preview, pause | PARTIAL/MISSING | | F/invite/* |
+| Invite: friends list, accept preview, pause | PARTIAL | friends list in the invite modal | F/invite/* |
 | Discovery page | PARTIAL | card images, language filter | DiscoveryPage.tsx |
-| Search UI chips/suggestions, history | PARTIAL/MISSING | | F/search/* |
-| Quick switcher recents | PARTIAL | | QuickSwitcher.tsx |
+| Search UI chips/suggestions, history | MISSING | no chips, value suggestions or history (filters are typed) | F/search/* |
+| Quick switcher recents | PARTIAL | empty query lists unread channels and DMs, not recents | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
@@ -248,10 +243,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Notifications | PARTIAL | click routing Win/mac | D/NotificationsIpc.ts |
 | Badge | PARTIAL | Win/mac | D/UnreadBadge.ts |
 | Deep links | PARTIAL | Windows forwarding | D/DeepLinks.ts |
-| Autostart | DONE | Flatpak Background portal; Win/mac compile-checked only | D/Autostart.ts |
+| Autostart | PARTIAL | Flatpak Background portal; Win/mac compile-checked only | D/Autostart.ts |
 | Window state persistence | PARTIAL | WONTFIX (user decision): size only — position/maximized need the raw handle and are impossible on Wayland | D/Window.ts |
 | Updater | PARTIAL | no release feed yet (`REFLUX_UPDATE_FEED`); AppImage self-update, else opens the page | D/Updater.ts |
-| Global shortcuts / PTT | PARTIAL | Linux portal only (no X11 fallback), Windows mute/deafen only, macOS none; PTT not used by voice yet (`shortcuts::ptt_held`) | D/GlobalShortcutsEngine.ts |
+| Global shortcuts / PTT | PARTIAL | Linux portal only (no X11 fallback), Windows mute/deafen only, macOS none | D/GlobalShortcutsEngine.ts |
 | Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
 | Zoom | DONE | | D/Menu.ts |
 | Screen-share picker / app audio | PARTIAL | | D/DisplayMedia.ts |
