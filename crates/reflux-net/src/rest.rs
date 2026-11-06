@@ -89,6 +89,12 @@ impl Client {
         path: &str,
         body: Option<&B>,
     ) -> Result<T> {
+        // Message search is a POST but only reads (it may start indexing, which nobody sees).
+        if crate::readonly() && method != Method::GET && !(method == Method::POST && path == "/search/messages") {
+            tracing::warn!(%method, path = path.split('?').next().unwrap_or(path), "read-only mode: request refused");
+            let error = ApiError { code: "READONLY".into(), message: "Read-only mode".into(), ..Default::default() };
+            return Err(Error::Api { status: StatusCode::FORBIDDEN, error: Box::new(error) });
+        }
         let body = body.map(serde_json::to_vec).transpose()?;
         let key = format!("{method} {}", path.split('?').next().unwrap_or(path));
         let (mut captcha, mut solves, mut retries) = (None::<String>, 0, 0);
@@ -132,7 +138,7 @@ impl Client {
                 if let (Some(0.0), Some(reset)) = (remaining, reset_after) {
                     self.limits.lock().unwrap().record(&key, false, secs(reset), Instant::now());
                 }
-                return Ok(serde_json::from_slice(if bytes.is_empty() { b"null" } else { &bytes })?);
+                return Ok(reflux_model::from_slice(if bytes.is_empty() { b"null" } else { &bytes })?);
             }
 
             let error = serde_json::from_slice::<ApiError>(&bytes).unwrap_or_else(|_| ApiError {
@@ -144,6 +150,7 @@ impl Client {
                 let global = global_header || error.extra.get("global").and_then(|v| v.as_bool()) == Some(true);
                 // The body value is exact; the header is rounded up to whole seconds.
                 let after = secs(error.retry_after.or(retry_header).unwrap_or(1.0));
+                tracing::warn!(%key, global, ?after, "rate limited (429)");
                 self.limits.lock().unwrap().record(&key, global, after, Instant::now());
                 if retries < MAX_429_RETRIES && after <= MAX_SILENT_WAIT {
                     retries += 1;
@@ -555,6 +562,16 @@ impl RateLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn read_only_mode_refuses_writes_locally() {
+        crate::force_readonly(); // this test binary only sends what read-only mode allows
+        let c = Client::new(reqwest::Client::new(), "http://127.0.0.1:9");
+        assert_eq!(c.logout().await.unwrap_err().code(), Some("READONLY"));
+        assert!(c.typing(Snowflake(1)).await.unwrap_err().code() == Some("READONLY"));
+        // GETs still go out (and fail here only because nothing listens).
+        assert!(matches!(c.current_user().await, Err(Error::Http(_))));
+    }
 
     #[test]
     fn reaction_paths() {

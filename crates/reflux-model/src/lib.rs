@@ -61,6 +61,21 @@ pub use user::*;
 /// ISO 8601 timestamp as sent by the API.
 pub type Timestamp = String;
 
+/// `serde_json::from_slice`, with the JSON path of a failure (`d.guilds[3].roles: missing field`)
+/// in the error message.
+pub fn from_slice<'de, T: serde::Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, serde_json::Error> {
+    serde_path_to_error::deserialize(&mut serde_json::Deserializer::from_slice(bytes)).map_err(with_path)
+}
+
+/// `T::deserialize(v)`, with the JSON path of a failure in the error message.
+pub fn from_value<'de, T: serde::Deserialize<'de>>(v: &'de serde_json::Value) -> Result<T, serde_json::Error> {
+    serde_path_to_error::deserialize(v).map_err(with_path)
+}
+
+fn with_path(e: serde_path_to_error::Error<serde_json::Error>) -> serde_json::Error {
+    serde::de::Error::custom(format_args!("{}: {}", e.path(), e.inner()))
+}
+
 /// Generic `{guild_id, ...inner}` payload used by several Gateway events.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GuildScoped<T> {

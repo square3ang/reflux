@@ -70,7 +70,7 @@ pub async fn discover(http: &reqwest::Client, input: &str) -> Result<InstanceDis
 
 async fn fetch(http: &reqwest::Client, url: &str) -> Result<InstanceDiscovery> {
     let bytes = http.get(url).send().await?.error_for_status()?.bytes().await?;
-    let d: InstanceDiscovery = serde_json::from_slice(&bytes)?;
+    let d: InstanceDiscovery = reflux_model::from_slice(&bytes)?;
     if d.endpoints.gateway.is_empty() || (d.endpoints.api.is_empty() && d.endpoints.api_client.is_empty()) {
         return Err(Error::Discovery("document has no api or gateway endpoint".into()));
     }

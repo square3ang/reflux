@@ -18,6 +18,8 @@ reflux-voice.workspace = true
 reqwest.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
+# Reads the official desktop app's store for "Import session from Fluxer desktop".
+rusqlite = { version = "0.37", features = ["bundled"] }
 fastrand = "2"
 # Firefox's CTAP2 stack: USB security keys on Linux (hidraw + libudev), Windows and macOS.
 authenticator = { version = "0.5", default-features = false, features = ["crypto_rust"] }

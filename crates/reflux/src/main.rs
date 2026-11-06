@@ -52,6 +52,21 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
 }
 
 fn main() {
+    // `--import-fluxer-session`: copy the official desktop app's session into ours and exit.
+    if std::env::args().any(|a| a == "--import-fluxer-session") {
+        let db = session::fluxer_desktop_db().expect("config dir");
+        match session::import_fluxer_desktop(&db) {
+            Ok(s) => {
+                session::save(&s);
+                println!("Imported the Fluxer desktop session for {}.", s.instance);
+            }
+            Err(e) => {
+                eprintln!("reflux: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let app = rune::App::new(AppSpec {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
@@ -64,16 +79,22 @@ fn main() {
         setup: Some(|s, waker| {
             ui::gallery::setup(s, waker.clone());
             s.app.shell.default_avatars = shell::load_default_avatars(waker.clone());
-            s.app.shell.media.setup(waker.clone(), None);
+            let live = app::live::scene().is_some();
+            s.app.shell.media.setup(waker.clone(), live.then_some(app::live::fetch_image as media::Fixture));
             shell::demo::setup(s, waker);
+            app::live::wait(s);
         }),
         ..AppSpec::new("Fluxer", (1280.0, 800.0), init, view)
     })
     .keep_running()
     .on_close(desktop::on_close)
     .on_focus(|s, focused, _| s.desktop.focused = focused);
-    // Headless snapshots stay offline and show the logged-out screens.
-    if !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo") {
+    // Headless snapshots stay offline and show the logged-out screens, unless `--live`.
+    if app::live::scene().is_some() {
+        reflux_net::force_readonly();
+        app::live::capture();
+        app::start(app.handle());
+    } else if !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo") {
         desktop::start(&app.handle());
         app::start(app.handle());
     }

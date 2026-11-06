@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
@@ -649,7 +649,7 @@ macro_rules! dispatch_events {
             /// `Err`, which the caller logs and skips so the connection survives.
             pub fn parse(t: &str, d: &Value) -> Result<Self, serde_json::Error> {
                 Ok(match t {
-                    $($name => Self::$variant(Deserialize::deserialize(d)?),)*
+                    $($name => Self::$variant(crate::from_value(d)?),)*
                     _ => Self::Unknown { t: t.to_owned(), d: d.clone() },
                 })
             }
@@ -765,7 +765,7 @@ mod tests {
         let p: GatewayPayload =
             serde_json::from_str(r#"{"op":10,"d":{"heartbeat_interval":41250}}"#).unwrap();
         assert_eq!(p.op, OpCode::HELLO);
-        assert_eq!(Hello::deserialize(&p.d).unwrap().heartbeat_interval, 41250);
+        assert_eq!(crate::from_value::<Hello>(&p.d).unwrap().heartbeat_interval, 41250);
 
         let ack: GatewayPayload = serde_json::from_str(r#"{"op":11}"#).unwrap();
         assert_eq!((ack.op, ack.d), (OpCode::HEARTBEAT_ACK, Value::Null));
@@ -947,7 +947,8 @@ mod tests {
         assert_eq!(ev, DispatchEvent::Unknown { t: "SOMETHING_NEW".into(), d: d.clone() });
         assert_eq!(ev.name(), "SOMETHING_NEW");
         // Wrong type for a field: an error, not a panic.
-        assert!(DispatchEvent::parse("MESSAGE_DELETE", &serde_json::json!({"id": [1]})).is_err());
+        let e = DispatchEvent::parse("MESSAGE_DELETE", &serde_json::json!({"id": [1]})).unwrap_err();
+        assert!(e.to_string().starts_with("id: invalid type"), "the error names the field: {e}");
         assert!(DispatchEvent::parse("READY", &serde_json::json!("nope")).is_err());
     }
 

@@ -22,3 +22,8 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 fastrand = "2"
+
+[dev-dependencies]
+# examples/live_probe.rs
+reflux-store.workspace = true
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }

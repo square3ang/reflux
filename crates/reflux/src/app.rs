@@ -22,6 +22,7 @@ use crate::{State, session};
 mod actions;
 mod chat;
 mod guild;
+pub mod live;
 mod voice;
 
 const PAGE: u8 = 50;
@@ -59,6 +60,7 @@ pub fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
 
 /// Changes UI state from a task; runs on the UI thread before the next frame.
 pub fn update(f: impl FnOnce(&mut State) + Send + 'static) {
+    let Err(f) = live::send(Box::new(f)) else { return };
     if let Some(b) = BRIDGE.get() {
         b.ui.update(move |s, _| f(s));
     }
@@ -164,7 +166,7 @@ pub fn act(s: &mut State, a: Action) {
         Action::SendMessage { channel, content, reply, attachments } => chat::send(s, channel, content, reply, attachments),
         Action::LoadOlder(ch) => fetch_older(s, ch),
         Action::Logout => {
-            if let Some(inst) = s.app.instance.clone() {
+            if let Some(inst) = s.app.instance.clone().filter(|_| !s.app.saved.imported) {
                 spawn(async move {
                     if let Err(e) = inst.rest.logout().await {
                         eprintln!("reflux: logout: {e}");
@@ -520,12 +522,28 @@ fn poll_ip_authorization(s: &State, ticket: String, alive: Weak<()>) {
 fn signed_in(s: &mut State, token: String) {
     s.login = crate::login::Login { instance: std::mem::take(&mut s.login.instance), ..Default::default() };
     s.app.saved.token = Some(token.clone());
+    s.app.saved.imported = false;
     session::save(&s.app.saved);
     if let Some(inst) = &s.app.instance {
         inst.rest.set_token(Some(token));
     }
     s.app.route = Route::Connecting;
     connect(s);
+}
+
+/// "Import session from Fluxer desktop": take over the official app's session and connect.
+pub fn import_session(s: &mut State) {
+    let r = session::fluxer_desktop_db().ok_or_else(|| "No config directory.".to_owned()).and_then(|db| session::import_fluxer_desktop(&db));
+    match r {
+        Ok(saved) => {
+            session::save(&saved);
+            s.login = crate::login::Login { instance: TextEdit::new(saved.instance.clone()), ..Default::default() };
+            s.app.saved = saved;
+            s.app.route = Route::Connecting;
+            discover(s); // the instance and installation ID may have changed
+        }
+        Err(e) => s.login.errors.form = Some(e),
+    }
 }
 
 fn restore_voice_devices(s: &mut State) {
@@ -635,6 +653,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             crate::desktop::on_dispatch(s, &d);
         }
         GatewayEvent::Error(e) => voice::on_error(s, &e),
+        GatewayEvent::Malformed { t, error, .. } => eprintln!("reflux: malformed {t} skipped: {error}"),
     }
 }
 

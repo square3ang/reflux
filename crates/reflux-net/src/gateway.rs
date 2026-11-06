@@ -57,6 +57,8 @@ pub enum GatewayEvent {
     Dispatch(DispatchEvent),
     /// Opcode 12, a refused voice join.
     Error(GatewayError),
+    /// A dispatch whose payload didn't parse (skipped); `error` has the JSON path.
+    Malformed { t: String, d: Value, error: String },
 }
 
 #[derive(Clone, Debug)]
@@ -236,6 +238,10 @@ impl Session {
                     conn.identify().await
                 }
                 cmd = cmds.recv() => match cmd {
+                    Some(Command::Send(p)) if crate::readonly() && !read_only_op(p.op) => {
+                        warn!(op = p.op.0, "read-only mode: gateway command dropped");
+                        None
+                    }
                     Some(Command::Send(p)) => conn.send(&p).await,
                     Some(Command::Close) | None => {
                         conn.close(1000, "").await;
@@ -404,7 +410,10 @@ impl Conn<'_> {
         }
         match DispatchEvent::parse(&t, &p.d) {
             Ok(e) => self.s.emit(GatewayEvent::Dispatch(e)),
-            Err(e) => warn!(event = %t, %e, "malformed dispatch, skipped"),
+            Err(e) => {
+                warn!(event = %t, %e, "malformed dispatch, skipped");
+                self.s.emit(GatewayEvent::Malformed { t, d: p.d, error: e.to_string() });
+            }
         }
     }
 
@@ -427,6 +436,21 @@ impl Conn<'_> {
 }
 
 /// 80% of the interval plus up to 5% (max 1.5 s) jitter, at least 1 s.
+/// Client opcodes that change nothing others can see (read-only mode allows only these).
+fn read_only_op(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::HEARTBEAT
+            | OpCode::IDENTIFY
+            | OpCode::RESUME
+            | OpCode::REQUEST_GUILD_MEMBERS
+            | OpCode::LAZY_REQUEST
+            | OpCode::REQUEST_GUILD_COUNTS
+            | OpCode::REQUEST_CHANNEL_MEMBER_COUNTS
+            | OpCode::REQUEST_FORUM_UNREADS
+    )
+}
+
 fn heartbeat_delay(interval: Duration) -> Duration {
     let ms = interval.as_millis() as u64;
     let jitter = (ms / 20).min(1500);
@@ -497,6 +521,12 @@ mod tests {
         }
     }
 
+    #[test]
+    fn read_only_ops() {
+        assert!([OpCode::HEARTBEAT, OpCode::IDENTIFY, OpCode::RESUME, OpCode::LAZY_REQUEST].into_iter().all(read_only_op));
+        assert!(![OpCode::PRESENCE_UPDATE, OpCode::VOICE_STATE_UPDATE, OpCode::VOICE_SIGNAL].into_iter().any(read_only_op));
+    }
+
     #[tokio::test]
     async fn hello_identify_heartbeat_resume() {
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -521,9 +551,10 @@ mod tests {
         srv.send(serde_json::json!({"op": 0, "s": 1, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
         assert_eq!(next_state(&mut gw).await, ConnectionState::Connected);
         assert!(matches!(gw.events.recv().await, Some(GatewayEvent::Dispatch(DispatchEvent::Ready(r))) if r.session_id == "abc"));
-        // Malformed dispatch is skipped; the next one still arrives.
+        // Malformed dispatch is reported with its JSON path and skipped; the next one still arrives.
         srv.send(serde_json::json!({"op": 0, "s": 2, "t": "MESSAGE_CREATE", "d": {"id": []}})).await;
         srv.send(serde_json::json!({"op": 0, "s": 3, "t": "SOMETHING_NEW", "d": {"x": 1}})).await;
+        assert!(matches!(gw.events.recv().await, Some(GatewayEvent::Malformed { t, error, .. }) if t == "MESSAGE_CREATE" && error.starts_with("id: ")));
         assert!(matches!(gw.events.recv().await, Some(GatewayEvent::Dispatch(DispatchEvent::Unknown { t, .. })) if t == "SOMETHING_NEW"));
 
         // Server-requested heartbeat is answered at once with the last sequence.

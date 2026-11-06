@@ -293,7 +293,18 @@ fn method_step(s: &State, p: &Palette) -> El {
                         .on_press(to_register)
                         .el(p)
                         .role("link"),
-                ),
+                )
+                // Reflux-only: reuse the official desktop app's session on this machine.
+                .children(crate::session::fluxer_desktop_db().filter(|db| db.exists()).map(|_| {
+                    Button::<State>::new("Import session from Fluxer desktop")
+                        .variant(ButtonVariant::Secondary)
+                        .icon(&icons::DOWNLOAD_SIMPLE)
+                        .fit_container()
+                        .disabled(disabled)
+                        .key("login-import")
+                        .on_press(crate::app::import_session)
+                        .el(p)
+                })),
         )
         .children(form_note(&s.login, p).map(|n| n.mt(12.0).align(Align::Center)))
         .child(instance_line(s, p))

@@ -41,6 +41,20 @@ impl Error {
     }
 }
 
+static READONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Read-only mode (`REFLUX_READONLY=1`, or [`force_readonly`]): every non-GET request and every
+/// gateway command but heartbeat/identify/resume/member and count requests is refused locally.
+/// For testing against real accounts without changing anything others can see.
+pub fn readonly() -> bool {
+    *READONLY.get_or_init(|| std::env::var_os("REFLUX_READONLY").is_some_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Turns read-only mode on for this process. Panics if it was already read as off.
+pub fn force_readonly() {
+    assert!(*READONLY.get_or_init(|| true), "read-only mode was already off");
+}
+
 /// `User-Agent` for every HTTP and WebSocket request.
 pub const USER_AGENT: &str = concat!("Reflux/", env!("CARGO_PKG_VERSION"));
 
