@@ -19,6 +19,8 @@ use crate::theme::{self, font};
 use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
 
+mod actions;
+
 const PAGE: u8 = 50;
 const IP_POLL: Duration = Duration::from_millis(2000);
 /// When the sign-in request takes this long, the ALTCHA proof of work is probably running.
@@ -88,6 +90,7 @@ pub struct App {
     gateway: Option<UnboundedSender<Command>>,
     /// Bumped per gateway connection, so events of a closed one are dropped.
     generation: u64,
+    acks: actions::PendingAcks,
 }
 
 /// What views (the shell) ask for; `act` runs it.
@@ -95,7 +98,8 @@ pub struct App {
 pub enum Action {
     /// Select a channel and fetch its newest messages if none are loaded.
     SelectChannel(Snowflake),
-    SendMessage { channel: Snowflake, content: String },
+    /// `reply`: (message, ping its author).
+    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)> },
     /// Fetch the page before the oldest loaded message.
     LoadOlder(Snowflake),
     Logout,
@@ -109,7 +113,7 @@ pub fn act(s: &mut State, a: Action) {
                 fetch_messages(s, ch);
             }
         }
-        Action::SendMessage { channel, content } => send_message(s, channel, content),
+        Action::SendMessage { channel, content, reply } => send_message(s, channel, content, reply),
         Action::LoadOlder(ch) => fetch_older(s, ch),
         Action::Logout => {
             if let Some(inst) = s.app.instance.clone() {
@@ -465,16 +469,17 @@ pub fn poll(s: &mut State) -> bool {
         match i {
             Intent::SelectGuild(_) => {}
             Intent::SelectChannel(c) => act(s, Action::SelectChannel(c)),
-            Intent::SendMessage { channel, content } => act(s, Action::SendMessage { channel, content }),
+            Intent::SendMessage { channel, content, reply } => act(s, Action::SendMessage { channel, content, reply }),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
             Intent::Logout => act(s, Action::Logout),
+            other => actions::run(s, other),
         }
     }
-    ran
+    actions::tick(s) || ran
 }
 
-fn send_message(s: &mut State, channel: Snowflake, content: String) {
+fn send_message(s: &mut State, channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>) {
     let (Some(inst), Some(me)) = (s.app.instance.clone(), s.app.store.me.as_ref()) else { return };
     if content.trim().is_empty() {
         return;
@@ -482,6 +487,8 @@ fn send_message(s: &mut State, channel: Snowflake, content: String) {
     let now = now_ms();
     // A snowflake for now, so the optimistic message sorts last; the server echoes it back.
     let nonce = Snowflake(Snowflake::from_timestamp_ms(now).0 | fastrand::u64(..1 << 22));
+    let target = reply.and_then(|(id, _)| s.app.store.messages(channel).iter().find(|m| m.id == id).cloned());
+    let reference = reply.map(|(id, _)| reflux_model::MessageReferenceInput { message_id: id, channel_id: Some(channel), ..Default::default() });
     s.app.store.add_local_message(Message {
         id: nonce,
         channel_id: channel,
@@ -489,9 +496,18 @@ fn send_message(s: &mut State, channel: Snowflake, content: String) {
         content: content.clone(),
         timestamp: iso8601(now),
         nonce: Some(nonce.to_string()),
+        kind: if reply.is_some() { reflux_model::MessageType::REPLY } else { Default::default() },
+        message_reference: reply.map(|(id, _)| reflux_model::MessageReference { channel_id: channel, message_id: Some(id), ..Default::default() }),
+        referenced_message: reply.map(|_| target.map(Box::new)),
         ..Default::default()
     });
-    let body = CreateMessage { nonce: Some(nonce.to_string()), content: Some(content), ..Default::default() };
+    // A reply pings its author only when the bar's toggle is on.
+    let allowed_mentions = reply.map(|(_, ping)| reflux_model::AllowedMentions {
+        parse: Some(vec!["users".into(), "roles".into(), "everyone".into()]),
+        replied_user: Some(ping),
+        ..Default::default()
+    });
+    let body = CreateMessage { nonce: Some(nonce.to_string()), content: Some(content), message_reference: reference, allowed_mentions, ..Default::default() };
     spawn(async move {
         if let Err(e) = inst.rest.send_message(channel, &body).await {
             eprintln!("reflux: send to {channel}: {e}");

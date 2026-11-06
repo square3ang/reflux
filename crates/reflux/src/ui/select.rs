@@ -36,7 +36,7 @@ impl<'a, S: 'static> Select<'a, S> {
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
     pub fn on_choose(mut self, f: impl Fn(&mut S, &str) + 'static) -> Self { self.on_choose = Some(Rc::new(f)); self }
 
-    pub fn el(self, popups: &Popups, access: PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
+    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
         let open = popups.is_open(self.id);
         let bg = p.form_surface_background;
         let border = if open { p.background_modifier_accent_focus } else { p.background_modifier_accent };

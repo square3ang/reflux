@@ -48,7 +48,16 @@ impl Popups {
     }
 }
 
-pub type PopupAccess<S> = fn(&mut S) -> &mut Popups;
+/// Reaches the [`Popups`] in app state: a plain `fn`, or a `Copy` closure made with
+/// [`popup_access`] (one that captures another accessor).
+pub trait PopupAccess<S>: Fn(&mut S) -> &mut Popups + Copy + 'static {}
+impl<S, F: Fn(&mut S) -> &mut Popups + Copy + 'static> PopupAccess<S> for F {}
+
+/// Pins a closure's signature to an accessor's (closures returning a borrow of their argument
+/// need the expected type spelled out).
+pub fn popup_access<S, F: Fn(&mut S) -> &mut Popups + Copy + 'static>(f: F) -> F {
+    f
+}
 
 /// Floating UI placements.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,6 +70,7 @@ pub enum Placement {
     BottomStart,
     BottomEnd,
     RightStart,
+    LeftStart,
 }
 
 impl Placement {
@@ -73,6 +83,7 @@ impl Placement {
             Placement::BottomStart => (Side::Bottom, Align::Start),
             Placement::BottomEnd => (Side::Bottom, Align::End),
             Placement::RightStart => (Side::Right, Align::Start),
+            Placement::LeftStart => (Side::Left, Align::Start),
         }
     }
 }
@@ -127,7 +138,7 @@ impl<'a> Tooltip<'a> {
     pub fn force(mut self, f: bool) -> Self { self.force = f; self }
 
     /// Wraps `trigger` (keyed `id`) and pushes the tooltip into `layer` while it shows.
-    pub fn el<S: 'static>(self, trigger: El, popups: &Popups, access: PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
+    pub fn el<S: 'static>(self, trigger: El, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
         let id = self.id.to_string();
         if self.force || popups.tip.as_deref() == Some(self.id) {
             layer.push(anchor(tooltip_surface(self.text, self.placement, self.kind, self.large, p), self.id, self.placement, 8.0));

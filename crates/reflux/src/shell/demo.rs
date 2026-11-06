@@ -236,10 +236,41 @@ impl Demo {
                 shell.settings = Some(crate::settings::SettingsUi::new(a.strip_prefix("--settings=")));
             }
         }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--msg-scene=")) {
+            stage(&mut shell, &store, sc);
+        }
         if rune::extra_args().iter().any(|a| a == "--shell-home") {
             (shell.guild, shell.channel) = (None, Some(Snowflake(8001)));
         }
         Demo { store, shell }
+    }
+}
+
+/// `--msg-scene=hover|menu|more|emoji|reply|edit|delete`: message actions mid-use.
+fn stage(st: &mut ShellState, store: &Store, scene: &str) {
+    let ids: Vec<Snowflake> = store.messages(Snowflake(GENERAL)).iter().map(|m| m.id).collect();
+    let (shot, mine, ada) = (ids[6], ids[7], ids[8]);
+    match scene {
+        "hover" => st.hover_msg = Some(ada),
+        "menu" => {
+            st.popups.open_at(&format!("msg-menu-{ada}"), [620.0, 330.0]);
+            st.active_msg = Some(ada);
+        }
+        "more" => {
+            st.popups.open = Some(format!("msg-more-{mine}"));
+            st.active_msg = Some(mine);
+        }
+        "emoji" => {
+            st.popups.open = Some(format!("emoji-{shot}"));
+            st.active_msg = Some(shot);
+        }
+        "reply" => st.reply = Some(super::ReplyTo { channel: Snowflake(GENERAL), message: ada, mention: true }),
+        "edit" => {
+            let m = store.messages(Snowflake(GENERAL))[7].clone();
+            st.editing = Some((m.id, rune::TextEdit::new(m.content)));
+        }
+        "delete" => st.confirm_delete = Some(mine),
+        _ => {}
     }
 }
 

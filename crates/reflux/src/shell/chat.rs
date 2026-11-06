@@ -3,16 +3,19 @@
 //! `MessageReactions`, `textarea/TextareaInput`).
 
 use chrono::{DateTime, Datelike, Local, TimeZone};
-use reflux_model::{Attachment, Channel, ChannelType, Embed, Message, MessageFlags, MessageType, Snowflake};
+use reflux_model::{
+    Attachment, Channel, ChannelType, Embed, Message, MessageFlags, MessageType, Permissions, ReactionEmoji, Snowflake,
+};
 use reflux_store::Store;
 use rune::text::Span;
-use rune::{Color, El, GrowthSpec, ScrollSpec, Shadow, col, el, icon, rich, row, text, text_input};
+use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el, icon, rich, row, text, text_input};
 
 use super::markdown::{self, Md};
-use super::{ShellAccess, ShellState, avatar, channel_icon, members, role_color};
+use super::{Intent, ReplyTo, ShellAccess, ShellState, avatar, channel_icon, emoji, members, role_color};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
-use crate::ui::{mix, over, scroller};
+use crate::ui::overlay::anchor;
+use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal, Placement, PopupAccess, Tooltip, mix, over, popup_access, rgb, scroller};
 
 /// `MESSAGE_GROUP_TIMEOUT`.
 const GROUP_MS: u64 = 7 * 60 * 1000;
@@ -23,7 +26,7 @@ const PAD: f32 = dim::CHAT_HORIZONTAL_PADDING_DEFAULT;
 /// Content column start: padding + avatar + gutter.
 const CONTENT_X: f32 = PAD + dim::MESSAGE_AVATAR_SIZE + dim::MESSAGE_GUTTER;
 
-pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel>, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel>, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let Some(c) = channel else {
         return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter);
     };
@@ -33,13 +36,16 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .min_w(0.0)
         .h_full()
         .min_h(0.0)
-        .child(messages(store, st, c, p, acc))
+        .child(messages(store, st, c, p, acc, layer))
         .child(composer(store, st, c, p, acc));
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
     if show_members {
         content = content
             .child(members::list(store, st, c, p))
             .child(el().pin(None, Some(0.0), Some(dim::LAYOUT_MEMBER_LIST_WIDTH), Some(0.0)).w(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
+    }
+    if let Some(m) = st.confirm_delete.and_then(|id| find(store, c.id, id)) {
+        layer.push(delete_modal(store, st, m, p, acc));
     }
     col()
         .grow(1.0)
@@ -48,6 +54,53 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .fill(p.background_secondary_lighter)
         .child(header(store, st, c, p, acc))
         .child(content)
+}
+
+fn find(store: &Store, channel: Snowflake, id: Snowflake) -> Option<&Message> {
+    let ms = store.messages(channel);
+    ms.binary_search_by_key(&id, |m| m.id).ok().map(|i| &ms[i])
+}
+
+// ---- Permissions -------------------------------------------------------------------------------
+
+/// What the current user may do to messages in a channel (`useMessagePermissions`).
+#[derive(Clone, Copy)]
+struct Perms {
+    me: Snowflake,
+    send: bool,
+    react: bool,
+    /// `MANAGE_MESSAGES` in a guild: delete others' messages.
+    manage: bool,
+    pin: bool,
+    /// Developer mode: show Copy message ID.
+    dev: bool,
+}
+
+impl Perms {
+    fn of(store: &Store, c: &Channel) -> Self {
+        let p = store.permissions(c.id);
+        Perms {
+            me: store.my_id(),
+            send: p.contains(Permissions::SEND_MESSAGES),
+            react: p.contains(Permissions::ADD_REACTIONS),
+            manage: c.guild_id.is_some() && p.contains(Permissions::MANAGE_MESSAGES),
+            pin: p.contains(Permissions::PIN_MESSAGES),
+            dev: store.settings.developer_mode,
+        }
+    }
+    fn can_edit(&self, m: &Message) -> bool {
+        m.author.id == self.me && is_user_message(m)
+    }
+    /// Only these types can be deleted (`http-api/messages` Delete message).
+    fn can_delete(&self, m: &Message) -> bool {
+        (m.author.id == self.me || self.manage)
+            && (is_user_message(m) || matches!(m.kind, MessageType::USER_JOIN | MessageType::CHANNEL_PINNED_MESSAGE))
+    }
+}
+
+/// An optimistic own message the server hasn't echoed yet (its ID is still the nonce).
+fn is_pending(m: &Message) -> bool {
+    m.nonce.as_deref().is_some_and(|n| n == m.id.to_string())
 }
 
 // ---- Header --------------------------------------------------------------------------------
@@ -252,29 +305,73 @@ fn stream(msgs: &[Message], first_unread: Option<Snowflake>) -> Vec<Item> {
     out
 }
 
-fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let msgs = store.messages(c.id);
+    let sticky = st.sticky_unread.filter(|s| s.0 == c.id).map(|s| s.1);
     let first_unread = if store.has_unread(c.id) {
         let ack = store.read_states.get(&c.id).and_then(|r| r.last_message_id).unwrap_or_default();
         msgs.iter().find(|m| m.id > ack && m.author.id != store.my_id()).map(|m| m.id)
     } else {
-        None
+        sticky
     };
     let md = Md { store, guild: c.guild_id, p };
+    let perms = Perms::of(store, c);
+    // The action bar's message: the hovered one, or the one whose menu or picker is open.
+    let active = st.active_msg.filter(|_| st.popups.open.is_some());
     let items = stream(msgs, first_unread);
-    let rows = items.iter().map(|it| match *it {
-        Item::Date(ms) => date_divider(ms, p).key(format!("date-{}", format_full_date(ms))),
-        Item::Msg { i, head, space, unread } => {
-            let m = &msgs[i];
-            let mut r = col().w_full();
-            if unread {
-                r = r.child(new_divider(p));
-            } else if space > 0.0 {
-                r = r.pt(space);
+    let n_items = items.len();
+    let mut rows = Vec::with_capacity(n_items + 1);
+    for it in &items {
+        rows.push(match *it {
+            Item::Date(ms) => date_divider(ms, p).key(format!("date-{}", format_full_date(ms))),
+            Item::Msg { i, head, space, unread } => {
+                let m = &msgs[i];
+                let mut r = col().w_full();
+                if unread {
+                    r = r.child(new_divider(p));
+                } else if space > 0.0 {
+                    r = r.pt(space);
+                }
+                let mut body = message(store, st, m, head, &md, p, acc);
+                if !is_pending(m) {
+                    let id = m.id;
+                    body = body
+                        .on_hover_change(move |s: &mut S, inside, _| {
+                            let st = acc(s);
+                            if inside {
+                                st.hover_msg = Some(id);
+                            } else if st.hover_msg == Some(id) {
+                                st.hover_msg = None;
+                            }
+                        })
+                        .on_secondary_press(move |s: &mut S, at, _| {
+                            let st = acc(s);
+                            st.popups.open_at(&format!("msg-menu-{id}"), [at.x, at.y]);
+                            st.active_msg = Some(id);
+                        });
+                    let editing = st.editing.as_ref().is_some_and(|e| e.0 == id);
+                    if !editing && (st.hover_msg == Some(id) || active == Some(id)) {
+                        body = body.child(action_bar(m, perms, st, p, acc, layer));
+                    }
+                }
+                r.child(body).key(format!("msg-{}", m.id))
             }
-            r.child(message(store, st, m, head, &md, p)).key(format!("msg-{}", m.id))
+        });
+    }
+    if let Some(m) = active.and_then(|id| find(store, c.id, id)) {
+        let open = st.popups.open.clone().unwrap_or_default();
+        if open == format!("msg-menu-{}", m.id) || open == format!("msg-more-{}", m.id) {
+            message_menu(&open, m, c, perms, st, acc).el(&st.popups, pops(acc), p, layer);
+        } else if open == format!("emoji-{}", m.id) {
+            let close = move |s: &mut S| {
+                let st = acc(s);
+                st.popups.close();
+                st.active_msg = None;
+            };
+            let picker = emoji::picker(st, c.id, m.id, p, acc).modal(true, close);
+            layer.push(anchor(picker, &format!("react-{}", m.id), Placement::LeftStart, 8.0));
         }
-    });
+    }
     let more = store.messages.get(&c.id).is_some_and(|w| w.has_more_before);
     let cid = c.id;
     let list = col()
@@ -287,10 +384,14 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .child(el().h(dim::MESSAGES_BOTTOM_CLEARANCE).key("msgs-end"))
         .on_visible_rows(move |s: &mut S, r| {
             let st = acc(s);
-            if r.start == 0 && more && !st.intents.contains(&super::Intent::LoadOlder { channel: cid }) {
-                st.intents.push(super::Intent::LoadOlder { channel: cid });
+            if r.start == 0 && more && !st.intents.contains(&Intent::LoadOlder { channel: cid }) {
+                st.intents.push(Intent::LoadOlder { channel: cid });
             }
-            false
+            // The clearance row is the last; seeing it means the newest message is on screen.
+            let bottom = r.end > n_items;
+            let changed = st.at_bottom != bottom;
+            st.at_bottom = bottom;
+            changed
         });
     let viewport = col().w_full().grow(1.0).min_h(0.0).justify_end().scroll(ScrollSpec { stick_bottom: true }).child(list);
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
@@ -299,6 +400,204 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         area = area.child(typing_rail(store, c.guild_id, &typing, p));
     }
     area
+}
+
+fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
+    popup_access(move |s: &mut S| &mut acc(s).popups)
+}
+
+fn start_reply(st: &mut ShellState, store_me: Snowflake, m: &Message) {
+    st.reply = Some(ReplyTo { channel: m.channel_id, message: m.id, mention: m.author.id != store_me });
+    st.editing = None;
+    st.composer.focused = true;
+}
+
+fn start_edit(st: &mut ShellState, m: &Message) {
+    let mut e = TextEdit::new(m.content.clone());
+    e.focused = true;
+    st.editing = Some((m.id, e));
+    st.composer.focused = false;
+}
+
+/// Shift skips the confirmation (`handleDelete(event.shiftKey)`).
+fn request_delete(st: &mut ShellState, m: &Message, shift: bool) {
+    if shift {
+        st.intents.push(Intent::Delete { channel: m.channel_id, message: m.id });
+    } else {
+        st.confirm_delete = Some(m.id);
+    }
+}
+
+fn toggle_reaction(st: &mut ShellState, m: &Message, emoji: ReactionEmoji) {
+    let add = !m.reactions.iter().any(|r| r.me && r.emoji.id == emoji.id && (emoji.id.is_some() || r.emoji.name == emoji.name));
+    st.intents.push(Intent::React { channel: m.channel_id, message: m.id, emoji, add });
+}
+
+/// `https://{webapp}/channels/{guild or @me}/{channel}/{message}`.
+fn message_link(st: &ShellState, c: &Channel, m: &Message) -> String {
+    let g = c.guild_id.map_or_else(|| "@me".to_string(), |g| g.to_string());
+    format!("{}/channels/{g}/{}/{}", st.web_base.trim_end_matches('/'), c.id, m.id)
+}
+
+/// `MessageActionBar` (default layout): quick reactions, add reaction, edit (own) or reply,
+/// and More. 28px items in a 2px-padded toolbar, its bottom 10px into the message.
+// shortcut: the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
+// those stay in More.
+fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let id = m.id;
+    let open = st.popups.open.as_deref();
+    let button = |glyph: El, active: bool| {
+        let fg = if active { p.text_primary } else { p.text_tertiary };
+        let mut b = row().size(28.0, 28.0).center().radius(6.0).cursor(rune::Cursor::Pointer).role("button").hover_group().child(glyph.color(fg).group_color(p.text_primary));
+        b = if active { b.fill(p.surface_interactive_selected_bg) } else { b.hover(p.surface_interactive_hover_bg) };
+        b
+    };
+    let tip = |key: String, label: &str, trigger: El, layer: &mut Vec<El>| Tooltip::new(&key, label).el(trigger, &st.popups, pops(acc), p, layer);
+    let mut bar = row()
+        .padding(3.0)
+        .center_y()
+        .radius(8.0)
+        .fill(p.form_surface_background)
+        .border(1.0, over(p.background_modifier_accent, p.form_surface_background))
+        .box_shadow(Shadow { x: 0.0, y: 6.0, blur: 14.0, spread: 0.0, color: rune::Color { a: 0.18, ..Color::BLACK }, inset: false });
+    if perms.react {
+        for (name, glyph) in [("thumbsup", "👍"), ("ok_hand", "👌"), ("tada", "🎉")] {
+            let m2 = m.clone();
+            let b = button(text(glyph).font(font(18.0, 400.0).lh(20.0)), false).on_press(move |s: &mut S| {
+                toggle_reaction(acc(s), &m2, ReactionEmoji { name: glyph.into(), ..Default::default() })
+            });
+            bar = bar.child(tip(format!("quick-{name}-{id}"), &format!(":{name}:"), b, layer));
+        }
+        let picking = open == Some(&*format!("emoji-{id}"));
+        let b = button(icon(&icons::SMILEY_FILL, 20.0), picking).on_press(move |s: &mut S| {
+            let st = acc(s);
+            st.popups.toggle(&format!("emoji-{id}"));
+            st.active_msg = Some(id);
+            st.emoji_query = TextEdit::new("");
+        });
+        bar = bar.child(tip(format!("react-{id}"), "Add reaction", b, layer));
+    }
+    if perms.can_edit(m) {
+        let m2 = m.clone();
+        let b = button(icon(&icons::PENCIL_SIMPLE_FILL, 20.0), false).on_press(move |s: &mut S| start_edit(acc(s), &m2));
+        bar = bar.child(tip(format!("edit-{id}"), "Edit message", b, layer));
+    } else if perms.send && is_user_message(m) {
+        let (m2, me) = (m.clone(), perms.me);
+        let b = button(icon(&icons::ARROW_BEND_UP_LEFT_FILL, 20.0), false).on_press(move |s: &mut S| start_reply(acc(s), me, &m2));
+        bar = bar.child(tip(format!("reply-{id}"), "Reply", b, layer));
+    }
+    let more_id = format!("msg-more-{id}");
+    let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
+        let st = acc(s);
+        st.popups.toggle(&format!("msg-more-{id}"));
+        st.active_msg = Some(id);
+    });
+    bar = bar.child(tip(more_id, "More", b, layer));
+    bar.pin(None, Some(-24.0), Some(14.0), None)
+}
+
+/// `MessageContextMenu`, for a right-click and the action bar's More.
+// shortcut: no forward, threads, bookmarks, speak, suppress embeds, remove reactions, report or
+// media items.
+fn message_menu<S: 'static>(menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
+    let mut menu = Menu::new(menu).placement(Placement::LeftStart);
+    let id = m.id;
+    if perms.react && is_user_message(m) {
+        menu = menu
+            .item(MenuItem::new("add-reaction", "Add reaction").icon(&icons::SMILEY_FILL).on_select(move |s: &mut S| {
+                let st = acc(s);
+                st.popups.open = Some(format!("emoji-{id}"));
+                st.active_msg = Some(id);
+                st.emoji_query = TextEdit::new("");
+            }))
+            .separator();
+    }
+    if perms.can_edit(m) {
+        let m2 = m.clone();
+        menu = menu.item(MenuItem::new("edit", "Edit message").icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| start_edit(acc(s), &m2)));
+    }
+    if perms.send && is_user_message(m) {
+        let (m2, me) = (m.clone(), perms.me);
+        menu = menu.item(MenuItem::new("reply", "Reply").icon(&icons::ARROW_BEND_UP_LEFT_FILL).on_select(move |s: &mut S| start_reply(acc(s), me, &m2)));
+    }
+    menu = menu.separator();
+    if !m.content.is_empty() {
+        let t = m.content.clone();
+        menu = menu.item(MenuItem::new("copy-text", "Copy text").icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(t.clone())));
+    }
+    if perms.pin && is_user_message(m) {
+        let pin = !m.pinned;
+        let (label, glyph) = if pin { ("Pin message", &icons::PUSH_PIN_FILL) } else { ("Unpin message", &icons::PUSH_PIN_SLASH_FILL) };
+        let ch = m.channel_id;
+        menu = menu.item(MenuItem::new("pin", label).icon(glyph).on_select(move |s: &mut S| acc(s).intents.push(Intent::Pin { channel: ch, message: id, pin })));
+    }
+    let ch = m.channel_id;
+    menu = menu.item(MenuItem::new("mark-unread", "Mark as unread").icon(&icons::ENVELOPE_OPEN_FILL).on_select(move |s: &mut S| {
+        acc(s).intents.push(Intent::MarkUnread { channel: ch, message: id })
+    }));
+    let link = message_link(st, c, m);
+    menu = menu.item(MenuItem::new("copy-link", "Copy message link").icon(&icons::LINK_BOLD).on_select_tx(move |_: &mut S, tx| tx.copy(link.clone())));
+    if perms.can_delete(m) {
+        let m2 = m.clone();
+        menu = menu.separator().item(
+            MenuItem::new("delete", "Delete message")
+                .icon(&icons::TRASH_FILL)
+                .danger()
+                .on_select_tx(move |s: &mut S, tx: &mut Tx| request_delete(acc(s), &m2, tx.mods().shift)),
+        );
+    }
+    if !perms.dev {
+        return menu;
+    }
+    // Developer mode only; Shift copies `channel-message`, as Fluxer's does.
+    let (cid, mid) = (m.channel_id, m.id);
+    menu.separator().item(MenuItem::new("copy-id", "Copy message ID").icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+        tx.copy(if tx.mods().shift { format!("{cid}-{mid}") } else { mid.to_string() })
+    }))
+}
+
+/// `showDeleteConfirmation`: the `ConfirmModal` with a preview of the message.
+fn delete_modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
+    let close = move |s: &mut S| acc(s).confirm_delete = None;
+    let md = Md { store, guild: store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p };
+    let preview = col()
+        .w_full()
+        .max_h(220.0)
+        .clip_rounded(6.0)
+        .py(8.0)
+        .radius(6.0)
+        .fill(p.background_secondary)
+        .border(1.0, over(p.background_header_secondary, p.background_secondary))
+        .inert()
+        .child(message(store, st, m, true, &md, p, acc));
+    let tip = "Pro tip: Hold Shift while choosing this action to skip this confirmation.";
+    let spans = vec![Span::new(0, 8).weight(700.0).color(p.accent_success)];
+    let body = col()
+        .w_full()
+        .gap(16.0)
+        .child(text("Delete this message? Can't be undone.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+        .child(preview)
+        .child(rich(tip, spans).font(font(13.0, 400.0).lh(18.2)).color(p.text_primary_muted).wrap());
+    let (ch, id) = (m.channel_id, m.id);
+    Modal::new("Delete message", close)
+        .body(body)
+        .footer(
+            row()
+                .gap(8.0)
+                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).key("delete-cancel").on_press(close).el(p))
+                .child(
+                    Button::new("Delete")
+                        .variant(ButtonVariant::Danger)
+                        .key("delete-confirm")
+                        .on_press(move |s: &mut S| {
+                            let st = acc(s);
+                            st.confirm_delete = None;
+                            st.intents.push(Intent::Delete { channel: ch, message: id });
+                        })
+                        .el(p),
+                ),
+        )
+        .el(p)
 }
 
 /// `.container` date divider: 20 tall, 16 above and below, lines on both sides of the date.
@@ -346,7 +645,7 @@ fn author_name(store: &Store, m: &Message) -> String {
     if n.is_empty() { m.author.global_name.clone().unwrap_or_else(|| m.author.username.clone()) } else { n }
 }
 
-fn message(store: &Store, st: &ShellState, m: &Message, head: bool, md: &Md, p: &Palette) -> El {
+fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
     if !is_user_message(m) {
         return system_message(store, m, md, p);
     }
@@ -393,18 +692,84 @@ fn message(store: &Store, st: &ShellState, m: &Message, head: bool, md: &Md, p: 
         ];
         content = content.child(rich(line, spans).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary).truncate());
     }
-    if !m.content.is_empty() {
+    if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
+        content = content.child(editor(edit, m, p, acc));
+    } else if !m.content.is_empty() {
         content = content.child(markdown::render(&m.content, md));
     }
-    if m.edited_timestamp.is_some() {
+    if m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
         // shortcut: "(edited)" sits on its own line under the body instead of inline after it.
         content = content.child(text("(edited)").font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
     }
-    let acc_el = accessories(store, m, p);
+    let acc_el = accessories(store, m, p, acc);
     if let Some(a) = acc_el {
         content = content.child(a);
     }
     root.child(row().w_full().items_start().child(el().w(PAD)).child(gutter).child(el().w(dim::MESSAGE_GUTTER)).child(content))
+}
+
+/// `EditingMessageInput`: the message's text in a composer-like box, then "escape to cancel •
+/// enter to save".
+fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
+    let (id, original) = (m.id, m.content.clone());
+    let field = text_input(edit, font(16.0, 400.0).lh(22.0))
+        .key("edit-field")
+        .w_full()
+        .color(p.text_chat)
+        .caret(p.text_primary, p.text_selection)
+        // A stale field after the edit closed binds a throwaway draft (ID 0 matches no message).
+        .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).editing.get_or_insert_with(|| (Snowflake(0), TextEdit::new(""))).1 })
+        .on_input_key(move |s: &mut S, k, _| {
+            if k.key != Key::Escape {
+                return false;
+            }
+            let st = acc(s);
+            st.editing = None;
+            st.composer.focused = true;
+            true
+        })
+        .on_submit({
+            let original = original.clone();
+            move |s: &mut S, _| save_edit(acc(s), id, &original)
+        });
+    let small = font(12.0, 400.0).lh(16.0);
+    let footer = row()
+        .py(8.0)
+        .center_y()
+        .child(text("escape to ").font(small).color(p.text_chat))
+        .child(text("cancel").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).editing = None))
+        .child(el().size(4.0, 4.0).radius(2.0).fill(p.text_chat_muted).mx(4.0))
+        .child(text("enter to ").font(small).color(p.text_chat))
+        .child(text("save").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| save_edit(acc(s), id, &original)));
+    col()
+        .w_full()
+        .pt(4.0)
+        .child(
+            row()
+                .w_full()
+                .py(dim::FOOTER_BOX_PADDING_Y)
+                .px(16.0)
+                .radius(dim::FOOTER_BOX_RADIUS)
+                .fill(p.background_textarea)
+                .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: p.floating_surface_ring_color_strong, inset: true })
+                .cursor(rune::Cursor::Text)
+                .child(field),
+        )
+        .child(footer)
+}
+
+/// Enter or "save": an emptied edit asks to delete the message instead, as in Fluxer; an
+/// unchanged one just closes.
+fn save_edit(st: &mut ShellState, id: Snowflake, original: &str) {
+    let Some((_, e)) = st.editing.take() else { return };
+    st.composer.focused = true;
+    let content = e.text.trim().to_string();
+    if content.is_empty() {
+        st.confirm_delete = Some(id);
+    } else if content != original.trim() {
+        let channel = st.channel.unwrap_or_default();
+        st.intents.push(Intent::Edit { channel, message: id, content });
+    }
 }
 
 /// The reply bar above a reply: spine from the avatar, mini avatar, name and a one-line preview.
@@ -490,7 +855,7 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
 }
 
 /// `.container`: attachments, embeds, reactions; row-gap 4, padding-block 2.
-fn accessories(store: &Store, m: &Message, p: &Palette) -> Option<El> {
+fn accessories<S: 'static>(store: &Store, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     if m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() {
         return None;
     }
@@ -504,7 +869,7 @@ fn accessories(store: &Store, m: &Message, p: &Palette) -> Option<El> {
         }
     }
     if !m.reactions.is_empty() {
-        c = c.child(reactions(m, p));
+        c = c.child(reactions(m, p, acc));
     }
     Some(c)
 }
@@ -579,7 +944,7 @@ fn embed(e: &Embed, store: &Store, m: &Message, p: &Palette) -> El {
 }
 
 /// `.reactionsGrid`.
-fn reactions(m: &Message, p: &Palette) -> El {
+fn reactions<S: 'static>(m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut grid = row().flex_wrap().gaps(4.0, 0.0).pt(4.0).center_y();
     for r in &m.reactions {
         let (bg, border, fg) = if r.me {
@@ -588,6 +953,7 @@ fn reactions(m: &Message, p: &Palette) -> El {
             (p.background_secondary, Color::TRANSPARENT, p.text_tertiary)
         };
         let glyph = if r.emoji.id.is_some() { format!(":{}:", r.emoji.name) } else { r.emoji.name.clone() };
+        let (m2, e) = (m.clone(), r.emoji.clone());
         grid = grid.child(
             row()
                 .py(3.0)
@@ -600,7 +966,8 @@ fn reactions(m: &Message, p: &Palette) -> El {
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
                 .child(row().min_w(20.0).h(24.0).center().child(text(glyph).font(font(16.0, 400.0).lh(20.0))))
-                .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0)),
+                .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0))
+                .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone())),
         );
     }
     grid
@@ -643,6 +1010,9 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         _ => format!("Message #{}", c.name.clone().unwrap_or_default()),
     };
     let cid = c.id;
+    // The newest own user message, for Up-arrow editing.
+    let me = store.my_id();
+    let last_own = store.messages(cid).iter().rev().find(|m| m.author.id == me && is_user_message(m) && !is_pending(m)).cloned();
     let field = text_input(&st.composer, font(16.0, 400.0).lh(22.0))
         .key("composer")
         .w_full()
@@ -650,27 +1020,27 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .placeholder(placeholder, p.text_tertiary_secondary)
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).composer })
+        .on_input_key(move |s: &mut S, k, _| composer_key(acc(s), cid, k, last_own.as_ref()))
         // Enter sends; Shift+Enter is the field's own newline.
         .on_submit(move |s: &mut S, _| {
             let st = acc(s);
             let content = st.composer.text.trim().to_string();
             if !content.is_empty() {
-                st.intents.push(super::Intent::SendMessage { channel: cid, content });
+                let reply = st.reply.take().filter(|r| r.channel == cid).map(|r| (r.message, r.mention));
+                st.intents.push(Intent::SendMessage { channel: cid, content, reply });
                 st.composer.clear();
+                st.typing_sent = None; // `handleOwnMessageSent`
             }
         });
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
-    let boxed = row()
+    let input_row = row()
         .w_full()
         .min_h(dim::FOOTER_BOX_HEIGHT)
         .py(dim::FOOTER_BOX_PADDING_Y)
         .px(dim::CHAT_HORIZONTAL_PADDING_DEFAULT - dim::FOOTER_BOX_INSET)
         .gap(dim::MESSAGE_GUTTER)
         .items_start()
-        .radius(dim::FOOTER_BOX_RADIUS)
-        .fill(p.background_textarea)
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if st.composer.focused { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true })
         .cursor(rune::Cursor::Text)
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(button(&icons::PLUS_BOLD, "Upload")))
         .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).child(field))
@@ -683,7 +1053,100 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                 .child(button(&icons::STICKER, "Stickers"))
                 .child(button(&icons::SMILEY, "Emojis")),
         );
-    row().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color).child(boxed)
+    let mut boxed = col()
+        .w_full()
+        .radius(dim::FOOTER_BOX_RADIUS)
+        .fill(p.background_textarea)
+        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if st.composer.focused { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
+    if let Some(r) = st.reply.filter(|r| r.channel == cid)
+        && let Some(target) = find(store, cid, r.message)
+    {
+        boxed = boxed.child(reply_bar(store, target, r, p, acc));
+    }
+    row().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color).child(boxed.child(input_row))
+}
+
+/// The composer's own keys: Escape drops the reply, Up in an empty composer edits the last own
+/// message, and typing sends a typing notice at most every 8 s (`TypingSendThrottle`).
+// shortcut: no 1.5 s send delay or stop-typing on clear; the notice goes out at once.
+fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, last_own: Option<&Message>) -> bool {
+    match &k.key {
+        Key::Escape if st.reply.is_some() => {
+            st.reply = None;
+            true
+        }
+        Key::Up if st.composer.text.is_empty() => match last_own {
+            Some(m) => {
+                start_edit(st, m);
+                true
+            }
+            None => false,
+        },
+        Key::Text(_) if !k.mods.cmd => {
+            if st.typing_sent.is_none_or(|(c, at)| c != channel || st.now_ms.saturating_sub(at) >= TYPING_THROTTLE_MS) {
+                st.typing_sent = Some((channel, st.now_ms));
+                st.intents.push(Intent::Typing(channel));
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// `TYPING_ROLLING_THROTTLE_MS`.
+const TYPING_THROTTLE_MS: u64 = 8000;
+
+/// `ChannelReplyBar`: "Replying to **name**", the @ ON/OFF mention toggle and a close button, in
+/// the composer's action stack (`.composerActionStack`).
+fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palette, acc: ShellAccess<S>) -> El {
+    let name = author_name(store, target);
+    let line = format!("Replying to {name}");
+    let spans = vec![Span::new(12, line.len()).weight(600.0)];
+    let mut controls = row().gap(2.0).center_y().min_h(32.0);
+    if target.author.id != store.my_id() {
+        let fg = if r.mention { rgb(96, 165, 250) } else { p.text_primary_muted };
+        controls = controls.child(
+            row()
+                .w(56.0)
+                .h(28.0)
+                .px(8.0)
+                .center()
+                .radius(dim::RADIUS_FULL)
+                .cursor(rune::Cursor::Pointer)
+                .role("switch")
+                .checked(r.mention)
+                .label("Mention replied user")
+                .hover_group()
+                .child(icon(&icons::AT_BOLD, 16.0).color(fg).group_color(if r.mention { fg } else { p.text_primary }).mr(3.0))
+                .child(text(if r.mention { "ON" } else { "OFF" }).font(font(12.0, 600.0)).color(fg).group_color(if r.mention { fg } else { p.text_primary }))
+                .on_press(move |s: &mut S| {
+                    if let Some(r) = &mut acc(s).reply {
+                        r.mention ^= true;
+                    }
+                }),
+        );
+    }
+    controls = controls.child(
+        row()
+            .size(32.0, 32.0)
+            .center()
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label("Cancel reply")
+            .hover_group()
+            .child(icon(&icons::X_CIRCLE_FILL, 16.0).color(p.text_primary_muted).group_color(p.text_primary))
+            .on_press(move |s: &mut S| acc(s).reply = None),
+    );
+    let bg = mix(p.background_textarea, p.background_tertiary, 84.0);
+    row()
+        .w_full()
+        .px(16.0)
+        .center_y()
+        .corners([dim::FOOTER_BOX_RADIUS, dim::FOOTER_BOX_RADIUS, 0.0, 0.0])
+        .fill(bg)
+        .child(rich(line, spans).font(font(13.0, 400.0).lh(16.25)).color(p.text_primary).truncate().grow(1.0).shrink().min_w(0.0))
+        .child(controls)
+        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.floating_surface_ring_color))
 }
 
 #[cfg(test)]
@@ -733,6 +1196,46 @@ mod tests {
         assert_eq!(s[3], Item::Msg { i: 1, head: true, space: 0.0, unread: false });
         assert_eq!(s[4], Item::Msg { i: 2, head: false, space: 0.0, unread: false });
         assert_eq!(s[5], Item::Msg { i: 3, head: true, space: 0.0, unread: true }, "the NEW line replaces the spacing");
+    }
+
+    #[test]
+    fn composer_keys_throttle_typing_and_start_edits() {
+        let ch = Snowflake(5);
+        let key = |k: Key| rune::KeyEvent { key: k, mods: Default::default() };
+        let mut st = ShellState { now_ms: 10_000, ..Default::default() };
+        assert!(!composer_key(&mut st, ch, &key(Key::Text("a".into())), None), "typing still reaches the field");
+        st.now_ms += TYPING_THROTTLE_MS - 1;
+        composer_key(&mut st, ch, &key(Key::Text("b".into())), None);
+        assert_eq!(st.intents, [Intent::Typing(ch)], "one notice per 8 s");
+        st.now_ms += 1;
+        composer_key(&mut st, ch, &key(Key::Text("c".into())), None);
+        assert_eq!(st.intents.len(), 2);
+
+        let mut mine = msg(9, 1, "2026-11-06T12:00:00Z");
+        mine.content = "hi".into();
+        assert!(composer_key(&mut st, ch, &key(Key::Up), Some(&mine)));
+        assert_eq!(st.editing.as_ref().map(|e| (e.0, e.1.text.as_str())), Some((Snowflake(9), "hi")));
+        st.composer = TextEdit::new("draft");
+        st.editing = None;
+        assert!(!composer_key(&mut st, ch, &key(Key::Up), Some(&mine)), "Up only edits from an empty composer");
+
+        st.reply = Some(ReplyTo { channel: ch, message: Snowflake(9), mention: true });
+        assert!(composer_key(&mut st, ch, &key(Key::Escape), None));
+        assert!(st.reply.is_none());
+    }
+
+    #[test]
+    fn saving_an_edit() {
+        let mut st = ShellState { channel: Some(Snowflake(5)), ..Default::default() };
+        st.editing = Some((Snowflake(9), TextEdit::new(" hi ")));
+        save_edit(&mut st, Snowflake(9), "hi");
+        assert!(st.intents.is_empty() && st.editing.is_none(), "unchanged closes");
+        st.editing = Some((Snowflake(9), TextEdit::new("  ")));
+        save_edit(&mut st, Snowflake(9), "hi");
+        assert_eq!(st.confirm_delete, Some(Snowflake(9)), "emptied asks to delete");
+        st.editing = Some((Snowflake(9), TextEdit::new("hey")));
+        save_edit(&mut st, Snowflake(9), "hi");
+        assert_eq!(st.intents, [Intent::Edit { channel: Snowflake(5), message: Snowflake(9), content: "hey".into() }]);
     }
 
     #[test]

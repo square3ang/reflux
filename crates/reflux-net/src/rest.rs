@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{
     ApiError, AuthResponse, AuthToken, CreateMessage, InstanceDiscovery, IpAuthorizationPoll, LoginRequest, Message, MfaTicket,
-    RegisterRequest, Snowflake, TotpLoginRequest, User, UserSettings, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
+    ReactionEmoji, RegisterRequest, Snowflake, TotpLoginRequest, User, UserSettings, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
 };
 use reqwest::{Method, StatusCode, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -228,6 +228,55 @@ impl Client {
     pub async fn send_message(&self, channel: Snowflake, msg: &CreateMessage) -> Result<Message> {
         self.request(Method::POST, &format!("/channels/{channel}/messages"), Some(msg)).await
     }
+
+    // --- Message actions (`http-api/messages.mdx`) ---
+
+    /// Changes only the text; other fields stay.
+    pub async fn edit_message(&self, channel: Snowflake, id: Snowflake, content: &str) -> Result<Message> {
+        let body = serde_json::json!({ "content": content });
+        self.request(Method::PATCH, &format!("/channels/{channel}/messages/{id}"), Some(&body)).await
+    }
+
+    pub async fn delete_message(&self, channel: Snowflake, id: Snowflake) -> Result<()> {
+        self.empty(Method::DELETE, &format!("/channels/{channel}/messages/{id}"), None).await
+    }
+
+    pub async fn set_pinned(&self, channel: Snowflake, id: Snowflake, pinned: bool) -> Result<()> {
+        let m = if pinned { Method::PUT } else { Method::DELETE };
+        self.empty(m, &format!("/channels/{channel}/pins/{id}"), None).await
+    }
+
+    /// Adds or removes the current user's reaction.
+    pub async fn set_reaction(&self, channel: Snowflake, id: Snowflake, emoji: &ReactionEmoji, add: bool) -> Result<()> {
+        let m = if add { Method::PUT } else { Method::DELETE };
+        let e = reaction_path(emoji);
+        self.empty(m, &format!("/channels/{channel}/messages/{id}/reactions/{e}/@me"), None).await
+    }
+
+    /// 204, or 200 with slowmode details we don't use.
+    pub async fn typing(&self, channel: Snowflake) -> Result<()> {
+        self.empty(Method::POST, &format!("/channels/{channel}/typing"), None).await
+    }
+
+    /// Marks the channel read up to `id`; `manual` moves the marker back (mark as unread).
+    pub async fn ack_message(&self, channel: Snowflake, id: Snowflake, manual: bool) -> Result<()> {
+        let body = serde_json::json!({ "mention_count": 0, "manual": manual });
+        self.empty(Method::POST, &format!("/channels/{channel}/messages/{id}/ack"), Some(&body)).await
+    }
+
+    /// A request whose response body (if any) is ignored.
+    async fn empty(&self, method: Method, path: &str, body: Option<&serde_json::Value>) -> Result<()> {
+        self.request::<serde_json::Value, _>(method, path, body).await.map(drop)
+    }
+}
+
+/// The `{emoji}` path value: `name:id` for a custom emoji, else the URL-encoded character.
+fn reaction_path(e: &ReactionEmoji) -> String {
+    let raw = match e.id {
+        Some(id) => format!("{}:{id}", e.name),
+        None => e.name.clone(),
+    };
+    url::form_urlencoded::byte_serialize(raw.as_bytes()).collect()
 }
 
 fn secs(s: f64) -> Duration {
@@ -278,6 +327,14 @@ impl RateLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reaction_paths() {
+        let thumbs = ReactionEmoji { name: "👍".into(), ..Default::default() };
+        assert_eq!(reaction_path(&thumbs), "%F0%9F%91%8D");
+        let custom = ReactionEmoji { name: "fluxer".into(), id: Some(Snowflake(77)), ..Default::default() };
+        assert_eq!(reaction_path(&custom), "fluxer%3A77");
+    }
 
     #[test]
     fn route_and_global_buckets() {

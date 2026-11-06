@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use rune::{Color, El, Icon, col, el, icon, row, text};
+use rune::{Color, El, Icon, Tx, col, el, icon, row, text};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, anchor_at_point, popout_shadow};
 use super::{mix, over};
@@ -29,7 +29,7 @@ pub struct MenuItem<S: 'static> {
     danger: bool,
     disabled: bool,
     check: Check,
-    on_select: Option<Rc<dyn Fn(&mut S)>>,
+    on_select: Option<Rc<dyn Fn(&mut S, &mut Tx)>>,
 }
 
 impl<S: 'static> MenuItem<S> {
@@ -54,7 +54,9 @@ impl<S: 'static> MenuItem<S> {
     pub fn checkbox(mut self, on: bool) -> Self { self.check = Check::Checkbox(on); self }
     pub fn radio(mut self, on: bool) -> Self { self.check = Check::Radio(on); self }
     /// Runs after the menu closes.
-    pub fn on_select(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_select = Some(Rc::new(f)); self }
+    pub fn on_select(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_select = Some(Rc::new(move |s, _| f(s))); self }
+    /// [`Self::on_select`] with the press's `Tx` (clipboard writes, Shift-click).
+    pub fn on_select_tx(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self { self.on_select = Some(Rc::new(f)); self }
 }
 
 pub enum MenuEntry<S: 'static> {
@@ -88,7 +90,7 @@ impl<S: 'static> Menu<S> {
     }
 
     /// Pushes the menu into `layer` while [`Popups`] says it is open.
-    pub fn el(self, popups: &Popups, access: PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) {
+    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) {
         if !popups.is_open(&self.id) {
             return;
         }
@@ -101,7 +103,7 @@ impl<S: 'static> Menu<S> {
     }
 }
 
-fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: PopupAccess<S>, p: &Palette, top: bool) -> El {
+fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, top: bool) -> El {
     let bg = p.form_surface_background;
     let mut c = col()
         .min_w(208.0)
@@ -186,7 +188,7 @@ fn label_text(l: &str, c: Color) -> El {
     text(l).font(font(13.0, 500.0).lh(18.0)).color(c).truncate().grow(1.0).shrink()
 }
 
-fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: PopupAccess<S>, p: &Palette, top: bool) -> El {
+fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p: &Palette, top: bool) -> El {
     let fg = if it.disabled {
         p.interactive_muted
     } else if it.danger {
@@ -240,10 +242,10 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: PopupAccess<S>, p: &Pal
         return r.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
     }
     let f = it.on_select;
-    r.on_press(move |s: &mut S| {
+    r.on_press_tx(move |s: &mut S, tx| {
         access(s).close();
         if let Some(f) = &f {
-            f(s);
+            f(s, tx);
         }
     })
 }

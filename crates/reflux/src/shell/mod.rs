@@ -7,6 +7,7 @@
 
 mod chat;
 pub mod demo;
+mod emoji;
 mod guilds;
 mod markdown;
 mod members;
@@ -14,12 +15,12 @@ mod sidebar;
 
 use std::collections::HashSet;
 
-use reflux_model::{ChannelType, Snowflake, Status as PresenceStatus};
+use reflux_model::{ChannelType, ReactionEmoji, Snowflake, Status as PresenceStatus};
 use reflux_store::Store;
 use rune::{Color, El, Icon, Image, ImageCache, TextEdit, Waker, col, el, row};
 
 use crate::theme::{Palette, dim};
-use crate::ui::{Avatar, Status, over, rgb};
+use crate::ui::{Avatar, Popups, Status, over, rgb};
 
 /// What the shell asks the runtime to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -28,12 +29,30 @@ pub enum Intent {
     SelectGuild(Option<Snowflake>),
     /// Fetch its newest messages if none are loaded; ack it.
     SelectChannel(Snowflake),
-    SendMessage { channel: Snowflake, content: String },
+    /// `reply`: the message replied to and whether to ping its author.
+    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)> },
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
+    /// The user typed in the composer (already throttled by the shell).
+    Typing(Snowflake),
+    /// Move the read marker back so `message` and everything after it is unread.
+    MarkUnread { channel: Snowflake, message: Snowflake },
+    React { channel: Snowflake, message: Snowflake, emoji: ReactionEmoji, add: bool },
+    Edit { channel: Snowflake, message: Snowflake, content: String },
+    Delete { channel: Snowflake, message: Snowflake },
+    Pin { channel: Snowflake, message: Snowflake, pin: bool },
     /// A partial user settings object: apply it now and `PATCH /users/@me/settings`.
     PatchSettings(serde_json::Value),
     Logout,
+}
+
+/// The composer's "Replying to …" target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReplyTo {
+    pub channel: Snowflake,
+    pub message: Snowflake,
+    /// Ping the author (the bar's @ ON/OFF toggle).
+    pub mention: bool,
 }
 
 /// UI-only state of the shell.
@@ -51,6 +70,29 @@ pub struct ShellState {
     /// `assets/media/images/avatars/{0..5}.png`, picked by user ID % 6.
     pub default_avatars: Vec<Image>,
     pub intents: Vec<Intent>,
+    /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
+    pub popups: Popups,
+    /// The message under the pointer (shows its action bar).
+    pub hover_msg: Option<Snowflake>,
+    /// The message the open menu or picker belongs to (keeps its action bar up).
+    pub active_msg: Option<Snowflake>,
+    pub reply: Option<ReplyTo>,
+    /// The message being edited inline and its draft.
+    pub editing: Option<(Snowflake, TextEdit)>,
+    /// The message waiting on the delete confirmation.
+    pub confirm_delete: Option<Snowflake>,
+    pub emoji_query: TextEdit,
+    /// When the last typing notice went out, and for which channel (`TypingSendThrottle`).
+    pub typing_sent: Option<(Snowflake, u64)>,
+    /// The message list shows its newest row (read states may be acked).
+    pub at_bottom: bool,
+    /// Where the red NEW line stays after the channel was acked while open (Fluxer's sticky
+    /// unread marker), and channels marked unread by hand, which aren't acked again until
+    /// they're reopened.
+    pub sticky_unread: Option<(Snowflake, Snowflake)>,
+    pub hold_ack: Option<Snowflake>,
+    /// Instance web app origin, for message links (`https://web.fluxer.app`).
+    pub web_base: String,
     /// The user settings modal, when open.
     pub settings: Option<crate::settings::SettingsUi>,
     /// The instance shows Billing tabs (`shouldShowPremiumFeatures`).
@@ -69,6 +111,18 @@ impl Default for ShellState {
             now_ms: 0,
             default_avatars: Vec::new(),
             intents: Vec::new(),
+            popups: Popups::default(),
+            hover_msg: None,
+            active_msg: None,
+            reply: None,
+            editing: None,
+            confirm_delete: None,
+            emoji_query: TextEdit::new(""),
+            typing_sent: None,
+            at_bottom: true,
+            sticky_unread: None,
+            hold_ack: None,
+            web_base: String::new(),
             settings: None,
             premium: false,
         }
@@ -89,6 +143,8 @@ impl ShellState {
     pub fn select_channel(&mut self, channel: Snowflake) {
         if self.channel != Some(channel) {
             self.composer = TextEdit::new("");
+            (self.reply, self.editing, self.sticky_unread, self.hold_ack) = (None, None, None, None);
+            self.at_bottom = true;
         }
         self.channel = Some(channel);
         self.intents.push(Intent::SelectChannel(channel));
@@ -125,6 +181,7 @@ pub fn first_channel(store: &Store, guild: Snowflake) -> Option<Snowflake> {
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let divider = over(p.user_area_divider_color, p.background_secondary);
     let channel = st.channel.and_then(|c| store.channels.get(&c));
+    let mut layer = Vec::new();
     let side = match st.guild {
         Some(g) => sidebar::guild(store, st, g, p, acc),
         None => sidebar::home(store, st, p, acc),
@@ -138,7 +195,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .min_h(0.0)
             .fill(p.background_secondary_lighter)
             .child(side)
-            .child(chat::main(store, st, channel, p, acc))
+            .child(chat::main(store, st, channel, p, acc, &mut layer))
             .child(el().pin(Some(dim::LAYOUT_SIDEBAR_WIDTH), Some(0.0), None, Some(0.0)).w(1.0).fill(divider)),
     );
     let body = row()
@@ -148,7 +205,6 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let mut layer = Vec::new();
     if let Some(ui) = &st.settings {
         layer.push(crate::settings::view(store, st, ui, p, st.premium, acc));
     }

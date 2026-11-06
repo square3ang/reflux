@@ -23,7 +23,7 @@ pub use input::Input;
 pub use menu::{Menu, MenuEntry, MenuItem};
 pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller};
 pub use modal::{Modal, ModalSize};
-pub use overlay::{Placement, PopupAccess, Popups, Tooltip};
+pub use overlay::{Placement, PopupAccess, Popups, Tooltip, popup_access};
 pub use select::Select;
 
 /// Whether a palette is the light theme (its primary text is dark).
