@@ -2,6 +2,7 @@ mod app;
 mod icons;
 mod login;
 mod session;
+mod settings;
 mod shell;
 mod theme;
 #[allow(dead_code, unused_imports)] // the kit exposes variants the screens don't use yet

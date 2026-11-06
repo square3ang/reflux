@@ -31,6 +31,9 @@ pub enum Intent {
     SendMessage { channel: Snowflake, content: String },
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
+    /// A partial user settings object: apply it now and `PATCH /users/@me/settings`.
+    PatchSettings(serde_json::Value),
+    Logout,
 }
 
 /// UI-only state of the shell.
@@ -48,6 +51,10 @@ pub struct ShellState {
     /// `assets/media/images/avatars/{0..5}.png`, picked by user ID % 6.
     pub default_avatars: Vec<Image>,
     pub intents: Vec<Intent>,
+    /// The user settings modal, when open.
+    pub settings: Option<crate::settings::SettingsUi>,
+    /// The instance shows Billing tabs (`shouldShowPremiumFeatures`).
+    pub premium: bool,
 }
 
 impl Default for ShellState {
@@ -62,6 +69,8 @@ impl Default for ShellState {
             now_ms: 0,
             default_avatars: Vec::new(),
             intents: Vec::new(),
+            settings: None,
+            premium: false,
         }
     }
 }
@@ -132,13 +141,18 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(chat::main(store, st, channel, p, acc))
             .child(el().pin(Some(dim::LAYOUT_SIDEBAR_WIDTH), Some(0.0), None, Some(0.0)).w(1.0).fill(divider)),
     );
-    row()
+    let body = row()
         .w_full()
         .h_full()
         .fill(p.background_secondary)
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
-        .child(sidebar::user_area(store, st, p))
+        .child(sidebar::user_area(store, st, p, acc));
+    let mut layer = Vec::new();
+    if let Some(ui) = &st.settings {
+        layer.push(crate::settings::view(store, st, ui, p, st.premium, acc));
+    }
+    rune_kit::root(body, layer)
 }
 
 // ---- Shared bits -------------------------------------------------------------------------------
@@ -152,7 +166,7 @@ fn role_color(c: u32) -> Color {
     rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
-fn presence(store: &Store, user: Snowflake) -> Status {
+pub(crate) fn presence(store: &Store, user: Snowflake) -> Status {
     let s = store.presences.get(&user).map(|p| p.status);
     match s {
         Some(PresenceStatus::Online) => Status::Online,
@@ -164,7 +178,7 @@ fn presence(store: &Store, user: Snowflake) -> Status {
 
 /// An avatar: the default image for now (custom avatars need the media proxy).
 // shortcut: custom avatar hashes are ignored; load them through the runtime's image cache.
-fn avatar(st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
+pub(crate) fn avatar(st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
     let px = st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels());
     Avatar::new(size).pixels(px).status(status).surface(surface).el(p)
 }

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{
     ApiError, AuthResponse, AuthToken, CreateMessage, InstanceDiscovery, IpAuthorizationPoll, LoginRequest, Message, MfaTicket,
-    RegisterRequest, Snowflake, TotpLoginRequest, User, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
+    RegisterRequest, Snowflake, TotpLoginRequest, User, UserSettings, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
 };
 use reqwest::{Method, StatusCode, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -206,6 +206,11 @@ impl Client {
 
     pub async fn current_user(&self) -> Result<User> {
         self.get("/users/@me").await
+    }
+
+    /// `PATCH /users/@me/settings` with a partial settings object; returns the full settings.
+    pub async fn update_settings(&self, patch: &serde_json::Value) -> Result<UserSettings> {
+        self.request(Method::PATCH, "/users/@me/settings", Some(patch)).await
     }
 
     /// Newest first; `limit` is 1-100.

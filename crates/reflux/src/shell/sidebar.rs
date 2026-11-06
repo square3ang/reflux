@@ -266,7 +266,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
 }
 
 /// `.userAreaWrapper` + `.userAreaContainer`, floating over the rail and sidebar bottoms.
-pub fn user_area(store: &Store, st: &ShellState, p: &Palette) -> El {
+pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let me = store.my_id();
     let user = store.me.as_ref().map(|u| &u.base);
     let name = user.map_or(String::new(), |u| u.global_name.clone().unwrap_or_else(|| u.username.clone()));
@@ -318,7 +318,7 @@ pub fn user_area(store: &Store, st: &ShellState, p: &Palette) -> El {
         .center_y()
         .child(control(&icons::MICROPHONE, "Mute"))
         .child(control(&icons::SPEAKER_HIGH, "Deafen"))
-        .child(control(&icons::GEAR, "User Settings"));
+        .child(control(&icons::GEAR, "User Settings").on_press(move |s: &mut S| acc(s).settings = Some(crate::settings::SettingsUi::new(None))));
     // --user-area-avatar-lead = max(8, 72/2 - 6 - 32/2) = 14.
     let lead = (dim::LAYOUT_GUILD_LIST_WIDTH / 2.0 - dim::FOOTER_BOX_INSET - 16.0).max(dim::FOOTER_BOX_INNER_INSET);
     let inner = row()

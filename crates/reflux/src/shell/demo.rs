@@ -152,7 +152,7 @@ impl Demo {
             "READY",
             json!({
                 "session_id": "demo",
-                "user": {"id": ME.to_string(), "username": "square", "global_name": "Square"},
+                "user": {"id": ME.to_string(), "username": "square", "global_name": "Square", "email": "square@example.com"},
                 "users": [user(1001, "ada", "Ada Lovelace"), user(1002, "linus", "Linus"), user(1003, "grace", "Grace Hopper"),
                           user(1004, "alan", "Alan Turing"), user(1005, "margaret", "Margaret Hamilton"),
                           user(1006, "ken", "Ken Thompson"), user(1007, "fluxbot", "Fluxbot")],
@@ -227,7 +227,15 @@ impl Demo {
         apply("MESSAGE_ACK", json!({"channel_id": GENERAL.to_string(), "message_id": ack, "mention_count": 1, "manual": true}));
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
-        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, ..ShellState::default() };
+        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, ..ShellState::default() };
+        // `--settings[=tab]` opens user settings; `--theme=light|coal` sets the account theme.
+        for a in rune::extra_args() {
+            if let Some(t) = a.strip_prefix("--theme=") {
+                store.settings.theme = t.to_owned();
+            } else if a == "--settings" || a.starts_with("--settings=") {
+                shell.settings = Some(crate::settings::SettingsUi::new(a.strip_prefix("--settings=")));
+            }
+        }
         if rune::extra_args().iter().any(|a| a == "--shell-home") {
             (shell.guild, shell.channel) = (None, Some(Snowflake(8001)));
         }
@@ -246,7 +254,7 @@ fn acc(s: &mut State) -> &mut ShellState {
 }
 
 pub fn view(d: &Demo) -> El {
-    super::view(&d.store, &d.shell, theme::palette(Kind::Dark), acc)
+    super::view(&d.store, &d.shell, theme::palette(Kind::from_setting(&d.store.settings.theme)), acc)
 }
 
 #[cfg(test)]

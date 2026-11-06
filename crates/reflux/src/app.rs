@@ -456,6 +456,8 @@ fn fetch_older(s: &State, channel: Snowflake) {
 /// Runs what the shell queued since the last frame; true when anything ran.
 pub fn poll(s: &mut State) -> bool {
     s.app.shell.now_ms = now_ms();
+    let f = s.app.instance.as_ref().map(|i| &i.discovery.features);
+    s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
     for i in intents {
@@ -465,6 +467,8 @@ pub fn poll(s: &mut State) -> bool {
             Intent::SelectChannel(c) => act(s, Action::SelectChannel(c)),
             Intent::SendMessage { channel, content } => act(s, Action::SendMessage { channel, content }),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
+            Intent::PatchSettings(v) => crate::settings::patch(s, v),
+            Intent::Logout => act(s, Action::Logout),
         }
     }
     ran
@@ -522,7 +526,7 @@ fn iso8601(ms: u64) -> String {
 
 /// Auth, connecting screen, or the shell.
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let p = theme::palette(theme::Kind::Dark);
+    let p = theme::palette(theme::Kind::from_setting(&s.app.store.settings.theme));
     let body = match s.app.route {
         Route::Auth => return crate::login::view(s, cx),
         Route::Connecting => {

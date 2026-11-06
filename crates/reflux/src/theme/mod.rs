@@ -13,6 +13,18 @@ pub enum Kind {
     Coal,
 }
 
+impl Kind {
+    /// The palette for a user settings `theme` value. `dark_legacy` and `system` have no palette
+    /// here yet and use dark.
+    pub fn from_setting(value: &str) -> Kind {
+        match value {
+            "light" => Kind::Light,
+            "coal" => Kind::Coal,
+            _ => Kind::Dark,
+        }
+    }
+}
+
 static DARK: LazyLock<Palette> = LazyLock::new(palette::dark);
 static LIGHT: LazyLock<Palette> = LazyLock::new(palette::light);
 static COAL: LazyLock<Palette> = LazyLock::new(palette::coal);
