@@ -74,6 +74,10 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
     if !me && dm.is_none() {
         m = m.item(MenuItem::new("message", "Message").icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user))));
     }
+    // shortcut: only your own nickname (CHANGE_NICKNAME); MANAGE_NICKNAMES on others isn't offered.
+    if let Some(g) = guild.filter(|&g| me && crate::guild::can(store, g, reflux_model::Permissions::CHANGE_NICKNAME)) {
+        m = m.item(MenuItem::new("nickname", "Change nickname").icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
+    }
     if !me {
         m = m.separator().item(MenuItem::new("note", "Add note").icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true))).separator();
         let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());

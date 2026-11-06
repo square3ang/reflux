@@ -15,16 +15,19 @@ pub struct Input<'a, S: 'static> {
     error: Option<&'a str>,
     /// Password field: whether it is revealed, and the toggle.
     password: Option<(bool, fn(&mut S))>,
+    /// Masked without the reveal button.
+    secure: bool,
 }
 
 impl<'a, S: 'static> Input<'a, S> {
     pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
-        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None }
+        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
     pub fn error(mut self, e: Option<&'a str>) -> Self { self.error = e; self }
     pub fn password(mut self, revealed: bool, toggle: fn(&mut S)) -> Self { self.password = Some((revealed, toggle)); self }
+    pub fn secure(mut self) -> Self { self.secure = true; self }
 
     pub fn el(self, p: &Palette) -> El {
         let style = font(14.0, 400.0).lh(20.0);
@@ -42,6 +45,9 @@ impl<'a, S: 'static> Input<'a, S> {
             });
         if let Some(l) = self.label {
             field = field.label(l);
+        }
+        if self.secure {
+            field = field.secure();
         }
         let border = if self.error.is_some() {
             p.status_danger

@@ -159,7 +159,7 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         return false;
     }
     match a {
-        ShowKeybinds => sh.settings = Some(crate::settings::SettingsUi::new(Some("keybinds"))),
+        ShowKeybinds => sh.open_settings(Some("keybinds")),
         GuildPrev | GuildNext => {
             let rail = rail(store);
             let i = rail.iter().position(|g| *g == sh.guild).unwrap_or(0);

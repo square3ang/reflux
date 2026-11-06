@@ -204,7 +204,7 @@ mod target {
         sh.member_list = true;
         if scene == "settings" {
             let tab = std::env::var("REFLUX_LIVE_TAB").ok().map(|t| &*t.leak());
-            sh.settings = Some(crate::settings::SettingsUi::new(tab));
+            sh.open_settings(tab);
         }
         Some(t)
     }

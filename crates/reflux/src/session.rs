@@ -1,5 +1,7 @@
 //! What survives a restart: the chosen instance, the session token and the installation ID, as
-//! JSON in the platform config dir (`$REFLUX_CONFIG_DIR` overrides it).
+//! JSON in the platform config dir (`$REFLUX_CONFIG_DIR` overrides it). Tokens go to the OS
+//! keyring when it has one (like the official app's `DesktopAppStorage`), else stay in the 0600
+//! file; a token found in the file is moved into the keyring on the next save.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -14,7 +16,8 @@ pub const DEFAULT_INSTANCE: &str = "fluxer.com";
 pub struct Saved {
     /// What the user typed in the instance picker (normalized host or URL).
     pub instance: String,
-    // shortcut: plain file with 0600, move the token to the OS keyring (keyring crate) later.
+    /// In the file only when the keyring is unavailable (see [`save`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     /// 32 lowercase hex chars, like `ClientInstallationId.ts`.
     pub installation_id: String,
@@ -28,6 +31,116 @@ pub struct Saved {
     /// The token was imported from the Fluxer desktop app: logging out only forgets it here,
     /// since revoking it would sign that app out too.
     pub imported: bool,
+    /// Who the active session is (filled on READY), for the account switcher.
+    pub current: Option<Account>,
+    /// The other signed-in accounts (`AccountSwitcherModal`), most recent first.
+    pub accounts: Vec<Account>,
+}
+
+/// A signed-in account the switcher can go back to.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Account {
+    pub instance: String,
+    pub user_id: String,
+    pub username: String,
+    pub display_name: String,
+    pub avatar: Option<String>,
+    /// In the file only when the keyring is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    pub imported: bool,
+}
+
+impl Account {
+    fn slot(&self) -> String {
+        format!("account:{}:{}", self.instance, self.user_id)
+    }
+}
+
+impl Saved {
+    /// Moves the active session (if any) to the top of [`Self::accounts`] and signs it out here.
+    pub fn stash_current(&mut self) {
+        let current = self.current.take();
+        let Some(token) = self.token.take() else { return };
+        let a = Account { instance: self.instance.clone(), token: Some(token), imported: std::mem::take(&mut self.imported), ..current.unwrap_or_default() };
+        self.accounts.retain(|x| x.slot() != a.slot());
+        self.accounts.insert(0, a);
+    }
+
+    /// Makes stored account `i` the active session, stashing the current one.
+    pub fn switch_to(&mut self, i: usize) -> bool {
+        if i >= self.accounts.len() {
+            return false;
+        }
+        let a = self.accounts.remove(i);
+        self.stash_current();
+        (self.instance, self.token, self.imported) = (a.instance.clone(), a.token.clone(), a.imported);
+        self.current = Some(Account { token: None, ..a });
+        true
+    }
+
+    /// Forgets stored account `i` (its keyring entry too).
+    pub fn remove_account(&mut self, i: usize) {
+        if i < self.accounts.len() {
+            let a = self.accounts.remove(i);
+            secret_set(&a.slot(), None);
+        }
+    }
+}
+
+// ---- Keyring --------------------------------------------------------------------------------
+
+/// Values last written to (or read from) the keyring by slot, so unchanged saves skip D-Bus.
+static SECRETS: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> = std::sync::Mutex::new(None);
+
+fn keyring_on() -> bool {
+    !cfg!(test) && std::env::var_os("REFLUX_NO_KEYRING").is_none()
+}
+
+/// One keyring entry per config dir and slot, so separate profiles don't share tokens.
+fn entry(slot: &str) -> Option<keyring::Entry> {
+    let dir = path()?.parent()?.display().to_string();
+    keyring::Entry::new("reflux", &format!("{dir}#{slot}")).ok()
+}
+
+/// Stores (or with `None` deletes) a secret; false when the keyring can't be used.
+fn secret_set(slot: &str, value: Option<&str>) -> bool {
+    if !keyring_on() {
+        return false;
+    }
+    let mut cache = SECRETS.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = cache.get_or_insert_default();
+    if cache.get(slot).is_some_and(|v| v.as_deref() == value) {
+        return true;
+    }
+    let Some(e) = entry(slot) else { return false };
+    let r = match value {
+        Some(v) => e.set_password(v),
+        None => match e.delete_credential() {
+            Err(keyring::Error::NoEntry) => Ok(()),
+            r => r,
+        },
+    };
+    match r {
+        Ok(()) => {
+            cache.insert(slot.to_owned(), value.map(str::to_owned));
+            true
+        }
+        Err(err) => {
+            eprintln!("reflux: keyring unavailable, keeping the token in the session file: {err}");
+            false
+        }
+    }
+}
+
+fn secret_get(slot: &str) -> Option<String> {
+    if !keyring_on() {
+        return None;
+    }
+    let v = entry(slot)?.get_password().ok();
+    SECRETS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default().insert(slot.to_owned(), v.clone());
+    v
 }
 
 fn path() -> Option<PathBuf> {
@@ -38,6 +151,15 @@ fn path() -> Option<PathBuf> {
 /// Reads the saved session, filling in the default instance and a new installation ID.
 pub fn load() -> Saved {
     let mut s: Saved = path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    // A token still in the file wins (older versions, or no keyring then); `save` moves it.
+    if s.token.is_none() {
+        s.token = secret_get("session");
+    }
+    for a in &mut s.accounts {
+        if a.token.is_none() {
+            a.token = secret_get(&a.slot());
+        }
+    }
     if s.instance.is_empty() {
         s.instance = DEFAULT_INSTANCE.into();
     }
@@ -51,6 +173,16 @@ pub fn load() -> Saved {
 /// Writes atomically (temp file + rename), owner-only on Unix. Failures are logged, not fatal.
 pub fn save(s: &Saved) {
     let Some(path) = path() else { return };
+    // Tokens the keyring took stay out of the file.
+    let mut s = s.clone();
+    if secret_set("session", s.token.as_deref()) {
+        s.token = None;
+    }
+    for a in &mut s.accounts {
+        if a.token.is_some() && secret_set(&a.slot(), a.token.as_deref()) {
+            a.token = None;
+        }
+    }
     let result = (|| -> std::io::Result<()> {
         std::fs::create_dir_all(path.parent().unwrap())?;
         let tmp = path.with_extension("json.tmp");
@@ -59,7 +191,7 @@ pub fn save(s: &Saved) {
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
         let mut f = opts.open(&tmp)?;
-        f.write_all(&serde_json::to_vec_pretty(s)?)?;
+        f.write_all(&serde_json::to_vec_pretty(&s)?)?;
         f.sync_all()?;
         std::fs::rename(&tmp, &path)
     })();
@@ -146,6 +278,25 @@ mod tests {
         let s = import_fluxer_desktop(&db).unwrap();
         assert_eq!((s.instance.as_str(), s.token.as_deref()), ("a.example", Some("tok-a")), "the active account wins");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn switching_accounts_swaps_the_active_session() {
+        let me = |id: &str| Account { user_id: id.into(), username: format!("u{id}"), ..Default::default() };
+        let mut s = Saved { instance: "a.example".into(), token: Some("ta".into()), current: Some(me("1")), ..Default::default() };
+        s.stash_current();
+        assert_eq!((s.token.as_deref(), s.current.is_none()), (None, true), "add account: signed out here");
+        assert_eq!((s.accounts[0].instance.as_str(), s.accounts[0].token.as_deref()), ("a.example", Some("ta")));
+        // Signed in to a second account on another instance.
+        (s.instance, s.token, s.current) = ("b.example".into(), Some("tb".into()), Some(me("2")));
+        assert!(s.switch_to(0));
+        assert_eq!((s.instance.as_str(), s.token.as_deref(), s.current.as_ref().unwrap().user_id.as_str()), ("a.example", Some("ta"), "1"));
+        assert_eq!(s.accounts.len(), 1);
+        assert_eq!((s.accounts[0].instance.as_str(), s.accounts[0].token.as_deref()), ("b.example", Some("tb")));
+        assert!(s.current.as_ref().unwrap().token.is_none(), "the active token lives in `token` only");
+        assert!(!s.switch_to(5));
+        s.remove_account(0);
+        assert!(s.accounts.is_empty());
     }
 
     #[test]

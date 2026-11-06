@@ -72,15 +72,17 @@ pub struct Menu<S: 'static> {
     id: String,
     entries: Vec<MenuEntry<S>>,
     placement: Placement,
+    min_w: f32,
 }
 
 impl<S: 'static> Menu<S> {
     /// Opens over the element keyed `id` (a popout menu), or at [`Popups::at`] (a context menu,
     /// see [`Popups::open_at`]).
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), entries: Vec::new(), placement: Placement::BottomStart }
+        Self { id: id.into(), entries: Vec::new(), placement: Placement::BottomStart, min_w: 208.0 }
     }
     pub fn placement(mut self, p: Placement) -> Self { self.placement = p; self }
+    pub fn min_w(mut self, w: f32) -> Self { self.min_w = w; self }
     pub fn item(mut self, i: MenuItem<S>) -> Self { self.entries.push(MenuEntry::Item(i)); self }
     pub fn separator(mut self) -> Self { self.entries.push(MenuEntry::Separator); self }
     pub fn group(mut self, label: impl Into<String>) -> Self { self.entries.push(MenuEntry::Group(label.into())); self }
@@ -94,7 +96,7 @@ impl<S: 'static> Menu<S> {
         if !popups.is_open(&self.id) {
             return;
         }
-        let m = surface(&self.id, self.entries, popups, access, p, true).modal(true, move |s: &mut S| access(s).close());
+        let m = surface(&self.id, self.entries, popups, access, p, true).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
         let m = match popups.at {
             Some(at) => anchor_at_point(layer, m, &self.id, at),
             None => anchor(m, &self.id, self.placement, 4.0),

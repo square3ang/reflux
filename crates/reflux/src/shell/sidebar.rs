@@ -516,6 +516,13 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .h(32.0)
         .gap(dim::SPACING_2)
         .center_y()
+        .key(super::status::MENU)
+        .radius(dim::RADIUS_MD)
+        .hover(p.background_modifier_hover)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label("User area")
+        .on_press(move |s: &mut S| acc(s).popups.toggle(super::status::MENU))
         .child(avatar(store, st, me, 32.0, Some(dot), surface, p))
         .child(
             col()
@@ -537,7 +544,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .center_y()
         .child(mic)
         .child(speaker)
-        .child(control(&icons::GEAR, "User Settings", false, false).on_press(move |s: &mut S| acc(s).settings = Some(crate::settings::SettingsUi::new(None))));
+        .child(control(&icons::GEAR, "User Settings", false, false).on_press(move |s: &mut S| acc(s).open_settings(None)));
     // --user-area-avatar-lead = max(8, 72/2 - 6 - 32/2) = 14.
     let lead = (dim::LAYOUT_GUILD_LIST_WIDTH / 2.0 - dim::FOOTER_BOX_INSET - 16.0).max(dim::FOOTER_BOX_INNER_INSET);
     let user_row = row()

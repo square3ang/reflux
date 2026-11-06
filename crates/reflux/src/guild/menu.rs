@@ -61,13 +61,7 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     }
     items.push(item("Notification settings", &icons::BELL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))));
     items.push(item("Privacy settings", &icons::SHIELD, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))));
-    // shortcut: Reflux's profile tab has no per-community profile editor yet; this opens the
-    // account profile.
-    items.push(item("Edit community profile", &icons::USER_CIRCLE, false, p).on_press(move |s: &mut S| {
-        let sh = acc(s);
-        sh.popups.close();
-        sh.settings = Some(crate::settings::SettingsUi::new(Some("my_profile")));
-    }));
+    items.push(item("Edit community profile", &icons::USER_CIRCLE, false, p).on_press(move |s: &mut S| acc(s).open_community_profile(g)));
     let hide = store.guild_settings.get(&Some(g)).is_some_and(|s| s.hide_muted_channels);
     let toggle_hide = move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: json!({ "hide_muted_channels": !hide }) });
     items.push(

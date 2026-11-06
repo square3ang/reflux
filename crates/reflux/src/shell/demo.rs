@@ -317,7 +317,7 @@ impl Demo {
             if let Some(t) = a.strip_prefix("--theme=") {
                 store.settings.theme = t.to_owned();
             } else if a == "--settings" || a.starts_with("--settings=") {
-                shell.settings = Some(crate::settings::SettingsUi::new(a.strip_prefix("--settings=")));
+                shell.open_settings(a.strip_prefix("--settings="));
             }
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--msg-scene=")) {
@@ -347,6 +347,10 @@ impl Demo {
                 shell.open_user_menu(t, at, "member-1001".into(), crate::ui::Placement::LeftStart);
             }
         }
+        account_fixtures(&mut shell, &store, now);
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--account-ui=")) {
+            account_scene(&mut shell, sc);
+        }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--guild-ui=")) {
             guild_scene(&mut shell, sc);
         }
@@ -355,6 +359,59 @@ impl Demo {
         }
         shell.voice.devices = Some((vec!["Built-in Microphone".into(), "USB Headset".into()], vec!["Speakers".into(), "USB Headset".into()]));
         Demo { store, shell }
+    }
+}
+
+/// What the account tabs and the switcher would have loaded.
+fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
+    sh.account.me = store.my_id();
+    let me = store.me.as_ref().map(|u| &u.base);
+    sh.account.current = me.map(|u| crate::session::Account {
+        instance: "fluxer.app".into(),
+        user_id: u.id.to_string(),
+        username: u.username.clone(),
+        display_name: u.global_name.clone().unwrap_or_else(|| u.username.clone()),
+        ..Default::default()
+    });
+    sh.account.accounts =
+        vec![crate::session::Account { instance: "chat.example.org".into(), user_id: "77".into(), username: "ada_work".into(), display_name: "Ada (work)".into(), ..Default::default() }];
+    let day = |d: u64| iso(now - d * 86_400_000);
+    for (k, v) in [
+        ("passkeys", json!([{"id": "pk1", "name": "YubiKey 5C", "created_at": day(90), "last_used_at": day(2)}])),
+        (
+            "sessions",
+            json!([
+                {"id_hash": "a1", "current": true, "approx_last_used_at": day(0), "client_info": {"os": "Linux", "browser": "Reflux", "location": {"city": "Seoul", "country": "South Korea"}}},
+                {"id_hash": "b2", "approx_last_used_at": day(3), "client_info": {"os": "iOS", "platform": "Fluxer", "device": "mobile", "location": {"city": "Busan", "country": "South Korea"}}},
+                {"id_hash": "c3", "approx_last_used_at": day(20), "client_info": {"os": "Windows", "browser": "Firefox"}}
+            ]),
+        ),
+        ("apps", json!([{"application": {"id": "900", "name": "Fluxer Stats"}, "scopes": ["identify", "guilds"], "authorized_at": day(12)}])),
+        ("connections", json!([{"type": "domain", "id": "c1", "name": "ada.dev", "verified": true, "visibility_flags": 1}])),
+        ("harvest", json!({"harvest_id": "h1", "status": "completed", "created_at": day(40), "completed_at": day(40)})),
+    ] {
+        sh.form.data.insert(k.into(), v);
+    }
+}
+
+/// `--account-ui=<scene>`: `menu` (user area), `status`, `accounts`, `nickname`, `sudo`,
+/// `profile` (the full profile modal).
+fn account_scene(sh: &mut ShellState, scene: &str) {
+    use crate::settings::ShellModal;
+    match scene {
+        "menu" => sh.popups.open = Some(super::status::MENU.into()),
+        "status" => super::status::open(sh, ShellModal::CustomStatus),
+        "accounts" => super::status::open(sh, ShellModal::Accounts),
+        "nickname" => super::status::open(sh, ShellModal::Nickname(Snowflake(HQ))),
+        "sudo" => {
+            let call = crate::guild::Call { method: reqwest::Method::POST, path: "/users/@me/disable".into(), body: None, then: crate::guild::Then::SignOut };
+            crate::settings::sudo::require(sh, call, &json!({"has_mfa": true, "methods": {"totp": true, "webauthn": true, "email_code": true}}));
+        }
+        "profile" => {
+            sh.account.profiles.insert((Snowflake(1001), Some(Snowflake(HQ))), Ok(json!({"user_profile": {"bio": "Building **Reflux**.", "pronouns": "she/her"}, "mutual_guilds": [{"id": HQ.to_string()}]})));
+            sh.account.profile_modal = Some((Snowflake(1001), Some(Snowflake(HQ)), "overview"));
+        }
+        _ => {}
     }
 }
 

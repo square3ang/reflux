@@ -124,7 +124,7 @@ fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palette,
 
 /// `GuildIcon`: the icon from the media proxy, else the acronym; a circle that rounds to a
 /// squircle (30%) when lit.
-fn guild_face(store: &Store, st: &ShellState, id: Snowflake, size: f32, lit: bool, p: &Palette) -> El {
+pub(crate) fn guild_face(store: &Store, st: &ShellState, id: Snowflake, size: f32, lit: bool, p: &Palette) -> El {
     let info = store.guilds.get(&id).and_then(|g| g.info.as_ref());
     let radius = if lit { size * 0.3 } else { size / 2.0 };
     let load = info.and_then(|i| i.icon.as_deref()).map(|h| st.media.asset(|b, s| media::guild_icon_url(b, id, h, size, s)));

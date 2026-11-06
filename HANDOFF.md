@@ -78,6 +78,15 @@ See `git log` for details. Crates:
   Scenes: `--shell-demo --msg-scene=media-{mosaic,files,embeds,invite,viewer,link,nsfw,blur}`.
   Shared target dir caveat: other worktrees overwrite `target/debug/reflux`; snapshot with the
   `target/debug/deps/reflux-<hash>` your build produced.
+- Account (`settings/{profile,account,privacy,sudo}.rs`, `shell/{status,profile}.rs`,
+  `app/account.rs`): profile editor (global + per-community, auto centre-crop), Account tab
+  (email/password/username, TOTP with QR, backup codes, passkey list, disable/delete), Privacy,
+  Devices, Authorized apps, Connections (domains), Blocked users; every write is an
+  `Intent::Api` and `SUDO_MODE_REQUIRED` opens the sudo modal, then retries with the proof. User
+  area popout (status, custom status, switch accounts), full profile modal, change nickname.
+  Tokens live in the OS keyring (`keyring` crate; `REFLUX_NO_KEYRING=1` disables), several
+  accounts in `Saved.accounts`. Demo: `--settings=<tab>`, `--account-ui=menu|status|accounts|nickname|sudo|profile`.
+  None of the writes were exercised against a live server.
 - Workflow that worked: each subagent in its own `git worktree` with shared
   `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
 - Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining

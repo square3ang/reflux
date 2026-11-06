@@ -38,6 +38,9 @@ pub struct Client {
     /// `{api}/v1`.
     base: String,
     token: RwLock<Option<String>>,
+    /// The last `X-Fluxer-Sudo-Mode-JWT` the server gave (five minutes of sudo mode), sent back
+    /// on every request until it changes.
+    sudo: RwLock<Option<String>>,
     /// `X-Fluxer-Client-Installation-ID`: 32 hex chars, stable per install.
     installation_id: Option<String>,
     limits: Mutex<RateLimits>,
@@ -50,6 +53,7 @@ impl Client {
             http,
             base: format!("{}/v1", api.trim_end_matches('/')),
             token: RwLock::new(None),
+            sudo: RwLock::new(None),
             installation_id: None,
             limits: Mutex::default(),
         }
@@ -75,6 +79,7 @@ impl Client {
     /// Sets the user session token, sent raw in `Authorization`.
     pub fn set_token(&self, token: Option<String>) {
         *self.token.write().unwrap() = token;
+        *self.sudo.write().unwrap() = None;
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -110,6 +115,9 @@ impl Client {
             if let Some(token) = self.token.read().unwrap().as_deref() {
                 req = req.header(header::AUTHORIZATION, token);
             }
+            if let Some(jwt) = self.sudo.read().unwrap().as_deref() {
+                req = req.header("X-Fluxer-Sudo-Mode-JWT", jwt);
+            }
             if let Some(id) = &self.installation_id {
                 req = req.header("X-Fluxer-Client-Installation-ID", id);
             }
@@ -126,6 +134,9 @@ impl Client {
             let (remaining, reset_after, retry_header) =
                 (num("x-ratelimit-remaining"), num("x-ratelimit-reset-after"), num("retry-after"));
             let global_header = h.get("x-ratelimit-global").is_some_and(|v| v == "true");
+            if let Some(jwt) = h.get("x-fluxer-sudo-mode-jwt").and_then(|v| v.to_str().ok()) {
+                *self.sudo.write().unwrap() = Some(jwt.to_owned());
+            }
             let bytes = res.bytes().await?;
 
             if status.is_success() {

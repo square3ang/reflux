@@ -4,7 +4,7 @@ use reflux_store::Store;
 use rune::{Color, El, col, el, icon, row, text};
 use serde_json::json;
 
-use super::{SettingsUi, select, set};
+use super::{SettingsUi, select};
 use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
@@ -12,8 +12,13 @@ use crate::ui::{Switch, over, rgb};
 
 pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     match ui.tab {
-        "my_profile" => profile(store, st, p),
-        "account_security" => account(store, ui, p, acc),
+        "my_profile" => super::profile::tab(store, st, ui, p, acc, layer),
+        "account_security" => super::account::tab(store, st, ui, p, acc),
+        "privacy_safety" => super::privacy::tab(store, st, p, acc, layer),
+        "devices" => super::privacy::devices(st, p, acc),
+        "authorized_apps" => super::privacy::apps(st, p, acc),
+        "linked_accounts" => super::privacy::connections(st, p, acc),
+        "blocked_users" => section(crate::i18n::t("Blocked users"), super::account::blocked(store, st, p, acc), true, p),
         "appearance" => appearance(p, acc),
         "themes" => themes(store, p, acc),
         "advanced_settings" => advanced(store, p, acc),
@@ -84,82 +89,6 @@ fn voice<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &
         .child(pick("voice-input", "Input device", &ins, &st.voice.input, false, layer))
         .child(pick("voice-output", "Output device", &outs, &st.voice.output, true, layer));
     section("Input & output", content, true, p)
-}
-
-// shortcut: Fluxer's Profile tab is a full profile editor (avatar, banner, bio, …); this shows a
-// read-only preview until editing lands.
-fn profile(store: &Store, st: &ShellState, p: &Palette) -> El {
-    let Some(me) = store.me.as_ref() else { return not_available(p) };
-    let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
-    let card = row()
-        .w_full()
-        .padding(16.0)
-        .gap(16.0)
-        .center_y()
-        .radius(12.0)
-        .border(1.0, p.background_modifier_accent)
-        .child(crate::shell::avatar(store, st, me.base.id, 80.0, None, p.background_secondary, p))
-        .child(
-            col()
-                .gap(4.0)
-                .child(text(name).font(font(20.0, 600.0).lh(24.0)).color(p.text_primary))
-                .child(text(me.base.username.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)),
-        );
-    section("Profile", card, true, p)
-}
-
-/// `AccountSecurityCard` row: label 14/500, description 13 (`--text-primary-muted`).
-fn card_row(label: &str, description: El, first: bool, p: &Palette) -> El {
-    let mut r = col()
-        .w_full()
-        .px(16.0)
-        .py(12.0)
-        .gap(2.0)
-        .child(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
-        .child(description);
-    if !first {
-        r = r.child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
-    }
-    r
-}
-
-/// `maskEmail`: every character before the `@` becomes `*`.
-fn mask_email(email: &str) -> String {
-    match email.split_once('@') {
-        Some((user, domain)) => format!("{}@{domain}", "*".repeat(user.chars().count())),
-        None => "*".repeat(email.chars().count()),
-    }
-}
-
-fn account<S: 'static>(store: &Store, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>) -> El {
-    let Some(me) = store.me.as_ref() else { return not_available(p) };
-    let small = |t: String, c: Color| text(t).font(font(13.0, 400.0).lh(18.2)).color(c);
-    let email = match &me.email {
-        Some(e) => row()
-            .gap(8.0)
-            .center_y()
-            .child(small(if ui.reveal_email { e.clone() } else { mask_email(e) }, p.text_primary_muted))
-            .child(
-                small((if ui.reveal_email { "Hide" } else { "Reveal" }).into(), p.text_link)
-                    .cursor(rune::Cursor::Pointer)
-                    .role("button")
-                    .on_press(move |s: &mut S| set(acc, s, |u| u.reveal_email = !u.reveal_email)),
-            ),
-        None => row().child(small("No email address set".into(), p.alert_warning_color)),
-    };
-    // shortcut: changing the email or password, the recovery kit, security and the danger zone
-    // aren't implemented; only the sign-in details are shown.
-    let password = match &me.password_last_changed_at {
-        Some(t) => format!("Last changed: {}", t.to_string().get(..10).unwrap_or_default()),
-        None => "Last changed: never".into(),
-    };
-    let card = col()
-        .w_full()
-        .radius(12.0)
-        .border(1.0, p.background_modifier_accent)
-        .child(card_row("Email address", email, true, p))
-        .child(card_row("Password", small(password, p.text_primary_muted), false, p));
-    section("Sign-in details", card, true, p)
 }
 
 fn appearance<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
@@ -258,13 +187,4 @@ fn advanced<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) -> El {
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.border_color));
     // shortcut: only developer mode; Fluxer's other advanced settings aren't implemented.
     section("Developer", row, true, p)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn mask_email_hides_the_local_part() {
-        assert_eq!(super::mask_email("ada@fluxer.app"), "***@fluxer.app");
-        assert_eq!(super::mask_email("x"), "*");
-    }
 }

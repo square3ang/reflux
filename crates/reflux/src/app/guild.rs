@@ -14,10 +14,16 @@ pub(super) fn run(s: &mut State, c: Call) {
     let from = sh.dialog.clone();
     sh.form.busy = true;
     sh.form.error = None;
+    // A retry from the sudo prompt reports back there.
+    let sudo = sh.account.sudo.as_ref().is_some_and(|x| x.call.path == c.path);
     spawn(async move {
         let r = inst.rest.request::<Value, Value>(c.method.clone(), &c.path, c.body.as_ref()).await;
         let reload = match (&r, &c.then) {
-            (Ok(_), Then::Reload(_, path)) => Some(inst.rest.get::<Value>(path).await),
+            (Ok(_), Then::Reload(_, path) | Then::Saved { reload: Some((_, path)), .. }) => Some(inst.rest.get::<Value>(path).await),
+            _ => None,
+        };
+        let c_reload = match &c.then {
+            Then::Saved { reload, .. } => reload.clone(),
             _ => None,
         };
         update(move |s| {
@@ -28,14 +34,26 @@ pub(super) fn run(s: &mut State, c: Call) {
             }
             let v = match r {
                 Ok(v) => v,
+                Err(reflux_net::Error::Api { error, .. }) if error.code == "SUDO_MODE_REQUIRED" => {
+                    if same {
+                        sh.form.busy = false;
+                    }
+                    let methods = Value::Object(error.extra.into_iter().collect());
+                    return crate::settings::sudo::require(sh, c, &methods);
+                }
                 Err(e) => {
                     eprintln!("reflux: {} {}: {e}", c.method, c.path);
-                    if same {
+                    if sudo && let Some(x) = sh.account.sudo.as_mut() {
+                        x.fail(describe(&e));
+                    } else if same {
                         sh.form.error = Some(describe(&e));
                     }
                     return;
                 }
             };
+            if sudo {
+                sh.account.sudo = None;
+            }
             if same {
                 // A confirmed action is done.
                 sh.form.confirm = None;
@@ -45,6 +63,7 @@ pub(super) fn run(s: &mut State, c: Call) {
                 Then::Close => {
                     if same {
                         sh.dialog = None;
+                        sh.close_account_modals();
                     }
                 }
                 Then::Keep(key) => {
@@ -65,6 +84,29 @@ pub(super) fn run(s: &mut State, c: Call) {
                         sh.select_guild(Some(g), ch);
                     }
                 }
+                Then::Saved { clear, .. } => {
+                    if same {
+                        sh.close_account_modals();
+                        sh.form.text.retain(|k, _| !k.starts_with(&clear));
+                        sh.form.data.retain(|k, _| !k.starts_with(&clear));
+                        match reload {
+                            Some(Ok(v)) => {
+                                if let Some((key, _)) = &c_reload {
+                                    sh.form.data.insert(key.clone(), v);
+                                }
+                            }
+                            Some(Err(e)) => sh.form.error = Some(describe(&e)),
+                            None => {}
+                        }
+                    }
+                }
+                Then::Token => {
+                    sh.close_account_modals();
+                    if let Some(t) = v.get("token").and_then(Value::as_str) {
+                        super::replace_token(s, t.to_owned());
+                    }
+                }
+                Then::SignOut => super::sign_out(s, None),
                 Then::Select => {
                     let id = v.get("id").and_then(Value::as_str).and_then(|i| i.parse::<Snowflake>().ok());
                     match (&mut sh.dialog, id) {

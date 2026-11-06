@@ -106,6 +106,13 @@ pub enum Then {
     Enter,
     /// Edit the role or overwrite the response is.
     Select,
+    /// Drop the form's fields and picks whose keys start with `clear` (a saved editor), then GET
+    /// `reload` (key, path) into `form.data`.
+    Saved { clear: String, reload: Option<(String, String)> },
+    /// The response carries a new session `token` (a password change ended every session).
+    Token,
+    /// The account is gone from this device (disabled or deleted): sign out locally.
+    SignOut,
 }
 
 impl ShellState {
@@ -173,7 +180,7 @@ fn error(st: &ShellState, p: &Palette) -> Option<El> {
 }
 
 /// A press handler that asks for an image and keeps it in `form.data[key]` as a data URL.
-fn pick_image<S: 'static>(acc: ShellAccess<S>, key: &'static str) -> impl Fn(&mut S, &mut Tx) + 'static {
+pub(crate) fn pick_image<S: 'static>(acc: ShellAccess<S>, key: &'static str) -> impl Fn(&mut S, &mut Tx) + 'static {
     move |_: &mut S, tx: &mut Tx| {
         let options = FileDialogOptions { title: "Choose an image".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
         tx.open_file(options, move |s: &mut S, r, _| {
@@ -190,7 +197,7 @@ fn pick_image<S: 'static>(acc: ShellAccess<S>, key: &'static str) -> impl Fn(&mu
 }
 
 /// `data:<mime>;base64,…`, the image form the API takes (`guilds.mdx`: raw base64 or a data URL).
-fn data_url(path: &std::path::Path, bytes: &[u8]) -> String {
+pub(crate) fn data_url(path: &std::path::Path, bytes: &[u8]) -> String {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
     let mime = match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",
@@ -215,11 +222,11 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 /// "#rrggbb" ↔ `0xRRGGBB`.
-fn hex(c: u32) -> String {
+pub(crate) fn hex(c: u32) -> String {
     format!("#{c:06x}")
 }
 
-fn parse_hex(s: &str) -> Option<u32> {
+pub(crate) fn parse_hex(s: &str) -> Option<u32> {
     let s = s.trim().trim_start_matches('#');
     (s.len() == 6).then(|| u32::from_str_radix(s, 16).ok()).flatten()
 }

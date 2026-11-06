@@ -6,9 +6,16 @@
 //! Views only queue [`Intent`]s; [`patch`] applies a settings change optimistically to the store
 //! and sends `PATCH /users/@me/settings`.
 
+mod account;
 mod desktop_tabs;
+mod privacy;
+mod profile;
+pub mod sudo;
 pub(crate) mod tabs;
 
+pub use account::{AccountModal, view_shell_modals};
+
+use reflux_model::Snowflake;
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, Shadow, TextEdit, col, el, icon, row, text, text_input};
 use serde_json::Value;
@@ -25,14 +32,89 @@ pub struct SettingsUi {
     pub search: TextEdit,
     pub reveal_email: bool,
     pub confirm_logout: bool,
+    /// A dialog over the settings (email or password change, TOTP setup, …).
+    pub modal: Option<AccountModal>,
+    /// The Profile tab edits this community's profile (`ProfileTypeSelector`).
+    pub profile_guild: Option<Snowflake>,
 }
 
 impl SettingsUi {
     /// Opens on `tab` (a [`TABS`] id), or on the first tab like Fluxer.
     pub fn new(tab: Option<&str>) -> Self {
         let tab = TABS.iter().find(|t| Some(t.id) == tab).map_or("my_profile", |t| t.id);
-        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false }
+        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None }
     }
+}
+
+/// Account state that outlives the settings modal: the sudo prompt, fetched profiles, the
+/// user-area modals and the account switcher's list.
+#[derive(Default)]
+pub struct AccountUi {
+    pub sudo: Option<sudo::Sudo>,
+    /// `GET /users/{id}/profile` answers by (user, guild); `Err` = couldn't load.
+    pub profiles: std::collections::HashMap<(Snowflake, Option<Snowflake>), Result<Value, String>>,
+    /// `UserProfileModal`: (user, guild, tab).
+    pub profile_modal: Option<(Snowflake, Option<Snowflake>, &'static str)>,
+    pub modal: Option<ShellModal>,
+    /// Mirrors of the saved session for the switcher: the active account and the others.
+    pub current: Option<crate::session::Account>,
+    pub accounts: Vec<crate::session::Account>,
+    /// The signed-in user's ID.
+    pub me: Snowflake,
+}
+
+/// A modal the user area or a menu opens outside settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellModal {
+    /// `CustomStatusModal`.
+    CustomStatus,
+    /// `AccountSwitcherModal`.
+    Accounts,
+    /// `ChangeNicknameModal` for a community.
+    Nickname(Snowflake),
+}
+
+/// Account requests that aren't a plain API call.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Op {
+    SwitchAccount(usize),
+    AddAccount,
+    RemoveAccount(usize),
+    /// `GET /users/{user}/profile` into [`AccountUi::profiles`].
+    FetchProfile { user: Snowflake, guild: Option<Snowflake> },
+    SudoPasskey,
+    SudoEmail,
+    /// Register a security key as a passkey.
+    AddPasskey,
+}
+
+#[allow(clippy::result_large_err)]
+/// A list a tab loaded into `form.data[key]`, or what to show instead (loading, the error).
+pub(crate) fn loaded<T: serde::de::DeserializeOwned>(st: &ShellState, key: &str, p: &Palette) -> Result<T, El> {
+    let note = |s: String| text(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
+    match st.form.data.get(key) {
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| note(format!("Couldn't read the list: {e}"))),
+        None => Err(note(st.form.error.clone().unwrap_or_else(|| t("Loading…").into()))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+/// A settings form field (`form.text[key]`) that shows `initial` until edited.
+pub(crate) fn input<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, initial: &str, label: &str, placeholder: &str, secure: bool, p: &Palette) -> El {
+    let edit = st.form.text.get(key).cloned().unwrap_or_else(|| TextEdit::new(initial));
+    let init = initial.to_string();
+    let el_key = format!("form-{key}");
+    let mut i = crate::ui::Input::new(&el_key, &edit, move |s: &mut S| -> &mut TextEdit {
+        acc(s).form.text.entry(key.to_string()).or_insert_with(|| TextEdit::new(init.clone()))
+    })
+    .placeholder(placeholder);
+    if !label.is_empty() {
+        i = i.label(label);
+    }
+    if secure {
+        i = i.secure();
+    }
+    i.el(p)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -210,6 +292,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     }
     layer.push(modal);
     layer.extend(popups);
+    if let Some(m) = &ui.modal {
+        layer.extend(account::modal(store, st, m, p, acc));
+    }
 }
 
 /// The full-window settings modal user, community and channel settings share: the backdrop and
@@ -279,7 +364,59 @@ fn set<S>(acc: ShellAccess<S>, s: &mut S, f: impl FnOnce(&mut SettingsUi)) {
 }
 
 fn select<S: 'static>(acc: ShellAccess<S>, id: &'static str) -> impl Fn(&mut S) + 'static {
-    move |s: &mut S| set(acc, s, |u| u.tab = id)
+    move |s: &mut S| open_tab(acc(s), id)
+}
+
+impl ShellState {
+    /// Opens user settings on `tab` (see [`SettingsUi::new`]).
+    pub fn open_settings(&mut self, tab: Option<&str>) {
+        let u = SettingsUi::new(tab);
+        let id = u.tab;
+        self.settings = Some(u);
+        open_tab(self, id);
+    }
+
+    /// Closes the settings dialog and the user-area modals, dropping their `m.` form fields.
+    pub fn close_account_modals(&mut self) {
+        if let Some(u) = self.settings.as_mut() {
+            u.modal = None;
+        }
+        self.account.modal = None;
+        self.form.text.retain(|k, _| !k.starts_with("m."));
+        self.form.data.retain(|k, _| !k.starts_with("m."));
+        self.form.error = None;
+    }
+
+    /// Opens a settings dialog with fresh `m.` fields.
+    pub fn open_account_modal(&mut self, m: AccountModal) {
+        self.close_account_modals();
+        if let Some(u) = self.settings.as_mut() {
+            u.modal = Some(m);
+        }
+    }
+
+    /// The Profile tab on a community's profile ("Edit community profile").
+    pub fn open_community_profile(&mut self, guild: Snowflake) {
+        self.popups.close();
+        self.settings = Some(SettingsUi { profile_guild: Some(guild), ..SettingsUi::new(Some("my_profile")) });
+        open_tab(self, "my_profile");
+    }
+}
+
+/// Shows tab `id` with a fresh form, loading what it lists.
+pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
+    let Some(u) = sh.settings.as_mut() else { return };
+    (u.tab, u.modal) = (id, None);
+    sh.form = Default::default();
+    match id {
+        "account_security" => sh.load("passkeys", "/users/@me/mfa/webauthn/credentials"),
+        "devices" => sh.load("sessions", "/auth/sessions"),
+        "authorized_apps" => sh.load("apps", "/oauth2/@me/authorizations"),
+        "linked_accounts" => sh.load("connections", "/users/@me/connections"),
+        "privacy_safety" => sh.load("harvest", "/users/@me/harvest/latest"),
+        "my_profile" => profile::load(sh),
+        _ => {}
+    }
 }
 
 /// `--settings-*` colours of `.container`.

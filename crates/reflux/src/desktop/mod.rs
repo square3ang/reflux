@@ -233,7 +233,7 @@ fn on_tray(e: TrayEvent) {
             "toggle" => app::show_window(),
             "settings" => {
                 app::show_window();
-                app::update(|s| s.app.shell.settings = Some(crate::settings::SettingsUi::new(None)));
+                app::update(|s| s.app.shell.open_settings(None));
             }
             "mute" => app::update(|s| s.app.shell.toggle_mute()),
             "deafen" => app::update(|s| s.app.shell.toggle_deaf()),

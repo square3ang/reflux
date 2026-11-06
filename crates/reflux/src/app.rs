@@ -19,6 +19,7 @@ use crate::theme::{self, font};
 use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
 
+mod account;
 mod actions;
 mod chat;
 mod guild;
@@ -552,8 +553,8 @@ fn restore_voice_devices(s: &mut State) {
     (v.input, v.output) = (s.app.saved.voice_input.clone(), s.app.saved.voice_output.clone());
 }
 
-/// Forgets the session locally; `message` is shown on the login screen.
-fn sign_out(s: &mut State, message: Option<String>) {
+/// Drops the connection and everything loaded for it.
+fn reset(s: &mut State) {
     voice::leave(s, true);
     if let Some(gw) = s.app.gateway.take() {
         let _ = gw.send(Command::Close);
@@ -562,20 +563,43 @@ fn sign_out(s: &mut State, message: Option<String>) {
     s.app.store = Store::default();
     s.app.connection = None;
     s.app.selected_channel = None;
+    s.app.member_sub = None;
     let avatars = std::mem::take(&mut s.app.shell.default_avatars);
     let media = s.app.shell.media.clone();
     media.set_base("");
     s.app.shell = crate::shell::ShellState { default_avatars: avatars, media, ..Default::default() };
     restore_voice_devices(s);
     s.app.error = None;
-    s.app.route = Route::Auth;
+}
+
+/// Forgets the session locally; `message` is shown on the login screen. Another account saved on
+/// this device takes over instead, like Fluxer's switcher after a logout.
+fn sign_out(s: &mut State, message: Option<String>) {
+    reset(s);
     s.app.saved.token = None;
+    s.app.saved.current = None;
+    if s.app.saved.switch_to(0) {
+        session::save(&s.app.saved);
+        s.app.route = Route::Connecting;
+        return discover(s);
+    }
+    s.app.route = Route::Auth;
     session::save(&s.app.saved);
     s.login = crate::login::Login { instance: std::mem::take(&mut s.login.instance), ..Default::default() };
     s.login.errors.form = message;
     if s.app.instance.is_none() && !s.login.discovering {
         discover(s);
     }
+}
+
+/// A password change ended every session and returned a new token: keep going with it.
+fn replace_token(s: &mut State, token: String) {
+    s.app.saved.token = Some(token.clone());
+    session::save(&s.app.saved);
+    if let Some(inst) = &s.app.instance {
+        inst.rest.set_token(Some(token));
+    }
+    connect(s);
 }
 
 // ---- Gateway -------------------------------------------------------------------------------
@@ -646,6 +670,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             if let reflux_model::DispatchEvent::Ready(_) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
                 s.app.route = Route::Main;
+                account::remember_me(s);
                 if !s.app.store.settings.locale.is_empty() {
                     crate::i18n::set_locale(&s.app.store.settings.locale);
                 }
@@ -728,6 +753,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
             Intent::Api(c) => guild::run(s, c),
             Intent::FetchInvite(code) => invites::fetch(s, code),
+            Intent::Account(op) => account::run(s, op),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {
@@ -753,6 +779,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         }
     }
     actions::subscribe_member_list(s);
+    account::mirror(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s);
     live::on_poll(s, tx);
@@ -761,7 +788,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.
-fn iso8601(ms: u64) -> String {
+pub(crate) fn iso8601(ms: u64) -> String {
     let (days, rem) = ((ms / 86_400_000) as i64, ms % 86_400_000);
     // Howard Hinnant's civil_from_days.
     let z = days + 719_468;

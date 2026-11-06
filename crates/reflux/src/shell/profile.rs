@@ -1,56 +1,160 @@
-//! The user profile popout (`user/components/popouts/UserProfilePopout`, `profile/profile_card/*`,
-//! `UserProfileShared` roles, `RoleList`).
+//! User profiles: the popout (`user/components/popouts/UserProfilePopout`,
+//! `profile/profile_card/*`), the full `UserProfileModal` (overview, mutual communities and
+//! friends) and the card the Profile settings tab previews. Banner, accent colour, bio and
+//! badges come from `GET /users/{id}/profile` (`users.mdx`), fetched when a profile opens.
 
 use reflux_model::{RelationshipType, Snowflake};
 use reflux_store::Store;
-use rune::{Color, El, TextEdit, col, el, row, text, text_input};
+use rune::{Color, El, Pixels, TextEdit, col, el, row, text, text_input};
+use serde_json::Value;
 
 use super::{Intent, ShellAccess, ShellState, avatar, friends::tag, presence, role_color};
+use crate::i18n::t;
+use crate::media::{self, Load};
 use crate::theme::{Palette, font};
 use crate::ui::overlay::{anchor, popout_shadow};
-use crate::ui::{Button, ButtonSize, rgb};
+use crate::ui::{Button, ButtonSize, ButtonVariant, mix, rgb};
 
 /// `PROFILE_POPOUT_GEOMETRY`: 300 content + 2.5 border, 105 banner in a 140 header, an 80px
 /// avatar at (10, 55).
 const WIDTH: f32 = 300.0;
 const BORDER: f32 = 2.5;
 
-/// `getUserAccentColor`: the avatar colour, else `DEFAULT_ACCENT_COLOR` (#4641D9).
-// shortcut: profile accent colours and banners need `GET /users/{id}/profile`; not fetched yet.
-fn accent(store: &Store, user: Snowflake) -> Color {
-    store.users.get(&user).and_then(|u| u.avatar_color).map_or(rgb(0x46, 0x41, 0xD9), role_color)
+/// What a profile card shows.
+pub struct Card {
+    pub user: Snowflake,
+    pub name: String,
+    pub tag: String,
+    pub pronouns: Option<String>,
+    pub bio: Option<String>,
+    pub accent: Color,
+    /// The banner picture (else the accent colour fills it).
+    pub banner: Option<Pixels>,
+    /// The avatar in its ring, `avatar_size` across.
+    pub avatar: El,
+    pub avatar_size: f32,
+    pub custom_status: Option<String>,
+    pub badges: Vec<String>,
+    pub guild: Option<Snowflake>,
+}
+
+/// The fetched profile, if it loaded.
+pub fn fetched(st: &ShellState, user: Snowflake, guild: Option<Snowflake>) -> Option<&Value> {
+    st.account.profiles.get(&(user, guild)).and_then(|r| r.as_ref().ok())
+}
+
+/// `getUserAccentColor`: the guild profile's, then the account's accent colour, the avatar
+/// colour, else `DEFAULT_ACCENT_COLOR` (#4641D9).
+fn accent(store: &Store, prof: Option<&Value>, user: Snowflake) -> Color {
+    let pick = |v: Option<&Value>, k: &str| v.and_then(|v| v[k].as_u64()).map(|c| c as u32);
+    prof.and_then(|v| pick(Some(&v["guild_member_profile"]), "accent_color").or(pick(Some(&v["user_profile"]), "accent_color")))
+        .or_else(|| store.users.get(&user).and_then(|u| u.avatar_color))
+        .map_or(rgb(0x46, 0x41, 0xD9), role_color)
+}
+
+/// A banner by hash (user banners share the `banners/{id}` media route with guild banners).
+pub fn banner_px(st: &ShellState, owner: Snowflake, hash: &str) -> Option<Pixels> {
+    match st.media.asset(|b, s| media::guild_banner_url(b, owner, hash, s)) {
+        Load::Ready(px) => Some(px),
+        _ => None,
+    }
+}
+
+/// Builds the card for `user` from the store and the fetched profile.
+pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, size: f32, p: &Palette) -> Card {
+    let prof = fetched(st, user, guild);
+    let gp = prof.map(|v| &v["guild_member_profile"]).filter(|v| v.is_object());
+    let up = prof.map(|v| &v["user_profile"]).filter(|v| v.is_object());
+    let field = |k: &str| gp.and_then(|v| v[k].as_str()).or(up.and_then(|v| v[k].as_str())).filter(|s| !s.is_empty()).map(str::to_string);
+    let banner = match (gp.and_then(|v| v["banner"].as_str()), up.and_then(|v| v["banner"].as_str())) {
+        (Some(h), _) => guild.and_then(|_| banner_px(st, user, h)),
+        (None, Some(h)) => banner_px(st, user, h),
+        _ => None,
+    };
+    let badges = prof.and_then(|v| v["profile_badges"].as_array()).map(|a| a.iter().filter_map(|b| b["description"].as_str().or(b["kind"].as_str()).map(str::to_string)).collect()).unwrap_or_default();
+    Card {
+        user,
+        name: store.display_name(guild, user),
+        tag: tag(store, user),
+        pronouns: field("pronouns"),
+        bio: field("bio"),
+        accent: accent(store, prof, user),
+        banner,
+        avatar: avatar(store, st, user, size, Some(presence(store, user)), p.background_primary, p),
+        avatar_size: size,
+        custom_status: store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty()),
+        badges,
+        guild,
+    }
+}
+
+fn section_title(t: &str, p: &Palette) -> El {
+    text(t.to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary)
+}
+
+/// The banner header, avatar, names, pronouns, status, badges and bio of a card `w` wide;
+/// `extra` goes under the bio.
+pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>, p: &Palette) -> El {
+    let banner_h = (w * 105.0 / WIDTH).round();
+    let banner = el().w_full().h(banner_h).corners([6.0 - BORDER, 6.0 - BORDER, 0.0, 0.0]);
+    let banner = match &c.banner {
+        Some(px) => banner.pixels_fit(px, rune::SurfaceFit::Fill),
+        None => banner.fill(c.accent),
+    };
+    let head = el()
+        .w_full()
+        // The ringed avatar (6px ring) hangs 50px into the banner.
+        .h(banner_h - 50.0 + c.avatar_size + 12.0 - 7.0)
+        .child(banner)
+        .child(el().absolute(10.0, banner_h - 50.0).padding(6.0).radius(999.0).fill(p.background_primary).child(c.avatar));
+    let mut names = col()
+        .w_full()
+        .child(text(c.name).font(font(20.0, 500.0).lh(24.0)).color(p.text_primary).truncate())
+        .child(text(c.tag).font(font(14.0, 400.0).lh(18.0)).color(p.text_tertiary).truncate());
+    if let Some(pr) = c.pronouns {
+        names = names.child(text(pr).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted).truncate());
+    }
+    let mut content = col().w_full().gap(8.0).pt(8.0).px(16.0).child(names);
+    if !c.badges.is_empty() {
+        content = content.child(row().w_full().flex_wrap().gaps(4.0, 4.0).children(c.badges.into_iter().map(|b| {
+            row().h(22.0).px(6.0).center_y().radius(4.0).fill(p.background_secondary_alt).child(text(b).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))
+        })));
+    }
+    if let Some(s) = c.custom_status {
+        content = content.child(text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap());
+    }
+    if let Some(bio) = c.bio {
+        let md = super::markdown::Md::new(store, &st.media, c.guild, p, format!("bio-{}", c.user));
+        content = content.child(col().w_full().gap(4.0).child(section_title(t("About me"), p)).child(super::markdown::inline_text(&bio, &md, font(14.0, 400.0).lh(18.0), p.text_chat)));
+    }
+    col().w_full().child(head).child(content.children(extra))
+}
+
+fn frame(body: El, accent: Color, w: f32, p: &Palette) -> El {
+    col()
+        .w(w + 2.0 * BORDER)
+        .gap(4.0)
+        .radius(6.0)
+        .fill(p.background_primary)
+        .border(BORDER, accent)
+        .box_shadow(popout_shadow(p, 0.24, 0.14))
+        .padding(BORDER)
+        .pb(12.0 + BORDER)
+        .child(body)
+}
+
+/// The Profile settings tab's preview: the popout card for the given values.
+pub fn preview(store: &Store, st: &ShellState, c: Card, p: &Palette) -> El {
+    let accent = c.accent;
+    frame(card_body(store, st, c, WIDTH, vec![], p), accent, WIDTH, p)
 }
 
 pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (key, placement) = st.profile_anchor.clone()?;
     let me = store.my_id();
-    let border = accent(store, user);
-    let status = presence(store, user);
-    // `.avatarButton`: an 80px avatar in a 6px background-primary ring.
-    let ring = 6.0;
-    let head = el()
-        .w_full()
-        .h(140.0)
-        .child(el().w_full().h(105.0).corners([6.0 - BORDER, 6.0 - BORDER, 0.0, 0.0]).fill(border))
-        .child(
-            el().absolute(10.0, 55.0).padding(ring).radius(999.0).fill(p.background_primary).child(avatar(store, st, user, 80.0, Some(status), p.background_primary, p)),
-        );
-
-    let name = store.display_name(guild, user);
-    let mut content = col()
-        .w_full()
-        .gap(8.0)
-        .pt(8.0)
-        .px(16.0)
-        .child(
-            col()
-                .w_full()
-                .child(text(name).font(font(20.0, 500.0).lh(24.0)).color(p.text_primary).truncate())
-                .child(text(tag(store, user)).font(font(14.0, 400.0).lh(18.0)).color(p.text_tertiary).truncate()),
-        );
-    if let Some(t) = store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty()) {
-        content = content.child(text(t).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap());
-    }
+    let c = card_for(store, st, user, guild, 80.0, p);
+    let border = c.accent;
+    let mut extra = Vec::new();
     // `UserProfileRoles`: shown when the member has roles.
     if let (Some(g), Some(m)) = (guild.and_then(|g| store.guilds.get(&g)), guild.and_then(|g| store.member(g, user))) {
         let mut roles: Vec<_> = g.roles.iter().filter(|r| m.roles.contains(&r.id)).collect();
@@ -70,7 +174,28 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
                     .child(el().size(12.0, 12.0).radius(6.0).fill(dot))
                     .child(text(r.name.clone()).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary).truncate().max_w(200.0).mr(2.0))
             }));
-            content = content.child(col().w_full().gap(4.0).child(section_title("Roles", p)).child(list));
+            extra.push(col().w_full().gap(4.0).child(section_title(t("Roles"), p)).child(list));
+        }
+    }
+    if let Some(v) = fetched(st, user, guild).filter(|_| user != me) {
+        let (guilds, friends) = (v["mutual_guilds"].as_array().map_or(0, Vec::len), v["mutual_friends"].as_array().map_or(0, Vec::len));
+        if guilds + friends > 0 {
+            let open = move |tab: &'static str| {
+                move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.popups.close();
+                    sh.account.profile_modal = Some((user, guild, tab));
+                }
+            };
+            let link = |label: String, tab: &'static str| text(label).font(font(12.0, 500.0).lh(16.0)).color(p.text_link).cursor(rune::Cursor::Pointer).role("button").on_press(open(tab));
+            let mut r = row().gap(12.0);
+            if guilds > 0 {
+                r = r.child(link(format!("{guilds} mutual communities"), "guilds"));
+            }
+            if friends > 0 {
+                r = r.child(link(format!("{friends} mutual friends"), "friends"));
+            }
+            extra.push(r);
         }
     }
     if user != me {
@@ -78,9 +203,9 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
             .key("profile-note")
             .w_full()
             .color(p.text_chat)
-            .placeholder("Click to add a note", p.text_tertiary)
+            .placeholder(t("Click to add a note"), p.text_tertiary)
             .caret(p.text_primary, p.background_modifier_selected)
-            .label("Note")
+            .label(t("Note"))
             .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).note })
             .on_submit(move |s: &mut S, _| {
                 let st = acc(s);
@@ -88,42 +213,128 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
                 st.note.focused = false;
                 st.intents.push(Intent::SetNote { user, note });
             });
-        content = content.child(col().w_full().gap(4.0).child(section_title("Note", p)).child(field));
+        extra.push(col().w_full().gap(4.0).child(section_title(t("Note"), p)).child(field));
     }
-
     let footer = if user == me {
-        Button::new("Edit profile").size(ButtonSize::Small).fit_container().key("profile-edit").on_press(move |s: &mut S| {
+        Button::new(t("Edit profile")).size(ButtonSize::Small).fit_container().key("profile-edit").on_press(move |s: &mut S| {
             let st = acc(s);
             st.popups.close();
-            st.settings = Some(crate::settings::SettingsUi::new(Some("profile")));
+            st.open_settings(Some("my_profile"));
         })
     } else {
-        let label = if store.relationships.get(&user).is_some_and(|r| r.kind == RelationshipType::BLOCKED) { "Open DM" } else { "Message" };
+        let label = if store.relationships.get(&user).is_some_and(|r| r.kind == RelationshipType::BLOCKED) { t("Open DM") } else { t("Message") };
         Button::new(label).size(ButtonSize::Small).fit_container().key("profile-message").on_press(move |s: &mut S| {
             let st = acc(s);
             st.popups.close();
             st.intents.push(Intent::OpenDm(user));
         })
     };
-    let card = col()
-        .w(WIDTH + 2.0 * BORDER)
-        .gap(4.0)
-        .pb(12.0)
-        .radius(6.0)
-        .fill(p.background_primary)
-        .border(BORDER, border)
-        .box_shadow(popout_shadow(p, 0.24, 0.14))
-        .padding(BORDER)
-        .pb(12.0 + BORDER)
+    // The avatar opens the full profile.
+    let body = card_body(store, st, c, WIDTH, extra, p);
+    let view_full = row()
+        .w_full()
+        .px(12.0)
+        .pt(8.0)
+        .child(Button::new(t("View full profile")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).fit_container().key("profile-full").on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.account.profile_modal = Some((user, guild, "overview"));
+        }).el(p));
+    let card = frame(body, border, WIDTH, p)
         .key("profile-popout")
-        .child(head)
-        .child(content)
         .child(row().w_full().pt(16.0).px(12.0).child(footer.el(p)))
+        .child(view_full)
         .modal(true, move |s: &mut S| acc(s).popups.close());
     Some(anchor(card, &key, placement, 8.0))
 }
 
-fn section_title(t: &str, p: &Palette) -> El {
-    text(t).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary)
+/// `UserProfileModal`: the card on the left, tabs (overview, mutual communities, mutual friends)
+/// on the right.
+pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, tab: &'static str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let close = move |s: &mut S| acc(s).account.profile_modal = None;
+    let prof = fetched(st, user, guild);
+    let c = card_for(store, st, user, guild, 120.0, p);
+    let accent = c.accent;
+    let left = col().w(340.0).h_full().child(card_body(store, st, c, 340.0, vec![], p));
+    let guilds = prof.and_then(|v| v["mutual_guilds"].as_array()).cloned().unwrap_or_default();
+    let friends = prof.and_then(|v| v["mutual_friends"].as_array()).cloned().unwrap_or_default();
+    let tabs: Vec<(&'static str, String)> = vec![
+        ("overview", t("Overview").to_string()),
+        ("guilds", format!("Mutual communities ({})", guilds.len())),
+        ("friends", format!("Mutual friends ({})", friends.len())),
+    ];
+    let tab_bar = row().w_full().gap(16.0).children(tabs.into_iter().map(|(id, label)| {
+        let on = id == tab;
+        col()
+            .gap(6.0)
+            .cursor(rune::Cursor::Pointer)
+            .role("tab")
+            .checked(on)
+            .on_press(move |s: &mut S| acc(s).account.profile_modal = Some((user, guild, id)))
+            .child(text(label).font(font(14.0, 500.0).lh(20.0)).color(if on { p.text_primary } else { p.text_tertiary }))
+            .child(el().w_full().h(2.0).fill(if on { accent } else { Color::TRANSPARENT }))
+    }));
+    let muted = |s: String| text(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
+    let item = |icon: El, name: String, sub: Option<String>| {
+        row()
+            .w_full()
+            .py(8.0)
+            .gap(12.0)
+            .center_y()
+            .child(icon)
+            .child(col().grow(1.0).min_w(0.0).child(text(name).font(font(15.0, 500.0).lh(20.0)).color(p.text_primary).truncate()).children(sub.map(|s| text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).truncate())))
+    };
+    let body = match tab {
+        "guilds" if guilds.is_empty() => muted(t("No mutual communities found.").into()),
+        "guilds" => col().w_full().children(guilds.iter().filter_map(|g| {
+            let id: Snowflake = g["id"].as_str()?.parse().ok()?;
+            let name = store.guilds.get(&id).and_then(|g| g.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
+            let nick = g["nick"].as_str().map(|n| format!("{}{n}", t("Nickname: ")));
+            let ch = super::first_channel(store, id);
+            Some(item(super::guilds::guild_face(store, st, id, 40.0, false, p), name, nick).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| {
+                let sh = acc(s);
+                sh.account.profile_modal = None;
+                sh.select_guild(Some(id), ch);
+            }))
+        })),
+        "friends" if friends.is_empty() => muted(t("No mutual friends found.").into()),
+        "friends" => col().w_full().children(friends.iter().filter_map(|f| {
+            let id: Snowflake = f["id"].as_str()?.parse().ok()?;
+            let name = f["global_name"].as_str().or(f["username"].as_str()).unwrap_or_default().to_string();
+            Some(item(avatar(store, st, id, 40.0, Some(presence(store, id)), p.background_secondary, p), name, f["username"].as_str().map(str::to_string)))
+        })),
+        _ => {
+            let mut c = col().w_full().gap(16.0);
+            c = c.child(col().gap(4.0).child(section_title(t("Member since"), p)).child(muted(super::chat::format_full_date(user.timestamp_ms()))));
+            let conns: Vec<String> = prof.and_then(|v| v["connected_accounts"].as_array()).map(|a| a.iter().filter_map(|c| c["name"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+            if !conns.is_empty() {
+                c = c.child(col().gap(6.0).child(section_title(t("Connections"), p)).children(conns.into_iter().map(|n| {
+                    row().gap(8.0).center_y().child(rune::icon(&crate::icons::GLOBE, 16.0).color(p.text_secondary)).child(text(n).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
+                })));
+            }
+            if prof.is_some_and(|v| v["profile_limited"].as_bool() == Some(true)) {
+                c = c.child(muted(t("This person's privacy settings hide the rest of their profile.").into()));
+            }
+            if st.account.profiles.get(&(user, guild)).is_some_and(Result::is_err) {
+                c = c.child(muted(t("Couldn't load this profile.").into()));
+            }
+            c
+        }
+    };
+    let right = col().grow(1.0).min_w(0.0).h_full().padding(16.0).gap(16.0).child(tab_bar).child(el().w_full().h(1.0).fill(mix(p.background_modifier_accent, Color::TRANSPARENT, 100.0))).child(body);
+    let card = row()
+        .w(860.0)
+        .h(560.0)
+        .radius(8.0)
+        .fill(p.background_primary)
+        .border(BORDER, accent)
+        .clip_rounded(8.0)
+        .role("dialog")
+        .label(t("User profile"))
+        .child(left)
+        .child(right)
+        .modal(true, close);
+    el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK).opacity(0.85))
+        .child(col().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(card))
 }
-

@@ -21,10 +21,11 @@ mod markdown;
 mod members;
 mod menus;
 pub mod pins;
-mod profile;
+pub(crate) mod profile;
 pub mod search;
 mod search_query;
 mod sidebar;
+pub mod status;
 pub mod switcher;
 pub mod upload;
 pub mod voice;
@@ -118,6 +119,8 @@ pub enum Intent {
     SetLocale(&'static str),
     /// `GET /invites/{code}` into `media_ui.invites`.
     FetchInvite(String),
+    /// Accounts, profiles and sudo (`crate::settings::Op`).
+    Account(crate::settings::Op),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -284,6 +287,8 @@ pub struct ShellState {
     pub cooldowns: std::collections::HashMap<Snowflake, u64>,
     /// Lightbox, spoilers, inline players, invite previews, link warning.
     pub media_ui: attachments::MediaUi,
+    /// Sudo prompt, fetched profiles, account modals and the account switcher.
+    pub account: crate::settings::AccountUi,
 }
 
 impl Default for ShellState {
@@ -350,6 +355,7 @@ impl Default for ShellState {
             ac_dismissed: None,
             cooldowns: Default::default(),
             media_ui: Default::default(),
+            account: Default::default(),
         }
     }
 }
@@ -389,6 +395,14 @@ impl ShellState {
         self.target = Some(Target::User { user, guild, dm: None });
         self.profile_anchor = Some((anchor, placement));
         self.note = TextEdit::new(note);
+        self.fetch_profile(user, guild);
+    }
+
+    /// Loads a user's full profile once (`UserProfileCommands.fetch`).
+    pub fn fetch_profile(&mut self, user: Snowflake, guild: Option<Snowflake>) {
+        if !self.account.profiles.contains_key(&(user, guild)) {
+            self.intents.push(Intent::Account(crate::settings::Op::FetchProfile { user, guild }));
+        }
     }
 
     pub fn select_channel(&mut self, channel: Snowflake) {
@@ -557,10 +571,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(sidebar::user_area(store, st, p, acc));
     let body = col().w_full().h_full().children(verify_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
+    status::menu(store, st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }
+    crate::settings::view_shell_modals(store, st, p, acc, &mut layer);
+    layer.extend(crate::settings::sudo::view(st, p, acc));
     layer.extend(upload::edit_modal(st, p, acc));
     layer.extend(switcher::view(store, st, p, acc));
     layer.extend(upload::notice_modal(st, p, acc));

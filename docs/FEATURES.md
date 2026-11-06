@@ -10,13 +10,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### 1.1 User settings (F/user/components/settings_utils/SettingsConstants.tsx; ours settings/)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Profile | PARTIAL | avatar/banner upload, display name, pronouns, bio, accent colour, username change, per-community profile/nickname, timezone, badges | F/user/components/modals/tabs/MyProfileTab.tsx |
-| Account | PARTIAL | change email/password, sign-in methods, recovery kit, Security (TOTP, backup codes, passkeys), Danger zone | tabs/account_security_tab/* |
-| Privacy | MISSING | calls/groups/friend requests/DMs/sensitive content/profile privacy/data export/delete my messages | tabs/PrivacySafetyTab.tsx |
-| Connections | MISSING | | tabs/LinkedAccountsTab.tsx, F/connection/* |
-| Authorized apps | MISSING | | tabs/AuthorizedAppsTab.tsx |
-| Blocked users | MISSING | list | tabs/BlockedUsersTab.tsx |
-| Devices | MISSING | sessions, revoke, sign out others | tabs/DevicesTab.tsx |
+| Profile | PARTIAL | interactive crop (auto centre-crop), timezone, badges | F/user/components/modals/tabs/MyProfileTab.tsx |
+| Account | PARTIAL | add passkey (no WebAuthn registration), recovery kit | tabs/account_security_tab/* |
+| Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
+| Connections | PARTIAL | Bluesky (browser OAuth) | tabs/LinkedAccountsTab.tsx, F/connection/* |
+| Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
+| Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
+| Devices | DONE | | tabs/DevicesTab.tsx |
 | Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | MISSING | | tabs/PlutoniumTab.tsx etc. |
 | Appearance | MISSING | cozy/compact, spacing, hide avatars, font size, typing in channel list, unread on muted, streamer mode | tabs/AppearanceTab.tsx |
 | Themes | PARTIAL | legacy dark, system, custom colours/fonts, Quick CSS, sharing | F/theme_settings/* |
@@ -73,12 +73,12 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Reset pw / verify email / recover pages | MISSING | web-only links | F/auth/… |
 | SSO login | MISSING | | AuthSsoPanel.tsx |
 | Browser login handoff | MISSING | | BrowserLoginHandoffModal.tsx |
-| Multi-account switcher | MISSING | | AccountSwitcherModal.tsx |
-| Sudo verification | PARTIAL | TOTP/passkey | SudoVerificationModal.tsx |
+| Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
+| Sudo verification | DONE | | SudoVerificationModal.tsx |
 | Account restriction / age gate / new-device | MISSING | | AccountRestrictionScreen.tsx |
 | OAuth2 authorize | MISSING | | OAuthAuthorizeModal.tsx |
 | Terms acceptance | MISSING | | TermsAcceptanceModal.tsx |
-| Token in OS keyring | PARTIAL | 0600 file | D/DesktopAppStorage.ts |
+| Token in OS keyring | DONE | falls back to the 0600 file when no keyring | D/DesktopAppStorage.ts |
 
 ### app / navigation / window / ui
 | Feature | Status | Missing | Official source |
@@ -87,7 +87,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Guild folders | PARTIAL | expand/collapse | GuildFolderItem.tsx |
 | Rail drag-reorder / create folder | MISSING | | F/app/components/layout/dnd/* |
 | Favorites | MISSING | | FavoritesButton.tsx |
-| Set custom status | MISSING | | CustomStatusModal.tsx |
+| Set custom status | PARTIAL | emoji picker, live preview | CustomStatusModal.tsx |
 | Nagbars (connection, notice, maintenance…) | MISSING | | app_layout/nagbars/* |
 | Skeletons | PARTIAL | member rows | F/app/components/skeleton/* |
 | Reopen last location | MISSING | | useLastLocationPersistence.ts |
@@ -165,9 +165,9 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Friends actions, notes | DONE | | |
 | Friend nicknames | MISSING | | ChangeFriendNicknameModal.tsx |
 | Add friends to group | MISSING | | AddFriendsToGroupModal.tsx |
-| Profile popout | PARTIAL | fetch profile: banner, accent, bio, mutuals, badges | UserProfilePopout.tsx |
-| Full profile modal | MISSING | | UserProfileModal.tsx |
-| Change own nickname | MISSING | | ChangeNicknameModal.tsx |
+| Profile popout | DONE | | UserProfilePopout.tsx |
+| Full profile modal | DONE | | UserProfileModal.tsx |
+| Change own nickname | DONE | | ChangeNicknameModal.tsx |
 | Community member avatars | PARTIAL | | F/user/components/profile/* |
 | User context menu | PARTIAL | call, invite, friend nickname, local mute, moderation | UserContextMenu.tsx |
 
@@ -176,7 +176,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Create/join, header popout, context menu, privacy modal, leave | DONE | | |
 | Notification modal | PARTIAL | channel overrides | GuildNotificationSettingsModal.tsx |
-| Edit community profile | PARTIAL | | MyProfileTab.tsx |
+| Edit community profile | DONE | | MyProfileTab.tsx |
 | Delete my messages | MISSING | | useDeleteMyMessagesInGuild.tsx |
 | Preview nagbar | MISSING | | GuildPreviewNagbar.tsx |
 | Role icons | MISSING | | RoleIcon.tsx |
