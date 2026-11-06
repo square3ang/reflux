@@ -115,7 +115,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 | Composer context menu | MISSING | | TextareaContextMenu.tsx |
 | Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
 | @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
-| Attachments | PARTIAL | video/audio players, text preview, download, mosaic | embeds/attachments/* |
+| Attachments | PARTIAL | video/audio players, text preview, download, mosaic (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
 | Embeds | PARTIAL | author/footer icons, galleries, video/YouTube/audio | RichEmbed.tsx |
 | Invite embed | MISSING | | InviteEmbed.tsx |
 | NSFW gate / blur | MISSING | | MatureContentChannelGate.tsx |
@@ -126,13 +126,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 | Active Now | MISSING | | ActiveNowSidebar.tsx |
 | Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | MISSING | | ChannelDuplicateModal.tsx |
-| Search UI | PARTIAL | | message_search_bar/* |
+| Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
 | Call system message / system message wording | MISSING/PARTIAL | | CallMessage.tsx, SystemMessageUtils.tsx |
 
 ### messaging/
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | | |
+| Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
 | Offline queue | PARTIAL | | MessageQueue.tsx |
 | Action bar / context menu | PARTIAL | shift layout; forward, thread, bookmark, suppress embeds, remove reactions, report | MessageContextMenu.tsx |
 | Forward | MISSING | | ForwardModal.tsx |
@@ -151,7 +151,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows). Agents: 
 |---|---|---|---|
 | Desktop notifications | PARTIAL | strip markdown; clicks on Win/mac | MessageNotificationPreview.ts |
 | Sounds, status select, custom status display | DONE | | |
-| Acks | PARTIAL | focus check | NotificationAutoAck.ts |
+| Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
 | Timed mute expiry | PARTIAL | | useMuteSheet.ts |
 | Per-channel overrides | MISSING | | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | PARTIAL | | MuteTargetMenuItem.tsx |
