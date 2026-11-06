@@ -368,6 +368,9 @@ impl Demo {
             voice_scene(&mut shell, &mut store, sc.trim_start_matches('='));
         }
         shell.voice.devices = Some((vec!["Built-in Microphone".into(), "USB Headset".into()], vec!["Speakers".into(), "USB Headset".into()]));
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--desktop=")) {
+            crate::desktop::demo(&mut shell, &mut store, sc);
+        }
         Demo { store, shell }
     }
 }

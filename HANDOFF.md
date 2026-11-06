@@ -87,6 +87,24 @@ See `git log` for details. Crates:
   Tokens live in the OS keyring (`keyring` crate; `REFLUX_NO_KEYRING=1` disables), several
   accounts in `Saved.accounts`. Demo: `--settings=<tab>`, `--account-ui=menu|status|accounts|nickname|sudo|profile`.
   None of the writes were exercised against a live server.
+- Desktop shell, part 2 (`desktop/{autostart,window,spell,shortcuts,updater,streamer,time,nagbar}.rs`,
+  prefs in `desktop::Prefs` inside session.json): launch at login (XDG autostart entry / HKCU Run /
+  LaunchAgent, `--autostart` + "Start minimized" → `App::windowless`); remembered window size
+  (Rune exposes no position/maximized or minimize event, so no minimize-to-tray); app zoom
+  (Ctrl+=/−/0, Appearance slider) by laying the root out at window/zoom and `El::scale`-ing it,
+  with `Popups::open_at` dividing pointer points by the zoom; composer spellcheck with Fluxer's
+  CDN Hunspell dictionaries (sha256-checked, cached in `~/.cache/reflux/spellcheck`) read by
+  `spellbook`, red underlines via `text_input().decorations`, right-click menu (suggestions, add to
+  dictionary) for the caret's misspelling; global shortcuts via the xdg-desktop-portal
+  GlobalShortcuts portal (ashpd, zbus 6) and Windows `RegisterHotKey` — voice can read
+  `desktop::shortcuts::ptt_held()`; updater against `REFLUX_UPDATE_FEED` (GitHub latest-release
+  JSON; no feed exists yet) with AppImage self-replace; locale-aware 12/24h times and dates
+  (`desktop::time`, chrono `unstable-locales`, user setting `time_format`); window title badge;
+  reopen last channel; nagbars (connection, update, streaming privacy) and toasts
+  (`desktop::toast`); streaming privacy (`Store::mask_names` shortens names; account gate, invite
+  link, sounds, notifications; OBS/XSplit detection). Snapshots: `--shell-demo
+  --desktop=bars|spell|toast|streamer`, `REFLUX_ZOOM=1.25`. Windows/macOS code was compile-checked
+  in an isolated crate only (no mingw toolchain for ring/zstd here).
 - Workflow that worked: each subagent in its own `git worktree` with shared
   `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
 - Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining

@@ -83,6 +83,8 @@ pub struct ChannelGroup<'a> {
 
 #[derive(Clone, Debug, Default)]
 pub struct Store {
+    /// Streaming privacy: [`Store::display_name`] shortens names to their first letter.
+    pub mask_names: bool,
     pub me: Option<User>,
     pub session_id: String,
     pub users: HashMap<Snowflake, PartialUser>,
@@ -519,9 +521,11 @@ impl Store {
     pub fn display_name(&self, guild: Option<Snowflake>, user: Snowflake) -> String {
         let nick = guild.and_then(|g| self.member(g, user)?.nick.clone());
         let u = self.users.get(&user);
-        nick.or_else(|| u.and_then(|u| u.global_name.clone()))
-            .or_else(|| u.map(|u| u.username.clone()))
-            .unwrap_or_default()
+        let name = nick.or_else(|| u.and_then(|u| u.global_name.clone())).or_else(|| u.map(|u| u.username.clone())).unwrap_or_default();
+        match name.trim().chars().next() {
+            Some(c) if self.mask_names => format!("{c}…"),
+            _ => name,
+        }
     }
 
     /// Colour of the highest coloured role, else the @everyone colour (fluxer `getColorString`).

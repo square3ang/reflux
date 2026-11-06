@@ -13,19 +13,20 @@ use crate::ui::{Switch, over, rgb};
 pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     match ui.tab {
         "my_profile" => super::profile::tab(store, st, ui, p, acc, layer),
+        "account_security" if st.desktop.streamer && st.prefs.streamer.hide_personal => super::desktop_tabs::streamer_gate(p, acc),
         "account_security" => super::account::tab(store, st, ui, p, acc),
         "privacy_safety" => super::privacy::tab(store, st, p, acc, layer),
         "devices" => super::privacy::devices(st, p, acc),
         "authorized_apps" => super::privacy::apps(st, p, acc),
         "linked_accounts" => super::privacy::connections(st, p, acc),
         "blocked_users" => section(crate::i18n::t("Blocked users"), super::account::blocked(store, st, p, acc), true, p),
-        "appearance" => appearance(p, acc),
+        "appearance" => appearance(st, p, acc),
         "themes" => themes(store, p, acc),
         "advanced_settings" => advanced(store, p, acc),
         "voice_video" => voice(st, p, acc, layer),
         "notifications" => super::desktop_tabs::notifications(st, p, acc),
         "keybinds" => super::desktop_tabs::keybinds(p),
-        "language" => super::desktop_tabs::language(p, acc),
+        "language" => super::desktop_tabs::language(store, st, p, acc),
         "desktop_settings" => super::desktop_tabs::desktop(st, p, acc),
         _ => not_available(p),
     }
@@ -91,7 +92,7 @@ fn voice<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &
     section("Input & output", content, true, p)
 }
 
-fn appearance<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
+fn appearance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let link = text("\"Themes\"")
         .font(font(14.0, 400.0).lh(20.0))
         .color(p.text_link)
@@ -103,9 +104,13 @@ fn appearance<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
         .child(text("You can pick a dark or light theme and change colors and quick CSS in ").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))
         .child(link)
         .child(text(".").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
-    // shortcut: messages display (cozy/compact), zoom, interface, channel list, active now and
-    // streamer mode sections need shell support first.
-    col().w_full().child(section("Theme", line, true, p)).child(section("More appearance settings", not_available(p), false, p))
+    // shortcut: messages display (cozy/compact), interface, channel list and active now sections
+    // need shell support first.
+    col()
+        .w_full()
+        .child(section("Theme", line, true, p))
+        .child(super::desktop_tabs::appearance(st, p, acc))
+        .child(section("More appearance settings", not_available(p), false, p))
 }
 
 /// `ThemeSelector` options: (setting value, label, swatch).

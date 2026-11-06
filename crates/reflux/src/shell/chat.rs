@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use chrono::{DateTime, Datelike, Local, TimeZone};
+use chrono::{DateTime, Local, TimeZone};
 use reflux_model::{
     Channel, ChannelType, Message, MessageFlags, MessageType, Permissions, ReactionEmoji, Snowflake,
 };
@@ -168,7 +168,7 @@ fn is_pending(m: &Message) -> bool {
 
 // ---- Header --------------------------------------------------------------------------------
 
-fn channel_title(store: &Store, c: &Channel) -> String {
+pub(crate) fn channel_title(store: &Store, c: &Channel) -> String {
     match c.kind {
         ChannelType::DM | ChannelType::GROUP_DM => c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| {
             let me = store.my_id();
@@ -260,26 +260,27 @@ fn local(ms: u64) -> DateTime<Local> {
     Local.timestamp_millis_opt(ms as i64).single().unwrap_or_default()
 }
 
-/// en-US `hour: numeric, minute: 2-digit` (12-hour).
-// shortcut: always en-US 12-hour; follow the user's locale and time-format setting later.
+/// `hour: numeric, minute: 2-digit` in the interface language and time format.
 pub fn format_time(ms: u64) -> String {
-    local(ms).format("%-I:%M %p").to_string()
+    crate::desktop::time::time(&local(ms), crate::i18n::locale())
 }
 
 /// `getRelativeDateString`: "Today at 3:04 PM", "Yesterday at …", else "11/6/2026, 3:04 PM".
 pub fn format_relative(ms: u64, now_ms: u64) -> String {
     let (d, now) = (local(ms), local(now_ms));
     let days = now.date_naive().signed_duration_since(d.date_naive()).num_days();
+    let time = format_time(ms);
+    let arg = [("timeString", time.as_str())];
     match days {
-        0 => format!("Today at {}", format_time(ms)),
-        1 => format!("Yesterday at {}", format_time(ms)),
-        _ => format!("{}/{}/{}, {}", d.month(), d.day(), d.year(), format_time(ms)),
+        0 => crate::i18n::tf("Today at {timeString}", &arg),
+        1 => crate::i18n::tf("Yesterday at {timeString}", &arg),
+        _ => format!("{}, {time}", crate::desktop::time::short_date(&d, crate::i18n::locale())),
     }
 }
 
 /// `getFormattedFullDate`: "Friday, November 6, 2026" (the date divider).
 pub fn format_full_date(ms: u64) -> String {
-    local(ms).format("%A, %B %-d, %Y").to_string()
+    crate::desktop::time::long_date(&local(ms), crate::i18n::locale())
 }
 
 pub fn format_full_date_time(ms: u64) -> String {
@@ -1246,11 +1247,19 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         (Slot::Create, Some(super::threads::Panel::Create { message: Some(m), .. })) => super::threads::suggested_name(store, c.guild_id, find(store, cid, m)),
         _ => String::new(),
     };
+    let spelling = if st.prefs.spellcheck { crate::desktop::spell::spans(&draft.text, draft.range().0, p.status_danger) } else { Vec::new() };
     let field = text_input(draft, font(16.0, 400.0).lh(22.0))
         .key(match slot {
             Slot::Main => "composer",
             Slot::Pane => "thread-composer",
             Slot::Create => "thread-create-composer",
+        })
+        .decorations(spelling)
+        // shortcut: the spelling menu edits the main composer only.
+        .on_secondary_press(move |s: &mut S, at, _| {
+            if slot == Slot::Main {
+                crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y]);
+            }
         })
         .w_full()
         .color(p.text_chat)

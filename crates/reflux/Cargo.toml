@@ -16,7 +16,7 @@ reflux-net.workspace = true
 reflux-store.workspace = true
 reflux-voice.workspace = true
 reqwest.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "unstable-locales"] }
 dirs = "6"
 # Reads the official desktop app's store for "Import session from Fluxer desktop".
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -38,7 +38,13 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
 # The authenticator app setup QR code.
 qrcode = { version = "0.14", default-features = false }
+spellbook = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts"] }
 # Unity LauncherEntry (dock badge / urgency); notify-rust already pulls zbus 5.
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

@@ -247,7 +247,8 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
             .el(p);
     }
     let link = created.and_then(|v| v["code"].as_str()).map(|c| format!("{}/{c}", st.invite_base.trim_end_matches('/')));
-    let shown = link.clone().unwrap_or_default();
+    let hide = st.desktop.streamer && st.prefs.streamer.hide_invites && link.is_some();
+    let shown = if hide { crate::i18n::t("Link hidden while sharing").to_string() } else { link.clone().unwrap_or_default() };
     // `CopyLinkSection`: the link in a read-only field with a Copy button inside it.
     let bg = p.form_surface_background;
     let copy = Button::<S>::new("Copy").size(ButtonSize::Compact).disabled(link.is_none()).key("invite-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {

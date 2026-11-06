@@ -38,7 +38,7 @@ impl Popups {
     pub fn open_at(&mut self, id: &str, at: [f32; 2]) {
         self.close();
         self.open = Some(id.into());
-        self.at = Some(at);
+        self.at = Some(crate::desktop::window::unzoom(at));
     }
     pub fn close(&mut self) {
         self.open = None;

@@ -1,6 +1,6 @@
 //! Fluxer's default keybinds (`input/state/InputKeybind.ts`) that Reflux has features for, and
 //! the window key handler that runs them. The Keybinds settings tab lists [`BINDS`].
-// shortcut: no custom keybinds or editing, and no global (system-wide) mute/deafen shortcuts.
+// shortcut: no custom keybinds or editing. System-wide shortcuts are `desktop::shortcuts`.
 
 use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
@@ -29,6 +29,9 @@ pub enum Action {
     ToggleMute,
     ToggleDeafen,
     QuickSwitcher,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,6 +97,10 @@ pub const BINDS: &[Bind] = &[
     b(MarkGuildRead, "Mark community as read", "chat", c(Escape, false, false, true)),
     b(ToggleMute, "Toggle mute", "voice_and_video", c(Char('m'), true, false, true)),
     b(ToggleDeafen, "Toggle deafen", "voice_and_video", c(Char('d'), true, false, true)),
+    // `hideFromDefaults`: "misc" isn't a listed section.
+    b(ZoomIn, "Zoom in", "misc", c(Char('='), true, false, false)),
+    b(ZoomOut, "Zoom out", "misc", c(Char('-'), true, false, false)),
+    b(ZoomReset, "Reset zoom", "misc", c(Char('0'), true, false, false)),
 ];
 
 /// (section id, Fluxer's heading) in `DEFAULT_KEYBIND_SECTIONS` order.
@@ -108,6 +115,10 @@ impl Combo {
             (Key::Command(ch), Char(want)) => ch.eq_ignore_ascii_case(&want),
             _ => false,
         };
+        // Ctrl++ (Shift+= on most layouts) zooms in too (`ZOOM_IN_KEYS`).
+        if matches!((&k.key, self.key), (Key::Command('+'), Char('='))) {
+            return m.cmd == self.ctrl && !m.alt;
+        }
         key && m.cmd == self.ctrl && m.alt == self.alt && m.shift == self.shift
     }
 
@@ -147,13 +158,20 @@ pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
     let Some(bind) = BINDS.iter().find(|b| b.combo.matches(k)) else { return false };
     match &mut s.shell_demo {
         Some(d) => run(&d.store, &mut d.shell, bind.action),
-        None if s.app.route == Route::Main => run(&s.app.store, &mut s.app.shell, bind.action),
+        None if s.app.route == Route::Main || matches!(bind.action, ZoomIn | ZoomOut | ZoomReset) => run(&s.app.store, &mut s.app.shell, bind.action),
         None => false,
     }
 }
 
 /// Runs a keybind; false when it did nothing (the key goes on).
 pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
+    if let ZoomIn | ZoomOut | ZoomReset = a {
+        let mut p = sh.prefs.clone();
+        p.zoom = if a == ZoomReset { 1.0 } else { crate::desktop::window::step_zoom(p.zoom, a == ZoomIn) };
+        crate::desktop::window::set_zoom(p.zoom);
+        sh.intents.push(Intent::Prefs(p));
+        return true;
+    }
     // Modals keep their own keys (Esc closes them), except the keybind list itself.
     if (sh.settings.is_some() || sh.dialog.is_some() || sh.media_ui.viewer.is_some() || sh.media_ui.link_warning.is_some()) && a != ShowKeybinds {
         return false;
@@ -194,6 +212,7 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         ToggleMute => sh.toggle_mute(),
         ToggleDeafen => sh.toggle_deaf(),
         QuickSwitcher => sh.toggle_switcher(),
+        ZoomIn | ZoomOut | ZoomReset => unreachable!("handled above"),
     }
     true
 }
@@ -275,5 +294,8 @@ mod tests {
         let mute = BINDS.iter().find(|b| b.action == ToggleMute).unwrap().combo;
         assert!(mute.matches(&ev(Key::Command('m'), true, false, true)));
         assert_eq!(mute.caps().len(), 3);
+        let zoom_in = BINDS.iter().find(|b| b.action == ZoomIn).unwrap().combo;
+        assert!(zoom_in.matches(&ev(Key::Command('='), true, false, false)));
+        assert!(zoom_in.matches(&ev(Key::Command('+'), true, false, true)), "Ctrl+Shift+= types +");
     }
 }

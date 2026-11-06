@@ -111,6 +111,9 @@ fn member_name_colour_and_partial_update() {
     assert_eq!(s.member_color(S(G), S(ME)), Some(0x00ff00), "highest coloured role");
     assert_eq!(s.display_name(Some(S(G)), S(ME)), "Nick");
     assert_eq!(s.display_name(None, S(ME)), "me");
+    s.mask_names = true;
+    assert_eq!(s.display_name(Some(S(G)), S(ME)), "N…", "streaming privacy");
+    s.mask_names = false;
     apply(&mut s, "GUILD_MEMBER_UPDATE", json!({"guild_id": G.to_string(), "user": {"id": "6"}, "roles": []}));
     assert_eq!(s.member(S(G), S(6)).unwrap().user.username, "bob", "user filled from cache");
     assert_eq!(s.member_color(S(G), S(6)), None);

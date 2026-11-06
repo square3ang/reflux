@@ -258,6 +258,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ashpd"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ba377f1fb1e3972907220f1f8e7c0a45164580905c981d872c1fb90d921cbcc"
+dependencies = [
+ "bitflags 2.13.2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "serde",
+ "zbus 6.2.1",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -804,6 +817,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "pure-rust-locales",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -4246,6 +4260,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pure-rust-locales"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "869675ad2d7541aea90c6d88c81f46a7f4ea9af8cd0395d38f11a95126998a0d"
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4510,11 +4530,13 @@ dependencies = [
 name = "reflux"
 version = "0.1.0"
 dependencies = [
+ "ashpd",
  "authenticator",
  "base64 0.22.1",
  "chrono",
  "dirs",
  "fastrand",
+ "futures-util",
  "image",
  "keyring",
  "notify-rust",
@@ -4532,9 +4554,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spellbook",
  "syntect",
  "tokio",
  "url",
+ "windows-sys 0.59.0",
  "zbus 5.19.0",
 ]
 
@@ -5408,6 +5432,16 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "spellbook"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d204abcbdf8e88729306a8d0ca01a79d8a49969fe1f84696909d6dbc4321c1a"
+dependencies = [
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -7652,6 +7686,9 @@ checksum = "23ef5ed7d628cdf0af82f93dfe03330a8e37383bf7422a1d3d6eb72326680be5"
 dependencies = [
  "futures-core",
  "futures-io",
+ "rustix 1.1.6",
+ "socket2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

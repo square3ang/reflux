@@ -18,15 +18,15 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
 | Devices | DONE | | tabs/DevicesTab.tsx |
 | Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | MISSING | | tabs/PlutoniumTab.tsx etc. |
-| Appearance | MISSING | cozy/compact, spacing, hide avatars, font size, typing in channel list, unread on muted, streamer mode | tabs/AppearanceTab.tsx |
+| Appearance | PARTIAL | cozy/compact, spacing, hide avatars, font size, typing in channel list, unread on muted (zoom + streaming privacy done) | tabs/AppearanceTab.tsx |
 | Themes | PARTIAL | legacy dark, system, custom colours/fonts, Quick CSS, sharing | F/theme_settings/* |
 | Notifications | PARTIAL | unread badge toggle, per-sound toggles, custom sounds, TTS | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | MISSING | embeds/link previews/reactions/spoilers display, input behaviour | tabs/ChatSettingsTab.tsx |
 | Voice & video | PARTIAL | volumes, mic test, processing, PTT/VAD, entrance sound, camera, stream quality | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | MISSING | reduced motion, animated emoji, saturation, link underline, keyboard mode | tabs/AccessibilityTab.tsx |
-| Language & time | PARTIAL | 12/24h, auto-detect, spellcheck | tabs/LanguageTab.tsx |
-| Keybinds | PARTIAL | custom keybinds, recorder, PTT key, global shortcuts | tabs/KeybindsTab.tsx |
-| Desktop app | PARTIAL | autostart, start minimized, window state, minimize to tray | tabs/DesktopSettingsTab.tsx |
+| Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
+| Keybinds | PARTIAL | custom keybinds, recorder, PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
+| Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
 | Advanced | PARTIAL | action bar toggles, double-click edit, encoder options, hide blocked, hw accel, auto-update | tabs/AdvancedSettingsTab.tsx |
 | Applications (dev) | MISSING | | tabs/applications_tab/* |
 | Embed debugger (dev) | MISSING | | tabs/EmbedDebuggerTab.tsx |
@@ -88,11 +88,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Rail drag-reorder / create folder | MISSING | | F/app/components/layout/dnd/* |
 | Favorites | MISSING | | FavoritesButton.tsx |
 | Set custom status | PARTIAL | emoji picker, live preview | CustomStatusModal.tsx |
-| Nagbars (connection, notice, maintenance…) | MISSING | | app_layout/nagbars/* |
+| Nagbars (connection, notice, maintenance…) | PARTIAL | instance notice, maintenance, desktop-notification, premium ones (connection, update, streamer, verify done) | app_layout/nagbars/* |
 | Skeletons | PARTIAL | member rows | F/app/components/skeleton/* |
-| Reopen last location | MISSING | | useLastLocationPersistence.ts |
-| Window title unread count | MISSING | | useFluxerDocumentTitle.ts |
-| Toasts | MISSING | | Toasts.tsx |
+| Reopen last location | DONE | | useLastLocationPersistence.ts |
+| Window title unread count | DONE | | useFluxerDocumentTitle.ts |
+| Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
 | Pop-out windows | MISSING | | PopoutWindow.tsx |
 | Error / rate-limit modals | PARTIAL | | GenericErrorModal.tsx |
 
@@ -230,27 +230,27 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Quick switcher recents | PARTIAL | | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | MISSING/PARTIAL | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | MISSING | | F/theme*/* |
-| i18n coverage, plurals, RTL, locale dates | PARTIAL/MISSING | | F/i18n/* |
+| i18n coverage, plurals, RTL, locale dates | PARTIAL | plurals, RTL (locale dates + 12/24h done) | F/i18n/* |
 | Reduced motion, screen reader announcements | MISSING/PARTIAL | | F/accessibility/* |
-| Streamer mode | MISSING | | F/streamer_mode/* |
+| Streamer mode | PARTIAL | names masked via Store::display_name, account gate, invite link, sounds, notifications; notes in profile not hidden | F/streamer_mode/* |
 | Debug modals, experiments, account engine cache, premium *(low)* | MISSING | | |
 
 ## 3. Desktop shell
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Tray, close to tray, flash, open links, HW encoder | DONE | | |
-| Minimize to tray / start minimized | MISSING | | D/Window.ts |
+| Minimize to tray / start minimized | PARTIAL | minimize to tray (no minimize event in Rune) | D/Window.ts |
 | Notifications | PARTIAL | click routing Win/mac | D/NotificationsIpc.ts |
 | Badge | PARTIAL | Win/mac | D/UnreadBadge.ts |
 | Deep links | PARTIAL | Windows forwarding | D/DeepLinks.ts |
-| Autostart | MISSING | | D/Autostart.ts |
-| Window state persistence | MISSING | | D/Window.ts |
-| Updater | MISSING | | D/Updater.ts |
-| Global shortcuts / PTT | MISSING | | D/GlobalShortcutsEngine.ts |
-| Spellcheck | MISSING | | D/Spellcheck.ts |
-| Zoom | MISSING | | D/Menu.ts |
+| Autostart | DONE | Flatpak Background portal; Win/mac compile-checked only | D/Autostart.ts |
+| Window state persistence | PARTIAL | size only; Rune reports no position/maximized | D/Window.ts |
+| Updater | PARTIAL | no release feed yet (`REFLUX_UPDATE_FEED`); AppImage self-update, else opens the page | D/Updater.ts |
+| Global shortcuts / PTT | PARTIAL | Linux portal only (no X11 fallback), Windows mute/deafen only, macOS none; PTT not used by voice yet (`shortcuts::ptt_held`) | D/GlobalShortcutsEngine.ts |
+| Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
+| Zoom | DONE | | D/Menu.ts |
 | Screen-share picker / app audio | PARTIAL | | D/DisplayMedia.ts |
 | App menu (macOS) | MISSING | | D/Menu.ts |
 | File downloads | DONE | | D/FileDownloads.ts |
 | Copy image | DONE | | D/MediaClipboard.ts |
-| Streamer-mode detection, theme folder, troubleshooting *(low)* | MISSING | | |
+| Streamer-mode detection, theme folder, troubleshooting *(low)* | PARTIAL | theme folder, troubleshooting (OBS/XSplit detection done) | |

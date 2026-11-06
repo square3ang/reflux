@@ -193,6 +193,7 @@ pub fn now_ms() -> u64 {
 fn boot(s: &mut State) {
     s.app.saved = session::load();
     crate::i18n::set_locale(s.app.saved.locale.as_deref().unwrap_or_else(|| crate::i18n::system()));
+    crate::desktop::boot(s);
     restore_voice_devices(s);
     s.login.instance = TextEdit::new(s.app.saved.instance.clone());
     if s.app.saved.token.is_some() {
@@ -678,6 +679,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 account::remember_me(s);
                 if !s.app.store.settings.locale.is_empty() {
                     crate::i18n::set_locale(&s.app.store.settings.locale);
+                    crate::desktop::spell::configure(&s.app.saved.desktop); // the locale's dictionary
                 }
                 crate::desktop::ready(s);
             }
@@ -765,13 +767,16 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {
+                crate::desktop::prefs_changed(&s.app.saved.desktop, &p);
                 s.app.saved.desktop = p;
                 session::save(&s.app.saved);
             }
+            Intent::Desktop(r) => crate::desktop::run(s, r, tx),
             Intent::SetLocale(code) => {
                 crate::i18n::set_locale(code);
                 s.app.saved.locale = Some(code.to_string());
                 session::save(&s.app.saved);
+                crate::desktop::spell::configure(&s.app.saved.desktop);
                 if s.app.route == Route::Main {
                     crate::settings::patch(s, serde_json::json!({ "locale": code }));
                 }
@@ -790,7 +795,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     account::mirror(s);
     let threads_changed = threads::tick(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
-    crate::desktop::tick(s);
+    crate::desktop::tick(s, tx);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
     actions::tick(s) || ran || shell || threads_changed

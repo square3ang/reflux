@@ -35,7 +35,7 @@ pub mod voice;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
-pub(crate) use chat::format_relative;
+pub(crate) use chat::{channel_title, format_relative};
 pub(crate) use guilds::acronym;
 
 use std::collections::HashSet;
@@ -130,6 +130,7 @@ pub enum Intent {
     Fetch { key: String, method: reqwest::Method, path: String, body: Option<serde_json::Value> },
     /// A message carrying a sticker or a saved meme instead of text.
     SendExtra { channel: Snowflake, sticker: Option<Snowflake>, meme: Option<Snowflake> },
+    Desktop(crate::desktop::Request),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -261,6 +262,8 @@ pub struct ShellState {
     pub invite_base: String,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
+    /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
+    pub desktop: crate::desktop::ShellView,
     /// Files waiting in the composer's tray, and the last tray ID given out.
     pub uploads: Vec<upload::Upload>,
     pub upload_seq: u64,
@@ -349,6 +352,7 @@ impl Default for ShellState {
             form: Default::default(),
             invite_base: String::new(),
             prefs: Default::default(),
+            desktop: Default::default(),
             uploads: Vec::new(),
             upload_seq: 0,
             upload_edit: None,
@@ -585,10 +589,11 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().w_full().h_full().children(verify_nagbar(store, st, p, acc)).child(body);
+    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(verify_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
     expr::layer(store, st, p, acc, &mut layer);
+    crate::desktop::nagbar::layer(st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);

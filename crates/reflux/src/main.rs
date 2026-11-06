@@ -33,6 +33,10 @@ fn init() -> State {
     if let Ok(l) = std::env::var("REFLUX_LOCALE") {
         i18n::set_locale(&l);
     }
+    // Headless zoom checks (`REFLUX_ZOOM=1.5`); a real run takes the saved zoom in `app::boot`.
+    if let Some(z) = std::env::var("REFLUX_ZOOM").ok().and_then(|z| z.parse().ok()) {
+        desktop::window::set_zoom(z);
+    }
     let gallery = rune::extra_args().iter().any(|a| a == "--gallery").then(ui::gallery::Gallery::default);
     let shell_demo = rune::extra_args().iter().any(|a| a == "--shell-demo").then(shell::demo::Demo::new);
     State { gallery, shell_demo, ..State::default() }
@@ -44,11 +48,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(d) = &s.shell_demo {
         d.shell.media.set_scale(scale);
     }
-    match (&s.gallery, &s.shell_demo) {
+    let content = match (&s.gallery, &s.shell_demo) {
         (Some(g), _) => ui::gallery::view(g, cx),
         (_, Some(d)) => shell::demo::view(d),
         _ => app::view(s, cx),
-    }
+    };
+    desktop::window::root(content, s.desktop.size)
 }
 
 fn main() {
@@ -67,7 +72,9 @@ fn main() {
         }
         return;
     }
-    let app = rune::App::new(AppSpec {
+    // The remembered size, and a launch at login with "Start minimized" stays in the tray.
+    let prefs = if rune::is_headless() { desktop::Prefs::default() } else { session::load().desktop };
+    let mut app = rune::App::new(AppSpec {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
@@ -84,11 +91,14 @@ fn main() {
             shell::demo::setup(s, waker);
             app::live::wait(s);
         }),
-        ..AppSpec::new("Fluxer", (1280.0, 800.0), init, view)
+        ..AppSpec::new("Fluxer", desktop::window::initial_size(&prefs, (1280.0, 800.0)), init, view)
     })
     .keep_running()
     .on_close(desktop::on_close)
     .on_focus(|s, focused, _| s.desktop.focused = focused);
+    if desktop::autostart::start_hidden(&prefs) && !rune::is_headless() {
+        app = app.windowless();
+    }
     // Headless snapshots stay offline and show the logged-out screens, unless `--live`.
     if app::live::scene().is_some() {
         reflux_net::force_readonly();

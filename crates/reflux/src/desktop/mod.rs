@@ -1,11 +1,20 @@
 //! The desktop shell around the app, as `fluxer_desktop` provides it: message notifications and
 //! sounds, the tray icon, the dock badge / urgency hint, close-to-tray, `fluxer://` links and
-//! single-instance forwarding.
+//! single-instance forwarding; launch at login, window size and zoom, spellcheck, global
+//! shortcuts, the updater, nagbars and toasts, and streaming privacy.
 
+pub mod autostart;
 pub mod link;
+pub mod nagbar;
 pub mod notify;
+pub mod shortcuts;
 pub mod sound;
+pub mod spell;
+pub mod streamer;
+pub mod time;
 mod tray;
+pub mod updater;
+pub mod window;
 
 use std::collections::{HashSet, VecDeque};
 
@@ -30,13 +39,105 @@ pub struct Prefs {
     pub tray: bool,
     /// `closeToTray`: closing the window hides it while the tray icon shows.
     pub close_to_tray: bool,
+    /// Launch at login (`Autostart.ts`); the entry itself is the source of truth at startup.
+    pub autostart: bool,
+    /// `startMinimized`: a launch at login stays in the tray.
+    pub start_minimized: bool,
+    /// `rememberWindowState`, and the size last seen (logical points).
+    pub remember_window: bool,
+    pub window: Option<[f32; 2]>,
+    /// `Accessibility:zoomLevel` (0.5..=2).
+    pub zoom: f32,
+    /// Spellcheck in the composer, its dictionaries (`dictionary-*` package names; empty = the
+    /// interface language's) and the user's own words.
+    pub spellcheck: bool,
+    pub spell_langs: Vec<String>,
+    pub words: Vec<String>,
+    /// System-wide mute / deafen / push-to-talk shortcuts.
+    pub global_shortcuts: bool,
+    /// The guild (`None` = home) and channel open last, reopened on start.
+    pub last: Option<(Option<Snowflake>, Snowflake)>,
+    pub streamer: streamer::Prefs,
+    /// The update version whose bar was dismissed.
+    pub skipped_update: Option<String>,
 }
 
 impl Default for Prefs {
     /// `DesktopConfig.ts` defaults.
     fn default() -> Self {
-        Self { notifications: true, sounds: true, tray: true, close_to_tray: true }
+        Self {
+            notifications: true,
+            sounds: true,
+            tray: true,
+            close_to_tray: true,
+            autostart: false,
+            start_minimized: false,
+            remember_window: true,
+            window: None,
+            zoom: 1.0,
+            spellcheck: true,
+            spell_langs: Vec::new(),
+            words: Vec::new(),
+            global_shortcuts: true,
+            last: None,
+            streamer: Default::default(),
+            skipped_update: None,
+        }
     }
+}
+
+/// What the shell's views show of the desktop side, mirrored into `ShellState` each frame;
+/// toasts and the spelling menu live here because shell handlers push them.
+#[derive(Clone, Debug, Default)]
+pub struct ShellView {
+    /// The gateway is reconnecting.
+    pub offline: bool,
+    pub update: Option<updater::Available>,
+    /// Streaming privacy is on (manually or detected).
+    pub streamer: bool,
+    pub toasts: Vec<nagbar::Toast>,
+    /// The misspelling the composer's context menu is about: (byte range, word).
+    pub spell_menu: Option<(std::ops::Range<usize>, String)>,
+}
+
+/// Desktop requests from shell handlers (`Intent::Desktop`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// Download and install the update (AppImage), or open its page.
+    Update,
+    /// Restart into the installed update.
+    Restart,
+    OpenUrl(String),
+}
+
+/// `--shell-demo --desktop=bars|spell|toast|streamer`: nagbars, the spelling menu over a
+/// composer draft (with a tiny inline dictionary), a toast, masked names.
+pub fn demo(sh: &mut crate::shell::ShellState, store: &mut reflux_store::Store, scene: &str) {
+    match scene {
+        "bars" => {
+            sh.desktop.offline = true;
+            sh.desktop.update = Some(updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(String::new()), stage: updater::Stage::Available });
+            sh.desktop.streamer = true;
+        }
+        "spell" => {
+            let dict = spellbook::Dictionary::new("SET UTF-8\n", "6\nthis\nis\na\ntest\nof\nspelling\n").expect("demo dictionary");
+            spell::insert("dictionary-en", dict);
+            sh.composer = rune::TextEdit::new("this is a tset of speling ");
+            sh.composer.set_caret(12);
+            nagbar::open_spell_menu(sh, [560.0, 640.0]);
+        }
+        "toast" => toast(&mut sh.desktop, "Added \"Fluxer\" to dictionary", true),
+        "streamer" => {
+            sh.desktop.streamer = true;
+            store.mask_names = true;
+        }
+        _ => {}
+    }
+}
+
+/// Pushes a toast (`ToastCommands.createToast`).
+pub fn toast(view: &mut ShellView, text: impl Into<String>, success: bool) {
+    view.toasts.push(nagbar::Toast { text: text.into(), success, at: std::time::Instant::now() });
 }
 
 /// Runtime state of the desktop integration.
@@ -56,11 +157,33 @@ pub struct Desktop {
     notified: VecDeque<Snowflake>,
     /// A launch link waiting for READY.
     pending_link: Option<link::Link>,
+    /// The window's size (root layout), and when it last changed while not yet saved.
+    pub size: [f32; 2],
+    size_changed: Option<std::time::Instant>,
+    title: String,
+    update: Option<updater::Available>,
+    /// OBS / XSplit is running (`StreamerModeProcessDetection.ts`).
+    pub capture_app: bool,
+    streamer_polled: Option<std::time::Instant>,
+    update_checked: Option<std::time::Instant>,
 }
 
 pub fn play(s: &State, sound: Sound) {
-    if s.app.saved.desktop.sounds {
+    if s.app.saved.desktop.sounds && !streamer::mute_sounds(&s.app.saved.desktop.streamer, s.desktop.capture_app) {
         sound::play(sound);
+    }
+}
+
+/// After the saved session loads: zoom, spellcheck, global shortcuts, and the autostart
+/// preference following the entry on disk (the user may have removed it).
+pub fn boot(s: &mut State) {
+    let p = &mut s.app.saved.desktop;
+    window::set_zoom(p.zoom);
+    spell::configure(p);
+    shortcuts::start(p.global_shortcuts);
+    if !rune::is_headless() && p.autostart != autostart::is_enabled() {
+        p.autostart = !p.autostart;
+        crate::session::save(&s.app.saved);
     }
 }
 
@@ -95,9 +218,9 @@ pub fn open_link(s: &mut State, url: &str) {
     }
 }
 
-/// The shell is up (READY): follow a link that arrived before it.
+/// The shell is up (READY): follow a link that arrived before it, else reopen the last channel.
 pub fn ready(s: &mut State) {
-    let Some(l) = s.desktop.pending_link.take() else { return };
+    let Some(l) = s.desktop.pending_link.take() else { return reopen(s) };
     let sh = &mut s.app.shell;
     match l {
         link::Link::Invite(code) => {
@@ -133,7 +256,7 @@ fn on_message(s: &mut State, m: &Message) {
     }
     play(s, Sound::Message);
     attention(s);
-    if !s.app.saved.desktop.notifications || rune::is_headless() {
+    if !s.app.saved.desktop.notifications || streamer::pause_notifications(&s.app.saved.desktop.streamer, s.desktop.capture_app) || rune::is_headless() {
         return;
     }
     let (title, body) = (notify::title(store, m), notify::body(store, m));
@@ -175,8 +298,35 @@ fn attention(s: &State) {
     }
 }
 
+/// `LocationState`: the channel open last, if it still exists.
+fn reopen(s: &mut State) {
+    let Some((guild, channel)) = s.app.saved.desktop.last else { return };
+    let sh = &mut s.app.shell;
+    if sh.channel.is_none() && s.app.store.channels.contains_key(&channel) && guild.is_none_or(|g| s.app.store.guilds.contains_key(&g)) {
+        sh.select_guild(guild, Some(channel));
+    }
+}
+
 /// Every frame: dock badge, tray icon and menu, and the voice sounds that follow state changes.
-pub fn tick(s: &mut State) {
+pub fn tick(s: &mut State, tx: &mut rune::Tx) {
+    window::tick(s, tx);
+    streamer::tick(s, tx);
+    updater::tick(s);
+    let prefs = &mut s.app.saved.desktop;
+    let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
+    if s.app.route == Route::Main && here.is_some() && prefs.last != here && !rune::is_headless() {
+        prefs.last = here;
+        crate::session::save(&s.app.saved);
+    }
+    time::set_format(s.app.store.settings.time_format);
+    let v = &mut s.app.shell.desktop;
+    v.offline = s.app.route == Route::Main && matches!(s.app.connection, Some(reflux_net::ConnectionState::Reconnecting(_) | reflux_net::ConnectionState::Connecting));
+    v.update = s.desktop.update.clone().filter(|u| s.app.saved.desktop.skipped_update.as_ref() != Some(&u.version));
+    v.streamer = streamer::enabled(&s.app.saved.desktop.streamer, s.desktop.capture_app);
+    v.toasts.retain(|t| t.at.elapsed() < nagbar::TOAST_TIME);
+    if !v.toasts.is_empty() {
+        tx.wake_after(std::time::Duration::from_millis(250));
+    }
     let main = s.app.route == Route::Main;
     let store = &s.app.store;
     // `UnreadBadge`: total mentions across guilds and DMs, plus unread DMs.
@@ -197,6 +347,42 @@ pub fn tick(s: &mut State) {
     }
     sync_tray(s, mentions > 0);
     voice_sounds(s);
+    let store = &s.app.store;
+    let unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
+    let title = window::title(&s.app.store, &s.app.shell, mentions, unread);
+    if s.desktop.title != title {
+        tx.set_title(title.clone());
+        s.desktop.title = title;
+    }
+}
+
+/// A changed preference that acts outside the app (`Intent::Prefs`).
+pub fn prefs_changed(old: &Prefs, new: &Prefs) {
+    if old.autostart != new.autostart
+        && let Err(e) = autostart::set(new.autostart)
+    {
+        eprintln!("reflux: autostart: {e}");
+    }
+    if old.global_shortcuts != new.global_shortcuts {
+        shortcuts::set_enabled(new.global_shortcuts);
+    }
+    if old.spell_langs != new.spell_langs || old.words != new.words || old.spellcheck != new.spellcheck {
+        spell::configure(new);
+    }
+    window::set_zoom(new.zoom);
+}
+
+/// Runs an [`Intent::Desktop`](crate::shell::Intent::Desktop).
+pub fn run(s: &mut State, r: Request, tx: &mut rune::Tx) {
+    match r {
+        Request::Update => updater::install(s),
+        Request::Restart => updater::restart(),
+        Request::OpenUrl(u) => {
+            if let Err(e) = tx.open_url(&u) {
+                eprintln!("reflux: open {u}: {e:?}");
+            }
+        }
+    }
 }
 
 fn sync_tray(s: &mut State, dot: bool) {
@@ -247,6 +433,7 @@ fn on_tray(e: TrayEvent) {
 
 /// `App::on_close`: hide to the tray when it shows and close-to-tray is on, else quit.
 pub fn on_close(s: &mut State, tx: &mut rune::Tx) {
+    window::save_size(s);
     if !(s.app.saved.desktop.close_to_tray && s.desktop.tray.is_some()) {
         tx.quit();
     }
