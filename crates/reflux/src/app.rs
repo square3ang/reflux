@@ -336,7 +336,9 @@ fn sign_out(s: &mut State, message: Option<String>) {
     s.app.connection = None;
     s.app.selected_channel = None;
     let avatars = std::mem::take(&mut s.app.shell.default_avatars);
-    s.app.shell = crate::shell::ShellState { default_avatars: avatars, ..Default::default() };
+    let media = s.app.shell.media.clone();
+    media.set_base("");
+    s.app.shell = crate::shell::ShellState { default_avatars: avatars, media, ..Default::default() };
     s.app.error = None;
     s.app.route = Route::Auth;
     s.app.saved.token = None;

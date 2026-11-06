@@ -19,6 +19,7 @@ use reflux_model::{ChannelType, ReactionEmoji, Snowflake, Status as PresenceStat
 use reflux_store::Store;
 use rune::{Color, El, Icon, Image, ImageCache, TextEdit, Waker, col, el, row};
 
+use crate::media::{self, Load};
 use crate::theme::{Palette, dim};
 use crate::ui::{Avatar, Popups, Status, over, rgb};
 
@@ -69,6 +70,8 @@ pub struct ShellState {
     pub now_ms: u64,
     /// `assets/media/images/avatars/{0..5}.png`, picked by user ID % 6.
     pub default_avatars: Vec<Image>,
+    /// Avatars, icons, attachments and emoji from the media proxy.
+    pub media: crate::media::Media,
     pub intents: Vec<Intent>,
     /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
     pub popups: Popups,
@@ -110,6 +113,7 @@ impl Default for ShellState {
             hover_guild: None,
             now_ms: 0,
             default_avatars: Vec::new(),
+            media: Default::default(),
             intents: Vec::new(),
             popups: Popups::default(),
             hover_msg: None,
@@ -232,11 +236,28 @@ pub(crate) fn presence(store: &Store, user: Snowflake) -> Status {
     }
 }
 
-/// An avatar: the default image for now (custom avatars need the media proxy).
-// shortcut: custom avatar hashes are ignored; load them through the runtime's image cache.
-pub(crate) fn avatar(st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
-    let px = st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels());
-    Avatar::new(size).pixels(px).status(status).surface(surface).el(p)
+/// A user's avatar from the media proxy: the skeleton while it loads, the default avatar
+/// (`id % 6`) without a hash or when it fails.
+// shortcut: guild member avatars aren't used; every surface shows the account avatar.
+pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
+    let hash = store.users.get(&user).map(|u| &u.avatar).or(store.me.as_ref().filter(|m| m.id == user).map(|m| &m.avatar));
+    let default = || st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels().clone());
+    let px = match hash.and_then(|h| h.as_deref()).map(|h| st.media.asset(|b, s| media::avatar_url(b, user, h, size, s))) {
+        Some(Load::Ready(px)) => Some(px),
+        Some(Load::Pending) => None,
+        Some(Load::Failed) | None => default(),
+    };
+    Avatar::new(size).pixels(px.as_ref()).status(status).surface(surface).el(p)
+}
+
+/// A remote picture at a fixed size, cropped to cover it; `background-secondary-alt` until
+/// it loads (and if it fails).
+pub(crate) fn picture(load: Load, w: f32, h: f32, radius: f32, p: &Palette) -> El {
+    let e = el().size(w, h).radius(radius);
+    match load {
+        Load::Ready(px) => e.pixels_fit(&px, rune::SurfaceFit::Fill),
+        Load::Pending | Load::Failed => e.fill(p.background_secondary_alt),
+    }
 }
 
 macro_rules! fluxer_icon {

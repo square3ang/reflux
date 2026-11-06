@@ -108,6 +108,7 @@ pub(super) fn tick(s: &mut State) -> bool {
         && s.app.shell.web_base.is_empty()
     {
         s.app.shell.web_base = inst.discovery.endpoints.webapp.clone();
+        s.app.shell.media.set_base(&inst.discovery.endpoints.media);
     }
     let now = now_ms();
     let sh = &s.app.shell;

@@ -101,7 +101,7 @@ fn member(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: b
         .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .child(avatar(st, u, 32.0, Some(status), p.background_secondary_lighter, p))
+        .child(avatar(store, st, u, 32.0, Some(status), p.background_secondary_lighter, p))
         .child(info);
     if status == Status::Offline {
         r = r.opacity(0.3);

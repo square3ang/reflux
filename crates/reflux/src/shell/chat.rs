@@ -11,6 +11,7 @@ use rune::text::Span;
 use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el, icon, rich, row, text, text_input};
 
 use super::markdown::{self, Md};
+use crate::media::Load;
 use super::{Intent, ReplyTo, ShellAccess, ShellState, avatar, channel_icon, emoji, members, role_color};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
@@ -131,7 +132,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     let mut left = row().grow(1.0).min_w(0.0).center_y();
     if c.kind == ChannelType::DM {
         let other = c.recipients.iter().find(|u| u.id != store.my_id()).map(|u| u.id).unwrap_or_default();
-        left = left.child(avatar(st, other, 24.0, None, p.background_secondary_lighter, p));
+        left = left.child(avatar(store, st, other, 24.0, None, p.background_secondary_lighter, p));
     } else {
         left = left.child(icon(channel_icon(c.kind), dim::CHANNEL_HEADER_ICON_SIZE).color(muted));
     }
@@ -147,7 +148,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         left = left
             .child(text("•").font(font(16.0, 400.0).lh(24.0)).color(p.background_modifier_hover).mx(dim::CHANNEL_HEADER_TOPIC_DIVIDER_GAP))
             .child(
-                markdown::inline_text(topic, &Md { store, guild: c.guild_id, p }, font(13.0, 400.0).lh(18.0), p.text_tertiary)
+                markdown::inline_text(topic, &Md { store, media: &st.media, guild: c.guild_id, p }, font(13.0, 400.0).lh(18.0), p.text_tertiary)
                     .grow(1.0)
                     .shrink()
                     .pr(dim::SPACING_5),
@@ -314,7 +315,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     } else {
         sticky
     };
-    let md = Md { store, guild: c.guild_id, p };
+    let md = Md { store, media: &st.media, guild: c.guild_id, p };
     let perms = Perms::of(store, c);
     // The action bar's message: the hovered one, or the one whose menu or picker is open.
     let active = st.active_msg.filter(|_| st.popups.open.is_some());
@@ -559,7 +560,7 @@ fn message_menu<S: 'static>(menu: &str, m: &Message, c: &Channel, perms: Perms, 
 /// `showDeleteConfirmation`: the `ConfirmModal` with a preview of the message.
 fn delete_modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).confirm_delete = None;
-    let md = Md { store, guild: store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p };
+    let md = Md { store, media: &st.media, guild: store.channels.get(&m.channel_id).and_then(|c| c.guild_id), p };
     let preview = col()
         .w_full()
         .max_h(220.0)
@@ -667,7 +668,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     // Avatar column: the avatar on a group head, the hover time on the rest.
     let gutter = if head {
         col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).child(
-            avatar(st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p),
+            avatar(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p),
         )
     } else {
         row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().child(
@@ -701,7 +702,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
         // shortcut: "(edited)" sits on its own line under the body instead of inline after it.
         content = content.child(text("(edited)").font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
     }
-    let acc_el = accessories(store, m, p, acc);
+    let acc_el = accessories(store, st, m, p, acc);
     if let Some(a) = acc_el {
         content = content.child(a);
     }
@@ -791,7 +792,7 @@ fn reply_preview(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palet
         Some(r) => {
             let name = author_name(store, r);
             line = line
-                .child(avatar(st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP))
+                .child(avatar(store, st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP))
                 .child(
                     text(name)
                         .font(font(dim::MESSAGE_REPLY_FONT_SIZE, 500.0).lh(h))
@@ -855,42 +856,53 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
 }
 
 /// `.container`: attachments, embeds, reactions; row-gap 4, padding-block 2.
-fn accessories<S: 'static>(store: &Store, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     if m.attachments.is_empty() && m.embeds.is_empty() && m.reactions.is_empty() {
         return None;
     }
     let mut c = col().w_full().gap(dim::MESSAGE_CONTAINER_GAP).py(dim::MESSAGE_CONTAINER_PADDING_Y).items_start();
     for a in &m.attachments {
-        c = c.child(attachment(a, p));
+        c = c.child(attachment(st, a, p));
     }
     if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
         for e in &m.embeds {
-            c = c.child(embed(e, store, m, p));
+            c = c.child(embed(e, store, st, m, p));
         }
     }
     if !m.reactions.is_empty() {
-        c = c.child(reactions(m, p, acc));
+        c = c.child(reactions(st, m, p, acc));
     }
     Some(c)
 }
 
-/// The size an image attachment draws at: fit in 550×350 (`MediaDimensionConfig`), never upscaled.
-pub fn media_size(w: u32, h: u32) -> (f32, f32) {
+/// `fitMediaWithinBounds`: the size media draws at inside `max`, never upscaled.
+fn fit(w: u32, h: u32, max: (f32, f32)) -> (f32, f32) {
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
-    let k = (550.0 / w).min(350.0 / h).min(1.0);
+    let k = (max.0 / w).min(max.1 / h).min(1.0);
     ((w * k).round(), (h * k).round())
 }
 
-fn attachment(a: &Attachment, p: &Palette) -> El {
+/// The size an image attachment draws at: fit in 550×350 (`MediaDimensionConfig`).
+pub fn media_size(w: u32, h: u32) -> (f32, f32) {
+    fit(w, h, (550.0, 350.0))
+}
+
+/// An image (or a video's poster frame) through the media proxy at its drawn size.
+fn media(st: &ShellState, proxy_url: Option<&str>, (w, h): (f32, f32), p: &Palette) -> El {
+    let load = match proxy_url {
+        Some(u) => st.media.get(&crate::media::fit_url(u, w, st.media.scale())),
+        None => Load::Failed,
+    };
+    if matches!(load, Load::Failed) {
+        return row().size(w, h).center().radius(dim::MEDIA_BORDER_RADIUS).fill(p.background_secondary_alt).child(icon(&icons::IMAGE, 32.0).color(p.text_tertiary_muted));
+    }
+    super::picture(load, w, h, dim::MEDIA_BORDER_RADIUS, p)
+}
+
+fn attachment(st: &ShellState, a: &Attachment, p: &Palette) -> El {
     if let (Some(w), Some(h), true) = (a.width, a.height, a.content_type.starts_with("image/") || a.content_type.starts_with("video/")) {
-        // shortcut: a placeholder box at the final size; the image itself loads later.
-        let (w, h) = media_size(w, h);
-        return row()
-            .size(w, h)
-            .center()
-            .radius(dim::MEDIA_BORDER_RADIUS)
-            .fill(p.background_secondary_alt)
-            .child(icon(&icons::IMAGE, 32.0).color(p.text_tertiary_muted));
+        // shortcut: videos show their first frame without a player.
+        return media(st, a.proxy_url.as_deref().or(a.url.as_deref()), media_size(w, h), p);
     }
     // A file card.
     // shortcut: approximates `AttachmentFile` (no download button or type-specific icons).
@@ -913,10 +925,27 @@ fn attachment(a: &Attachment, p: &Palette) -> El {
         )
 }
 
-// shortcut: rich embeds show provider, author, title, description and fields; no media or footer icons.
-fn embed(e: &Embed, store: &Store, m: &Message, p: &Palette) -> El {
+/// Embed media with its dimensions (`isValidMedia`).
+fn sized(m: &reflux_model::EmbedMedia) -> Option<(&reflux_model::EmbedMedia, u32, u32)> {
+    Some((m, m.width?, m.height?))
+}
+
+// shortcut: rich embeds show provider, author, title, description, fields and image or
+// thumbnail; no author/footer icons, galleries or players.
+fn embed(e: &Embed, store: &Store, st: &ShellState, m: &Message, p: &Palette) -> El {
+    let thumb = e.thumbnail.as_ref().and_then(sized);
+    // An image or gifv link with nothing else is the bare media (`EMBED_MAX_*` 400×300).
+    if matches!(e.kind.as_str(), "image" | "gifv") && e.title.is_none() && e.description.is_none()
+        && let Some((t, w, h)) = e.image.as_ref().and_then(sized).or(thumb)
+    {
+        return media(st, t.proxy_url.as_deref(), fit(w, h, (400.0, 300.0)), p);
+    }
+    // `RichEmbed`: articles and images promote the thumbnail; else it sits inline at 80px tall.
+    let promote = matches!(e.kind.as_str(), "article" | "image");
+    let image = e.image.as_ref().and_then(sized).or(thumb.filter(|_| promote || e.video.is_some()));
+    let inline = thumb.filter(|_| image.is_none());
     let bar = e.color.map_or(p.background_modifier_accent, role_color);
-    let md = Md { store, guild: m.guild_id, p };
+    let md = Md { store, media: &st.media, guild: m.guild_id, p };
     let mut body = col().grow(1.0).min_w(0.0).gap(8.0).pt(8.0).pr(16.0).pb(16.0).pl(12.0);
     if let Some(pr) = &e.provider {
         body = body.child(text(pr.name.clone()).font(font(12.0, 400.0)).color(p.text_tertiary));
@@ -937,14 +966,21 @@ fn embed(e: &Embed, store: &Store, m: &Message, p: &Palette) -> El {
                 .child(markdown::render(&f.value, &md)),
         );
     }
+    if let Some((t, w, h)) = image {
+        body = body.child(media(st, t.proxy_url.as_deref(), fit(w, h, (400.0, 300.0)), p));
+    }
     if let Some(f) = &e.footer {
         body = body.child(text(f.text.clone()).font(font(12.0, 500.0)).color(p.text_tertiary));
+    }
+    if let Some((t, w, h)) = inline {
+        let tw = 80f32.min((80.0 * w as f32 / h.max(1) as f32).round());
+        body = row().grow(1.0).min_w(0.0).items_start().child(body).child(media(st, t.proxy_url.as_deref(), (tw, 80.0), p).mt(8.0).mr(16.0).ml(16.0));
     }
     row().w_full().max_w(432.0).radius(4.0).fill(p.background_secondary).child(el().w(4.0).self_stretch().corners([4.0, 0.0, 0.0, 4.0]).fill(bar)).child(body)
 }
 
 /// `.reactionsGrid`.
-fn reactions<S: 'static>(m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
+fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut grid = row().flex_wrap().gaps(4.0, 0.0).pt(4.0).center_y();
     for r in &m.reactions {
         let (bg, border, fg) = if r.me {
@@ -952,7 +988,14 @@ fn reactions<S: 'static>(m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
         } else {
             (p.background_secondary, Color::TRANSPARENT, p.text_tertiary)
         };
-        let glyph = if r.emoji.id.is_some() { format!(":{}:", r.emoji.name) } else { r.emoji.name.clone() };
+        // `.emoji`: a 20px custom emoji image, or the unicode glyph.
+        let glyph = match r.emoji.id {
+            Some(id) => match st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())) {
+                Load::Ready(px) => el().size(20.0, 20.0).my(2.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+                _ => text(format!(":{}:", r.emoji.name)).font(font(16.0, 400.0).lh(20.0)),
+            },
+            None => text(r.emoji.name.clone()).font(font(16.0, 400.0).lh(20.0)),
+        };
         let (m2, e) = (m.clone(), r.emoji.clone());
         grid = grid.child(
             row()
@@ -965,7 +1008,7 @@ fn reactions<S: 'static>(m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
                 .hover(if r.me { mix(p.brand_tint_hover, Color::TRANSPARENT, 50.0) } else { p.background_modifier_hover })
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .child(row().min_w(20.0).h(24.0).center().child(text(glyph).font(font(16.0, 400.0).lh(20.0))))
+                .child(row().min_w(20.0).h(24.0).center().child(glyph))
                 .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0))
                 .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone())),
         );

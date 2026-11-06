@@ -7,8 +7,9 @@ use rune::{Color, El, ScrollSpec, col, el, icon, row, text};
 
 use super::{ShellAccess, ShellState, USER_AREA_OVERLAY, avatar, channel_icon, presence};
 use crate::icons;
+use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
-use crate::ui::{Status, mention_badge, mix, over, scroller};
+use crate::ui::{Status, mention_badge, mix, over, rgba, scroller};
 
 fn header_bar(p: &Palette) -> El {
     // `border-bottom: 1px solid var(--user-area-divider-color)`, drawn as a child row.
@@ -21,21 +22,40 @@ fn list(content: El, p: &Palette) -> El {
 }
 
 pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let name = store.guilds.get(&gid).and_then(|g| g.info.as_ref()).map_or(String::new(), |i| i.name.clone());
+    let info = store.guilds.get(&gid).and_then(|g| g.info.as_ref());
+    let name = info.map_or(String::new(), |i| i.name.clone());
+    // `GuildHeader` with a banner: the image (cover, wide-asset aspect 16:9 to 32:9) under a
+    // 40px dark gradient, and the header row over it in white.
+    // shortcut: the banner doesn't collapse or frost as the channel list scrolls.
+    let banner = info.and_then(|i| Some((i.banner.as_deref()?, i)));
+    let banner = banner.map(|(h, i)| {
+        let ratio = match (i.banner_width, i.banner_height) {
+            (Some(w), Some(h)) if w > 0 && h > 0 => (w as f32 / h as f32).clamp(16.0 / 9.0, 32.0 / 9.0),
+            _ => 16.0 / 9.0,
+        };
+        let w = dim::LAYOUT_SIDEBAR_WIDTH;
+        let load = st.media.asset(|b, s| media::guild_banner_url(b, gid, h, s));
+        let img = match load {
+            Load::Ready(px) => el().size(w, w / ratio).pixels_fit(&px, rune::SurfaceFit::Fill),
+            _ => el().size(w, w / ratio).fill(p.background_secondary),
+        };
+        img.child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(40.0).linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.3)), (1.0, Color::TRANSPARENT)]))
+    });
+    let fg = if banner.is_some() { Color::WHITE } else { p.text_primary };
     // `.headerContainer` / `.headerContent`: 56 tall, padding 0 16, gap 4.
-    // shortcut: guild banners aren't fetched yet, so the header always shows the plain variant.
-    let header = row()
+    let mut header = row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
         .px(dim::SPACING_4)
         .gap(dim::SPACING_1)
         .center_y()
-        .fill(p.background_secondary)
-        .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
-        .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
-        .child(icon(&icons::CARET_DOWN, 16.0).color(p.text_primary))
-        .child(header_bar(p));
+        .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(fg).truncate().grow(1.0).shrink())
+        .child(icon(&icons::CARET_DOWN, 16.0).color(fg));
+    header = match &banner {
+        Some(_) => header.pin(Some(0.0), Some(0.0), Some(0.0), None),
+        None => header.fill(p.background_secondary).hover(p.background_modifier_hover).child(header_bar(p)),
+    };
 
     // `.navigationContainer`: padding-right 8; 10px drop zones above and below.
     let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0);
@@ -62,7 +82,10 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .h_full()
         .min_h(0.0)
         .fill(p.background_secondary)
-        .child(header)
+        .child(match banner {
+            Some(b) => b.child(header),
+            None => header,
+        })
         .child(list(groups, p))
 }
 
@@ -184,7 +207,7 @@ fn voice_users(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
             .center_y()
             .radius(6.0)
             .hover(p.surface_interactive_hover_bg)
-            .child(avatar(st, u, 24.0, None, p.background_secondary, p))
+            .child(avatar(store, st, u, 24.0, None, p.background_secondary, p))
             .child(text(store.display_name(gid, u)).font(font(14.0, 500.0).lh(18.0)).color(p.text_tertiary_muted).truncate().shrink())
     }))
 }
@@ -223,8 +246,8 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         let fg = if selected { p.surface_interactive_selected_color } else if unread { p.text_secondary } else { p.text_tertiary_muted };
         let surface = if selected { over(p.surface_interactive_selected_bg, p.background_secondary) } else { p.background_secondary };
         let face = match other {
-            Some(u) if c.kind == ChannelType::DM => avatar(st, u.id, 32.0, Some(presence(store, u.id)), surface, p),
-            _ => avatar(st, c.id, 32.0, None, surface, p),
+            Some(u) if c.kind == ChannelType::DM => avatar(store, st, u.id, 32.0, Some(presence(store, u.id)), surface, p),
+            _ => avatar(store, st, c.id, 32.0, None, surface, p),
         };
         let id = c.id;
         let mut item = row()
@@ -297,7 +320,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .h(32.0)
         .gap(dim::SPACING_2)
         .center_y()
-        .child(avatar(st, me, 32.0, Some(dot), surface, p))
+        .child(avatar(store, st, me, 32.0, Some(dot), surface, p))
         .child(
             col()
                 .grow(1.0)

@@ -3696,6 +3696,7 @@ dependencies = [
  "reflux-model",
  "reflux-net",
  "reflux-store",
+ "reqwest",
  "rune",
  "rune-kit",
  "serde",

@@ -61,7 +61,7 @@ fn profile(store: &Store, st: &ShellState, p: &Palette) -> El {
         .center_y()
         .radius(12.0)
         .border(1.0, p.background_modifier_accent)
-        .child(crate::shell::avatar(st, me.base.id, 80.0, None, p.background_secondary, p))
+        .child(crate::shell::avatar(store, st, me.base.id, 80.0, None, p.background_secondary, p))
         .child(
             col()
                 .gap(4.0)

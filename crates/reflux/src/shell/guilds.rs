@@ -6,6 +6,7 @@ use rune::{Align, El, ScrollSpec, Shadow, col, el, icon, row, text};
 
 use super::{ShellAccess, ShellState, USER_AREA_OVERLAY, first_channel, role_color};
 use crate::icons;
+use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{mention_badge, mix, scroller};
 
@@ -23,7 +24,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     for item in store.guild_list() {
         list = match item {
             GuildListItem::Guild(id) => list.child(guild(store, st, id, p, acc)),
-            GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, folder.color, &guilds, p)),
+            GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder.color, &guilds, p)),
         };
     }
     list = list.child(add_button(p));
@@ -113,13 +114,25 @@ fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palette,
     let lit = selected || st.hover_guild == Some(Some(id));
     let name = store.guilds.get(&id).and_then(|g| g.info.as_ref()).map_or("", |i| i.name.as_str());
     let (unread, mentions) = store.guild_unread(id);
-    // shortcut: guild icons aren't fetched yet, so every guild shows its acronym.
-    let face = acronym_face(name, ICON, lit, p);
+    let face = guild_face(store, st, id, ICON, lit, p);
     let first = first_channel(store, id);
     slot(Some(id), selected, unread, st, face, mention_badge(mentions as u64, true, p), p, acc)
         .label(name.to_string())
         .key(format!("guild-{id}"))
         .on_press(move |s: &mut S| acc(s).select_guild(Some(id), first))
+}
+
+/// `GuildIcon`: the icon from the media proxy, else the acronym; a circle that rounds to a
+/// squircle (30%) when lit.
+fn guild_face(store: &Store, st: &ShellState, id: Snowflake, size: f32, lit: bool, p: &Palette) -> El {
+    let info = store.guilds.get(&id).and_then(|g| g.info.as_ref());
+    let radius = if lit { size * 0.3 } else { size / 2.0 };
+    let load = info.and_then(|i| i.icon.as_deref()).map(|h| st.media.asset(|b, s| media::guild_icon_url(b, id, h, size, s)));
+    match load {
+        Some(Load::Ready(px)) => el().size(size, size).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill),
+        Some(Load::Pending) => el().size(size, size).radius(radius).fill(p.guilds_layout_item_bg),
+        Some(Load::Failed) | None => acronym_face(info.map_or("", |i| i.name.as_str()), size, lit, p),
+    }
 }
 
 fn acronym_face(name: &str, size: f32, lit: bool, p: &Palette) -> El {
@@ -158,12 +171,9 @@ fn acronym_font_size(a: &str, size: f32) -> f32 {
 
 /// A closed folder: up to four mini acronyms on the folder colour.
 // shortcut: folders always show closed and don't open; add expand state when folders matter.
-fn folder_item(store: &Store, color: Option<u32>, guilds: &[Snowflake], p: &Palette) -> El {
+fn folder_item(store: &Store, st: &ShellState, color: Option<u32>, guilds: &[Snowflake], p: &Palette) -> El {
     let bg = color.map_or(mix(p.brand_primary, p.background_secondary, 40.0), |c| mix(role_color(c), p.background_secondary, 40.0));
-    let mini = |id: &Snowflake| {
-        let name = store.guilds.get(id).and_then(|g| g.info.as_ref()).map_or("", |i| i.name.as_str());
-        acronym_face(name, 16.0, false, p)
-    };
+    let mini = |id: &Snowflake| guild_face(store, st, *id, 16.0, false, p);
     let cells: Vec<El> = guilds.iter().take(4).map(mini).collect();
     let grid = col()
         .gap(2.0)

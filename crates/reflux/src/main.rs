@@ -1,6 +1,7 @@
 mod app;
 mod icons;
 mod login;
+mod media;
 mod session;
 mod settings;
 mod shell;
@@ -27,6 +28,11 @@ fn init() -> State {
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
+    let scale = cx.env().scale;
+    s.app.shell.media.set_scale(scale);
+    if let Some(d) = &s.shell_demo {
+        d.shell.media.set_scale(scale);
+    }
     match (&s.gallery, &s.shell_demo) {
         (Some(g), _) => ui::gallery::view(g, cx),
         (_, Some(d)) => shell::demo::view(d),
@@ -43,6 +49,7 @@ fn main() {
         setup: Some(|s, waker| {
             ui::gallery::setup(s, waker.clone());
             s.app.shell.default_avatars = shell::load_default_avatars(waker.clone());
+            s.app.shell.media.setup(waker.clone(), None);
             shell::demo::setup(s, waker);
         }),
         ..AppSpec::new("Fluxer", (1280.0, 800.0), init, view)

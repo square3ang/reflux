@@ -5,7 +5,7 @@
 use chrono::{Local, TimeZone};
 use reflux_model::{DispatchEvent, Snowflake};
 use reflux_store::Store;
-use rune::{El, Waker};
+use rune::{El, Image, ImageCache, Waker};
 use serde_json::{Value, json};
 
 use super::{ShellState, load_default_avatars};
@@ -36,7 +36,38 @@ fn id_at(ms: u64, n: u64) -> String {
 }
 
 fn user(id: u64, name: &str, global: &str) -> Value {
-    json!({"id": id.to_string(), "username": name, "global_name": global})
+    // Two users have custom avatars (drawn by `fixture`); the rest show default ones.
+    let avatar = matches!(id, 1001 | 1004).then_some("demo");
+    json!({"id": id.to_string(), "username": name, "global_name": global, "avatar": avatar})
+}
+
+/// Offline stand-ins for media proxy URLs: the Fluxer logo for icons and emoji, gradients for
+/// the rest. Waits for the decode so headless snapshots include them.
+fn fixture(cache: &ImageCache, url: &str) -> Option<Image> {
+    let gradient = |w: u32, h: u32, a: [f32; 3], b: [f32; 3]| {
+        let mut px = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let t = (x + y) as f32 / (w + h) as f32;
+                px.extend((0..3).map(|i| (a[i] + (b[i] - a[i]) * t) as u8));
+                px.push(255);
+            }
+        }
+        cache.rgba(w, h, px)
+    };
+    let img = if url.contains("/icons/") || url.contains("/emojis/") {
+        cache.svg(&include_bytes!("../../../../assets/media/images/fluxer-logo-color.svg")[..], 96.0, 2.0)
+    } else if url.contains("/avatars/") {
+        gradient(128, 128, [250.0, 166.0, 26.0], [237.0, 66.0, 69.0])
+    } else if url.contains("/banners/") {
+        gradient(480, 270, [70.0, 65.0, 217.0], [235.0, 69.0, 158.0])
+    } else if url.contains("/attachments/") || url.contains("/external/") {
+        gradient(640, 360, [0.0, 187.0, 167.0], [43.0, 127.0, 255.0])
+    } else {
+        return None;
+    };
+    let _ = img.wait();
+    Some(img)
 }
 
 fn chan(id: u64, kind: u16, name: &str, position: i32, parent: Option<u64>) -> Value {
@@ -124,7 +155,7 @@ impl Demo {
             member(1006, &[]),
             member(1007, &[]),
         ];
-        let hq = guild(
+        let mut hq = guild(
             HQ,
             "Fluxer HQ",
             hq_channels,
@@ -136,6 +167,8 @@ impl Demo {
                 "voice_states": [{"user_id": "1004", "channel_id": "2301"}, {"user_id": "1003", "channel_id": "2301"}],
             }),
         );
+        hq["properties"]["icon"] = json!("demo");
+        hq["properties"]["banner"] = json!("demo");
         let small = |id: u64, name: &str, ch: u64, last: u64| {
             guild(
                 id,
@@ -195,7 +228,8 @@ impl Demo {
         let y = |h, m| at(-1, h, m);
         let t = |h, m| at(0, h, m);
         let alan_shot = message(t(10, 1), 0, 1004, "First light from the new renderer:", json!({
-            "attachments": [{"id": "9001", "filename": "screenshot.png", "content_type": "image/png", "size": 482133, "width": 1280, "height": 720}],
+            "attachments": [{"id": "9001", "filename": "screenshot.png", "content_type": "image/png", "size": 482133, "width": 1280, "height": 720,
+                             "proxy_url": "https://media.fluxer.app/attachments/2201/9001/screenshot.png"}],
             "reactions": [{"emoji": {"name": "👍"}, "count": 3, "me": true}, {"emoji": {"name": "🎉"}, "count": 1, "me": false},
                           {"emoji": {"id": "77", "name": "fluxer"}, "count": 2, "me": false}],
         }));
@@ -215,10 +249,12 @@ impl Demo {
             message(t(10, 6), 0, 1001, "## Release notes\n<@1000> can you review the __changelog__ before we tag 0.4?", json!({"mentions": [user(ME, "square", "Square")]})),
             message(t(10, 20), 0, 1007, "", json!({"embeds": [{"type": "rich", "title": "Build #1842 passed", "url": "https://ci.fluxer.app/1842",
                 "description": "All **312** tests green on `main`.", "color": 0x2ECC71,
-                "fields": [{"name": "Duration", "value": "4m 12s", "inline": true}], "footer": {"text": "Fluxer CI"}}]})),
+                "fields": [{"name": "Duration", "value": "4m 12s", "inline": true}], "footer": {"text": "Fluxer CI"},
+                "thumbnail": {"url": "https://ci.fluxer.app/badge.png", "proxy_url": "https://media.fluxer.app/external/sig/ci.png", "width": 128, "height": 128}}]})),
             message(t(11, 2), 0, 1005, "", json!({"type": 7})),
             message(t(11, 3), 0, 1005, "Hi all! Happy to be here. I brought `notes.txt`:", json!({
                 "attachments": [{"id": "9002", "filename": "notes.txt", "content_type": "text/plain", "size": 2048}]})),
+            message(t(11, 4), 0, 1006, "<:fluxer:77> <:fluxer:77>", json!({})),
         ];
         let ack = msgs[7]["id"].as_str().unwrap_or_default().to_string();
         for m in msgs {
@@ -276,7 +312,9 @@ fn stage(st: &mut ShellState, store: &Store, scene: &str) {
 
 pub fn setup(s: &mut State, waker: Waker) {
     if let Some(d) = s.shell_demo.as_mut() {
-        d.shell.default_avatars = load_default_avatars(waker);
+        d.shell.default_avatars = load_default_avatars(waker.clone());
+        d.shell.media.setup(waker, Some(fixture));
+        d.shell.media.set_base("https://media.fluxer.app");
     }
 }
 
@@ -299,7 +337,7 @@ mod tests {
         let s = &d.store;
         assert_eq!(s.guilds.len(), 6);
         assert_eq!(first_channel(s, Snowflake(HQ)), Some(Snowflake(2001)));
-        assert_eq!(s.messages(Snowflake(GENERAL)).len(), 12);
+        assert_eq!(s.messages(Snowflake(GENERAL)).len(), 13);
         assert!(s.has_unread(Snowflake(GENERAL)));
         assert!(s.has_unread(Snowflake(2202)));
         assert!(s.is_muted(&s.channels[&Snowflake(2203)]));

@@ -12,6 +12,7 @@ use crate::ui::mix;
 
 pub struct Md<'a> {
     pub store: &'a Store,
+    pub media: &'a crate::media::Media,
     pub guild: Option<Snowflake>,
     pub p: &'a Palette,
 }
@@ -98,7 +99,32 @@ fn is_block(n: &Node) -> bool {
 /// The message body: blocks stacked, inline runs as rich text (16/22, `text-chat`).
 pub fn render(content: &str, md: &Md) -> El {
     let nodes = reflux_markdown::parse(content, &Options::new(presets::STANDARD));
-    blocks(&nodes, md, md.p.text_chat)
+    jumbo(&nodes, md).unwrap_or_else(|| blocks(&nodes, md, md.p.text_chat))
+}
+
+/// `shouldRenderAsJumboEmojis` (only emoji, at most 30) with a custom emoji among them: a row
+/// of 48px (`--emoji-size-jumbo-emoji`) emoji.
+// shortcut: custom emoji between words stay `:name:`; Rune rich text has no inline images.
+fn jumbo(nodes: &[Node], md: &Md) -> Option<El> {
+    let mut emoji = Vec::new();
+    for n in nodes {
+        match n {
+            Node::Emoji { kind } => emoji.push(kind),
+            Node::Text { content } if content.trim().is_empty() => {}
+            _ => return None,
+        }
+    }
+    if emoji.len() > 30 || !emoji.iter().any(|k| matches!(k, EmojiKind::Custom { .. })) {
+        return None;
+    }
+    let one = |k: &&EmojiKind| match k {
+        EmojiKind::Custom { id, .. } => match md.media.asset(|b, _| crate::media::emoji_url(b, id)) {
+            crate::media::Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+            _ => el().size(48.0, 48.0),
+        },
+        EmojiKind::Standard { raw, .. } => text(raw.clone()).font(font(48.0, 400.0).lh(48.0)),
+    };
+    Some(row().w_full().flex_wrap().gaps(4.0, 4.0).children(emoji.iter().map(one)))
 }
 
 /// A one-line inline rendering (reply previews): block syntax flattened.

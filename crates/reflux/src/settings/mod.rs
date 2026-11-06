@@ -315,7 +315,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .label("Edit your profile")
         .hover_group()
         .on_press(select(acc, "my_profile"))
-        .child(crate::shell::avatar(st, store.my_id(), 40.0, Some(crate::shell::presence(store, store.my_id())), if profile_sel { c.selected } else { c.surface }, p))
+        .child(crate::shell::avatar(store, st, store.my_id(), 40.0, Some(crate::shell::presence(store, store.my_id())), if profile_sel { c.selected } else { c.surface }, p))
         .child(
             col()
                 .grow(1.0)
