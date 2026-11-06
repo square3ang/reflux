@@ -165,7 +165,8 @@ impl Demo {
             json!({
                 "presences": [presence(ME, "online"), presence(1001, "online"), presence(1002, "idle"), presence(1003, "dnd"),
                               presence(1004, "online"), presence(1007, "online")],
-                "voice_states": [{"user_id": "1004", "channel_id": "2301"}, {"user_id": "1003", "channel_id": "2301"}],
+                "voice_states": [{"user_id": "1004", "channel_id": "2301", "self_stream": true},
+                                 {"user_id": "1003", "channel_id": "2301", "self_mute": true, "self_deaf": true}],
             }),
         );
         hq["properties"]["icon"] = json!("demo");
@@ -322,7 +323,38 @@ impl Demo {
                 shell.open_user_menu(t, at, "member-1001".into(), crate::ui::Placement::LeftStart);
             }
         }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--voice")) {
+            voice_scene(&mut shell, &mut store, sc.trim_start_matches('='));
+        }
+        shell.voice.devices = Some((vec!["Built-in Microphone".into(), "USB Headset".into()], vec!["Speakers".into(), "USB Headset".into()]));
         Demo { store, shell }
+    }
+}
+
+/// `--voice[=connecting|failed|watch]`: connected to Lounge (Alan speaking, sharing his screen).
+fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
+    let lounge = (Some(Snowflake(HQ)), Snowflake(2301));
+    if scene == "failed" {
+        st.voice.failed = Some(lounge);
+        return;
+    }
+    let me = json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_mute": true});
+    if let Ok(ev) = DispatchEvent::parse("VOICE_STATE_UPDATE", &me) {
+        store.apply(&ev, 0);
+    }
+    st.voice.channel = Some(lounge);
+    st.voice.self_mute = true;
+    st.voice.connected = scene != "connecting";
+    if st.voice.connected {
+        (st.voice.ping, st.voice.pings) = (Some(42), vec![40, 41, 42]);
+        st.voice.speaking.insert(Snowflake(1004));
+    }
+    if scene == "watch" {
+        st.voice.watching = Some(Snowflake(1004));
+        // A gradient stands in for the decoded frames.
+        let (w, h) = (320u32, 180u32);
+        let rgba = (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, 160, 255]).collect();
+        st.voice.stream.set(w, h, rgba);
     }
 }
 

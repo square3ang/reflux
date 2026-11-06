@@ -5,11 +5,11 @@ use reflux_model::{Channel, ChannelType, Snowflake};
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, col, el, icon, row, text};
 
-use super::{ShellAccess, ShellState, Target, USER_AREA_OVERLAY, avatar, channel_icon, group_avatar, presence};
+use super::{ShellAccess, ShellState, Target, avatar, channel_icon, group_avatar, presence, user_area_overlay, voice};
 use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
-use crate::ui::{Status, mention_badge, mix, over, rgba, scroller};
+use crate::ui::{Status, mention_badge, mix, over, rgb, rgba, scroller};
 
 fn header_bar(p: &Palette) -> El {
     // `border-bottom: 1px solid var(--user-area-divider-color)`, drawn as a child row.
@@ -72,11 +72,11 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
             }
             groups = groups.child(channel_row(store, c, selected, p, acc));
             if c.kind == ChannelType::GUILD_VOICE {
-                groups = groups.child(voice_users(store, st, c, p));
+                groups = groups.child(voice_users(store, st, c, p, acc));
             }
         }
     }
-    groups = groups.child(el().h(10.0 + USER_AREA_OVERLAY + dim::SPACING_2));
+    groups = groups.child(el().h(10.0 + user_area_overlay(st) + dim::SPACING_2));
     col()
         .w(dim::LAYOUT_SIDEBAR_WIDTH)
         .h_full()
@@ -174,7 +174,10 @@ fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palet
     } else {
         item.hover(p.surface_interactive_hover_bg)
     };
-    if !link {
+    let guild = c.guild_id;
+    if c.kind == ChannelType::GUILD_VOICE {
+        item = item.on_press(move |s: &mut S| acc(s).join_voice(guild, id));
+    } else if !link {
         item = item.on_press(move |s: &mut S| acc(s).select_channel(id));
     }
     item = item.on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(Target::Channel(id), [at.x, at.y]));
@@ -191,25 +194,66 @@ fn channel_row<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palet
     container.key(format!("ch-{id}"))
 }
 
-/// Members connected to a voice channel, under its row.
-// shortcut: approximates `VoiceParticipantItem` (24px avatar row, indented past the icon); no
-// speaking ring or mute/deafen glyphs yet.
-fn voice_users(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
+/// Members connected to a voice channel, under its row (`VoiceParticipantItem`): 24px avatar
+/// with a green ring while speaking, the name, then camera / mute / deafen / LIVE.
+fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let gid = c.guild_id;
-    let mut users: Vec<Snowflake> =
-        store.voice_states.iter().filter(|((g, _), v)| *g == gid && v.channel_id == Some(c.id)).map(|((_, u), _)| *u).collect();
-    users.sort();
-    col().w_full().pl(8.0 + 8.0 + 20.0 + 6.0 - 8.0).children(users.into_iter().map(|u| {
-        row()
+    let me = store.my_id();
+    let mut users: Vec<_> = store.voice_states.iter().filter(|((g, _), v)| *g == gid && v.channel_id == Some(c.id)).map(|((_, u), v)| (*u, v)).collect();
+    users.sort_by_key(|(u, _)| *u);
+    col().w_full().pl(8.0 + 8.0 + 20.0 + 6.0 - 8.0).children(users.into_iter().map(|(u, v)| {
+        let speaking = st.voice.speaking.contains(&u);
+        let current = u == me && st.voice.channel == Some((gid, c.id));
+        let fg = if speaking || current { p.text_primary } else { p.text_primary_muted };
+        // `.containerSpeaking`: a 2.4px #22c55e outline (min(3px, 10% of the avatar)).
+        let mut face = el().size(24.0, 24.0).child(avatar(store, st, u, 24.0, None, p.background_secondary, p));
+        if speaking {
+            face = face.child(el().absolute(-2.4, -2.4).size(28.8, 28.8).radius(14.4).border(2.4, rgb(0x22, 0xc5, 0x5e)));
+        }
+        let glyph = |i: &'static rune::Icon, c: Color| icon(i, 16.0).color(c);
+        let mut icons_row = row().gap(4.0).center_y();
+        if v.self_video {
+            icons_row = icons_row.child(glyph(&icons::VIDEO_CAMERA_FILL, p.text_primary_muted));
+        }
+        if v.mute || v.self_mute {
+            icons_row = icons_row.child(glyph(&icons::MICROPHONE_SLASH_FILL, if v.mute { rgb(239, 68, 68) } else { p.text_primary_muted }));
+        }
+        if v.deaf || v.self_deaf {
+            icons_row = icons_row.child(glyph(&icons::SPEAKER_SLASH_FILL, if v.deaf { rgb(239, 68, 68) } else { p.text_primary_muted }));
+        }
+        if v.self_stream {
+            // `LiveBadge`: red pill, 10/600 uppercase white; opens the stream viewer.
+            let mut badge = row()
+                .px(6.0)
+                .py(2.0)
+                .radius(999.0)
+                .fill(rgb(220, 38, 38))
+                .child(text("LIVE").font(font(10.0, 600.0).lh(10.0)).color(Color::WHITE));
+            if u != me {
+                badge = badge.cursor(rune::Cursor::Pointer).role("button").label("Watch stream").on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.watching = Some(u);
+                    sh.intents.push(super::Intent::Watch(Some(u)));
+                });
+            }
+            icons_row = icons_row.child(badge);
+        }
+        let mut item = row()
             .w_full()
-            .h(32.0)
             .px(8.0)
-            .gap(8.0)
+            .py(4.0)
+            .gap(6.0)
             .center_y()
             .radius(6.0)
-            .hover(p.surface_interactive_hover_bg)
-            .child(avatar(store, st, u, 24.0, None, p.background_secondary, p))
-            .child(text(store.display_name(gid, u)).font(font(14.0, 500.0).lh(18.0)).color(p.text_tertiary_muted).truncate().shrink())
+            .hover(p.background_modifier_hover)
+            .hover_group()
+            .child(face)
+            .child(text(store.display_name(gid, u)).font(font(14.0, 500.0).lh(20.0)).color(fg).group_color(p.text_primary).truncate().grow(1.0).shrink())
+            .child(icons_row);
+        if speaking || current {
+            item = item.fill(p.background_modifier_hover);
+        }
+        item
     }))
 }
 
@@ -276,7 +320,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     for c in store.private_channels() {
         rows = rows.child(dm_row(store, st, c, p, acc));
     }
-    rows = rows.child(el().h(USER_AREA_OVERLAY + dim::SPACING_2));
+    rows = rows.child(el().h(user_area_overlay(st) + dim::SPACING_2));
     col()
         .w(dim::LAYOUT_SIDEBAR_WIDTH)
         .h_full()
@@ -403,18 +447,61 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         _ => (Status::Online, "Online"),
     };
     let surface = p.panel_control_bg;
-    let control = |i: &'static rune::Icon, label: &str| {
-        row()
+    // `.controlButton`; `.active` (muted / deafened) turns it danger-red, `.disabled` halves it.
+    let control = |i: &'static rune::Icon, label: &str, active: bool, disabled: bool| {
+        let (fg, hover_fg) = if active || disabled {
+            (p.control_button_danger_text, p.control_button_danger_text)
+        } else {
+            (p.control_button_normal_text, p.control_button_hover_text)
+        };
+        let mut b = row()
             .size(32.0, 32.0)
             .center()
             .radius(dim::RADIUS_MD)
-            .hover(mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0))
             .hover_group()
-            .cursor(rune::Cursor::Pointer)
             .role("button")
             .label(label.to_string())
-            .child(icon(i, 20.0).color(p.control_button_normal_text).group_color(p.control_button_hover_text))
+            .child(icon(i, 20.0).color(fg).group_color(hover_fg));
+        if active {
+            b = b.fill(mix(p.control_button_danger_text, Color::TRANSPARENT, 10.0)).hover(mix(p.control_button_danger_text, Color::TRANSPARENT, 20.0));
+        } else if disabled {
+            b = b.hover(mix(p.control_button_danger_text, Color::TRANSPARENT, 15.0));
+        } else {
+            b = b.hover(mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0));
+        }
+        if disabled {
+            b.opacity(0.5)
+        } else {
+            b.cursor(rune::Cursor::Pointer)
+        }
     };
+    let v = &st.voice;
+    let mine = v.channel.and_then(|(g, _)| store.voice_states.get(&(g, me)));
+    let (server_mute, server_deaf) = mine.map_or((false, false), |s| (s.mute, s.deaf));
+    let no_speak = !voice::can(store, v, reflux_model::Permissions::SPEAK);
+    let mic_locked = server_mute || server_deaf || no_speak;
+    let mic_label = if server_deaf {
+        "Deafened by moderators"
+    } else if server_mute {
+        "Muted by moderators"
+    } else if no_speak {
+        "You don't have permission to speak in this channel"
+    } else if v.self_mute {
+        "Unmute microphone"
+    } else {
+        "Mute microphone"
+    };
+    let muted = v.self_mute || mic_locked;
+    let deaf = v.self_deaf || server_deaf;
+    let mut mic = control(if muted { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, mic_label, muted && !mic_locked, mic_locked);
+    if !mic_locked {
+        mic = mic.on_press(move |s: &mut S| acc(s).toggle_mute());
+    }
+    let deaf_label = if server_deaf { "Deafened by moderators" } else if v.self_deaf { "Undeafen" } else { "Deafen" };
+    let mut speaker = control(if deaf { &icons::SPEAKER_SLASH } else { &icons::SPEAKER_HIGH }, deaf_label, deaf && !server_deaf, server_deaf);
+    if !server_deaf {
+        speaker = speaker.on_press(move |s: &mut S| acc(s).toggle_deaf());
+    }
     let info = row()
         .grow(1.0)
         .min_w(0.0)
@@ -440,12 +527,12 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .gap(dim::SPACING_1)
         .pl(dim::SPACING_3)
         .center_y()
-        .child(control(&icons::MICROPHONE, "Mute"))
-        .child(control(&icons::SPEAKER_HIGH, "Deafen"))
-        .child(control(&icons::GEAR, "User Settings").on_press(move |s: &mut S| acc(s).settings = Some(crate::settings::SettingsUi::new(None))));
+        .child(mic)
+        .child(speaker)
+        .child(control(&icons::GEAR, "User Settings", false, false).on_press(move |s: &mut S| acc(s).settings = Some(crate::settings::SettingsUi::new(None))));
     // --user-area-avatar-lead = max(8, 72/2 - 6 - 32/2) = 14.
     let lead = (dim::LAYOUT_GUILD_LIST_WIDTH / 2.0 - dim::FOOTER_BOX_INSET - 16.0).max(dim::FOOTER_BOX_INNER_INSET);
-    let inner = row()
+    let user_row = row()
         .w_full()
         .min_h(dim::LAYOUT_USER_AREA_HEIGHT)
         .py(dim::FOOTER_BOX_PADDING_Y)
@@ -453,11 +540,19 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .pr(dim::FOOTER_BOX_INNER_INSET)
         .gap(dim::SPACING_3)
         .center_y()
-        .radius(dim::FOOTER_BOX_RADIUS)
-        .fill(surface)
-        .box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: p.floating_surface_ring_color, inset: true })
         .child(info)
         .child(controls);
+    // `.userAreaInnerWrapper`: the voice panel (when in voice) stacked over the user row.
+    let mut inner = col()
+        .w_full()
+        .radius(dim::FOOTER_BOX_RADIUS)
+        .clip_rounded(dim::FOOTER_BOX_RADIUS)
+        .fill(surface)
+        .box_shadow(rune::Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: p.floating_surface_ring_color, inset: true });
+    if let Some(panel) = voice::panel(store, st, p, acc) {
+        inner = inner.child(panel);
+    }
+    let inner = inner.child(user_row);
     row()
         .pin(Some(0.0), None, None, Some(0.0))
         .w(dim::LAYOUT_GUILD_LIST_WIDTH + dim::LAYOUT_SIDEBAR_WIDTH + 1.0)

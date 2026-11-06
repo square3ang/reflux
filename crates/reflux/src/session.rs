@@ -18,6 +18,9 @@ pub struct Saved {
     pub token: Option<String>,
     /// 32 lowercase hex chars, like `ClientInstallationId.ts`.
     pub installation_id: String,
+    /// Chosen microphone / speaker names (`None` = system default).
+    pub voice_input: Option<String>,
+    pub voice_output: Option<String>,
 }
 
 fn path() -> Option<PathBuf> {

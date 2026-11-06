@@ -187,7 +187,8 @@ fn metrics(w: f32, h: f32) -> Metrics {
 const LAYER_KEY: &str = "settings-layer";
 
 /// The modal layer (backdrop + card, and the sign-out confirmation over it).
-pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>) -> El {
+pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let mut popups = Vec::new();
     // The layer covers the window; its size from the last frame stands in for the viewport.
     let [w, h] = rune::memo::layout_size(LAYER_KEY).unwrap_or([1280.0, 800.0]);
     let m = metrics(w, h);
@@ -206,9 +207,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         .role("dialog")
         .label("User settings")
         .child(sidebar(store, st, ui, p, &m, premium, acc))
-        .child(content(store, st, ui, p, &m, acc))
+        .child(content(store, st, ui, p, &m, acc, &mut popups))
         .modal(true, close);
-    let mut layer = el()
+    let mut modal = el()
         .key(LAYER_KEY)
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK).opacity(0.85))
@@ -222,7 +223,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         );
     if ui.confirm_logout {
         let cancel = move |s: &mut S| set(acc, s, |u| u.confirm_logout = false);
-        layer = layer.child(
+        modal = modal.child(
             Modal::new("Sign out?", cancel)
                 .body(text("You can sign back in at any time.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
                 .footer(
@@ -234,7 +235,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
                 .el(p),
         );
     }
-    layer
+    layer.push(modal);
+    layer.extend(popups);
 }
 
 fn set<S>(acc: ShellAccess<S>, s: &mut S, f: impl FnOnce(&mut SettingsUi)) {
@@ -446,7 +448,7 @@ fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, danger: bool, p
     }
 }
 
-fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, m: &Metrics, acc: ShellAccess<S>) -> El {
+fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, m: &Metrics, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let c = colors(p);
     let bg = if is_light(p) { p.background_primary } else { p.background_secondary };
     // `SettingsModalHeader`: 60 tall, padding 0 16, title 18/600, a 34 close button.
@@ -471,7 +473,7 @@ fn content<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .child(text(label_of(ui.tab)).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
         .child(close)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(c.border, bg)));
-    let body = tabs::body(store, st, ui, p, acc);
+    let body = tabs::body(store, st, ui, p, acc, layer);
     let inner = col().w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
     let viewport = col()
         .key("settings-content")

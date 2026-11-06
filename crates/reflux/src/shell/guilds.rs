@@ -4,7 +4,7 @@ use reflux_model::Snowflake;
 use reflux_store::{GuildListItem, Store};
 use rune::{Align, El, ScrollSpec, Shadow, col, el, icon, row, text};
 
-use super::{ShellAccess, ShellState, USER_AREA_OVERLAY, first_channel, role_color};
+use super::{ShellAccess, ShellState, user_area_overlay, first_channel, role_color};
 use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
@@ -18,7 +18,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let mut list = col()
         .w_full()
         .pt(dim::SPACING_1)
-        .pb(USER_AREA_OVERLAY + dim::SPACING_2)
+        .pb(user_area_overlay(st) + dim::SPACING_2)
         .child(home(store, st, p, acc))
         .child(divider(p));
     for item in store.guild_list() {

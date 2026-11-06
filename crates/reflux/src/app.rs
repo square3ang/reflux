@@ -20,6 +20,7 @@ use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
 
 mod actions;
+mod voice;
 
 const PAGE: u8 = 50;
 const IP_POLL: Duration = Duration::from_millis(2000);
@@ -93,6 +94,7 @@ pub struct App {
     acks: actions::PendingAcks,
     /// The member list subscription last sent: (guild, channel, ranges).
     member_sub: Option<(Snowflake, Snowflake, Vec<[u32; 2]>)>,
+    voice: voice::VoiceRt,
 }
 
 /// What views (the shell) ask for; `act` runs it.
@@ -138,6 +140,7 @@ pub fn now_ms() -> u64 {
 
 fn boot(s: &mut State) {
     s.app.saved = session::load();
+    restore_voice_devices(s);
     s.login.instance = TextEdit::new(s.app.saved.instance.clone());
     if s.app.saved.token.is_some() {
         s.app.route = Route::Connecting;
@@ -328,8 +331,14 @@ fn signed_in(s: &mut State, token: String) {
     connect(s);
 }
 
+fn restore_voice_devices(s: &mut State) {
+    let v = &mut s.app.shell.voice;
+    (v.input, v.output) = (s.app.saved.voice_input.clone(), s.app.saved.voice_output.clone());
+}
+
 /// Forgets the session locally; `message` is shown on the login screen.
 fn sign_out(s: &mut State, message: Option<String>) {
+    voice::leave(s, true);
     if let Some(gw) = s.app.gateway.take() {
         let _ = gw.send(Command::Close);
     }
@@ -341,6 +350,7 @@ fn sign_out(s: &mut State, message: Option<String>) {
     let media = s.app.shell.media.clone();
     media.set_base("");
     s.app.shell = crate::shell::ShellState { default_avatars: avatars, media, ..Default::default() };
+    restore_voice_devices(s);
     s.app.error = None;
     s.app.route = Route::Auth;
     s.app.saved.token = None;
@@ -412,12 +422,17 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
         }
         GatewayEvent::Dispatch(d) => {
             s.app.store.apply(&d, now_ms());
+            match &d {
+                reflux_model::DispatchEvent::VoiceServerUpdate(v) => voice::on_server_update(s, v),
+                reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
+                _ => {}
+            }
             if matches!(d, reflux_model::DispatchEvent::Ready(_)) {
                 s.app.member_sub = None; // a new session has no subscriptions
                 s.app.route = Route::Main;
             }
         }
-        GatewayEvent::Error(_) => {} // voice join refusals; no voice UI yet
+        GatewayEvent::Error(e) => voice::on_error(s, &e),
     }
 }
 
@@ -469,6 +484,12 @@ pub fn poll(s: &mut State) -> bool {
     s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
     let community = s.app.instance.as_ref().map(|i| &i.discovery.community);
     s.app.shell.personal_notes = community.is_none_or(|c| c.personal_notes_enabled != Some(false));
+    // The Voice & video tab lists devices once it opens.
+    let sh = &mut s.app.shell;
+    if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.devices.is_none() && !s.app.voice.devices_loading {
+        s.app.voice.devices_loading = true;
+        sh.intents.push(crate::shell::Intent::LoadDevices);
+    }
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
     for i in intents {
@@ -480,6 +501,13 @@ pub fn poll(s: &mut State) -> bool {
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
             Intent::Logout => act(s, Action::Logout),
+            i @ (Intent::JoinVoice { .. }
+            | Intent::LeaveVoice
+            | Intent::VoiceSelf
+            | Intent::ToggleScreen
+            | Intent::Watch(_)
+            | Intent::LoadDevices
+            | Intent::VoiceDevices) => voice::run(s, i),
             other => actions::run(s, other),
         }
     }

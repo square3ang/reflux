@@ -10,13 +10,14 @@ use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Switch, over, rgb};
 
-pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     match ui.tab {
         "my_profile" => profile(store, st, p),
         "account_security" => account(store, ui, p, acc),
         "appearance" => appearance(p, acc),
         "themes" => themes(store, p, acc),
         "advanced_settings" => advanced(store, p, acc),
+        "voice_video" => voice(st, p, acc, layer),
         _ => not_available(p),
     }
 }
@@ -47,6 +48,38 @@ fn not_available(p: &Palette) -> El {
                 .font(font(14.0, 400.0).lh(20.0))
                 .color(p.text_primary_muted),
         )
+}
+
+/// `UserVoiceTab`'s "Input & output" section: the devices WebRTC's audio module sees.
+// shortcut: volume, voice processing, mic test, entrance sound and video settings aren't here yet.
+fn voice<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let Some((inputs, outputs)) = &st.voice.devices else {
+        return section("Input & output", text("Looking for devices…").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted), true, p);
+    };
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    let options = |names: &[String]| -> Vec<(String, String)> {
+        std::iter::once((String::new(), "Default".to_string())).chain(names.iter().map(|n| (n.clone(), n.clone()))).collect()
+    };
+    let (ins, outs) = (options(inputs), options(outputs));
+    let pick = |id: &str, label: &str, opts: &[(String, String)], value: &Option<String>, output: bool, layer: &mut Vec<El>| {
+        let refs: Vec<(&str, &str)> = opts.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+        crate::ui::Select::new(id, &refs, Some(value.as_deref().unwrap_or("")))
+            .label(label)
+            .width(340.0)
+            .on_choose(move |s: &mut S, v| {
+                let sh = acc(s);
+                let v = (!v.is_empty()).then(|| v.to_string());
+                if output { sh.voice.output = v } else { sh.voice.input = v }
+                sh.intents.push(Intent::VoiceDevices);
+            })
+            .el(&st.popups, pops, p, layer)
+    };
+    let content = col()
+        .w_full()
+        .gap(16.0)
+        .child(pick("voice-input", "Input device", &ins, &st.voice.input, false, layer))
+        .child(pick("voice-output", "Output device", &outs, &st.voice.output, true, layer));
+    section("Input & output", content, true, p)
 }
 
 // shortcut: Fluxer's Profile tab is a full profile editor (avatar, banner, bio, …); this shows a

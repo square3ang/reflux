@@ -15,6 +15,7 @@ mod members;
 mod menus;
 mod profile;
 mod sidebar;
+pub mod voice;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
@@ -51,6 +52,18 @@ pub enum Intent {
     /// A partial user settings object: apply it now and `PATCH /users/@me/settings`.
     PatchSettings(serde_json::Value),
     Logout,
+    /// Op 4 into the channel, then connect LiveKit on VOICE_SERVER_UPDATE.
+    JoinVoice { guild: Option<Snowflake>, channel: Snowflake },
+    LeaveVoice,
+    /// `voice.self_mute` / `self_deaf` changed: tell the gateway and the call.
+    VoiceSelf,
+    ToggleScreen,
+    /// Show this user's screen share (`None` stops).
+    Watch(Option<Snowflake>),
+    /// List microphones and speakers into `voice.devices`.
+    LoadDevices,
+    /// `voice.input` / `voice.output` changed.
+    VoiceDevices,
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
     /// Close a DM or leave a group DM.
@@ -149,6 +162,7 @@ pub struct ShellState {
     pub confirm_leave: Option<Snowflake>,
     /// Member list rows on screen (drives the lazy list subscription).
     pub member_rows: std::ops::Range<usize>,
+    pub voice: voice::Voice,
 }
 
 impl Default for ShellState {
@@ -188,6 +202,7 @@ impl Default for ShellState {
             note: TextEdit::new(""),
             confirm_leave: None,
             member_rows: 0..0,
+            voice: voice::Voice::default(),
         }
     }
 }
@@ -278,6 +293,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         None => sidebar::home(store, st, p, acc),
     };
     let main = match (st.guild, channel) {
+        _ if st.voice.watching.is_some() => voice::viewer(store, st, p, acc).unwrap_or_else(el),
         (None, None) => friends::view(store, st, p, acc, &mut layer),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
@@ -302,7 +318,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(sidebar::user_area(store, st, p, acc));
     menus::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
-        layer.push(crate::settings::view(store, st, ui, p, st.premium, acc));
+        crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }
     rune_kit::root(body, layer)
 }
@@ -310,8 +326,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
 // ---- Shared bits -------------------------------------------------------------------------------
 
 /// Height the user area covers at the bottom of the rail and sidebar (`--layout-user-area-height`
-/// + `--user-area-box-inset-block-end`).
-const USER_AREA_OVERLAY: f32 = dim::LAYOUT_USER_AREA_HEIGHT + dim::FOOTER_BOX_INSET + 1.0;
+/// + `--user-area-box-inset-block-end` + `--layout-voice-connection-height`).
+fn user_area_overlay(st: &ShellState) -> f32 {
+    dim::LAYOUT_USER_AREA_HEIGHT + dim::FOOTER_BOX_INSET + 1.0 + voice::panel_height(&st.voice)
+}
 
 /// A role colour (`0xRRGGBB`).
 fn role_color(c: u32) -> Color {
