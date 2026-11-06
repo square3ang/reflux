@@ -1,0 +1,15 @@
+[Desktop Entry]
+# Install: copy to ~/.local/share/applications/, then
+#   xdg-mime default reflux.desktop x-scheme-handler/fluxer
+# The file name is the id notifications and the dock badge refer to (`desktop::notify::DESKTOP_ID`).
+Type=Application
+Name=Fluxer
+GenericName=Chat
+Comment=Fluxer chat client (Reflux)
+Exec=reflux %u
+Icon=reflux
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+MimeType=x-scheme-handler/fluxer;
+StartupWMClass=reflux
+StartupNotify=true

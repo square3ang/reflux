@@ -6,12 +6,14 @@
 //! Views only queue [`Intent`]s; [`patch`] applies a settings change optimistically to the store
 //! and sends `PATCH /users/@me/settings`.
 
+mod desktop_tabs;
 pub(crate) mod tabs;
 
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, Shadow, TextEdit, col, el, icon, row, text, text_input};
 use serde_json::Value;
 
+use crate::i18n::t;
 use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
@@ -43,12 +45,12 @@ enum Cat {
 
 impl Cat {
     fn label(self) -> &'static str {
-        match self {
+        t(match self {
             Cat::Account => "Your account",
             Cat::Billing => "Billing",
             Cat::App => "App settings",
             Cat::Developer => "Developer",
-        }
+        })
     }
 }
 
@@ -110,7 +112,7 @@ fn visible(t: &TabDef, store: &Store, premium: bool) -> bool {
 }
 
 fn label_of(id: &str) -> &'static str {
-    TABS.iter().find(|t| t.id == id).map_or("User settings", |t| t.label)
+    t(TABS.iter().find(|tab| tab.id == id).map_or("User settings", |tab| tab.label))
 }
 
 // ---- Settings changes ----------------------------------------------------------------------
@@ -191,17 +193,17 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     let close = move |s: &mut S| acc(s).settings = None;
     let (head, nav) = sidebar(store, st, ui, p, premium, acc);
     let body = tabs::body(store, st, ui, p, acc, &mut popups);
-    let mut modal = frame("User settings", label_of(ui.tab), head, nav, body, close, p);
+    let mut modal = frame(t("User settings"), label_of(ui.tab), head, nav, body, close, p);
     if ui.confirm_logout {
         let cancel = move |s: &mut S| set(acc, s, |u| u.confirm_logout = false);
         modal = modal.child(
-            Modal::new("Sign out?", cancel)
-                .body(text("You can sign back in at any time.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+            Modal::new(t("Sign out?"), cancel)
+                .body(text(t("You can sign back in at any time.")).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
                 .footer(
                     row()
                         .gap(8.0)
-                        .child(Button::new("Stay signed in").variant(ButtonVariant::Secondary).on_press(cancel).el(p))
-                        .child(Button::new("Sign out").key("settings-sign-out").on_press(move |s: &mut S| acc(s).intents.push(Intent::Logout)).el(p)),
+                        .child(Button::new(t("Stay signed in")).variant(ButtonVariant::Secondary).on_press(cancel).el(p))
+                        .child(Button::new(t("Sign out")).key("settings-sign-out").on_press(move |s: &mut S| acc(s).intents.push(Intent::Logout)).el(p)),
                 )
                 .el(p),
         );
@@ -321,11 +323,11 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
             text_input(&ui.search, font(13.0, 400.0).lh(18.0))
                 .single_line()
                 .key("settings-search")
-                .label("Search settings")
+                .label(t("Search settings"))
                 .grow(1.0)
                 .shrink()
                 .color(p.text_primary)
-                .placeholder("Search settings…", p.text_tertiary)
+                .placeholder(t("Search settings…"), p.text_tertiary)
                 .caret(p.text_primary, p.background_modifier_selected)
                 .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).settings.get_or_insert_with(|| SettingsUi::new(None)).search }),
         );
@@ -346,7 +348,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .radius(8.0)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label("Edit your profile")
+        .label(t("Edit your profile"))
         .hover_group()
         .on_press(select(acc, "my_profile"))
         .child(crate::shell::avatar(store, st, store.my_id(), 40.0, Some(crate::shell::presence(store, store.my_id())), if profile_sel { c.selected } else { c.surface }, p))
@@ -362,7 +364,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
                         .gap(4.0)
                         .center_y()
                         .child(icon(&icons::PENCIL_BOLD, 12.0).color(hint).group_color(p.text_secondary))
-                        .child(text("Edit your profile").font(font(12.0, 500.0).lh(16.0)).color(hint).group_color(p.text_secondary).truncate()),
+                        .child(text(t("Edit your profile")).font(font(12.0, 500.0).lh(16.0)).color(hint).group_color(p.text_secondary).truncate()),
                 ),
         );
     profile = if profile_sel { profile.fill(c.selected) } else { profile.fill(c.surface).hover(c.hover) };
@@ -372,12 +374,12 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
     let shown: Vec<&TabDef> = TABS
         .iter()
         .filter(|t| !NAV_HIDDEN.contains(&t.id) && visible(t, store, premium))
-        .filter(|t| q.is_empty() || t.label.to_lowercase().contains(&q))
+        .filter(|tab| q.is_empty() || t(tab.label).to_lowercase().contains(&q))
         .collect();
     let mut nav = col().w_full().gap(3.0);
     if shown.is_empty() {
         nav = nav.child(
-            text("No settings found").font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
+            text(t("No settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
         );
     }
     for cat in [Cat::Account, Cat::Billing, Cat::App, Cat::Developer] {
@@ -385,13 +387,13 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         if items.is_empty() {
             continue;
         }
-        let items = items.into_iter().map(|t| nav_item(t.icon, t.label, ui.tab == t.id, false, p, &c).on_press(select(acc, t.id)));
+        let items = items.into_iter().map(|tab| nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).on_press(select(acc, tab.id)));
         nav = nav.child(nav_group(Some(cat.label()), items, p));
     }
     // shortcut: Fluxer also lists What's new, Submit feedback and Donate here; they open the
     // instance's web pages, and Reflux can't open URLs yet.
     if q.is_empty() {
-        nav = nav.child(nav_item(&icons::SIGN_OUT, "Sign out", false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
+        nav = nav.child(nav_item(&icons::SIGN_OUT, t("Sign out"), false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
     }
     let footer = col()
         .w_full()
@@ -474,7 +476,7 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .hover_group()
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label("Close")
+        .label(t("Close"))
         .on_press(close)
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
     let header = row()

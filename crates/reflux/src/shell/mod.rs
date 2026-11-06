@@ -90,6 +90,10 @@ pub enum Intent {
     /// A partial user guild settings object: apply it now and
     /// `PATCH /users/@me/guilds/{guild}/settings` (`None` = DMs).
     PatchGuildSettings { guild: Option<Snowflake>, patch: serde_json::Value },
+    /// Save changed local desktop preferences.
+    Prefs(crate::desktop::Prefs),
+    /// Switch the interface language (a `crate::i18n::LOCALES` code).
+    SetLocale(&'static str),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -216,6 +220,8 @@ pub struct ShellState {
     pub form: crate::guild::Form,
     /// Invite link origin (`discovery.endpoints.invite`, e.g. `https://fluxer.gg`).
     pub invite_base: String,
+    /// The local desktop preferences, mirrored for the settings views.
+    pub prefs: crate::desktop::Prefs,
 }
 
 impl Default for ShellState {
@@ -260,6 +266,7 @@ impl Default for ShellState {
             dialog: None,
             form: Default::default(),
             invite_base: String::new(),
+            prefs: Default::default(),
         }
     }
 }

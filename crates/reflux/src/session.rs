@@ -21,6 +21,10 @@ pub struct Saved {
     /// Chosen microphone / speaker names (`None` = system default).
     pub voice_input: Option<String>,
     pub voice_output: Option<String>,
+    /// Interface language picked before sign-in (`None` = the system's); signed in, the
+    /// account's `locale` setting wins.
+    pub locale: Option<String>,
+    pub desktop: crate::desktop::Prefs,
 }
 
 fn path() -> Option<PathBuf> {

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use reflux_model::{
     Channel, ChannelType, DispatchEvent, Emoji, Guild, GuildFolder, GuildMember, GuildReady,
-    MemberListGroup, Message, MessageReaction, PartialUser, PermissionInput, Permissions, Presence,
+    MemberListGroup, Message, MessageReaction, NotificationLevel, PartialUser, PermissionInput, Permissions, Presence,
     ReactionEmoji, ReadState, Relationship, RelationshipType, Role, SessionPresence, Snowflake,
     Sticker, Timestamp, User, UserGuildSettings, UserSettings, VoiceState, compute_permissions,
     thread_permissions,
@@ -547,6 +547,41 @@ impl Store {
             id.and_then(|id| s.channel_overrides.as_ref()?.get(&id)).is_some_and(|o| o.muted)
         };
         (c.guild_id.is_some() && s.muted) || ov(Some(c.id)) || ov(c.parent_id)
+    }
+
+    /// Fluxer `resolveEffectiveMessageNotifications`: the channel override, its category's, the
+    /// guild setting, then the guild default (DMs default to all messages).
+    pub fn notification_level(&self, c: &Channel) -> NotificationLevel {
+        let s = self.guild_settings.get(&c.guild_id);
+        let explicit = |l: NotificationLevel| (l != NotificationLevel::INHERIT).then_some(l);
+        let ov = |id: Option<Snowflake>| explicit(id.and_then(|id| s?.channel_overrides.as_ref()?.get(&id))?.message_notifications);
+        let parent = c.parent_id.filter(|_| c.guild_id.is_some());
+        let guild_default = || {
+            let d = c.guild_id.and_then(|g| self.guilds.get(&g)?.info.as_ref()).map(|g| g.default_message_notifications);
+            NotificationLevel(d.unwrap_or(0))
+        };
+        ov(Some(c.id)).or_else(|| ov(parent)).or_else(|| explicit(s?.message_notifications)).unwrap_or_else(guild_default)
+    }
+
+    /// Whether a new message from someone else should alert (sound + desktop notification),
+    /// leaving focus to the caller: Fluxer `validateNotificationData` + `shouldNotifyBasedOnSettings`.
+    // shortcut: threads resolve like their parent channel; Fluxer's per-thread levels and forum
+    // "new post" levels aren't modelled.
+    pub fn should_notify(&self, m: &Message) -> bool {
+        let Some(c) = self.channels.get(&m.channel_id) else { return false };
+        if m.author.id == self.my_id()
+            || self.is_blocked(m.author.id)
+            || self.settings.status == reflux_model::Status::Dnd
+            || m.flags.contains(reflux_model::MessageFlags::SUPPRESS_NOTIFICATIONS)
+            || self.is_muted(c)
+        {
+            return false;
+        }
+        match self.notification_level(c) {
+            NotificationLevel::NO_MESSAGES => false,
+            NotificationLevel::ALL_MESSAGES => true,
+            _ => self.mentions_me(m),
+        }
     }
 
     // ---- Internals ---------------------------------------------------------------------------

@@ -57,10 +57,22 @@ See `git log` for details. Crates:
   mute/deafen, speaking rings, screen share, device picker), register/forgot password/USB FIDO2
   passkeys (`authenticator` crate; origin = instance web origin), community/channel settings,
   invites, roles, notification settings. All verified only with `--shell-demo` / login scenes.
+- Desktop (`desktop/`, `keybinds.rs`, `i18n.rs`): message notifications per Fluxer's rules
+  (`Store::should_notify`: levels/overrides/mutes/DND/suppress flag; focus + viewed channel in
+  `desktop::on_message`) via notify-rust with the author's avatar (cached PNG) and click → focus +
+  open channel (Linux only); sounds via rodio (message, mute/deafen, voice join/leave/disconnect,
+  ringing); Rune tray (rebuilt to toggle the red mention dot; show/hide, settings, mute, deafen,
+  disconnect, quit) + close-to-tray (`keep_running` + `on_close`); Unity LauncherEntry dock badge;
+  Wayland urgency via tokenless focus; `fluxer://invite|channels` links + single instance over
+  `$XDG_RUNTIME_DIR/reflux-<uid>.sock` (`packaging/reflux.desktop` has the MimeType); Fluxer's
+  default keybinds (window `on_key`) + Keybinds/Notifications/Language/Linux app settings tabs.
+  i18n: English text is the key into Fluxer's catalogs; `scripts/i18n-extract.py` copies the used
+  entries to `assets/i18n/*.json` (re-run after adding strings). Only login + settings chrome are
+  converted; the remaining files are listed in `i18n.rs`. Headless snapshots: `REFLUX_LOCALE=ko`.
 - Workflow that worked: each subagent in its own `git worktree` with shared
   `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
-- Next: composer uploads, pins, search, threads/forums, quick switcher, desktop notifications,
-  tray, keybinds, i18n; and live testing (needs an account or a self-hosted instance).
+- Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining
+  UI strings to `t()`; and live testing (needs an account or a self-hosted instance).
 
 ## Design-fidelity status
 - Reference: the live login page (`web.fluxer.app/login`, dark theme, 1020×893 viewport). The

@@ -63,6 +63,48 @@ pub fn update(f: impl FnOnce(&mut State) + Send + 'static) {
     }
 }
 
+fn window() -> Option<&'static AppHandle<State>> {
+    BRIDGE.get().map(|b| &b.ui)
+}
+
+/// Shows and focuses the window (a notification click, a second launch).
+pub fn show_window() {
+    if let Some(w) = window() {
+        w.open();
+    }
+}
+
+/// [`show_window`] with an XDG activation token when the caller has one (Wayland focus).
+pub fn show_window_with(token: Option<String>) {
+    match (window(), token) {
+        (Some(w), Some(t)) => w.activate(t),
+        _ => show_window(),
+    }
+}
+
+pub fn hide_window() {
+    if let Some(w) = window() {
+        w.hide();
+    }
+}
+
+pub fn window_visible() -> bool {
+    window().is_some_and(|w| w.is_visible())
+}
+
+/// A tokenless focus request: Wayland compositors mark the window urgent.
+pub fn request_attention() {
+    if let Some(w) = window() {
+        w.focus();
+    }
+}
+
+pub fn quit() {
+    if let Some(w) = window() {
+        w.quit();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Route {
     #[default]
@@ -141,6 +183,7 @@ pub fn now_ms() -> u64 {
 
 fn boot(s: &mut State) {
     s.app.saved = session::load();
+    crate::i18n::set_locale(s.app.saved.locale.as_deref().unwrap_or_else(|| crate::i18n::system()));
     restore_voice_devices(s);
     s.login.instance = TextEdit::new(s.app.saved.instance.clone());
     if s.app.saved.token.is_some() {
@@ -299,7 +342,7 @@ pub fn submit_register(s: &mut State) {
     }
     s.login.errors = Default::default();
     if s.login.password.text != s.login.register.confirm.text {
-        s.login.errors.confirm = Some("The passwords don't match.".into());
+        s.login.errors.confirm = Some(crate::i18n::t("The passwords don't match.").into());
         return;
     }
     let r = &s.login.register;
@@ -331,7 +374,7 @@ pub fn submit_forgot(s: &mut State) {
     }
     request_with(s, move |inst| async move { inst.rest.forgot_password(&email).await }, |s, r| match r {
         Ok(()) => s.login.step = Step::Forgot { sent: true },
-        Err(_) => s.login.errors.email = Some("Failed to send reset link. Try again.".into()),
+        Err(_) => s.login.errors.email = Some(crate::i18n::t("Failed to send reset link. Try again.").into()),
     });
 }
 
@@ -580,10 +623,15 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
                 _ => {}
             }
-            if matches!(d, reflux_model::DispatchEvent::Ready(_)) {
+            if let reflux_model::DispatchEvent::Ready(_) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
                 s.app.route = Route::Main;
+                if !s.app.store.settings.locale.is_empty() {
+                    crate::i18n::set_locale(&s.app.store.settings.locale);
+                }
+                crate::desktop::ready(s);
             }
+            crate::desktop::on_dispatch(s, &d);
         }
         GatewayEvent::Error(e) => voice::on_error(s, &e),
     }
@@ -656,6 +704,18 @@ pub fn poll(s: &mut State) -> bool {
             Intent::Api(c) => guild::run(s, c),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
+            Intent::Prefs(p) => {
+                s.app.saved.desktop = p;
+                session::save(&s.app.saved);
+            }
+            Intent::SetLocale(code) => {
+                crate::i18n::set_locale(code);
+                s.app.saved.locale = Some(code.to_string());
+                session::save(&s.app.saved);
+                if s.app.route == Route::Main {
+                    crate::settings::patch(s, serde_json::json!({ "locale": code }));
+                }
+            }
             i @ (Intent::JoinVoice { .. }
             | Intent::LeaveVoice
             | Intent::VoiceSelf
@@ -667,6 +727,8 @@ pub fn poll(s: &mut State) -> bool {
         }
     }
     actions::subscribe_member_list(s);
+    s.app.shell.prefs = s.app.saved.desktop.clone();
+    crate::desktop::tick(s);
     actions::tick(s) || ran
 }
 
@@ -739,11 +801,11 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Route::Connecting => {
             let mut c = col().gap(16.0).items_center();
             match &s.app.error {
-                None => c = c.child(spinner(p.text_primary)).child(text("Connecting…").font(font(16.0, 500.0)).color(p.text_primary)),
+                None => c = c.child(spinner(p.text_primary)).child(text(crate::i18n::t("Connecting…")).font(font(16.0, 500.0)).color(p.text_primary)),
                 Some(e) => {
                     c = c
                         .child(text(e.clone()).font(font(14.0, 400.0)).color(p.text_primary).wrap().max_w(480.0))
-                        .child(Button::new("Retry").key("connect-retry").on_press(|s: &mut State| discover(s)).el(p))
+                        .child(Button::new(crate::i18n::t("Retry")).key("connect-retry").on_press(|s: &mut State| discover(s)).el(p))
                 }
             }
             c.child(logout_button(p))
@@ -754,7 +816,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 }
 
 fn logout_button(p: &theme::Palette) -> El {
-    Button::new("Log out")
+    Button::new(crate::i18n::t("Log out"))
         .variant(ButtonVariant::Secondary)
         .key("logout")
         .on_press(|s: &mut State| act(s, Action::Logout))

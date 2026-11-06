@@ -1,5 +1,8 @@
 mod app;
+mod desktop;
 mod guild;
+mod i18n;
+mod keybinds;
 mod icons;
 mod login;
 mod media;
@@ -17,6 +20,7 @@ use rune::{AppSpec, Cx, El};
 struct State {
     login: login::Login,
     app: app::App,
+    desktop: desktop::Desktop,
     /// Dev-only component gallery (`--gallery`).
     gallery: Option<ui::gallery::Gallery>,
     /// Dev-only shell over a fixture store (`--shell-demo`).
@@ -24,6 +28,11 @@ struct State {
 }
 
 fn init() -> State {
+    // Headless snapshots stay English unless asked (`REFLUX_LOCALE=ko`); `app::boot` picks the
+    // saved or system language in a real run.
+    if let Ok(l) = std::env::var("REFLUX_LOCALE") {
+        i18n::set_locale(&l);
+    }
     let gallery = rune::extra_args().iter().any(|a| a == "--gallery").then(ui::gallery::Gallery::default);
     let shell_demo = rune::extra_args().iter().any(|a| a == "--shell-demo").then(shell::demo::Demo::new);
     State { gallery, shell_demo, ..State::default() }
@@ -48,6 +57,7 @@ fn main() {
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
         poll: Some(|s, _, _| app::poll(s)),
+        on_key: Some(keybinds::on_key),
         setup: Some(|s, waker| {
             ui::gallery::setup(s, waker.clone());
             s.app.shell.default_avatars = shell::load_default_avatars(waker.clone());
@@ -55,9 +65,13 @@ fn main() {
             shell::demo::setup(s, waker);
         }),
         ..AppSpec::new("Fluxer", (1280.0, 800.0), init, view)
-    });
+    })
+    .keep_running()
+    .on_close(desktop::on_close)
+    .on_focus(|s, focused, _| s.desktop.focused = focused);
     // Headless snapshots stay offline and show the logged-out screens.
     if !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo") {
+        desktop::start(&app.handle());
         app::start(app.handle());
     }
     app.run();

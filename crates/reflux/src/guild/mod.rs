@@ -26,6 +26,7 @@ use crate::ui::{Input, mix};
 pub use channel::first_tab as first_channel_tab;
 pub use settings::tab_ids;
 pub use menu::{HEADER_MENU, first_settings_tab, header_menu, invitable_channel, open_invite};
+pub use modals::parse_invite;
 
 /// The management dialog that's open (one at a time).
 #[derive(Clone, Debug, PartialEq)]

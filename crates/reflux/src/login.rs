@@ -6,6 +6,7 @@ use std::f32::consts::PI;
 use rune::{Align, Color, Cx, El, Icon, Shadow, TextEdit, col, el, icon, row, text};
 
 use crate::State;
+use crate::i18n::t;
 use crate::icons;
 use crate::theme::{self, Palette, font};
 use crate::ui::{Button, ButtonVariant, Input, Popups, Select, mix, over, rgb, rgba};
@@ -255,13 +256,13 @@ fn method_step(s: &State, p: &Palette) -> El {
     let disabled = s.login.submitting;
     col()
         .w_full()
-        .child(title("Welcome back", p))
+        .child(title(t("Welcome back"), p))
         .child(
             col()
                 .w_full()
                 .gap(10.0)
                 .child(
-                    Button::new("Sign in with email")
+                    Button::new(t("Sign in with email"))
                         .icon(&icons::ENVELOPE_SIMPLE)
                         .fit_container()
                         .disabled(disabled)
@@ -273,7 +274,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                         .el(p),
                 )
                 .child(
-                    Button::<State>::new("Sign in with a passkey")
+                    Button::<State>::new(t("Sign in with a passkey"))
                         .variant(ButtonVariant::Secondary)
                         .icon(&icons::KEY)
                         .fit_container()
@@ -283,7 +284,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                         .el(p),
                 )
                 .child(
-                    Button::<State>::new("Register an account")
+                    Button::<State>::new(t("Register an account"))
                         .variant(ButtonVariant::Secondary)
                         .icon(&icons::USER_PLUS)
                         .icon_gap(8.0)
@@ -301,14 +302,14 @@ fn method_step(s: &State, p: &Palette) -> El {
 /// "Signing in to {host} · Change", in place of the app's instance picker row.
 fn instance_line(s: &State, p: &Palette) -> El {
     let host = if s.app.saved.instance.is_empty() { crate::session::DEFAULT_INSTANCE } else { &s.app.saved.instance };
-    let status = if s.login.discovering { format!("Connecting to {host}…") } else { format!("Signing in to {host}") };
+    let status = if s.login.discovering { crate::i18n::tf("Connecting to {domain}…", &[("domain", host)]) } else { format!("Signing in to {host}") };
     row()
         .w_full()
         .mt(16.0)
         .justify_center()
         .gap(6.0)
         .child(text(status).font(font(13.0, 400.0)).color(p.text_tertiary))
-        .child(link("Change", "login-change-instance", p, |s: &mut State| {
+        .child(link(t("Change"), "login-change-instance", p, |s: &mut State| {
             s.login.errors = Default::default();
             s.login.instance.focused = true;
             s.login.step = Step::Instance;
@@ -340,7 +341,7 @@ fn form_note(l: &crate::login::Login, p: &Palette) -> Option<El> {
 fn footer(p: &Palette, submitting: bool, back: fn(&mut State), primary: Option<(&str, &str, fn(&mut State))>) -> El {
     let footer_rule = mix(p.background_modifier_accent, Color::TRANSPARENT, 72.0);
     let mut buttons = row().w_full().justify_end().gap(12.0).child(
-        Button::new("Back")
+        Button::new(t("Back"))
             .variant(ButtonVariant::Secondary)
             .disabled(submitting)
             .key("login-back")
@@ -373,12 +374,12 @@ fn instance_step(s: &State, p: &Palette) -> El {
                 .gap(18.0)
                 .child(
                     Input::new("login-instance-input", &l.instance, |s: &mut State| &mut s.login.instance)
-                        .label("Instance")
+                        .label(t("Instance"))
                         .placeholder(crate::session::DEFAULT_INSTANCE)
                         .error(l.errors.instance.as_deref())
                         .el(p),
                 )
-                .child(footer(p, l.discovering, to_method, Some(("Continue", "login-instance-continue", crate::app::choose_instance)))),
+                .child(footer(p, l.discovering, to_method, Some((t("Continue"), "login-instance-continue", crate::app::choose_instance)))),
         )
 }
 
@@ -387,23 +388,23 @@ fn mfa_step(s: &State, m: &crate::login::Mfa, p: &Palette) -> El {
     let codes = m.totp || m.backup_codes;
     let mut form = col().w_full().gap(18.0);
     if codes {
-        let label = if m.totp { "Authenticator code" } else { "Backup code" };
+        let label = if m.totp { t("Authenticator code") } else { t("Backup code") };
         let hint = if m.totp {
             "Enter the 6-digit code from your authenticator app or a backup code."
         } else {
-            "Enter one of your backup codes if you can't use your passkey."
+            t("Enter one of your backup codes if you can't use your passkey.")
         };
         form = form.child(description(hint, p)).child(
             Input::new("login-mfa-code", &l.code, |s: &mut State| &mut s.login.code)
                 .label(label)
-                .placeholder(if m.totp { "6-digit code" } else { "Backup code" })
+                .placeholder(if m.totp { t("6-digit code") } else { t("Backup code") })
                 .error(l.errors.code.as_deref())
                 .el(p),
         );
     }
     if m.webauthn {
         let mfa = m.clone();
-        let label = if codes { "Try security key / passkey instead" } else { "Security key / passkey" };
+        let label = if codes { t("Try security key / passkey instead") } else { t("Security key / passkey") };
         form = form.child(
             Button::new(label)
                 .variant(if codes { ButtonVariant::Secondary } else { ButtonVariant::Primary })
@@ -415,10 +416,10 @@ fn mfa_step(s: &State, m: &crate::login::Mfa, p: &Palette) -> El {
                 .el(p),
         );
     }
-    let primary = codes.then_some(("Verify", "login-mfa-submit", crate::app::submit_mfa as fn(&mut State)));
+    let primary = codes.then_some((t("Verify"), "login-mfa-submit", crate::app::submit_mfa as fn(&mut State)));
     col()
         .w_full()
-        .child(title("Two-factor authentication", p))
+        .child(title(t("Two-factor authentication"), p))
         .child(form.children(form_note(l, p)).child(footer(p, l.submitting, |s| to(s, Step::Credentials), primary)))
 }
 
@@ -509,7 +510,7 @@ fn date_of_birth(l: &crate::login::Login, width: f32, p: &Palette, layer: &mut V
         .gap(8.0)
         .child(
             Select::new("register-dob-month", &month_opts, r.month.as_deref())
-                .placeholder("Month")
+                .placeholder(t("Month"))
                 .width(unit * 2.0)
                 .on_choose(|s: &mut State, v| {
                     s.login.register.month = Some(v.to_owned());
@@ -519,14 +520,14 @@ fn date_of_birth(l: &crate::login::Login, width: f32, p: &Palette, layer: &mut V
         )
         .child(
             Select::new("register-dob-day", &day_opts, r.day.as_deref())
-                .placeholder("Day")
+                .placeholder(t("Day"))
                 .width(unit * 1.5)
                 .on_choose(|s: &mut State, v| s.login.register.day = Some(v.to_owned()))
                 .el(&l.popups, access, p, layer),
         )
         .child(
             Select::new("register-dob-year", &year_opts, r.year.as_deref())
-                .placeholder("Year")
+                .placeholder(t("Year"))
                 .width(unit * 1.5)
                 .on_choose(|s: &mut State, v| {
                     s.login.register.year = Some(v.to_owned());
@@ -540,11 +541,11 @@ fn date_of_birth(l: &crate::login::Login, width: f32, p: &Palette, layer: &mut V
         }
         _ => false,
     };
-    let error = l.errors.date_of_birth.clone().or_else(|| implausible.then(|| "Enter your real date of birth.".to_owned()));
+    let error = l.errors.date_of_birth.clone().or_else(|| implausible.then(|| t("Enter your real date of birth.").to_owned()));
     col()
         .w_full()
         .gap(8.0)
-        .child(text("Date of birth").font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
+        .child(text(t("Date of birth")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
         .child(
             col()
                 .w_full()
@@ -629,7 +630,7 @@ pub fn username_problem(name: &str) -> Option<&'static str> {
     } else if name.chars().count() > 32 {
         Some("Username must be 32 characters or fewer")
     } else if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        Some("Only letters, numbers, and underscores")
+        Some(t("Only letters, numbers, and underscores"))
     } else {
         None
     }
@@ -639,17 +640,17 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
     let l = &s.login;
     let r = &l.register;
     let su = sign_up(s);
-    let heading = title("Create an account", p).mb(24.0);
+    let heading = title(t("Create an account"), p).mb(24.0);
     let to_login: fn(&mut State) = |s| to(s, Step::Method);
     let body = if r.pending {
-        col().w_full().child(notice("Your account request is pending approval. You can sign in after an admin approves it.", p))
+        col().w_full().child(notice(t("Your account request is pending approval. You can sign in after an admin approves it."), p))
     } else if su.closed {
-        col().w_full().child(notice("Registration is currently closed. Use a registration link from an admin to create an account.", p))
+        col().w_full().child(notice(t("Registration is currently closed. Use a registration link from an admin to create an account."), p))
     } else {
         let username_error = l.errors.username.as_deref().or(username_problem(&r.username.text));
         let username = Input::new("register-username", &r.username, |s: &mut State| &mut s.login.register.username)
-            .label("Username (optional)")
-            .placeholder("Leave blank for a random username")
+            .label(t("Username (optional)"))
+            .placeholder(t("Leave blank for a random username"))
             .el(p);
         let username = col().w_full().child(username).children(
             username_error.map(|e| text(e).mt(4.0).font(font(12.0, 400.0).lh(16.0)).color(mix(p.status_danger, p.text_primary, 78.0))),
@@ -658,25 +659,25 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
             .w_full()
             .gap(20.0)
             .children(l.errors.form.as_deref().map(|e| notice(e, p)))
-            .child(Input::new("register-email", &l.email, |s: &mut State| &mut s.login.email).label("Email").error(l.errors.email.as_deref()).el(p))
+            .child(Input::new("register-email", &l.email, |s: &mut State| &mut s.login.email).label(t("Email")).error(l.errors.email.as_deref()).el(p))
             .child(
                 Input::new("register-global-name", &r.global_name, |s: &mut State| &mut s.login.register.global_name)
-                    .label("Display name (optional)")
-                    .placeholder("What should people call you?")
+                    .label(t("Display name (optional)"))
+                    .placeholder(t("What should people call you?"))
                     .error(l.errors.global_name.as_deref())
                     .el(p),
             )
             .child(username)
             .child(
                 Input::new("register-password", &l.password, |s: &mut State| &mut s.login.password)
-                    .label("Password")
+                    .label(t("Password"))
                     .password(l.show_password, |s: &mut State| s.login.show_password = !s.login.show_password)
                     .error(l.errors.password.as_deref())
                     .el(p),
             )
             .child(
                 Input::new("register-confirm", &r.confirm, |s: &mut State| &mut s.login.register.confirm)
-                    .label("Confirm password")
+                    .label(t("Confirm password"))
                     .password(r.show_confirm, |s: &mut State| s.login.register.show_confirm = !s.login.register.show_confirm)
                     .error(l.errors.confirm.as_deref())
                     .el(p),
@@ -686,7 +687,7 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
         }
         let slow = l.slow.then(|| text("Verifying you're human…").w_full().font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary));
         form.children(legal_notice(&su, p)).children(slow).child(
-            Button::new("Create account")
+            Button::new(t("Create account"))
                 .fit_container()
                 .submitting(l.submitting)
                 .disabled(register_missing(s) || username_problem(&r.username.text).is_some())
@@ -700,20 +701,20 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
         .w_full()
         .child(heading)
         .child(body)
-        .child(bottom_link("Already have an account?", "Sign in", "register-to-login", p, to_login))
+        .child(bottom_link(t("Already have an account?"), t("Sign in"), "register-to-login", p, to_login))
 }
 
 fn forgot_step(s: &State, sent: bool, p: &Palette) -> El {
     let l = &s.login;
     let to_login: fn(&mut State) = |s| to(s, Step::Credentials);
     // `ForgotPasswordPage.module.css`: title 20/28 mb 8, description mb 32, form gap 24, footer.
-    let heading = title(if sent { "Check your email" } else { "Forgot your password?" }, p).mb(8.0);
+    let heading = title(if sent { t("Check your email") } else { t("Forgot your password?") }, p).mb(8.0);
     if sent {
         return col()
             .w_full()
             .child(heading)
-            .child(description("If an account uses that address, we've sent it password reset instructions. Check your inbox for the reset link.", p).mb(32.0).role("status"))
-            .child(row().w_full().mt(24.0).justify_center().child(link("Return to sign-in", "forgot-return", p, to_login).font(font(14.0, 400.0).lh(20.0))));
+            .child(description(t("If an account uses that address, we've sent it password reset instructions. Check your inbox for the reset link."), p).mb(32.0).role("status"))
+            .child(row().w_full().mt(24.0).justify_center().child(link(t("Return to sign-in"), "forgot-return", p, to_login).font(font(14.0, 400.0).lh(20.0))));
     }
     let footer = col()
         .w_full()
@@ -721,7 +722,7 @@ fn forgot_step(s: &State, sent: bool, p: &Palette) -> El {
         .gap(12.0)
         .items_center()
         .child(
-            text("Back to sign-in")
+            text(t("Back to sign-in"))
                 .key("forgot-back")
                 .font(font(14.0, 400.0).lh(20.0))
                 .color(p.text_tertiary)
@@ -729,18 +730,18 @@ fn forgot_step(s: &State, sent: bool, p: &Palette) -> El {
                 .role("link")
                 .on_press(move |s: &mut State| to_login(s)),
         )
-        .child(row().gap(4.0).child(text("Don't have an account?").font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary)).child(link("Register", "forgot-register", p, to_register).font(font(14.0, 400.0).lh(20.0))));
+        .child(row().gap(4.0).child(text(t("Don't have an account?")).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary)).child(link(t("Register"), "forgot-register", p, to_register).font(font(14.0, 400.0).lh(20.0))));
     col()
         .w_full()
         .child(heading)
-        .child(description("Enter your email address and we'll send you a link to reset your password.", p).mb(32.0))
+        .child(description(t("Enter your email address and we'll send you a link to reset your password."), p).mb(32.0))
         .child(
             col()
                 .w_full()
                 .gap(24.0)
-                .child(Input::new("forgot-email", &l.email, |s: &mut State| &mut s.login.email).label("Email").error(l.errors.email.as_deref()).el(p))
+                .child(Input::new("forgot-email", &l.email, |s: &mut State| &mut s.login.email).label(t("Email")).error(l.errors.email.as_deref()).el(p))
                 .child(
-                    Button::new("Send reset link")
+                    Button::new(t("Send reset link"))
                         .fit_container()
                         .submitting(l.submitting)
                         .key("forgot-submit")
@@ -755,7 +756,7 @@ fn forgot_step(s: &State, sent: bool, p: &Palette) -> El {
 
 fn passkey_step(s: &State, k: &Passkey, p: &Palette) -> El {
     let l = &s.login;
-    let heading = title(if k.mfa.is_some() { "Two-factor authentication" } else { "Sign in with a passkey" }, p);
+    let heading = title(if k.mfa.is_some() { t("Two-factor authentication") } else { t("Sign in with a passkey") }, p);
     let mut body = col().w_full().gap(18.0);
     let mut primary = None;
     match k.prompt {
@@ -774,12 +775,12 @@ fn passkey_step(s: &State, k: &Passkey, p: &Palette) -> El {
             });
             body = body.child(description("Enter your security key's PIN.", p)).child(
                 Input::new("passkey-pin", &l.pin, |s: &mut State| &mut s.login.pin)
-                    .label("Security key PIN")
+                    .label(t("Security key PIN"))
                     .password(l.show_password, |s: &mut State| s.login.show_password = !s.login.show_password)
                     .error(error.as_deref())
                     .el(p),
             );
-            primary = Some(("Continue", "passkey-pin-submit", crate::app::submit_pin as fn(&mut State)));
+            primary = Some((t("Continue"), "passkey-pin-submit", crate::app::submit_pin as fn(&mut State)));
         }
     }
     col()
@@ -793,7 +794,7 @@ fn ip_step(ip: &crate::login::IpAuth, p: &Palette) -> El {
     col()
         .w_full()
         .gap(18.0)
-        .child(title("Check your email", p).mb(0.0))
+        .child(title(t("Check your email"), p).mb(0.0))
         .child(
             text(format!("We sent a link to {to} to approve signing in from this new location. This page continues once you open it."))
                 .w_full()
@@ -810,27 +811,27 @@ fn credential_step(s: &State, p: &Palette) -> El {
     let l = &s.login;
     col()
         .w_full()
-        .child(title("Welcome back", p))
+        .child(title(t("Welcome back"), p))
         .child(
             col()
                 .w_full()
                 .gap(18.0)
                 .child(
                     Input::new("login-email-input", &l.email, |s: &mut State| &mut s.login.email)
-                        .label("Email")
+                        .label(t("Email"))
                         .error(l.errors.email.as_deref())
                         .el(p),
                 )
                 .child(
                     Input::new("login-password-input", &l.password, |s: &mut State| &mut s.login.password)
-                        .label("Password")
+                        .label(t("Password"))
                         .password(l.show_password, |s: &mut State| s.login.show_password = !s.login.show_password)
                         .error(l.errors.password.as_deref())
                         .el(p),
                 )
                 .child(
                     col().gap(4.0).child(
-                        text("Forgot your password?")
+                        text(t("Forgot your password?"))
                             .key("login-forgot")
                             .font(font(14.0, 400.0))
                             .color(p.text_tertiary)
@@ -840,7 +841,7 @@ fn credential_step(s: &State, p: &Palette) -> El {
                     ),
                 )
                 .children(form_note(l, p))
-                .child(footer(p, l.submitting, to_method, Some(("Sign in", "login-submit", crate::app::submit_login)))),
+                .child(footer(p, l.submitting, to_method, Some((t("Sign in"), "login-submit", crate::app::submit_login)))),
         )
 }
 
@@ -872,7 +873,7 @@ pub mod scenes {
         l.register.username = TextEdit::new("not valid!".to_owned());
         (l.register.month, l.register.day, l.register.year) = (Some("2".into()), Some("29".into()), Some("2001".into()));
         l.errors.email = Some("Email is already in use.".into());
-        l.errors.confirm = Some("The passwords don't match.".into());
+        l.errors.confirm = Some(t("The passwords don't match.").into());
         l.errors.form = Some("You're going too fast. Try again in 5s.".into());
     }
 

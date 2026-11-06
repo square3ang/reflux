@@ -121,6 +121,27 @@ fn member_name_colour_and_partial_update() {
 }
 
 #[test]
+fn should_notify_follows_levels_mutes_and_dnd() {
+    let mut s = store();
+    let m = |channel: u64, author: u64| -> Message { serde_json::from_value(msg(1, channel, author)).unwrap() };
+    let mut mention = m(101, 6);
+    mention.mentions = vec![serde_json::from_value(json!({"id": ME.to_string()})).unwrap()];
+    // Guild default is all messages (0); DMs always notify.
+    assert!(s.should_notify(&m(101, 6)) && s.should_notify(&m(300, 6)));
+    assert!(!s.should_notify(&m(101, ME)), "own messages never notify");
+    // Guild set to mentions only; the category 120 override brings channel 103 back to all.
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "message_notifications": 1,
+        "channel_overrides": {"120": {"message_notifications": 0}}}));
+    assert!(!s.should_notify(&m(101, 6)) && s.should_notify(&mention));
+    assert!(s.should_notify(&m(103, 6)), "category override wins over the guild level");
+    // Muting the guild silences even mentions; DND silences everything.
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "muted": true}));
+    assert!(!s.should_notify(&mention));
+    s.settings.status = reflux_model::Status::Dnd;
+    assert!(!s.should_notify(&m(300, 6)));
+}
+
+#[test]
 fn unread_and_mentions() {
     let mut s = store();
     assert!(!s.has_unread(S(101)), "no messages yet");

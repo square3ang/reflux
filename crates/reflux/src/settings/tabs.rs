@@ -18,6 +18,10 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         "themes" => themes(store, p, acc),
         "advanced_settings" => advanced(store, p, acc),
         "voice_video" => voice(st, p, acc, layer),
+        "notifications" => super::desktop_tabs::notifications(st, p, acc),
+        "keybinds" => super::desktop_tabs::keybinds(p),
+        "language" => super::desktop_tabs::language(p, acc),
+        "desktop_settings" => super::desktop_tabs::desktop(st, p, acc),
         _ => not_available(p),
     }
 }
