@@ -50,9 +50,17 @@ See `git log` for details. Crates:
   avatar, tooltip, modal, menu, controls, select, misc; `--gallery`), `theme/`, `icons.rs`.
   Only one real API call was made (wrong-credential login → proper error). Everything after
   login is untested against a live server (no test account).
-- Next: message actions + settings/theme switching (in progress), image loading via media proxy
-  (avatars/icons/attachments are placeholders), voice UI wiring, DMs/friends, member list via
-  GUILD_MEMBER_LIST_UPDATE, register/passkey.
+- Done since: message actions (reply/edit/delete/reactions/typing/acks), user settings + theme
+  switching, media-proxy images (WebP/GIF decoded by `image` → `ImageCache::rgba`), inline emoji
+  (no-break-space gap + `rune::memo::layout(key)` overlay; copy mapped via `El::selection_copy`),
+  friends/DMs/profile popout/lazy member list/context menus, voice (op 4 → LiveKit, panel,
+  mute/deafen, speaking rings, screen share, device picker), register/forgot password/USB FIDO2
+  passkeys (`authenticator` crate; origin = instance web origin), community/channel settings,
+  invites, roles, notification settings. All verified only with `--shell-demo` / login scenes.
+- Workflow that worked: each subagent in its own `git worktree` with shared
+  `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
+- Next: composer uploads, pins, search, threads/forums, quick switcher, desktop notifications,
+  tray, keybinds, i18n; and live testing (needs an account or a self-hosted instance).
 
 ## Design-fidelity status
 - Reference: the live login page (`web.fluxer.app/login`, dark theme, 1020×893 viewport). The
