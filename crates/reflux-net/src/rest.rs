@@ -5,7 +5,7 @@ use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use reflux_model::{
-    ApiError, AuthResponse, AuthToken, CreateMessage, InstanceDiscovery, LoginRequest, Message, MfaTicket,
+    ApiError, AuthResponse, AuthToken, CreateMessage, InstanceDiscovery, IpAuthorizationPoll, LoginRequest, Message, MfaTicket,
     RegisterRequest, Snowflake, TotpLoginRequest, User, WebAuthnAuthenticationOptions, WebAuthnLoginRequest,
 };
 use reqwest::{Method, StatusCode, header};
@@ -37,6 +37,8 @@ pub struct Client {
     /// `{api}/v1`.
     base: String,
     token: RwLock<Option<String>>,
+    /// `X-Fluxer-Client-Installation-ID`: 32 hex chars, stable per install.
+    installation_id: Option<String>,
     limits: Mutex<RateLimits>,
 }
 
@@ -47,14 +49,26 @@ impl Client {
             http,
             base: format!("{}/v1", api.trim_end_matches('/')),
             token: RwLock::new(None),
+            installation_id: None,
             limits: Mutex::default(),
         }
     }
 
-    /// Uses `api_client` (what the Fluxer apps use), falling back to `api`.
+    pub fn with_installation_id(mut self, id: String) -> Self {
+        self.installation_id = Some(id);
+        self
+    }
+
+    /// Picks `api_transport`, then `api_public`, then `api_client`, then `api`. fluxer.app's
+    /// `api_client` (web.fluxer.app) refuses non-GET requests without a browser `Origin`
+    /// (`INVALID_API_ORIGIN`); its desktop app and other clients go through fluxer.com/api.
     pub fn from_discovery(http: reqwest::Client, d: &InstanceDiscovery) -> Self {
         let e = &d.endpoints;
-        Self::new(http, if e.api_client.is_empty() { &e.api } else { &e.api_client })
+        let api = [e.api_transport.as_deref().unwrap_or(""), &e.api_public, &e.api_client, &e.api]
+            .into_iter()
+            .find(|u| !u.is_empty())
+            .unwrap_or_default();
+        Self::new(http, api)
     }
 
     /// Sets the user session token, sent raw in `Authorization`.
@@ -93,6 +107,9 @@ impl Client {
                 .header("X-Fluxer-Capabilities", CAPABILITIES);
             if let Some(token) = self.token.read().unwrap().as_deref() {
                 req = req.header(header::AUTHORIZATION, token);
+            }
+            if let Some(id) = &self.installation_id {
+                req = req.header("X-Fluxer-Client-Installation-ID", id);
             }
             if let Some(token) = &captcha {
                 req = req.header("X-Captcha-Token", token);
@@ -166,6 +183,12 @@ impl Client {
 
     pub async fn login_webauthn(&self, req: &WebAuthnLoginRequest) -> Result<AuthToken> {
         self.request(Method::POST, "/auth/login/mfa/webauthn", Some(req)).await
+    }
+
+    /// State of a sign-in waiting on `IP_AUTHORIZATION_REQUIRED` (poll every 2 s, like the app).
+    pub async fn poll_ip_authorization(&self, ticket: &str) -> Result<IpAuthorizationPoll> {
+        let ticket: String = url::form_urlencoded::byte_serialize(ticket.as_bytes()).collect();
+        self.get(&format!("/auth/ip-authorization/poll?ticket={ticket}")).await
     }
 
     pub async fn register(&self, req: &RegisterRequest) -> Result<AuthResponse> {

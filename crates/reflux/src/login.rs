@@ -10,11 +10,31 @@ use crate::icons;
 use crate::theme::{self, Palette, font};
 use crate::ui::{Button, ButtonVariant, Input, mix, over, rgb, rgba};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum Step {
     #[default]
     Method,
     Credentials,
+    /// Instance picker: a host or URL to discover.
+    Instance,
+    Mfa(Mfa),
+    /// "Check your email" while the new-IP sign-in waits for the link.
+    IpAuth(IpAuth),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mfa {
+    pub ticket: String,
+    pub totp: bool,
+    pub backup_codes: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IpAuth {
+    pub ticket: String,
+    pub email: String,
+    /// The poll task stops once this step (the only strong holder) is gone.
+    pub alive: std::sync::Arc<()>,
 }
 
 #[derive(Default)]
@@ -24,6 +44,52 @@ pub struct Login {
     pub password: TextEdit,
     pub show_password: bool,
     pub submitting: bool,
+    /// Submitting for a while: the captcha is being solved.
+    pub slow: bool,
+    /// Counts submissions, so a late "slow" timer can't mark a newer one.
+    pub attempt: u64,
+    pub instance: TextEdit,
+    pub discovering: bool,
+    /// TOTP or backup code.
+    pub code: TextEdit,
+    pub errors: Errors,
+}
+
+/// Messages under the inputs, and one for the whole form.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Errors {
+    pub email: Option<String>,
+    pub password: Option<String>,
+    pub code: Option<String>,
+    pub instance: Option<String>,
+    pub form: Option<String>,
+}
+
+impl Errors {
+    /// Field errors go under their input (by `errors[].path`), the rest to the form.
+    pub fn from_error(e: &reflux_net::Error) -> Self {
+        let mut out = Self::default();
+        let reflux_net::Error::Api { error, .. } = e else {
+            out.form = Some(format!("Something went wrong: {e}"));
+            return out;
+        };
+        for v in &error.errors {
+            let slot = match v.path.as_str() {
+                "login" | "email" => &mut out.email,
+                "password" => &mut out.password,
+                "code" | "ticket" => &mut out.code,
+                _ => &mut out.form,
+            };
+            slot.get_or_insert_with(|| v.message.clone());
+        }
+        if error.errors.is_empty() {
+            out.form = Some(match error.retry_after {
+                Some(secs) if error.code == "RATE_LIMITED" => format!("{} Try again in {}s.", error.message, secs.ceil()),
+                _ => error.message.clone(),
+            });
+        }
+        out
+    }
 }
 
 /// The white waves of `fluxer-logo-color.svg`; the blue disc is drawn as a circle under them.
@@ -96,9 +162,12 @@ fn card(s: &State, p: &Palette) -> El {
         .box_shadow(Shadow { x: 0.0, y: 20.0, blur: 64.0, spread: -24.0, color: rgba(0, 0, 0, 0.7), inset: false })
         .child(brand(p))
         .child(
-            col().grow(1.0).padding(40.0).justify_center().child(match s.login.step {
+            col().grow(1.0).padding(40.0).justify_center().child(match &s.login.step {
                 Step::Method => method_step(s, p),
                 Step::Credentials => credential_step(s, p),
+                Step::Instance => instance_step(s, p),
+                Step::Mfa(m) => mfa_step(s, m, p),
+                Step::IpAuth(ip) => ip_step(ip, p),
             }),
         )
 }
@@ -163,11 +232,133 @@ fn method_step(s: &State, p: &Palette) -> El {
                         .role("link"),
                 ),
         )
+        .child(instance_line(s, p))
+}
+
+/// "Signing in to {host} · Change", in place of the app's instance picker row.
+fn instance_line(s: &State, p: &Palette) -> El {
+    let host = if s.app.saved.instance.is_empty() { crate::session::DEFAULT_INSTANCE } else { &s.app.saved.instance };
+    let status = if s.login.discovering { format!("Connecting to {host}…") } else { format!("Signing in to {host}") };
+    row()
+        .w_full()
+        .mt(16.0)
+        .justify_center()
+        .gap(6.0)
+        .child(text(status).font(font(13.0, 400.0)).color(p.text_tertiary))
+        .child(link("Change", "login-change-instance", p, |s: &mut State| {
+            s.login.errors = Default::default();
+            s.login.instance.focused = true;
+            s.login.step = Step::Instance;
+        }))
+}
+
+fn link(label: &str, key: &str, p: &Palette, f: fn(&mut State)) -> El {
+    text(label)
+        .key(key)
+        .font(font(13.0, 500.0))
+        .color(p.text_link)
+        .cursor(rune::Cursor::Pointer)
+        .role("link")
+        .on_press(move |s: &mut State| f(s))
+}
+
+/// Form-level error (`.error` text) or the captcha note, above the footer.
+fn form_note(l: &crate::login::Login, p: &Palette) -> Option<El> {
+    let (msg, color) = match (&l.errors.form, l.slow) {
+        (Some(e), _) => (e.clone(), mix(p.status_danger, p.text_primary, 78.0)),
+        (None, true) => ("Verifying you're human…".to_owned(), p.text_tertiary),
+        (None, false) => return None,
+    };
+    Some(text(msg).w_full().font(font(14.0, 400.0).lh(20.0)).color(color).wrap())
+}
+
+/// The 1px rule and right-aligned Back / primary buttons of every step.
+#[allow(clippy::type_complexity)]
+fn footer(p: &Palette, submitting: bool, back: fn(&mut State), primary: Option<(&str, &str, fn(&mut State))>) -> El {
+    let footer_rule = mix(p.background_modifier_accent, Color::TRANSPARENT, 72.0);
+    let mut buttons = row().w_full().justify_end().gap(12.0).child(
+        Button::new("Back")
+            .variant(ButtonVariant::Secondary)
+            .disabled(submitting)
+            .key("login-back")
+            .on_press(move |s: &mut State| back(s))
+            .el(p)
+            .min_w(112.0),
+    );
+    if let Some((label, key, f)) = primary {
+        buttons = buttons.child(
+            Button::new(label).submitting(submitting).key(key).on_press(move |s: &mut State| f(s)).el(p).min_w(112.0).default_button(),
+        );
+    }
+    // `.footer`: margin-top 2, padding-top 14, 1px top rule.
+    col().w_full().mt(2.0).gap(13.0).child(el().w_full().h(1.0).fill(footer_rule)).child(buttons)
+}
+
+fn to_method(s: &mut State) {
+    s.login.errors = Default::default();
+    s.login.step = Step::Method;
+}
+
+fn instance_step(s: &State, p: &Palette) -> El {
+    let l = &s.login;
+    col()
+        .w_full()
+        .child(title("Choose an instance", p))
+        .child(
+            col()
+                .w_full()
+                .gap(18.0)
+                .child(
+                    Input::new("login-instance-input", &l.instance, |s: &mut State| &mut s.login.instance)
+                        .label("Instance")
+                        .placeholder(crate::session::DEFAULT_INSTANCE)
+                        .error(l.errors.instance.as_deref())
+                        .el(p),
+                )
+                .child(footer(p, l.discovering, to_method, Some(("Continue", "login-instance-continue", crate::app::choose_instance)))),
+        )
+}
+
+fn mfa_step(s: &State, m: &crate::login::Mfa, p: &Palette) -> El {
+    let l = &s.login;
+    let mut form = col().w_full().gap(18.0);
+    if m.totp || m.backup_codes {
+        let label = if m.totp { "Authenticator code" } else { "Backup code" };
+        form = form.child(
+            Input::new("login-mfa-code", &l.code, |s: &mut State| &mut s.login.code)
+                .label(label)
+                .placeholder(if m.totp { "6-digit code" } else { "8-character code" })
+                .error(l.errors.code.as_deref())
+                .el(p),
+        );
+    }
+    let primary = (m.totp || m.backup_codes).then_some(("Verify", "login-mfa-submit", crate::app::submit_mfa as fn(&mut State)));
+    col()
+        .w_full()
+        .child(title("Two-factor authentication", p))
+        .child(form.children(form_note(l, p)).child(footer(p, l.submitting, |s| s.login.step = Step::Credentials, primary)))
+}
+
+fn ip_step(ip: &crate::login::IpAuth, p: &Palette) -> El {
+    let to = if ip.email.is_empty() { "your email".to_owned() } else { ip.email.clone() };
+    col()
+        .w_full()
+        .gap(18.0)
+        .child(title("Check your email", p).mb(0.0))
+        .child(
+            text(format!("We sent a link to {to} to approve signing in from this new location. This page continues once you open it."))
+                .w_full()
+                .align(Align::Center)
+                .font(font(14.0, 400.0).lh(20.0))
+                .color(p.text_secondary)
+                .wrap(),
+        )
+        .child(row().w_full().justify_center().child(crate::ui::spinner(p.text_tertiary)))
+        .child(footer(p, false, |s| s.login.step = Step::Credentials, None))
 }
 
 fn credential_step(s: &State, p: &Palette) -> El {
     let l = &s.login;
-    let footer_rule = mix(p.background_modifier_accent, Color::TRANSPARENT, 72.0);
     col()
         .w_full()
         .child(title("Welcome back", p))
@@ -175,11 +366,17 @@ fn credential_step(s: &State, p: &Palette) -> El {
             col()
                 .w_full()
                 .gap(18.0)
-                .child(Input::new("login-email-input", &l.email, |s: &mut State| &mut s.login.email).label("Email").el(p))
+                .child(
+                    Input::new("login-email-input", &l.email, |s: &mut State| &mut s.login.email)
+                        .label("Email")
+                        .error(l.errors.email.as_deref())
+                        .el(p),
+                )
                 .child(
                     Input::new("login-password-input", &l.password, |s: &mut State| &mut s.login.password)
                         .label("Password")
                         .password(l.show_password, |s: &mut State| s.login.show_password = !s.login.show_password)
+                        .error(l.errors.password.as_deref())
                         .el(p),
                 )
                 .child(
@@ -191,32 +388,7 @@ fn credential_step(s: &State, p: &Palette) -> El {
                             .role("link"),
                     ),
                 )
-                .child(
-                    // `.footer`: margin-top 2, padding-top 14, 1px top rule.
-                    col().w_full().mt(2.0).gap(13.0).child(el().w_full().h(1.0).fill(footer_rule)).child(
-                        row()
-                            .w_full()
-                            .justify_end()
-                            .gap(12.0)
-                            .child(
-                                Button::new("Back")
-                                    .variant(ButtonVariant::Secondary)
-                                    .disabled(l.submitting)
-                                    .key("login-back")
-                                    .on_press(|s: &mut State| s.login.step = Step::Method)
-                                    .el(p)
-                                    .min_w(112.0),
-                            )
-                            .child(
-                                Button::new("Sign in")
-                                    .submitting(l.submitting)
-                                    .key("login-submit")
-                                    // shortcut: no network yet, so submitting only shows the spinner.
-                                    .on_press(|s: &mut State| s.login.submitting = true)
-                                    .el(p)
-                                    .min_w(112.0),
-                            ),
-                    ),
-                ),
+                .children(form_note(l, p))
+                .child(footer(p, l.submitting, to_method, Some(("Sign in", "login-submit", crate::app::submit_login)))),
         )
 }
