@@ -1,2 +1,3 @@
 /target
 /.cuda
+__pycache__/
