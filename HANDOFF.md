@@ -27,57 +27,32 @@ instances, Linux NVENC + VA-API screen share. License AGPL-3.0-or-later (assets 
   (docker is installed but the daemon was not running).
 
 ## Repo state (`/home/square3ang/Documents/reflux`)
-Commits: `fe8a272` skeleton/theme/fonts, `9dc92f3` markdown parser + icons.
-- `Cargo.toml` — workspace, `members = ["crates/*"]`, shared deps (tokio, reqwest rustls,
-  tokio-tungstenite, zstd, serde, rune, rune-kit).
-- `crates/reflux` (bin) — `main.rs` is a placeholder "Welcome back" screen (builds; verified with
-  `--snap`). `theme/` = generated `palette.rs` (215 colours × dark/light/coal as typed `Palette`
-  fields, plus `dim::*` CSS dimensions in px) + Fluxer Sans/Mono fonts. `icons.rs` = 252 Phosphor
-  icons used by fluxer_app (regular/`_BOLD`/`_FILL`). `ui/mod.rs` (uncommitted, not yet wired into
-  main.rs) = `mix()` (CSS color-mix in sRGB), `rgb()`; references a `ui/button.rs` that is NOT
-  written yet (spec: `fluxer_app/src/features/ui/button/Button.module.css`; hover = `.hover(color)`
-  overlay drawn over fill).
-- `crates/reflux-markdown` — done: Fluxer's own Rust markdown parser (upstream
-  `packages/markdown_parser`) copied in; `parse(input, &Options)`, presets. Tests pass. Gaps: the
-  app-side `cleanNode` link post-processing and unicode emoji context are not ported.
-- `crates/reflux-model` — **currently does NOT compile** (subagent cancelled mid-way, uncommitted).
-  `lib.rs` has the helper macros (`model!` = serde structs with `#[serde(default)]`, `int_enum!` =
-  open integer enums, `int_flags!` = bitflags as JSON ints, `GuildScoped<T>`, `double_option`) and
-  declares modules `auth channel gateway guild instance message permissions user`, but only
-  `snowflake.rs` exists (`cargo check -p reflux-model` → E0583 file not found). Because `reflux`
-  depends on it, **`cargo build -p reflux` is broken too** until those files exist (or the `mod`
-  lines are commented out). Still needed: serde types for every API/gateway object (docs-driven),
-  permission bitflags + calculation (with tests), typed `DispatchEvent` with an `Unknown` fallback.
-  `bitflags = "2"` was added to its Cargo.toml.
-- `crates/reflux-voice` — not created (subagent cancelled before writing files). Plan: LiveKit
-  `livekit` crate (git, pinned) + cpal; set `CUDA_HOME` (e.g. `.cargo/config.toml` `[env]`) so
-  webrtc-sys compiles the NVENC factory; encoder preference via `LIVEKIT_PREFERRED_HW_ENCODER`;
-  prove with an encode probe example. Screen capture: libwebrtc desktop_capturer (PipeWire portal).
-- `crates/reflux-net`, `crates/reflux-store` — empty stubs (Cargo.toml only).
-- `assets/` — fonts (TTF converted from woff2), theme JSON, media (logo SVGs, default avatars,
-  emoji data/spritesheet, sounds).
-- `tools/gen_theme.py`, `tools/gen_icons.py` — regenerate palette/icons.
-
-## Planned architecture / next steps
-1. Finish `reflux-model`; then `reflux-net`: instance discovery (`/.well-known/fluxer`), REST client
-   with auth + rate limits + ALTCHA, gateway (`?v=1&encoding=json&compress=zstd-stream&stream=1`,
-   one zstd decompressor per connection, heartbeat/resume per gateway/overview.md).
-2. `reflux-store`: cache applying dispatches (guilds, channels, members, messages, read states,
-   presences, voice states), permission calc.
-3. App: tokio runtime on a background thread; `rune::App` + `AppHandle::update` to push events
-   into UI state; images fetched with reqwest and decoded to RGBA (`ImageCache::rgba`), media proxy
-   supports `format=png`.
-4. UI kit in `crates/reflux/src/ui` matching Fluxer CSS (button, input, avatar+status, modal,
-   tooltip, in-app context menu — Rune's native popup menu is macOS-only, popover, switch, slider,
-   scroller), then screens: auth (login/register/MFA/instance picker, layout in
-   `login-layout.json`), guild list, channel sidebar, chat (virtual rows), composer, member list,
-   user area, settings, voice UI.
-5. Known Rune limitation: no custom (frameless) titlebar on Windows/Linux — keep system titlebar.
-
-## Uncommitted work (as of handoff)
-`git status`: modified `crates/reflux-model/{Cargo.toml,src/lib.rs}`; untracked
-`crates/reflux-model/src/snowflake.rs`, `crates/reflux/src/ui/mod.rs`, `assets/media/`, `HANDOFF.md`.
-Commit `assets/media` + `HANDOFF.md` as-is; commit the model/ui work once it builds.
+See `git log` for details. Crates:
+- `reflux-model` — serde types for API/gateway, `DispatchEvent::parse` (81 events + `Unknown`),
+  permissions calc (`compute_permissions`, `thread_permissions`). 29 tests.
+- `reflux-net` — discovery (`/.well-known/fluxer`), REST (`Client`, per-route + global rate limits,
+  ALTCHA v2 = PBKDF2 PoW auto-solve + retry), gateway (zstd-stream both directions, heartbeat,
+  resume, backoff). `Client::from_discovery` prefers `api_transport`/`api_public` because
+  `web.fluxer.app/api` rejects non-browser Origins (403 INVALID_API_ORIGIN). Default instance
+  `fluxer.com`.
+- `reflux-store` — `Store::apply(&DispatchEvent, now_ms)`, message windows (200), optimistic sends
+  by nonce, unread/mention rules, sorted guild/channel lists. Gaps are marked `shortcut:`.
+- `reflux-voice` — livekit (git rev 052f0891…) skeleton (`Call::connect/publish_mic/publish_screen`)
+  + `examples/encode_probe.rs`. NVENC works only with H.264 profile `42e01f` (default `42001f`
+  silently falls back to OpenH264). VA-API encode unavailable on this NVIDIA box (decode-only
+  driver). `CUDA_HOME` via `.cargo/config.toml` → gitignored `.cuda` symlink. Voice token comes
+  from gateway op 4 → `VOICE_SERVER_UPDATE` (no HTTP route). Not yet wired into the app.
+- `reflux-markdown` — Fluxer's own markdown parser.
+- `reflux` (bin) — `app.rs` (tokio runtime thread + Rune `AppHandle`; `Action`/`act`; `poll`
+  drains `shell::Intent`s each frame), `session.rs` (~/.config/reflux/session.json, 0600),
+  `login.rs` (instance picker, email/password, TOTP, IP-authorization polling), `shell/` (guild
+  rail, sidebar, chat, composer, members; `--shell-demo` fixture), `ui/` kit (button, input,
+  avatar, tooltip, modal, menu, controls, select, misc; `--gallery`), `theme/`, `icons.rs`.
+  Only one real API call was made (wrong-credential login → proper error). Everything after
+  login is untested against a live server (no test account).
+- Next: message actions + settings/theme switching (in progress), image loading via media proxy
+  (avatars/icons/attachments are placeholders), voice UI wiring, DMs/friends, member list via
+  GUILD_MEMBER_LIST_UPDATE, register/passkey.
 
 ## Design-fidelity status
 - Reference: the live login page (`web.fluxer.app/login`, dark theme, 1020×893 viewport). The
