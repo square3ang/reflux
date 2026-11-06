@@ -82,6 +82,7 @@ pub struct App {
     pub store: Store,
     pub connection: Option<ConnectionState>,
     pub selected_channel: Option<Snowflake>,
+    pub shell: crate::shell::ShellState,
     /// Why the saved session couldn't connect (shown on the connecting screen).
     pub error: Option<String>,
     gateway: Option<UnboundedSender<Command>>,
@@ -91,11 +92,12 @@ pub struct App {
 
 /// What views (the shell) ask for; `act` runs it.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // SelectChannel / SendMessage come from the shell views
 pub enum Action {
     /// Select a channel and fetch its newest messages if none are loaded.
     SelectChannel(Snowflake),
     SendMessage { channel: Snowflake, content: String },
+    /// Fetch the page before the oldest loaded message.
+    LoadOlder(Snowflake),
     Logout,
 }
 
@@ -108,6 +110,7 @@ pub fn act(s: &mut State, a: Action) {
             }
         }
         Action::SendMessage { channel, content } => send_message(s, channel, content),
+        Action::LoadOlder(ch) => fetch_older(s, ch),
         Action::Logout => {
             if let Some(inst) = s.app.instance.clone() {
                 spawn(async move {
@@ -328,6 +331,8 @@ fn sign_out(s: &mut State, message: Option<String>) {
     s.app.store = Store::default();
     s.app.connection = None;
     s.app.selected_channel = None;
+    let avatars = std::mem::take(&mut s.app.shell.default_avatars);
+    s.app.shell = crate::shell::ShellState { default_avatars: avatars, ..Default::default() };
     s.app.error = None;
     s.app.route = Route::Auth;
     s.app.saved.token = None;
@@ -431,6 +436,40 @@ fn fetch_messages(s: &State, channel: Snowflake) {
     });
 }
 
+fn fetch_older(s: &State, channel: Snowflake) {
+    let Some(w) = s.app.store.messages.get(&channel) else { return };
+    let (Some(oldest), Some(inst)) = (w.messages.first().map(|m| m.id), s.app.instance.clone()) else { return };
+    if !w.has_more_before {
+        return;
+    }
+    let generation = s.app.generation;
+    spawn(async move {
+        let r = inst.rest.messages(channel, MessagePage::Before(oldest), PAGE).await;
+        update(move |s| match r {
+            Ok(page) if s.app.generation == generation => s.app.store.prepend_messages(channel, page, PAGE as usize),
+            Ok(_) => {}
+            Err(e) => eprintln!("reflux: older messages of {channel}: {e}"),
+        });
+    });
+}
+
+/// Runs what the shell queued since the last frame; true when anything ran.
+pub fn poll(s: &mut State) -> bool {
+    s.app.shell.now_ms = now_ms();
+    let intents = std::mem::take(&mut s.app.shell.intents);
+    let ran = !intents.is_empty();
+    for i in intents {
+        use crate::shell::Intent;
+        match i {
+            Intent::SelectGuild(_) => {}
+            Intent::SelectChannel(c) => act(s, Action::SelectChannel(c)),
+            Intent::SendMessage { channel, content } => act(s, Action::SendMessage { channel, content }),
+            Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
+        }
+    }
+    ran
+}
+
 fn send_message(s: &mut State, channel: Snowflake, content: String) {
     let (Some(inst), Some(me)) = (s.app.instance.clone(), s.app.store.me.as_ref()) else { return };
     if content.trim().is_empty() {
@@ -481,7 +520,7 @@ fn iso8601(ms: u64) -> String {
 
 // ---- Views ---------------------------------------------------------------------------------
 
-/// Connecting screen, and the stand-in for the shell.
+/// Auth, connecting screen, or the shell.
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let p = theme::palette(theme::Kind::Dark);
     let body = match s.app.route {
@@ -498,13 +537,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
             }
             c.child(logout_button(p))
         }
-        Route::Main => {
-            let me = s.app.store.me.as_ref().map_or("?".into(), |u| u.base.username.clone());
-            col().gap(16.0).items_center().child(
-                text(format!("Connected as {me}, {} guilds", s.app.store.guilds.len())).font(font(16.0, 500.0)).color(p.text_primary),
-            )
-            .child(logout_button(p))
-        }
+        Route::Main => return crate::shell::view(&s.app.store, &s.app.shell, &p, |s: &mut State| &mut s.app.shell),
     };
     col().w_full().h_full().center().fill(p.background_primary).child(body)
 }

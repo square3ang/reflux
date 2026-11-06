@@ -38,8 +38,10 @@ fn main() {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
+        poll: Some(|s, _, _| app::poll(s)),
         setup: Some(|s, waker| {
             ui::gallery::setup(s, waker.clone());
+            s.app.shell.default_avatars = shell::load_default_avatars(waker.clone());
             shell::demo::setup(s, waker);
         }),
         ..AppSpec::new("Fluxer", (1280.0, 800.0), init, view)
