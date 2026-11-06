@@ -1,0 +1,9 @@
+[package]
+name = "reflux-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reflux-model.workspace = true
+serde_json.workspace = true

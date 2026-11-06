@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "gzip", "brotli", "zstd"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+zstd = "0.13"
+thiserror = "2"
+tracing = "0.1"
+url = "2"
+reflux-model = { path = "crates/reflux-model" }
+reflux-net = { path = "crates/reflux-net" }
+reflux-store = { path = "crates/reflux-store" }
+reflux-markdown = { path = "crates/reflux-markdown" }
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
