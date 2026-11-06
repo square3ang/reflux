@@ -32,7 +32,7 @@ pub fn first_tab(store: &Store, channel: Snowflake) -> Option<&'static str> {
 }
 
 /// `SLOWMODE_OPTIONS` (seconds).
-const SLOWMODE: [(&str, &str); 14] = [
+pub(super) const SLOWMODE: [(&str, &str); 14] = [
     ("0", "Off"),
     ("5", "5 seconds"),
     ("10", "10 seconds"),
@@ -153,6 +153,9 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palet
         if nsfw != ch.nsfw {
             patch.insert("nsfw".into(), json!(nsfw));
         }
+    }
+    if reflux_store::threads::is_forum(ch.kind) {
+        content = super::forum::fields(st, ch, p, acc, layer, content, &mut patch);
     }
     let mut body = col().w_full().child(section("Overview", content, true, p));
     if !patch.is_empty() {

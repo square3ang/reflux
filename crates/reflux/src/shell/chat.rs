@@ -35,7 +35,14 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     let Some(c) = channel else {
         return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter);
     };
-    let show_members = st.member_list && c.guild_id.is_some();
+    let show_members = st.member_list && c.guild_id.is_some() && !reflux_store::threads::is_forum(c.kind);
+    if reflux_store::threads::is_forum(c.kind) {
+        // A forum lists its posts instead of messages (`ForumChannelView`).
+        let mut content = row().w_full().grow(1.0).min_h(0.0).child(super::forum::view(store, st, c, p, acc, layer));
+        content = content.children(super::threads::panel(store, st, c, p, acc, layer));
+        super::threads::layer(store, st, Some(c), p, acc, layer);
+        return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter).child(header(store, st, c, p, acc, layer)).child(content);
+    }
     let mut chat = col()
         .grow(1.0)
         .min_w(0.0)
@@ -45,7 +52,11 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .clip_rounded(0.0)
         .children(match super::attachments::mature_gate(store, st, c, p, acc) {
             Some(gate) => vec![gate],
-            None => vec![messages(store, st, c, p, acc, layer), composer(store, st, c, p, acc)],
+            None => {
+                let mut v = vec![messages(store, st, c, p, acc, layer, false)];
+                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![composer(store, st, c, p, acc, Slot::Main)] });
+                v
+            }
         })
         // Files dragged in from other apps join the tray.
         .on_drop_files(move |s: &mut S, files, _| {
@@ -60,15 +71,18 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
     if let Some(panel) = super::search::panel(store, st, p, acc) {
         content = content.child(panel);
+    } else if let Some(panel) = super::threads::panel(store, st, c, p, acc, layer) {
+        content = content.child(panel);
     } else if show_members {
         content = content
-            .child(members::list(store, st, c, p, acc))
+            .child(if c.kind.is_thread() { super::threads::members_column(store, st, c, p, acc) } else { members::list(store, st, c, p, acc) })
             .child(el().pin(None, Some(0.0), Some(dim::LAYOUT_MEMBER_LIST_WIDTH), Some(0.0)).w(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
     }
     if let Some(m) = st.confirm_delete.and_then(|id| find(store, c.id, id)) {
         layer.push(delete_modal(store, st, m, p, acc));
     }
     super::pins::popout(store, st, c, p, acc, layer);
+    super::threads::layer(store, st, Some(c), p, acc, layer);
     super::upload::plus_menu(st, p, acc, layer);
     col()
         .grow(1.0)
@@ -118,6 +132,8 @@ struct Perms {
     pin: bool,
     /// Developer mode: show Copy message ID.
     dev: bool,
+    /// Messages here can start threads (in this parent).
+    thread_from: Option<Snowflake>,
 }
 
 impl Perms {
@@ -130,6 +146,9 @@ impl Perms {
             manage: c.guild_id.is_some() && p.contains(Permissions::MANAGE_MESSAGES),
             pin: p.contains(Permissions::PIN_MESSAGES),
             dev: store.settings.developer_mode,
+            thread_from: (matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT)
+                && store.can_create_thread(c, reflux_store::threads::CreateKind::FromMessage))
+            .then_some(c.id),
         }
     }
     fn can_edit(&self, m: &Message) -> bool {
@@ -173,6 +192,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
             .child(icon(i, dim::CHANNEL_HEADER_ACTION_ICON_SIZE).color(if selected { p.text_primary } else { muted }).group_color(p.text_primary))
     };
     let mut left = row().grow(1.0).min_w(0.0).center_y();
+    left = left.children(super::threads::parent_crumb(store, c, p, acc));
     if c.kind == ChannelType::DM {
         let other = c.recipients.iter().find(|u| u.id != store.my_id()).map(|u| u.id).unwrap_or_default();
         left = left.child(avatar(store, st, other, 24.0, None, p.background_secondary_lighter, p));
@@ -202,22 +222,26 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     let pins = action(&icons::PUSH_PIN, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
         .key(super::pins::POPOUT)
         .on_press(move |s: &mut S| super::pins::open(acc(s), cid));
+    let forum = reflux_store::threads::is_forum(c.kind);
     if c.guild_id.is_some() {
-        right = right
-            .child(action(&icons::BELL, "Notification Settings", false))
-            .child(pins)
-            .child(
+        right = right.child(if c.kind.is_thread() { super::threads::notification_button(st, c, p, acc) } else { action(&icons::BELL, "Notification Settings", false) });
+        right = right.children(super::threads::header_button(store, st, c, p, acc));
+        if !forum {
+            right = right.child(pins).child(
                 action(&icons::USERS, "Toggle Member List", st.member_list)
                     .key("toggle-members")
                     .on_press(move |s: &mut S| acc(s).member_list ^= true),
             );
+        }
     } else {
         right = right
             .child(action(&icons::PHONE, "Start Voice Call", false))
             .child(action(&icons::VIDEO_CAMERA, "Start Video Call", false))
             .child(pins);
     }
-    right = right.child(super::search::bar(st, p, acc, layer));
+    if !forum {
+        right = right.child(super::search::bar(st, p, acc, layer));
+    }
     row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
@@ -343,7 +367,10 @@ fn stream(msgs: &[Message], first_unread: Option<Snowflake>) -> Vec<Item> {
     out
 }
 
-fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+/// The message list; `pane`: the thread side panel's (its own list position, row keys prefixed).
+pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>, pane: bool) -> El {
+    let pre = if pane { "pane-" } else { "" };
+    let (list_fits, rows_below) = if pane { (st.threads.list_fits, st.threads.rows_below) } else { (st.list_fits, st.rows_below) };
     let msgs = store.messages(c.id);
     let sticky = st.sticky_unread.filter(|s| s.0 == c.id).map(|s| s.1);
     let first_unread = if store.has_unread(c.id) {
@@ -372,7 +399,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     let mut rows = Vec::with_capacity(n_items + 1);
     for it in &items {
         rows.push(match *it {
-            Item::Date(ms) => date_divider(ms, p).key(format!("date-{}", format_full_date(ms))),
+            Item::Date(ms) => date_divider(ms, p).key(format!("{pre}date-{}", format_full_date(ms))),
             Item::Msg { i, head, space, unread } => {
                 let m = &msgs[i];
                 let mut r = col().w_full();
@@ -403,6 +430,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                         });
                     let editing = st.editing.as_ref().is_some_and(|e| e.0 == id);
                     if !editing && (st.hover_msg == Some(id) || active == Some(id)) {
+                        let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(id).is_none()), ..perms };
                         body = body.child(action_bar(m, perms, st, p, acc, layer));
                     }
                 }
@@ -413,6 +441,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     if let Some(m) = active.and_then(|id| find(store, c.id, id)) {
         let open = st.popups.open.clone().unwrap_or_default();
         if open == format!("msg-menu-{}", m.id) || open == format!("msg-more-{}", m.id) {
+            let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(m.id).is_none()), ..perms };
             message_menu(&open, m, c, perms, st, acc).el(&st.popups, pops(acc), p, layer);
         } else if open == format!("emoji-{}", m.id) {
             let close = move |s: &mut S| {
@@ -442,7 +471,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             }
         })
         // `--messages-bottom-clearance`: room for the typing rail over the list's end.
-        .child(el().h(dim::MESSAGES_BOTTOM_CLEARANCE).key("msgs-end"))
+        .child(el().h(dim::MESSAGES_BOTTOM_CLEARANCE).key(format!("{pre}msgs-end")))
         .on_visible_rows(move |s: &mut S, r| {
             let st = acc(s);
             if r.start == 0 && more && !st.intents.contains(&Intent::LoadOlder { channel: cid }) {
@@ -455,20 +484,25 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             }
             let below = (n_items + 1).saturating_sub(r.end);
             let fits = r.start == 0 && bottom;
-            let changed = st.at_bottom != bottom || (st.rows_below > PRESENT_ROWS) != (below > PRESENT_ROWS) || st.list_fits != fits;
-            st.list_fits = fits;
-            st.at_bottom = bottom;
-            st.rows_below = below;
+            let (at_bottom, rows_below, list_fits) = if pane {
+                (&mut st.threads.at_bottom, &mut st.threads.rows_below, &mut st.threads.list_fits)
+            } else {
+                (&mut st.at_bottom, &mut st.rows_below, &mut st.list_fits)
+            };
+            let changed = *at_bottom != bottom || (*rows_below > PRESENT_ROWS) != (below > PRESENT_ROWS) || *list_fits != fits;
+            *list_fits = fits;
+            *at_bottom = bottom;
+            *rows_below = below;
             changed
         });
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: !newer }).child(list);
     // Bottom-aligned like Fluxer's `.scrollerContent` only while everything fits: Rune's reveal
     // and centring miss rows in an overflowing `justify_end` viewport (seen live: a jump showed
     // an empty list).
-    let viewport = if st.list_fits && !newer { viewport.justify_end() } else { viewport };
+    let viewport = if list_fits && !newer { viewport.justify_end() } else { viewport };
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
-    if newer || st.rows_below > PRESENT_ROWS {
-        area = area.child(present_bar(cid, p, acc));
+    if newer || rows_below > PRESENT_ROWS {
+        area = area.child(present_bar(cid, pre, p, acc));
     }
     let typing = store.typing_users(c.id, st.now_ms);
     if !typing.is_empty() {
@@ -481,7 +515,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
 const PRESENT_ROWS: usize = 30;
 
 /// `.jumpToPresentBar`: a pill over the list's foot while reading history.
-fn present_bar<S: 'static>(channel: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+fn present_bar<S: 'static>(channel: Snowflake, pre: &str, p: &Palette, acc: ShellAccess<S>) -> El {
     let bg = mix(p.background_textarea, p.background_tertiary, 90.0);
     row()
         // Above the typing rail.
@@ -494,12 +528,12 @@ fn present_bar<S: 'static>(channel: Snowflake, p: &Palette, acc: ShellAccess<S>)
         .radius(dim::RADIUS_FULL)
         .fill(bg)
         .border(1.0, over(p.background_modifier_accent, bg))
-        .key("jump-present-bar")
+        .key(format!("{pre}jump-present-bar"))
         .child(text("You're viewing older messages").font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary).truncate().grow(1.0).shrink().min_w(0.0))
         .child(
             Button::new("Jump to present")
                 .size(crate::ui::ButtonSize::Compact)
-                .key("jump-present")
+                .key(format!("{pre}jump-present"))
                 .on_press(move |s: &mut S| {
                     let st = acc(s);
                     st.highlight = None;
@@ -551,6 +585,7 @@ fn message_link(st: &ShellState, c: &Channel, m: &Message) -> String {
 // shortcut: the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
 // those stay in More.
 fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let thread_from = perms.thread_from.filter(|_| is_user_message(m));
     let id = m.id;
     let open = st.popups.open.as_deref();
     let button = |glyph: El, active: bool| {
@@ -593,6 +628,10 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
         let b = button(icon(&icons::ARROW_BEND_UP_LEFT_FILL, 20.0), false).on_press(move |s: &mut S| start_reply(acc(s), me, &m2));
         bar = bar.child(tip(format!("reply-{id}"), "Reply", b, layer));
     }
+    if let Some(parent) = thread_from {
+        let b = button(icon(&icons::CHATS_FILL, 20.0), false).on_press(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id)));
+        bar = bar.child(tip(format!("thread-{id}"), "Create thread", b, layer));
+    }
     let more_id = format!("msg-more-{id}");
     let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
         let st = acc(s);
@@ -626,6 +665,9 @@ fn message_menu<S: 'static>(menu: &str, m: &Message, c: &Channel, perms: Perms, 
     if perms.send && is_user_message(m) {
         let (m2, me) = (m.clone(), perms.me);
         menu = menu.item(MenuItem::new("reply", "Reply").icon(&icons::ARROW_BEND_UP_LEFT_FILL).on_select(move |s: &mut S| start_reply(acc(s), me, &m2)));
+    }
+    if let Some(parent) = perms.thread_from.filter(|_| is_user_message(m)) {
+        menu = menu.item(MenuItem::new("create-thread", "Create thread").icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id))));
     }
     menu = menu.separator();
     if !m.content.is_empty() {
@@ -753,6 +795,12 @@ fn author_name(store: &Store, m: &Message) -> String {
 }
 
 fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
+    if m.kind == MessageType::THREAD_CREATED {
+        return super::threads::created_message(store, m, &author_name(store, m), p, acc);
+    }
+    if m.kind == MessageType::THREAD_STARTER_MESSAGE {
+        return super::threads::starter_message(store, st, m, p, acc);
+    }
     if !is_user_message(m) {
         return system_message(store, m, md, p);
     }
@@ -837,13 +885,17 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     if let Some(a) = acc_el {
         content = content.child(a);
     }
+    // Previews (no copy map: pins, search, a thread's starter) have no chip, like `!isPreview`.
+    if md.copy.is_some() {
+        content = content.children(super::threads::chip(store, st, m, p, acc));
+    }
     root.child(row().w_full().items_start().child(el().w(PAD)).child(gutter).child(el().w(dim::MESSAGE_GUTTER)).child(content))
 }
 
 /// `EditingMessageInput`: the message's text in a composer-like box, then "escape to cancel •
 /// enter to save".
 fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
-    let (id, original) = (m.id, m.content.clone());
+    let (ch, id, original) = (m.channel_id, m.id, m.content.clone());
     let field = text_input(edit, font(16.0, 400.0).lh(22.0))
         .key("edit-field")
         .w_full()
@@ -862,7 +914,7 @@ fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAcces
         })
         .on_submit({
             let original = original.clone();
-            move |s: &mut S, _| save_edit(acc(s), id, &original)
+            move |s: &mut S, _| save_edit(acc(s), ch, id, &original)
         });
     let small = font(12.0, 400.0).lh(16.0);
     let footer = row()
@@ -872,7 +924,7 @@ fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAcces
         .child(text("cancel").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).editing = None))
         .child(el().size(4.0, 4.0).radius(2.0).fill(p.text_chat_muted).mx(4.0))
         .child(text("enter to ").font(small).color(p.text_chat))
-        .child(text("save").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| save_edit(acc(s), id, &original)));
+        .child(text("save").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| save_edit(acc(s), ch, id, &original)));
     col()
         .w_full()
         .pt(4.0)
@@ -892,14 +944,13 @@ fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAcces
 
 /// Enter or "save": an emptied edit asks to delete the message instead, as in Fluxer; an
 /// unchanged one just closes.
-fn save_edit(st: &mut ShellState, id: Snowflake, original: &str) {
+fn save_edit(st: &mut ShellState, channel: Snowflake, id: Snowflake, original: &str) {
     let Some((_, e)) = st.editing.take() else { return };
     st.composer.focused = true;
     let content = e.text.trim().to_string();
     if content.is_empty() {
         st.confirm_delete = Some(id);
     } else if content != original.trim() {
-        let channel = st.channel.unwrap_or_default();
         st.intents.push(Intent::Edit { channel, message: id, content });
     }
 }
@@ -1125,7 +1176,31 @@ fn typing_rail(store: &Store, guild: Option<Snowflake>, users: &[Snowflake], p: 
 
 // ---- Composer --------------------------------------------------------------------------------
 
-fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+/// Which composer: the main column's, the thread panel's, or the new-thread pane's (whose Enter
+/// starts the thread in `c`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Slot {
+    Main,
+    Pane,
+    Create,
+}
+
+/// Runs a composer handler on the slot's draft: the panel's composer and tray are swapped into
+/// the main fields for the duration, so every composer helper works on either.
+fn in_slot<R>(st: &mut ShellState, slot: Slot, f: impl FnOnce(&mut ShellState) -> R) -> R {
+    if slot == Slot::Main {
+        return f(st);
+    }
+    std::mem::swap(&mut st.composer, &mut st.threads.composer);
+    std::mem::swap(&mut st.uploads, &mut st.threads.uploads);
+    let r = f(st);
+    std::mem::swap(&mut st.composer, &mut st.threads.composer);
+    std::mem::swap(&mut st.uploads, &mut st.threads.uploads);
+    r
+}
+
+pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, slot: Slot) -> El {
+    let draft = if slot == Slot::Main { &st.composer } else { &st.threads.composer };
     let button = |i: &'static rune::Icon, label: &str| {
         row()
             .size(32.0, 32.0)
@@ -1138,7 +1213,10 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             .label(label.to_string())
             .child(icon(i, 22.0).color(p.text_primary_muted).group_color(p.text_primary))
     };
+    let post = c.kind.is_thread() && c.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| reflux_store::threads::is_forum(p.kind));
     let placeholder = match c.kind {
+        _ if slot == Slot::Create => "Enter a message to start the conversation!".to_string(),
+        _ if post => format!("Send a message in \"{}\"", c.name.clone().unwrap_or_default()),
         ChannelType::DM => format!("Message @{}", channel_title(store, c)),
         ChannelType::GROUP_DM => format!("Message {}", channel_title(store, c)),
         _ => format!("Message #{}", c.name.clone().unwrap_or_default()),
@@ -1146,36 +1224,60 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     let cid = c.id;
     // The newest own user message, for Up-arrow editing.
     let me = store.my_id();
-    let last_own = store.messages(cid).iter().rev().find(|m| m.author.id == me && is_user_message(m) && !is_pending(m)).cloned();
+    let last_own = store.messages(cid).iter().rev().find(|m| m.author.id == me && is_user_message(m) && !is_pending(m)).cloned().filter(|_| slot != Slot::Create);
     // The completions for the word at the caret, unless dismissed with Escape.
-    let ac = autocomplete::trigger(&st.composer.text, st.composer.focus)
-        .filter(|t| st.composer.focused && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())))
+    let ac = autocomplete::trigger(&draft.text, draft.focus)
+        .filter(|t| draft.focused && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())))
         .map(|t| {
             let items = autocomplete::completions(store, c, &t);
             (t, items)
         })
         .filter(|(_, items)| !items.is_empty());
     let ac_keys = ac.clone();
-    let (limit, slow) = (st.limits.message_length, slowmode(store, c));
-    let field = text_input(&st.composer, font(16.0, 400.0).lh(22.0))
-        .key("composer")
+    let (limit, slow) = (st.limits.message_length, if slot == Slot::Create { 0 } else { slowmode(store, c) });
+    let suggested = match (slot, st.threads.panel) {
+        (Slot::Create, Some(super::threads::Panel::Create { message: Some(m), .. })) => super::threads::suggested_name(store, c.guild_id, find(store, cid, m)),
+        _ => String::new(),
+    };
+    let field = text_input(draft, font(16.0, 400.0).lh(22.0))
+        .key(match slot {
+            Slot::Main => "composer",
+            Slot::Pane => "thread-composer",
+            Slot::Create => "thread-create-composer",
+        })
         .w_full()
         .color(p.text_chat)
         .placeholder(placeholder, p.text_tertiary_secondary)
         .caret(p.text_primary, p.text_selection)
-        .on_edit(move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).composer })
-        .on_input_key(move |s: &mut S, k, _| composer_key(acc(s), cid, k, last_own.as_ref(), ac_keys.as_ref()))
+        .on_edit(move |s: &mut S| -> &mut rune::TextEdit {
+            let st = acc(s);
+            if slot == Slot::Main { &mut st.composer } else { &mut st.threads.composer }
+        })
+        .on_input_key(move |s: &mut S, k, _| {
+            in_slot(acc(s), slot, |st| {
+                // The create pane neither sends typing nor edits the last message.
+                if slot == Slot::Create && matches!(k.key, Key::Text(_)) {
+                    return false;
+                }
+                composer_key(st, cid, k, last_own.as_ref(), ac_keys.as_ref())
+            })
+        })
         // A pasted image joins the tray.
         .on_input_paste(move |s: &mut S, content, _| match content.image() {
-            Some(img) => {
+            Some(img) if slot == Slot::Main => {
                 super::upload::add_png(acc(s), img.png().to_vec());
                 true
             }
-            None => false,
+            _ => false,
         })
         // Enter sends; Shift+Enter is the field's own newline.
-        .on_submit(move |s: &mut S, _| send(acc(s), cid, limit, slow));
+        .on_submit(move |s: &mut S, _| match slot {
+            Slot::Create => super::threads::submit_create(acc(s), &suggested),
+            _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
+        });
+    // shortcut: the thread panels have no upload tray; files go through the full view.
     let plus = button(&icons::PLUS_BOLD, "Upload").key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
+    let plus = if slot == Slot::Main { plus } else { el().size(32.0, 32.0) };
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
     let input_row = row()
@@ -1202,18 +1304,18 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .w_full()
         .radius(dim::FOOTER_BOX_RADIUS)
         .fill(p.background_textarea)
-        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if st.composer.focused { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
-    if let Some(r) = st.reply.filter(|r| r.channel == cid)
+        .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if draft.focused { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
+    if let Some(r) = st.reply.filter(|r| r.channel == cid && slot != Slot::Create)
         && let Some(target) = find(store, cid, r.message)
     {
         boxed = boxed.child(reply_bar(store, target, r, p, acc));
     }
-    if let Some(tray) = super::upload::tray(st, p, acc) {
+    if let Some(tray) = super::upload::tray(st, p, acc).filter(|_| slot == Slot::Main) {
         boxed = boxed.child(tray);
     }
     boxed = boxed.child(input_row);
     // `CharacterCounter`: from 80% of the limit; red under 50 left.
-    let len = st.composer.text.chars().count();
+    let len = draft.text.chars().count();
     if len * 10 > limit * 8 {
         let left = limit as i64 - len as i64;
         boxed = boxed.child(
@@ -1227,7 +1329,9 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
     // The autocomplete list hangs above the box, as wide as it.
     if let Some((t, items)) = &ac {
-        out = out.child(el().w_full().h(0.0).child(autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0))));
+        // shortcut: in the thread panels the list is keyboard-only (its clicks edit the main draft).
+        let list = autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0));
+        out = out.child(el().w_full().h(0.0).child(if slot == Slot::Main { list } else { list.inert() }));
     }
     if slow > 0 {
         out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p));
@@ -1529,13 +1633,13 @@ mod tests {
     fn saving_an_edit() {
         let mut st = ShellState { channel: Some(Snowflake(5)), ..Default::default() };
         st.editing = Some((Snowflake(9), TextEdit::new(" hi ")));
-        save_edit(&mut st, Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
         assert!(st.intents.is_empty() && st.editing.is_none(), "unchanged closes");
         st.editing = Some((Snowflake(9), TextEdit::new("  ")));
-        save_edit(&mut st, Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
         assert_eq!(st.confirm_delete, Some(Snowflake(9)), "emptied asks to delete");
         st.editing = Some((Snowflake(9), TextEdit::new("hey")));
-        save_edit(&mut st, Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
         assert_eq!(st.intents, [Intent::Edit { channel: Snowflake(5), message: Snowflake(9), content: "hey".into() }]);
     }
 

@@ -271,17 +271,28 @@ impl Client {
         files: Vec<(String, Arc<Vec<u8>>, String)>,
         progress: impl Fn(u64) + Send + Sync + 'static,
     ) -> Result<Message> {
-        guard(&Method::POST, &format!("/channels/{channel}/messages"))?;
+        self.post_multipart(&format!("/channels/{channel}/messages"), msg, files, progress).await
+    }
+
+    /// `POST {path}` as `multipart/form-data`: `payload_json` plus `files[N]`.
+    pub async fn post_multipart<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        payload: &B,
+        files: Vec<(String, Arc<Vec<u8>>, String)>,
+        progress: impl Fn(u64) + Send + Sync + 'static,
+    ) -> Result<T> {
+        guard(&Method::POST, path)?;
         let progress = Arc::new(progress);
         let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let mut form = reqwest::multipart::Form::new().text("payload_json", serde_json::to_string(msg)?);
+        let mut form = reqwest::multipart::Form::new().text("payload_json", serde_json::to_string(payload)?);
         for (i, (name, bytes, ctype)) in files.into_iter().enumerate() {
             let len = bytes.len() as u64;
             let body = counted(bytes, sent.clone(), progress.clone());
             let part = reqwest::multipart::Part::stream_with_length(body, len).file_name(name).mime_str(&ctype).map_err(|e| Error::Upload(e.to_string()))?;
             form = form.part(format!("files[{i}]"), part);
         }
-        let mut req = self.http.post(format!("{}/channels/{channel}/messages", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES).multipart(form);
+        let mut req = self.http.post(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES).multipart(form);
         if let Some(token) = self.token.read().unwrap().as_deref() {
             req = req.header(header::AUTHORIZATION, token);
         }

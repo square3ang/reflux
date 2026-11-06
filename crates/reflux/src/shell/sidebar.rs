@@ -79,6 +79,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
                 continue;
             }
             groups = groups.child(channel_row(store, c, selected, p, acc));
+            groups = groups.children(super::threads::sidebar_rows(store, st, c, p, acc));
             if c.kind == ChannelType::GUILD_VOICE {
                 groups = groups.child(voice_users(store, st, c, p, acc));
             }

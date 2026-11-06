@@ -10,9 +10,12 @@ use reflux_model::{
     Channel, ChannelType, DispatchEvent, Emoji, Guild, GuildFolder, GuildMember, GuildReady,
     MemberListGroup, Message, MessageReaction, NotificationLevel, PartialUser, PermissionInput, Permissions, Presence,
     ReactionEmoji, ReadState, Relationship, RelationshipType, Role, SessionPresence, Snowflake,
-    Sticker, Timestamp, User, UserGuildSettings, UserSettings, VoiceState, compute_permissions,
+    Sticker, ThreadMember, Timestamp, User, UserGuildSettings, UserSettings, VoiceState, compute_permissions,
     thread_permissions,
 };
+
+pub mod threads;
+pub use threads::{CreateKind, ThreadRights};
 
 /// Live window size cap (fluxer `MAX_LOADED_MESSAGES`).
 pub const MAX_WINDOW: usize = 200;
@@ -101,6 +104,8 @@ pub struct Store {
     pub member_lists: HashMap<(Snowflake, String), MemberList>,
     /// Channel → (user, expires at ms).
     pub typing: HashMap<Snowflake, Vec<(Snowflake, u64)>>,
+    /// Members of threads subscribed with `thread_member_lists` (`THREAD_MEMBER_LIST_UPDATE`).
+    pub thread_members: HashMap<Snowflake, Vec<ThreadMember>>,
 }
 
 impl Store {
@@ -191,7 +196,11 @@ impl Store {
                 self.upsert_channel(c.guild_id, c)
             }
             E::ChannelUpdateBulk(b) => b.channels.iter().for_each(|c| self.upsert_channel(Some(b.guild_id), c)),
-            E::ChannelDelete(c) => self.remove_channel(c.id),
+            E::ChannelDelete(c) => {
+                // Its threads go with it (`ChannelThreads.handleParentDelete`).
+                let threads: Vec<_> = self.channels.values().filter(|t| t.kind.is_thread() && t.parent_id == Some(c.id)).map(|t| t.id).collect();
+                threads.into_iter().chain([c.id]).for_each(|id| self.remove_channel(id));
+            }
             E::ThreadDelete(t) => self.remove_channel(t.id),
             E::ChannelRecipientAdd(r) => {
                 self.upsert_user(&r.user);
@@ -218,7 +227,8 @@ impl Store {
                 let gone: Vec<_> = self
                     .channels
                     .values()
-                    .filter(|c| c.guild_id == Some(s.guild_id) && c.kind.is_thread())
+                    // Archived threads stay (fluxer keeps those it loaded by REST).
+                    .filter(|c| c.guild_id == Some(s.guild_id) && c.kind.is_thread() && !threads::is_archived(c))
                     .filter(|c| s.channel_ids.as_ref().is_none_or(|ids| c.parent_id.is_some_and(|p| ids.contains(&p))))
                     .map(|c| c.id)
                     .collect();
@@ -246,6 +256,21 @@ impl Store {
                         t.member = Some(m.clone());
                     }
                 }
+                for m in &u.added_members {
+                    self.thread_member_side_effects(u.guild_id, m);
+                }
+                if let Some(list) = self.thread_members.get_mut(&u.id) {
+                    list.retain(|m| m.user_id.is_none_or(|id| !u.removed_member_ids.contains(&id)));
+                    for m in &u.added_members {
+                        if !list.iter().any(|x| x.user_id == m.user_id) {
+                            list.push(m.clone());
+                        }
+                    }
+                }
+            }
+            E::ThreadMemberListUpdate(u) => {
+                u.members.iter().for_each(|m| self.thread_member_side_effects(u.guild_id, m));
+                self.thread_members.insert(u.thread_id, u.members.clone());
             }
 
             E::GuildMemberAdd(m) => {
@@ -335,6 +360,7 @@ impl Store {
 
     /// Replaces the window with the newest page (`GET /messages?limit=`).
     pub fn set_latest_messages(&mut self, channel: Snowflake, page: Vec<Message>, limit: usize) {
+        self.ingest_message_threads(&page);
         let more = page.len() >= limit;
         let w = self.messages.entry(channel).or_default();
         *w = MessageWindow { has_more_before: more, ..Default::default() };
@@ -344,6 +370,7 @@ impl Store {
 
     /// Adds an older page (`before=` the oldest loaded ID); drops the newest beyond the cap.
     pub fn prepend_messages(&mut self, channel: Snowflake, page: Vec<Message>, limit: usize) {
+        self.ingest_message_threads(&page);
         let w = self.messages.entry(channel).or_default();
         w.has_more_before = page.len() >= limit;
         merge(&mut w.messages, page);
@@ -355,6 +382,7 @@ impl Store {
 
     /// Adds a newer page (`after=` the newest loaded ID) while scrolled into history.
     pub fn append_messages(&mut self, channel: Snowflake, page: Vec<Message>, limit: usize) {
+        self.ingest_message_threads(&page);
         let w = self.messages.entry(channel).or_default();
         w.has_more_after = page.len() >= limit;
         merge(&mut w.messages, page);
@@ -364,6 +392,7 @@ impl Store {
     /// Replaces the window with a page around a message (`around=`, jump to message). It's the
     /// newest only when it reaches the channel's last message.
     pub fn set_around_messages(&mut self, channel: Snowflake, page: Vec<Message>, limit: usize) {
+        self.ingest_message_threads(&page);
         let last = self.channels.get(&channel).and_then(|c| c.last_message_id);
         let newest = page.iter().map(|m| m.id).max();
         let w = self.messages.entry(channel).or_default();
@@ -544,7 +573,8 @@ impl Store {
                 continue;
             }
             mentions += self.mention_count(c.id);
-            unread |= !c.kind.is_thread() && !self.is_muted(c) && self.has_unread(c.id);
+            // Threads count only when joined (`getThreadContribution`).
+            unread |= (!c.kind.is_thread() || c.member.is_some()) && !self.is_muted(c) && self.has_unread(c.id);
         }
         (unread, mentions)
     }
@@ -552,6 +582,9 @@ impl Store {
     /// Muted through guild settings, the channel override or its category's override.
     // shortcut: ignores `mute_config.end_time` expiry; pass `now` in if timed mutes matter.
     pub fn is_muted(&self, c: &Channel) -> bool {
+        if c.kind.is_thread() {
+            return self.is_thread_muted(c);
+        }
         let Some(s) = self.guild_settings.get(&c.guild_id) else { return false };
         let ov = |id: Option<Snowflake>| {
             id.and_then(|id| s.channel_overrides.as_ref()?.get(&id)).is_some_and(|o| o.muted)
@@ -562,6 +595,16 @@ impl Store {
     /// Fluxer `resolveEffectiveMessageNotifications`: the channel override, its category's, the
     /// guild setting, then the guild default (DMs default to all messages).
     pub fn notification_level(&self, c: &Channel) -> NotificationLevel {
+        // A joined thread: its own flag, else its parent's level (`resolveThreadNotificationLevel`);
+        // others only notify on mentions.
+        if c.kind.is_thread() {
+            let parent = c.parent_id.and_then(|p| self.channels.get(&p));
+            return match (c.member.is_some(), self.thread_notify_setting(c), parent) {
+                (false, ..) | (true, NotificationLevel::INHERIT, None) => NotificationLevel::ONLY_MENTIONS,
+                (true, NotificationLevel::INHERIT, Some(p)) => self.notification_level(p),
+                (true, l, _) => l,
+            };
+        }
         let s = self.guild_settings.get(&c.guild_id);
         let explicit = |l: NotificationLevel| (l != NotificationLevel::INHERIT).then_some(l);
         let ov = |id: Option<Snowflake>| explicit(id.and_then(|id| s?.channel_overrides.as_ref()?.get(&id))?.message_notifications);
@@ -575,8 +618,7 @@ impl Store {
 
     /// Whether a new message from someone else should alert (sound + desktop notification),
     /// leaving focus to the caller: Fluxer `validateNotificationData` + `shouldNotifyBasedOnSettings`.
-    // shortcut: threads resolve like their parent channel; Fluxer's per-thread levels and forum
-    // "new post" levels aren't modelled.
+    // shortcut: forum "new post" levels aren't modelled (unjoined posts notify on mentions).
     pub fn should_notify(&self, m: &Message) -> bool {
         let Some(c) = self.channels.get(&m.channel_id) else { return false };
         if m.author.id == self.my_id()
@@ -744,6 +786,7 @@ impl Store {
 
     fn remove_channel(&mut self, id: Snowflake) {
         self.channels.remove(&id);
+        self.thread_members.remove(&id);
         self.messages.remove(&id);
         self.typing.remove(&id);
     }
@@ -760,7 +803,17 @@ impl Store {
         Some(&mut w.messages[i])
     }
 
+    fn thread_member_side_effects(&mut self, guild: Snowflake, m: &ThreadMember) {
+        if let Some(gm) = &m.member {
+            self.upsert_member(guild, gm);
+        }
+        if let Some(p) = &m.presence {
+            self.presence(p);
+        }
+    }
+
     fn message_side_effects(&mut self, m: &Message) {
+        self.ingest_message_threads(std::slice::from_ref(m));
         self.upsert_user(&m.author);
         if let (Some(g), Some(member)) = (m.guild_id, &m.member) {
             self.upsert_member(g, &GuildMember { user: m.author.clone(), ..member.clone() });

@@ -27,6 +27,8 @@ mod search_query;
 mod sidebar;
 pub mod status;
 pub mod switcher;
+pub mod forum;
+pub mod threads;
 pub mod upload;
 pub mod voice;
 
@@ -121,6 +123,8 @@ pub enum Intent {
     FetchInvite(String),
     /// Accounts, profiles and sudo (`crate::settings::Op`).
     Account(crate::settings::Op),
+    /// A thread or forum request (`threads::Op`).
+    Thread(threads::Op),
 }
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
@@ -289,6 +293,8 @@ pub struct ShellState {
     pub media_ui: attachments::MediaUi,
     /// Sudo prompt, fetched profiles, account modals and the account switcher.
     pub account: crate::settings::AccountUi,
+    /// Thread panel, browser and forum state.
+    pub threads: threads::Threads,
 }
 
 impl Default for ShellState {
@@ -356,6 +362,7 @@ impl Default for ShellState {
             cooldowns: Default::default(),
             media_ui: Default::default(),
             account: Default::default(),
+            threads: Default::default(),
         }
     }
 }

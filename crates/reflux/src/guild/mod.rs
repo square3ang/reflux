@@ -6,6 +6,7 @@
 //! GUILD_ROLE_*, CHANNEL_*), so the store stays the source of truth.
 
 mod channel;
+mod forum;
 mod menu;
 mod modals;
 mod perms;

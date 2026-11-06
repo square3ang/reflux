@@ -72,7 +72,7 @@ pub fn ranges(rows: std::ops::Range<usize>) -> Vec<[u32; 2]> {
     std::iter::once(0).chain(first.max(1)..=last).map(|i| [(i * 100) as u32, (i * 100 + 99) as u32]).collect()
 }
 
-fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+pub(super) fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, u: Snowflake, owner: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let status = presence(store, u);
     let color = store.member_color(gid, u).map_or(p.text_chat, role_color);
     let mut name = row()

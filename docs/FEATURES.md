@@ -59,8 +59,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Channel invites | MISSING | | ChannelSettingsModalUtils.ts |
 | Channel webhooks | MISSING | | channel_tabs/ChannelWebhooksTab.tsx |
 | Delete channel | DONE | | ChannelDeleteModal.tsx |
-| Forum settings / tags | MISSING | | F/forum/components/settings/* |
-| Thread settings | MISSING | | F/threads/…/ThreadSettingsModal.tsx |
+| Forum settings / tags | PARTIAL | tag add/edit/delete (ForumTagEditModal), default reaction picker, guidelines textarea, thread defaults, mature content | F/forum/components/settings/* |
+| Thread settings | PARTIAL | slowmode; no live write test | F/threads/…/ThreadSettingsModal.tsx |
 | Group DM edit | MISSING | | modals/EditGroupModal.tsx |
 
 ## 2. Feature areas
@@ -134,7 +134,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
 | Offline queue | PARTIAL | | MessageQueue.tsx |
-| Action bar / context menu | PARTIAL | shift layout; forward, thread, bookmark, suppress embeds, remove reactions, report | MessageContextMenu.tsx |
+| Action bar / context menu | PARTIAL | shift layout; forward, bookmark, suppress embeds, remove reactions, report | MessageContextMenu.tsx |
 | Forward | MISSING | | ForwardModal.tsx |
 | Saved messages | MISSING | | SavedMessagesPage.tsx |
 | Inbox / recent mentions | MISSING | | InboxPopout.tsx |
@@ -157,7 +157,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Mute duration submenu | PARTIAL | | MuteTargetMenuItem.tsx |
 | TTS | MISSING | | TextToSpeech.tsx |
 | Auto-idle | MISSING | | LocalPresence.ts |
-| Thread/forum notification levels | MISSING | | F/threads/* |
+| Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
 
 ### relationship / user
 | Feature | Status | Missing | Official source |
@@ -215,8 +215,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### threads / forum
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Threads | MISSING | | F/threads/* |
-| Forum channels + tags | MISSING | | F/forum/* |
+| Threads | PARTIAL | resizable panel, browser search, hoisted-role groups in thread members, timeouts; untested against a live server (demo fixtures + store tests only) | F/threads/* |
+| Forum channels + tags | PARTIAL | server-side search/tag filter (client-side over loaded posts), media-channel gallery grid; untested against a live server | F/forum/* |
 
 ### expressions / emoji / gift / invite / discovery / search / input / theme / i18n / a11y / misc
 | Feature | Status | Missing | Official source |

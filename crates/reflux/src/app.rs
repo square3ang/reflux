@@ -24,6 +24,7 @@ mod actions;
 mod chat;
 mod guild;
 mod invites;
+mod threads;
 pub mod live;
 mod voice;
 
@@ -142,6 +143,8 @@ pub struct App {
     acks: actions::PendingAcks,
     /// The member list subscription last sent: (guild, channel, ranges).
     member_sub: Option<(Snowflake, Snowflake, Vec<[u32; 2]>)>,
+    /// The thread subscription last sent: (guild, thread whose member list is open).
+    thread_sub: Option<(Snowflake, Option<Snowflake>)>,
     voice: voice::VoiceRt,
 }
 
@@ -669,6 +672,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             }
             if let reflux_model::DispatchEvent::Ready(_) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
+                s.app.thread_sub = None;
                 s.app.route = Route::Main;
                 account::remember_me(s);
                 if !s.app.store.settings.locale.is_empty() {
@@ -754,6 +758,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::Api(c) => guild::run(s, c),
             Intent::FetchInvite(code) => invites::fetch(s, code),
             Intent::Account(op) => account::run(s, op),
+            Intent::Thread(o) => threads::run(s, o),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {
@@ -780,11 +785,12 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     }
     actions::subscribe_member_list(s);
     account::mirror(s);
+    let threads_changed = threads::tick(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
-    actions::tick(s) || ran || shell
+    actions::tick(s) || ran || shell || threads_changed
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.

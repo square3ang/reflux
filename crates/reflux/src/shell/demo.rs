@@ -2,7 +2,7 @@
 //! `cargo run -p reflux -- --shell-demo --snap /tmp/opencode/snaps/shell.png --size 1280x800 --scale 1`
 //! (add `--shell-home` for the DM list, `--friends[=all|pending|add]` for the friends page,
 //! `--profile` for a profile popout, `--ctx=user|guild|channel` for context menus,
-//! `--guild-ui=<scene>` for community management).
+//! `--guild-ui=<scene>` for community management, `--threads[=<scene>]` for threads and forums).
 
 use chrono::{Local, TimeZone};
 use reflux_model::{DispatchEvent, Snowflake};
@@ -319,6 +319,9 @@ impl Demo {
             } else if a == "--settings" || a.starts_with("--settings=") {
                 shell.open_settings(a.strip_prefix("--settings="));
             }
+        }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--threads")) {
+            thread_scene(&mut shell, &mut store, sc.trim_start_matches('='));
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--msg-scene=")) {
             stage(&mut shell, &mut store, sc);
@@ -666,6 +669,157 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         let items = m.attachments.iter().map(super::attachments::item).collect();
         super::lightbox::open(st, items, 0, Some((m.channel_id, m.id)));
     }
+}
+
+/// `--threads[=<scene>]`: threads under #general (one from Alan's screenshot, joined; one
+/// standalone, joined and unread; one to join) and posts in the #help forum. Scenes: `panel`,
+/// `create`, `full`, `browser`, `closed`, `menu`, `settings`, `forum`, `forum-grid`,
+/// `forum-compose`, `forum-post`, `forum-settings`.
+fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
+    let now = st.now_ms;
+    fn put(store: &mut Store, now: u64, t: &str, d: Value) {
+        match DispatchEvent::parse(t, &d) {
+            Ok(ev) => {
+                if let DispatchEvent::MessageCreate(m) = &ev {
+                    store.messages.entry(m.channel_id).or_default();
+                }
+                store.apply(&ev, now);
+            }
+            Err(e) => panic!("fixture {t}: {e}"),
+        }
+    }
+    let t = |h, m| at(0, h, m);
+    let shot: u64 = store.messages(Snowflake(GENERAL))[6].id.0;
+    let thread = |id: u64, parent: u64, kind: u16, name: &str, owner: u64, count: u32, joined: bool, extra: Value| {
+        let mut v = json!({"id": id.to_string(), "type": kind, "guild_id": HQ.to_string(), "parent_id": parent.to_string(), "name": name,
+            "owner_id": owner.to_string(), "message_count": count, "member_count": 3,
+            "thread_metadata": {"archived": false, "auto_archive_duration": 4320, "archive_timestamp": iso(t(9, 0)), "locked": false, "create_timestamp": iso(t(9, 0))}});
+        if joined {
+            v["member"] = json!({"join_timestamp": iso(t(9, 0)), "flags": 1});
+        }
+        if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        v
+    };
+    let in_ch = |mut m: Value, ch: u64| {
+        m["channel_id"] = json!(ch.to_string());
+        m
+    };
+    // From Alan's screenshot (thread ID = message ID), joined and read.
+    put(store, now, "THREAD_CREATE", thread(shot, GENERAL, 11, "renderer feedback", 1004, 3, true, json!({})));
+    let starter = in_ch(message(t(10, 2), 0, 1004, "", json!({"type": 21, "message_reference": {"channel_id": GENERAL.to_string(), "message_id": shot.to_string()}})), shot);
+    put(store, now, "MESSAGE_CREATE", starter);
+    let replies = [
+        message(t(10, 3), 0, 1003, "The text looks crisper than before. Is that the new hinting?", json!({})),
+        message(t(10, 9), 0, 1004, "Yes: grayscale AA with the gamma fix, no subpixel.", json!({})),
+        message(t(10, 12), 0, 1002, "Ship it 🚀", json!({})),
+    ];
+    let mut last = String::new();
+    for r in replies {
+        last = r["id"].as_str().unwrap_or_default().to_string();
+        put(store, now, "MESSAGE_CREATE", in_ch(r, shot));
+    }
+    put(store, now, "MESSAGE_ACK", json!({"channel_id": shot.to_string(), "message_id": last}));
+    // Standalone, joined, unread; and one the user hasn't joined.
+    let release = Snowflake::from_timestamp_ms(t(11, 0)).0 + 7;
+    put(store, now, "THREAD_CREATE", thread(release, GENERAL, 11, "release-0.4", 1001, 2, true, json!({})));
+    put(store, now, "MESSAGE_CREATE", in_ch(message(t(11, 8), 0, 1001, "Tagging tomorrow unless someone objects.", json!({})), release));
+    let style = Snowflake::from_timestamp_ms(t(8, 0)).0 + 9;
+    put(store, now, "THREAD_CREATE", thread(style, GENERAL, 11, "style guide nits", 1006, 14, false, json!({})));
+    put(store, now, "MESSAGE_CREATE", message(t(11, 7), 0, 1001, "release-0.4", json!({"type": 18, "message_reference": {"channel_id": release.to_string(), "guild_id": HQ.to_string()}})));
+    // A closed one for the browser.
+    let closed = Snowflake::from_timestamp_ms(at(-5, 9, 0)).0 + 3;
+    let mut c = thread(closed, GENERAL, 11, "old CI flakes", 1002, 41, false, json!({}));
+    c["thread_metadata"]["archived"] = json!(true);
+    store.add_threads(&[serde_json::from_value(c).expect("thread")], &[]);
+    st.threads.archived.insert((Snowflake(GENERAL), super::threads::Tab::Archived), super::threads::Archived { ids: vec![Snowflake(closed)], ..Default::default() });
+
+    // #help: guidelines, tags, a default reaction and three posts.
+    if let Some(help) = store.channels.get_mut(&Snowflake(2204)) {
+        help.topic = Some("Search before posting, and pick a **tag** so helpers find you.".into());
+        help.available_tags = serde_json::from_value(json!([
+            {"id": "2290", "name": "bug", "moderated": false, "emoji_name": "🐛"},
+            {"id": "2291", "name": "question", "moderated": false, "emoji_name": "❓"},
+            {"id": "2292", "name": "solved", "moderated": true, "emoji_name": "✅"},
+            {"id": "2293", "name": "linux", "moderated": false},
+        ]))
+        .expect("tags");
+        help.default_reaction_emoji = Some(reflux_model::DefaultReaction { emoji_id: None, emoji_name: Some("👍".into()) });
+    }
+    let posts = [
+        (Snowflake::from_timestamp_ms(t(7, 0)).0 + 1, "Read this first: how to get help", 1001, 1, vec!["2291"], 2, true, "Include your OS, the build number and what you tried."),
+        (Snowflake::from_timestamp_ms(t(9, 30)).0 + 2, "Window goes black after resume on Wayland", 1003, 6, vec!["2290", "2293"], 0, false, "After suspend the whole window is black until I resize it. Screenshot attached."),
+        (Snowflake::from_timestamp_ms(at(-1, 16, 0)).0 + 3, "Can I run two accounts side by side?", 1006, 3, vec!["2291", "2292"], 0, false, "Asking for a friend who runs a community and a personal account."),
+    ];
+    let wayland = Snowflake(posts[1].0);
+    for (id, name, owner, count, tags, flags, joined, body) in posts {
+        let mut p = thread(id, 2204, 11, name, owner, count, joined, json!({"applied_tags": tags, "flags": flags}));
+        p["last_message_id"] = json!(Snowflake::from_timestamp_ms(t(11, 30)).0.to_string());
+        put(store, now, "THREAD_CREATE", p);
+        let mut first = message(Snowflake(id).timestamp_ms(), 0, owner, body, json!({"reactions": [{"emoji": {"name": "👍"}, "count": count, "me": joined}]}));
+        first["id"] = json!(id.to_string());
+        first["channel_id"] = json!(id.to_string());
+        if owner == 1003 {
+            first["attachments"] = json!([{"id": "9101", "filename": "black.png", "content_type": "image/png", "size": 1000, "width": 1280, "height": 720,
+                "proxy_url": "https://media.fluxer.app/attachments/2204/9101/black.png"}]);
+        }
+        let m: reflux_model::Message = serde_json::from_value(first).expect("first message");
+        st.threads.forum.first.insert(Snowflake(id), Some(m));
+    }
+    st.threads.archived.insert((Snowflake(2204), super::threads::Tab::Archived), Default::default());
+    let general = Snowflake(GENERAL);
+    match scene {
+        "panel" => super::threads::open(st, Some(general), Snowflake(shot)),
+        "create" => {
+            let ada = store.messages(general)[8].id;
+            super::threads::start_create(st, general, Some(ada));
+        }
+        "full" => {
+            let members = [1006u64, 1001, 1003, 1005].map(|u| serde_json::from_value(json!({"id": style.to_string(), "user_id": u.to_string(), "join_timestamp": iso(t(8, 0)), "flags": 1})).expect("member"));
+            store.thread_members.insert(Snowflake(style), members.into());
+            super::threads::open_full(st, Snowflake(style));
+        }
+        "browser" => st.popups.toggle(super::threads::BROWSER),
+        "closed" => {
+            st.popups.toggle(super::threads::BROWSER);
+            st.threads.tab = super::threads::Tab::Archived;
+        }
+        "menu" => super::threads::open_menu(st, Snowflake(release), [120.0, 420.0]),
+        "settings" => {
+            super::threads::open_menu(st, Snowflake(release), [120.0, 420.0]);
+            st.popups.close();
+            st.threads.settings = Some(super::threads::Settings { thread: Snowflake(release), name: rune::TextEdit::new("release-0.4"), auto_archive: 4320, invitable: true });
+        }
+        "forum" | "forum-grid" | "forum-compose" | "forum-post" | "forum-settings" => {
+            st.select_channel(Snowflake(2204));
+            if scene == "forum-grid" {
+                st.threads.forum.layout.insert(Snowflake(2204), 2);
+            }
+            if scene == "forum-compose" {
+                st.threads.forum.draft = Some(super::forum::Draft {
+                    forum: Snowflake(2204),
+                    title: rune::TextEdit::new("Crash when dropping a folder into the composer"),
+                    body: rune::TextEdit::new("Dragging a folder from Files makes the app hang for a few seconds."),
+                    tags: vec![Snowflake(2290)],
+                    error: None,
+                    preview: false,
+                });
+            }
+            if scene == "forum-settings" {
+                st.open_dialog(crate::guild::Dialog::Channel { channel: Snowflake(2204), tab: "overview", target: None });
+            }
+            if scene == "forum-post" {
+                put(store, now, "MESSAGE_CREATE", in_ch(message(t(11, 30), 0, 1002, "Does it happen with `--disable-gpu` too?", json!({})), wayland.0));
+                if let (Some(m), Some(w)) = (st.threads.forum.first.get(&wayland).cloned().flatten(), store.messages.get_mut(&wayland)) {
+                    w.messages.insert(0, m);
+                }
+                super::threads::open(st, Some(Snowflake(2204)), wayland);
+            }
+        }
+        _ => {}
+    }
+    st.intents.clear();
 }
 
 pub fn setup(s: &mut State, waker: Waker) {
