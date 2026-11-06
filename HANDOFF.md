@@ -105,6 +105,26 @@ See `git log` for details. Crates:
   link, sounds, notifications; OBS/XSplit detection). Snapshots: `--shell-demo
   --desktop=bars|spell|toast|streamer`, `REFLUX_ZOOM=1.25`. Windows/macOS code was compile-checked
   in an isolated crate only (no mingw toolchain for ring/zstd here).
+- Voice & video (`app/voice.rs`, `shell/{voice,call,clip,voice_message}.rs`, `settings/voice_tabs.rs`,
+  `gst.rs`, `voice_input.rs`, `reflux-voice`): camera (GStreamer `DeviceMonitor` → RGBA appsink →
+  `Camera::push_rgba` → H.264 track, `CameraPreviewModal`), `VoiceCallView` (click the joined
+  voice channel; grid / focused tile, camera + stream tiles, speaking border, mute icons, control
+  bar), DM calls (header buttons, `/call` eligibility → join → `/call/ring`, `IncomingCallUI`
+  from `Store::calls`, DM call strip, ring / stop-ringing in the tile menu, `CallMessage`
+  wording), Voice & video settings (`Saved.voice_settings`; profiles, PTT key + release delay,
+  VAD threshold/auto, mic test meter, camera, screen share quality/fps/bitrate, encoder →
+  `LIVEKIT_PREFERRED_HW_ENCODER` / software), local mute, voice details popout (ping graph),
+  E2EE (`e2ee_key` → shared-key AES-GCM frame encryption + lock badge), moderator move follow,
+  reconnecting state, join-confirm / channel-full / refused modals, watch-stream full window +
+  spectators, video/audio attachment playback through GStreamer (`gst` feature, default; Linux
+  only, `--no-default-features` drops it), voice messages (composer "+" → record WAV via cpal,
+  Fluxer waveform, `VOICE_MESSAGE` flag; waveform player). The mic gate enables/disables the
+  local track (no mute signalling). Scenes: `--shell-demo --voice=call|focus|details|tile-menu|
+  camera|share|full|refused|incoming|dm|voice-message|meter`, `--msg-scene=media-files`.
+  Shortcuts (in code): no per-user/stream/device volume (SDK lacks it), EC/NS/AGC toggles only the
+  hardware processors, P2P calls refused, no portal source thumbnails, no Linux stream audio, no
+  entrance sound, mic test/VAD/recording use the default input. PTT = the in-window key OR
+  `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the desktop). Nothing here was exercised in a real call (no test channel).
 - Workflow that worked: each subagent in its own `git worktree` with shared
   `CARGO_TARGET_DIR=<repo>/target`, then rebase + `merge --ff-only` into master.
 - Next: composer uploads, pins, search, threads/forums, quick switcher, converting the remaining

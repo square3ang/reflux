@@ -50,6 +50,8 @@ pub struct Upload {
     pub spoiler: bool,
     /// Alt text.
     pub description: String,
+    /// A voice message: whole seconds and the base64 waveform.
+    pub voice: Option<(u32, String)>,
 }
 
 impl Upload {
@@ -161,7 +163,7 @@ pub fn add(st: &mut ShellState, files: Vec<(String, u64, Source)>) {
     }
     for (name, size, source) in files.into_iter().filter(|f| f.1 <= l.file_size) {
         st.upload_seq += 1;
-        st.uploads.push(Upload { id: st.upload_seq, name, size, source, spoiler: false, description: String::new() });
+        st.uploads.push(Upload { id: st.upload_seq, name, size, source, spoiler: false, description: String::new(), voice: None });
     }
 }
 
@@ -183,8 +185,8 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
     add(st, vec![("image.png".into(), n, Source::Bytes(Arc::new(png)))]);
 }
 
-/// The composer's "+" (`TextareaPlusMenu`): Upload file.
-// shortcut: the dialog picks one file at a time; no "upload as file", voice message or gift items.
+/// The composer's "+" (`TextareaPlusMenu`): Upload file, Send voice message.
+// shortcut: the dialog picks one file at a time; no "upload as file" or gift items.
 pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     Menu::new("composer-plus")
         .placement(Placement::Top)
@@ -195,6 +197,12 @@ pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                 Ok(None) => {}
                 Err(e) => acc(s).notice = Some(("Upload failed".into(), e.to_string())),
             });
+        }))
+        .item(MenuItem::new("voice-message", "Send voice message").icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(c) = sh.channel {
+                sh.intents.push(super::Intent::Voice(super::voice::Op::RecordStart(c)));
+            }
         }))
         .el(&st.popups, super::pops(acc), p, layer);
 }

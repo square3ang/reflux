@@ -122,8 +122,17 @@ pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Op
     let attachments = files
         .iter()
         .enumerate()
-        .map(|(i, u)| Attachment { id: Snowflake(i as u64), filename: u.name.clone(), content_type: u.content_type().into(), size: u.size, ..Default::default() })
+        .map(|(i, u)| Attachment {
+            id: Snowflake(i as u64),
+            filename: u.name.clone(),
+            content_type: u.content_type().into(),
+            size: u.size,
+            duration: u.voice.as_ref().map(|v| v.0 as f64),
+            waveform: u.voice.as_ref().map(|v| v.1.clone()),
+            ..Default::default()
+        })
         .collect();
+    let voice = files.iter().any(|u| u.voice.is_some());
     s.app.store.add_local_message(Message {
         id: nonce,
         channel_id: channel,
@@ -135,6 +144,7 @@ pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Op
         message_reference: reply.map(|(id, _)| reflux_model::MessageReference { channel_id: channel, message_id: Some(id), ..Default::default() }),
         referenced_message: reply.map(|_| target.map(Box::new)),
         attachments,
+        flags: if voice { reflux_model::MessageFlags::VOICE_MESSAGE } else { Default::default() },
         ..Default::default()
     });
     if !files.is_empty() {
@@ -151,6 +161,7 @@ pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Op
         content: Some(content.clone()).filter(|c| !c.is_empty()),
         message_reference: reference,
         allowed_mentions,
+        flags: if voice { reflux_model::MessageFlags::VOICE_MESSAGE } else { Default::default() },
         ..Default::default()
     };
     let presigned = inst.discovery.features.presigned_attachment_uploads;
@@ -215,7 +226,7 @@ async fn upload_and_send(inst: &Instance, channel: Snowflake, mut body: CreateMe
             .enumerate()
             .map(|(i, (u, _))| {
                 let (description, flags) = meta(u);
-                json!({ "id": i, "filename": u.name, "description": description, "flags": flags })
+                voice_meta(json!({ "id": i, "filename": u.name, "description": description, "flags": flags }), u)
             })
             .collect();
         let files = data.into_iter().map(|(u, b)| (u.name.clone(), b, u.content_type().to_string())).collect();
@@ -248,11 +259,23 @@ async fn upload_and_send(inst: &Instance, channel: Snowflake, mut body: CreateMe
         .zip(&data)
         .map(|(plan, (u, b))| {
             let (description, flags) = meta(u);
-            json!({
-                "id": plan.id, "filename": u.name, "upload_filename": plan.upload_filename, "file_size": b.len(),
-                "content_type": plan.content_type, "description": description, "flags": flags,
-            })
+            voice_meta(
+                json!({
+                    "id": plan.id, "filename": u.name, "upload_filename": plan.upload_filename, "file_size": b.len(),
+                    "content_type": plan.content_type, "description": description, "flags": flags,
+                }),
+                u,
+            )
         })
         .collect();
     inst.rest.send_message(channel, &body).await.map(drop)
+}
+
+/// A voice message attachment also carries `duration` and `waveform` (`MessageRequestUtils.ts`).
+fn voice_meta(mut a: serde_json::Value, u: &Upload) -> serde_json::Value {
+    if let Some((secs, waveform)) = &u.voice {
+        a["duration"] = json!(secs);
+        a["waveform"] = json!(waveform);
+    }
+    a
 }

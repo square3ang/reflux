@@ -32,6 +32,9 @@ pub mod forum;
 pub mod threads;
 pub mod upload;
 pub mod voice;
+pub mod call;
+pub mod clip;
+pub mod voice_message;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
@@ -92,6 +95,8 @@ pub enum Intent {
     LoadDevices,
     /// `voice.input` / `voice.output` changed.
     VoiceDevices,
+    /// Camera, calls, settings, mic test, voice messages (`voice::Op`).
+    Voice(voice::Op),
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
     /// Close a DM or leave a group DM.
@@ -438,6 +443,7 @@ impl ShellState {
         }
         self.channel = Some(channel);
         self.social.discovery = false;
+        self.voice.call_view = false;
         self.intents.push(Intent::SelectChannel(channel));
     }
 
@@ -500,6 +506,7 @@ fn media_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
         st.media_ui.trusted = store.settings.trusted_domains.clone();
     }
     let mut changed = invite_embed::request(store, st);
+    changed |= clip::poll(st, tx);
     if let Some(d) = st.media.take_next_frame() {
         tx.wake_after(d);
         changed = true;
@@ -559,6 +566,12 @@ pub fn first_channel(store: &Store, guild: Snowflake) -> Option<Snowflake> {
 
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    // `WatchStreamOverlay` in full-window mode.
+    if st.voice.stream_fullscreen
+        && let Some(v) = voice::viewer(store, st, p, acc)
+    {
+        return rune_kit::root(v, Vec::new());
+    }
     let divider = over(p.user_area_divider_color, p.background_secondary);
     // Personal notes: a channel whose ID is the user's own, which READY may leave out.
     let notes = Channel { id: store.my_id(), kind: ChannelType::DM_PERSONAL_NOTES, name: Some("Personal Notes".into()), ..Default::default() };
@@ -571,6 +584,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let main = match (st.guild, channel) {
         _ if st.voice.watching.is_some() => voice::viewer(store, st, p, acc).unwrap_or_else(el),
         (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc),
+        _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, _)| g.is_some()) => call::view(store, st, p, acc).unwrap_or_else(el),
         (None, None) => friends::view(store, st, p, acc, &mut layer),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
@@ -611,6 +625,21 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(upload::notice_modal(st, p, acc));
     layer.extend(lightbox::view(st, p, acc));
     layer.extend(links::modal(st, p, acc));
+    call::modals(store, st, p, acc, &mut layer);
+    call::details(st, p, acc, &mut layer);
+    call::tile_menu(store, st, p, acc, &mut layer);
+    layer.extend(voice_message::modal(st, p, acc));
+    layer.extend(call::incoming(store, st, p, acc));
+    let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
+        let sh = acc(s);
+        let key = format!("{:?}", k.key);
+        if sh.voice.ptt_held && sh.voice.settings.ptt_key.as_deref() == Some(key.as_str()) {
+            sh.voice.ptt_held = false;
+            sh.intents.push(Intent::Voice(voice::Op::PushToTalk(false)));
+            return true;
+        }
+        false
+    });
     rune_kit::root(body, layer)
 }
 

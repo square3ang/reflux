@@ -16,6 +16,11 @@ pub enum Sound {
     UserLeave,
     IncomingRing,
     VoiceDisconnect,
+    CameraOn,
+    CameraOff,
+    StreamStart,
+    StreamStop,
+    UserMove,
 }
 
 impl Sound {
@@ -35,6 +40,11 @@ impl Sound {
             Sound::UserLeave => file!("user-leave.mp3"),
             Sound::IncomingRing => file!("incoming-ring.mp3"),
             Sound::VoiceDisconnect => file!("voice-disconnect.mp3"),
+            Sound::CameraOn => file!("camera-on.mp3"),
+            Sound::CameraOff => file!("camera-off.mp3"),
+            Sound::StreamStart => file!("stream-start.mp3"),
+            Sound::StreamStop => file!("stream-stop.mp3"),
+            Sound::UserMove => file!("user-move.mp3"),
         }
     }
 }

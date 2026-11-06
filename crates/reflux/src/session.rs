@@ -24,6 +24,8 @@ pub struct Saved {
     /// Chosen microphone / speaker names (`None` = system default).
     pub voice_input: Option<String>,
     pub voice_output: Option<String>,
+    /// Voice & video settings.
+    pub voice_settings: crate::shell::voice::Settings,
     /// Interface language picked before sign-in (`None` = the system's); signed in, the
     /// account's `locale` setting wins.
     pub locale: Option<String>,

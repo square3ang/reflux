@@ -152,7 +152,7 @@ pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
         None if s.app.route == Route::Main => Some(&mut s.app.shell),
         None => None,
     };
-    if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k)) {
+    if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k) || push_to_talk(sh, k)) {
         return true;
     }
     let Some(bind) = BINDS.iter().find(|b| b.combo.matches(k)) else { return false };
@@ -161,6 +161,30 @@ pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
         None if s.app.route == Route::Main || matches!(bind.action, ZoomIn | ZoomOut | ZoomReset) => run(&s.app.store, &mut s.app.shell, bind.action),
         None => false,
     }
+}
+
+/// The in-window push-to-talk key (its release is heard by the shell root's `on_key_up`), and
+/// the Voice tab's key recorder.
+fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
+    use crate::shell::voice::Op;
+    let key = format!("{:?}", k.key);
+    let v = &mut sh.voice;
+    if v.recording_key {
+        v.recording_key = false;
+        if k.key != Key::Escape {
+            v.settings.ptt_key = Some(key);
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }
+        return true;
+    }
+    if !v.settings.ptt() || v.settings.ptt_key.as_deref() != Some(key.as_str()) {
+        return false;
+    }
+    if !v.ptt_held {
+        v.ptt_held = true;
+        sh.intents.push(Intent::Voice(Op::PushToTalk(true)));
+    }
+    true
 }
 
 /// Runs a keybind; false when it did nothing (the key goes on).

@@ -355,3 +355,18 @@ fn deleting_an_original_marks_its_replies() {
     let r = s.messages(S(101)).iter().find(|m| m.id.0 == t + 1).expect("reply stays");
     assert_eq!(r.referenced_message, Some(None));
 }
+
+#[test]
+fn calls_follow_create_update_delete() {
+    let mut s = store();
+    let vs = json!({"guild_id":null,"channel_id":"50","user_id":"7","connection_id":"c","session_id":"s","member":null,"mute":false,"deaf":false,"self_mute":false,"self_deaf":false,"self_video":false,"self_stream":false,"is_mobile":false,"suppress":false,"viewer_stream_keys":[],"e2ee_capable":true,"p2p":false,"version":1});
+    apply(&mut s, "CALL_CREATE", json!({"channel_id":"50","message_id":"60","region":null,"ringing":["1"],"voice_states":[vs],"recipients":["1","7"],"created_at":5}));
+    assert_eq!(s.calls[&Snowflake(50)].ringing, [Snowflake(1)]);
+    assert!(s.voice_states.contains_key(&(None, Snowflake(7))));
+    apply(&mut s, "CALL_UPDATE", json!({"channel_id":"50","message_id":"60","region":"us","ringing":[],"voice_states":[]}));
+    let c = &s.calls[&Snowflake(50)];
+    assert!(c.ringing.is_empty());
+    assert_eq!(c.recipients.as_deref(), Some(&[Snowflake(1), Snowflake(7)][..]), "update keeps the recipients");
+    apply(&mut s, "CALL_DELETE", json!({"channel_id":"50"}));
+    assert!(s.calls.is_empty() && !s.voice_states.contains_key(&(None, Snowflake(7))));
+}

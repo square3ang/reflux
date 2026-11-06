@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -22,7 +22,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Themes | PARTIAL | legacy dark, system, custom colours/fonts, Quick CSS, sharing | F/theme_settings/* |
 | Notifications | PARTIAL | unread badge toggle, per-sound toggles, custom sounds, TTS | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | MISSING | embeds/link previews/reactions/spoilers display, input behaviour | tabs/ChatSettingsTab.tsx |
-| Voice & video | PARTIAL | volumes, mic test, processing, PTT/VAD, entrance sound, camera, stream quality | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
+| Voice & video | PARTIAL | input/output volume stored but not applied (no SDK volume); EC/NS/AGC only switch hardware processors; no entrance sound, no camera effects; mic test/VAD always use the default input | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | MISSING | reduced motion, animated emoji, saturation, link underline, keyboard mode | tabs/AccessibilityTab.tsx |
 | Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
 | Keybinds | PARTIAL | custom keybinds, recorder, PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
@@ -105,6 +105,9 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Topic modal | DONE | | ChannelTopicModal.tsx |
 | DM call buttons | MISSING | | CallButtons.tsx |
 | Announcement follow | DONE | | ChannelFollowModal.tsx |
+| Topic modal | MISSING | | ChannelTopicModal.tsx |
+| DM call buttons | DONE | | CallButtons.tsx |
+| Announcement follow | MISSING | | ChannelFollowModal.tsx |
 | Compact layout | MISSING | | CompactMessageLayout.tsx |
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
@@ -116,6 +119,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
 | @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
 | Attachments | PARTIAL | video/audio play only where Rune's `Player` does (macOS); elsewhere "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
+| @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
+| Attachments | PARTIAL | video/audio play through GStreamer on Linux (`gst` feature, default) and Rune's `Player` on macOS; Windows keeps "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
 | Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
 | NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
@@ -127,7 +132,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
 | Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
-| Call system message / system message wording | MISSING/PARTIAL | | CallMessage.tsx, SystemMessageUtils.tsx |
+| Call system message / system message wording | PARTIAL | call message has no inline "Join the call" link; other system messages generic | CallMessage.tsx, SystemMessageUtils.tsx |
 
 ### messaging/
 | Feature | Status | Missing | Official source |
@@ -195,22 +200,22 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Join/leave, panel, mute/deafen, rings, devices, HW encode | DONE | | |
-| Screen share | PARTIAL | picker UI, quality, audio | ScreenSharePickerModal.tsx |
-| Watch stream | PARTIAL | volume, fullscreen, spectators | WatchStreamOverlay.tsx |
-| Camera | MISSING | | CameraPreviewModal.tsx |
-| Call view grid | MISSING | | VoiceCallView.tsx |
-| DM calls / ringing / P2P | MISSING | | IncomingCallUI.tsx |
-| Per-user volume / local mute | MISSING | | VoiceParticipantMenuItems.tsx |
+| Screen share | PARTIAL | no in-app source thumbnails (the system portal picks); no audio | ScreenSharePickerModal.tsx |
+| Watch stream | PARTIAL | no stream volume (SDK has no remote track volume) | WatchStreamOverlay.tsx |
+| Camera | PARTIAL | Linux only (GStreamer); no background effects; never tested in a real call | CameraPreviewModal.tsx |
+| Call view grid | PARTIAL | no PiP / pop-out, no tile hover controls | VoiceCallView.tsx |
+| DM calls / ringing / P2P | PARTIAL | P2P calls refused with a notice; untested against a server | IncomingCallUI.tsx |
+| Per-user volume / local mute | PARTIAL | local mute only; no volume slider (SDK) | VoiceParticipantMenuItems.tsx |
 | Noise suppression | MISSING | | AudioProcessingModal.tsx |
-| Voice details popout | MISSING | | VoiceDetailsPopout.tsx |
+| Voice details popout | DONE | | VoiceDetailsPopout.tsx |
 | PiP / pop-out | MISSING | | PiPOverlay.tsx |
-| PTT / VAD | MISSING | | HoldSources.ts |
+| PTT / VAD | PARTIAL | the recorded key works in-window only; the global key comes from the portal (Linux), none on Windows/macOS | HoldSources.ts |
 | Entrance sounds | MISSING | | EntranceSoundTrimmerModal.tsx |
-| Moderator move / reconnect | PARTIAL | | VoiceReconnectionManager.tsx |
-| E2EE indicator | MISSING | | VoiceE2EEIndicator.tsx |
+| Moderator move / reconnect | DONE | | VoiceReconnectionManager.tsx |
+| E2EE indicator | PARTIAL | frame encryption with the grant's `e2ee_key` untested against Fluxer's web client | VoiceE2EEIndicator.tsx |
 | Stream audio (Linux) | MISSING | | AudioSourcePickerLinux.tsx |
-| Join confirm / channel full | PARTIAL | | VoiceConnectionConfirmModal.tsx |
-| Voice messages | MISSING | | VoiceMessageComposerModal.tsx |
+| Join confirm / channel full | DONE | | VoiceConnectionConfirmModal.tsx |
+| Voice messages | PARTIAL | WAV like Fluxer; no hold-to-record, trimming or playback speed | VoiceMessageComposerModal.tsx |
 
 ### threads / forum
 | Feature | Status | Missing | Official source |

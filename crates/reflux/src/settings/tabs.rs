@@ -23,7 +23,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         "appearance" => appearance(st, p, acc),
         "themes" => themes(store, p, acc),
         "advanced_settings" => advanced(store, p, acc),
-        "voice_video" => voice(st, p, acc, layer),
+        "voice_video" => super::voice_tabs::tab(st, p, acc, layer),
         "notifications" => super::desktop_tabs::notifications(st, p, acc),
         "keybinds" => super::desktop_tabs::keybinds(p),
         "language" => super::desktop_tabs::language(store, st, p, acc),
@@ -58,38 +58,6 @@ pub(crate) fn not_available(p: &Palette) -> El {
                 .font(font(14.0, 400.0).lh(20.0))
                 .color(p.text_primary_muted),
         )
-}
-
-/// `UserVoiceTab`'s "Input & output" section: the devices WebRTC's audio module sees.
-// shortcut: volume, voice processing, mic test, entrance sound and video settings aren't here yet.
-fn voice<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    let Some((inputs, outputs)) = &st.voice.devices else {
-        return section("Input & output", text("Looking for devices…").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted), true, p);
-    };
-    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
-    let options = |names: &[String]| -> Vec<(String, String)> {
-        std::iter::once((String::new(), "Default".to_string())).chain(names.iter().map(|n| (n.clone(), n.clone()))).collect()
-    };
-    let (ins, outs) = (options(inputs), options(outputs));
-    let pick = |id: &str, label: &str, opts: &[(String, String)], value: &Option<String>, output: bool, layer: &mut Vec<El>| {
-        let refs: Vec<(&str, &str)> = opts.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
-        crate::ui::Select::new(id, &refs, Some(value.as_deref().unwrap_or("")))
-            .label(label)
-            .width(340.0)
-            .on_choose(move |s: &mut S, v| {
-                let sh = acc(s);
-                let v = (!v.is_empty()).then(|| v.to_string());
-                if output { sh.voice.output = v } else { sh.voice.input = v }
-                sh.intents.push(Intent::VoiceDevices);
-            })
-            .el(&st.popups, pops, p, layer)
-    };
-    let content = col()
-        .w_full()
-        .gap(16.0)
-        .child(pick("voice-input", "Input device", &ins, &st.voice.input, false, layer))
-        .child(pick("voice-output", "Output device", &outs, &st.voice.output, true, layer));
-    section("Input & output", content, true, p)
 }
 
 fn appearance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {

@@ -478,12 +478,59 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
     }
 }
 
+/// A gradient standing in for decoded video frames.
+fn fake_frames(px: &rune::Pixels, tint: u8) {
+    let (w, h) = (320u32, 180u32);
+    let rgba = (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, tint, 255]).collect();
+    px.set(w, h, rgba);
+}
+
 /// `--voice[=connecting|failed|watch]`: connected to Lounge (Alan speaking, sharing his screen).
+/// `call|focus|details|tile-menu|camera|share|full|refused`: the call view and voice dialogs;
+/// `incoming|dm`: a DM call ringing us / joined; `voice-message|meter`: the composer, mic test.
 fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
+    use super::voice::Modal;
     let lounge = (Some(Snowflake(HQ)), Snowflake(2301));
-    if scene == "failed" {
-        st.voice.failed = Some(lounge);
-        return;
+    let apply = |store: &mut Store, t: &str, d: Value| {
+        if let Ok(ev) = DispatchEvent::parse(t, &d) {
+            store.apply(&ev, 0);
+        }
+    };
+    match scene {
+        "failed" => {
+            st.voice.failed = Some(lounge);
+            return;
+        }
+        "incoming" | "dm" => {
+            let mut states = vec![json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001"})];
+            if scene == "dm" {
+                states.push(json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true}));
+            }
+            for v in &states {
+                apply(store, "VOICE_STATE_UPDATE", v.clone());
+            }
+            let ringing = if scene == "incoming" { json!([ME.to_string()]) } else { json!([]) };
+            apply(store, "CALL_CREATE", json!({"channel_id": "8001", "message_id": "1", "region": null, "ringing": ringing, "voice_states": states, "recipients": ["1001", ME.to_string()]}));
+            (st.guild, st.channel) = (None, Some(Snowflake(8001)));
+            if scene == "dm" {
+                st.voice.channel = Some((None, Snowflake(8001)));
+                (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (true, true, true);
+                st.voice.speaking.insert(Snowflake(1001));
+            }
+            return;
+        }
+        "voice-message" => {
+            let bars = (0..40).map(|i| (i as f32 * 0.7).sin().abs() * 0.8 + 0.1).collect();
+            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, bars, ..Default::default() });
+            return;
+        }
+        "meter" => {
+            st.open_settings(Some("voice_video"));
+            (st.voice.mic_test, st.voice.level) = (true, -28.0);
+            (st.voice.settings.vad_auto, st.voice.settings.processing) = (false, "custom".into());
+            return;
+        }
+        _ => {}
     }
     let me = json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_mute": true});
     if let Ok(ev) = DispatchEvent::parse("VOICE_STATE_UPDATE", &me) {
@@ -498,10 +545,35 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
     if scene == "watch" {
         st.voice.watching = Some(Snowflake(1004));
-        // A gradient stands in for the decoded frames.
-        let (w, h) = (320u32, 180u32);
-        let rgba = (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, 160, 255]).collect();
-        st.voice.stream.set(w, h, rgba);
+        fake_frames(&st.voice.stream, 160);
+    }
+    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "camera" | "share" | "full" | "refused") {
+        apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
+        fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
+        (st.voice.call_view, st.voice.encrypted) = (true, true);
+        st.voice.server = Some(("livekit.fluxer.app".into(), "2301".into()));
+        st.voice.pings = vec![40, 44, 41, 52, 47, 42, 39, 61, 45, 42];
+    }
+    match scene {
+        "focus" => {
+            st.voice.focus = Some(Snowflake(1004));
+            st.voice.watching = None;
+        }
+        "details" => st.popups.open = Some(super::call::DETAILS.into()),
+        "tile-menu" => {
+            st.popups.open_at(super::call::TILE_MENU, [700.0, 300.0]);
+            st.target = Some(super::Target::User { user: Snowflake(1003), guild: Some(Snowflake(HQ)), dm: None });
+        }
+        "camera" => {
+            st.voice.modal = Some(Modal::CameraPreview);
+            st.voice.previewing = true;
+            st.voice.cameras = Some(vec!["Integrated Camera".into()]);
+            fake_frames(&st.voice.self_view, 220);
+        }
+        "share" => st.voice.modal = Some(Modal::ScreenShare),
+        "full" => st.voice.modal = Some(Modal::ChannelFull),
+        "refused" => st.voice.modal = Some(Modal::Refused("This call is peer-to-peer, which Reflux can't join yet.".into())),
+        _ => {}
     }
 }
 
@@ -709,6 +781,8 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "files" => {
             msgs.push(message(t(1), 0, 1004, "", json!({"attachments": [att(9201, "demo.mp4", "video/mp4", 1280, 720, json!({}))]})));
+            msgs.push(message(t(1), 1, 1001, "", json!({"flags": 8192, "attachments": [att(9205, "voice-message.wav", "audio/wav", 0, 0,
+                json!({"width": null, "height": null, "size": 403200, "duration": 4.0, "waveform": "IEBgf5+/3/+/n39gQCBAYH+fv9//v59/YEAgQGB/n7/f/7+ff2BAIA=="}))]})));
             msgs.push(message(t(2), 0, 1002, "", json!({"attachments": [
                 att(9202, "theme.ogg", "audio/ogg", 0, 0, json!({"width": null, "height": null, "size": 1843200, "duration": 94.0})),
                 att(9203, "main.rs", "text/x-rust", 0, 0, json!({"width": null, "height": null, "size": 412})),

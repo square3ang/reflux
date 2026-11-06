@@ -5,7 +5,7 @@
 //! image, download, reset, zoom, reply) with the name, size and zoom on the right.
 
 use reflux_model::Snowflake;
-use rune::{Color, El, Icon, KeyEvent, Player, PlayerState, Tx, col, el, icon, row, text};
+use rune::{Color, El, Icon, KeyEvent, PlayerState, Tx, col, el, icon, row, text};
 
 use super::{ReplyTo, ShellAccess, ShellState};
 use crate::icons;
@@ -61,12 +61,18 @@ pub fn open(st: &mut ShellState, items: Vec<Item>, index: usize, message: Option
 
 fn close(st: &mut ShellState) {
     st.media_ui.viewer = None;
+    if st.media_ui.gst.as_ref().is_some_and(|c| c.key.starts_with("viewer-")) {
+        st.media_ui.gst = None;
+    }
     if st.media_ui.playing.as_ref().is_some_and(|(k, _)| k.starts_with("viewer-")) {
         st.media_ui.playing = None;
     }
 }
 
 fn go(st: &mut ShellState, delta: isize) {
+    if st.media_ui.gst.as_ref().is_some_and(|c| c.key.starts_with("viewer-")) {
+        st.media_ui.gst = None;
+    }
     if st.media_ui.playing.as_ref().is_some_and(|(k, _)| k.starts_with("viewer-")) {
         st.media_ui.playing = None;
     }
@@ -145,7 +151,12 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     let clip = st.media_ui.playing.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
 
     // The picture: fitted inside the HUD insets, never past its natural size.
+    let gst = super::clip::get(st, &key);
     let media = match (&clip, it.video) {
+        (None, true) if gst.is_some_and(|c| !c.failed) => {
+            let k = key.clone();
+            el().aspect_fit(ratio).max_w(it.w as f32).max_h(it.h as f32).pixels_fit(&gst.unwrap().pixels, rune::SurfaceFit::Fit).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::clip::toggle(acc, &k, s))
+        }
         (Some(c), true) if !matches!(c.state(), PlayerState::Failed(_)) => el().aspect_fit(ratio).max_w(it.w as f32).max_h(it.h as f32).video(c, rune::SurfaceFit::Fit),
         _ => {
             let pic = el().aspect_fit(ratio).max_w(it.w.max(1) as f32).max_h(it.h.max(1) as f32).label(it.alt.clone().unwrap_or_else(|| it.name.clone()));
@@ -166,7 +177,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
                         .fill(rgba(0, 0, 0, 0.75))
                         .cursor(rune::Cursor::Pointer)
                         .child(icon(&icons::PLAY_FILL, 28.0).color(Color::WHITE))
-                        .on_press(move |s: &mut S| super::attachments::play(acc(s), k.clone(), Player::url(url.clone()))),
+                        .on_press(move |s: &mut S| super::clip::start(acc(s), k.clone(), url.clone(), false)),
                 );
                 if let Some(e) = msg {
                     over = over.child(text(e).font(font(13.0, 500.0).lh(18.0)).color(Color::WHITE));

@@ -90,6 +90,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .h_full()
         .fill(p.background_secondary_lighter)
         .child(header(store, st, c, p, acc, layer))
+        .children(super::call::dm_strip(store, st, c, p, acc))
         .child(content)
 }
 
@@ -241,8 +242,8 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         }
     } else {
         right = right
-            .child(action(&icons::PHONE, "Start Voice Call", false))
-            .child(action(&icons::VIDEO_CAMERA, "Start Video Call", false))
+            .child(super::call::header_action(store, st, c, false, action(&icons::PHONE, "Start Voice Call", false), acc))
+            .child(super::call::header_action(store, st, c, true, action(&icons::VIDEO_CAMERA, "Start Video Call", false), acc))
             .child(pins);
     }
     if !forum {
@@ -1083,7 +1084,10 @@ fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
         MessageType::RECIPIENT_ADD => (&icons::ARROW_RIGHT_BOLD, p.status_online, format!("{name} added someone to the group.")),
         MessageType::RECIPIENT_REMOVE => (&icons::ARROW_LEFT_BOLD, p.status_danger, format!("{name} left the group.")),
         MessageType::CHANNEL_NAME_CHANGE => (&icons::PENCIL_SIMPLE_BOLD, p.text_primary_muted, format!("{name} changed the channel name: {}", m.content)),
-        MessageType::CALL => (&icons::PHONE_FILL, p.status_online, format!("{name} started a call.")),
+        MessageType::CALL => {
+            let (body, missed) = call_text(store, m, &name);
+            (&icons::PHONE_FILL, if missed { p.status_danger } else { p.status_online }, body)
+        }
         _ => (&icons::INFO_BOLD, p.text_primary_muted, if m.content.is_empty() { format!("{name} did something.") } else { m.content.clone() }),
     };
     row()
@@ -1712,5 +1716,61 @@ mod tests {
         assert_eq!(media_size(1280, 720), (550.0, 309.0));
         assert_eq!(media_size(200, 100), (200.0, 100.0));
         assert_eq!(media_size(400, 1000), (140.0, 350.0));
+    }
+}
+
+/// `CallMessage`: ongoing, missed, or ended with its length; true when missed.
+// shortcut: no inline "Join the call" link; the call strip above the chat has Join.
+fn call_text(store: &Store, m: &Message, name: &str) -> (String, bool) {
+    let Some(call) = &m.call else { return (format!("{name} started a call."), false) };
+    let Some(ended) = &call.ended_timestamp else { return (format!("{name} started a call."), false) };
+    let me = store.my_id();
+    let start = DateTime::parse_from_rfc3339(&m.timestamp).map_or(0, |d| d.timestamp());
+    let end = DateTime::parse_from_rfc3339(ended).map_or(start, |d| d.timestamp());
+    let length = call_duration((end - start).max(0) as u64);
+    if !call.participants.contains(&me) && m.author.id != me {
+        (format!("You missed a call from {name} that lasted {length}."), true)
+    } else {
+        (format!("{name} started a call that lasted {length}."), false)
+    }
+}
+
+/// `formatCallDuration`: "a few seconds" under a minute, else whole units rounded up to minutes.
+fn call_duration(secs: u64) -> String {
+    if secs < 60 {
+        return "a few seconds".into();
+    }
+    let units = [("year", 525_600), ("month", 43_800), ("week", 10_080), ("day", 1_440), ("hour", 60), ("minute", 1)];
+    let mut left = secs.div_ceil(60).max(1);
+    let mut parts = Vec::new();
+    for (unit, minutes) in units {
+        if left >= minutes {
+            let n = left / minutes;
+            left -= n * minutes;
+            parts.push(match (n, unit) {
+                (1, "minute") => "a minute".to_string(),
+                (1, u) => format!("1 {u}"),
+                (n, u) => format!("{n} {u}s"),
+            });
+        }
+    }
+    match parts.len() {
+        1 => parts.remove(0),
+        2 => parts.join(" and "),
+        _ => {
+            let last = parts.pop().unwrap_or_default();
+            format!("{}, and {last}", parts.join(", "))
+        }
+    }
+}
+
+#[cfg(test)]
+mod call_tests {
+    #[test]
+    fn call_durations_read_like_fluxer() {
+        assert_eq!(super::call_duration(30), "a few seconds");
+        assert_eq!(super::call_duration(60), "a minute");
+        assert_eq!(super::call_duration(3600 + 120), "1 hour and 2 minutes");
+        assert_eq!(super::call_duration(86_400 + 3600 + 60), "1 day, 1 hour, and a minute");
     }
 }

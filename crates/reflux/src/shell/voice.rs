@@ -3,7 +3,8 @@
 //! (`SignalStrengthIcon.tsx`, `VoiceLatencySignal.ts`), the local mute/deafen rules
 //! (`LocalVoiceStateMachine.ts`) and a minimal stream viewer.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
 
 use reflux_model::{Permissions, Snowflake};
 use reflux_store::Store;
@@ -41,18 +42,211 @@ pub struct Voice {
     pub devices: Option<(Vec<String>, Vec<String>)>,
     pub input: Option<String>,
     pub output: Option<String>,
+    /// The persisted Voice & video settings (mirrored from `Saved::voice_settings`).
+    pub settings: Settings,
+    /// Publishing the camera (or starting it).
+    pub camera: bool,
+    /// Our own camera frames (mirrored per `mirror_camera`), for the preview and our tile.
+    pub self_view: Pixels,
+    /// The camera preview modal's capture runs.
+    pub previewing: bool,
+    /// Remote camera frames by user.
+    pub videos: HashMap<Snowflake, Pixels>,
+    /// Cameras GStreamer sees (`None` until listed).
+    pub cameras: Option<Vec<String>>,
+    /// `VoiceCallView` replaces the chat column.
+    pub call_view: bool,
+    /// The tile shown large (`focusedParticipant`), `None` = the grid.
+    pub focus: Option<Snowflake>,
+    /// Users muted locally.
+    // shortcut: no per-user volume slider; the Rust SDK has no remote track volume (WebRTC's
+    // AudioSourceInterface::SetVolume isn't bound). Add it when webrtc-sys exposes it.
+    pub local_mutes: HashSet<Snowflake>,
+    /// The room's media is encrypted (`e2ee_key`).
+    pub encrypted: bool,
+    /// LiveKit endpoint host and room name of the connection.
+    pub server: Option<(String, String)>,
+    /// LiveKit lost the connection and is reconnecting.
+    pub reconnecting: bool,
+    /// The mic test meter runs; its last level in dBFS.
+    pub mic_test: bool,
+    pub level: f32,
+    /// The mic gate (voice activity / push-to-talk) is open.
+    pub transmitting: bool,
+    /// The push-to-talk key is held in the window.
+    pub ptt_held: bool,
+    /// The next key pressed becomes the push-to-talk key.
+    pub recording_key: bool,
+    pub modal: Option<Modal>,
+    /// The voice message composer.
+    pub voice_message: Option<VoiceMessage>,
+    /// Incoming calls the user declined or ignored (until the call ends).
+    pub dismissed_calls: HashSet<Snowflake>,
+    /// The watched stream fills the window.
+    pub stream_fullscreen: bool,
+}
+
+/// Voice & video settings (`VoiceSettings.ts`, `Keybind` transmit mode) kept on disk.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub input_volume: f32,
+    pub output_volume: f32,
+    /// `voice` (focused voice), `studio` (direct input) or `custom`.
+    pub processing: String,
+    pub echo_cancellation: bool,
+    pub noise_suppression: bool,
+    pub auto_gain_control: bool,
+    pub stereo: bool,
+    pub push_to_talk: bool,
+    /// The in-window push-to-talk key (`rune::Key` debug form).
+    pub ptt_key: Option<String>,
+    pub ptt_release_ms: u64,
+    pub vad_auto: bool,
+    pub vad_threshold: f32,
+    pub show_connection_ids: bool,
+    pub camera: Option<String>,
+    pub mirror_camera: bool,
+    /// `low` (480p), `medium` (720p) or `high` (1080p).
+    pub camera_quality: String,
+    /// Tallest screen share frame (`None` = source).
+    pub screen_height: Option<u32>,
+    pub screen_fps: u32,
+    /// Bits/s, `None` = automatic.
+    pub screen_bitrate: Option<u64>,
+    /// `auto`, `nvenc`, `vaapi` or `software`.
+    pub encoder: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            input_volume: 100.0,
+            output_volume: 100.0,
+            processing: "voice".into(),
+            echo_cancellation: true,
+            noise_suppression: true,
+            auto_gain_control: true,
+            stereo: false,
+            push_to_talk: false,
+            ptt_key: None,
+            ptt_release_ms: 20,
+            vad_auto: true,
+            vad_threshold: -60.0,
+            show_connection_ids: false,
+            camera: None,
+            mirror_camera: true,
+            camera_quality: "medium".into(),
+            screen_height: Some(720),
+            screen_fps: 30,
+            screen_bitrate: None,
+            encoder: "auto".into(),
+        }
+    }
+}
+
+impl Settings {
+    /// (echo cancellation, noise suppression, auto gain) for the chosen profile.
+    pub fn processing(&self) -> (bool, bool, bool) {
+        match self.processing.as_str() {
+            "studio" => (false, false, false),
+            "custom" => (self.echo_cancellation, self.noise_suppression, self.auto_gain_control),
+            _ => (true, true, self.auto_gain_control),
+        }
+    }
+
+    /// Push-to-talk applies outside direct input only.
+    pub fn ptt(&self) -> bool {
+        self.push_to_talk && self.processing != "studio"
+    }
+
+    pub fn camera_size(&self) -> (u32, u32) {
+        match self.camera_quality.as_str() {
+            "low" => (854, 480),
+            "high" => (1920, 1080),
+            _ => (1280, 720),
+        }
+    }
+
+    pub fn screen_quality(&self) -> reflux_voice::ScreenQuality {
+        reflux_voice::ScreenQuality { fps: self.screen_fps, max_height: self.screen_height, bitrate: self.screen_bitrate }
+    }
+}
+
+/// Voice dialogs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Modal {
+    /// `CameraPreviewModal`: the self view before turning the camera on.
+    CameraPreview,
+    /// `ScreenSharePickerModal`: quality, then the system picker.
+    ScreenShare,
+    /// `VoiceChannelFullModal`.
+    ChannelFull,
+    /// `VoiceConnectionConfirmModal`: already in voice on another device/channel.
+    JoinConfirm { guild: Option<Snowflake>, channel: Snowflake },
+    /// A peer-to-peer call Reflux can't join, or another refusal.
+    Refused(String),
+    /// `CallNotRingableModal`.
+    NotRingable,
+}
+
+/// The voice message being recorded or reviewed (`VoiceMessageComposerModal`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VoiceMessage {
+    pub channel: Snowflake,
+    pub recording: bool,
+    pub secs: f32,
+    /// Recent block peaks (0..1) while recording; the final waveform after.
+    pub bars: Vec<f32>,
+    pub sending: bool,
+    pub error: Option<String>,
+}
+
+/// What the voice views ask the runtime for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Op {
+    ToggleCamera,
+    /// Start or stop the camera preview capture.
+    Preview(bool),
+    LoadCameras,
+    /// `voice.settings` changed: save and apply.
+    Settings,
+    LocalMute(Snowflake, bool),
+    /// Check eligibility, join and ring (`CallCommands.startCall`).
+    StartCall(Snowflake),
+    /// Join a ringing call (`joinCall`).
+    AcceptCall(Snowflake),
+    /// Stop ringing us (`rejectCall`).
+    DeclineCall(Snowflake),
+    /// Ring (`Some`) or stop ringing (`None`) one recipient of the call we're in.
+    Ring(Snowflake, Snowflake, bool),
+    MicTest(bool),
+    /// Start recording a voice message into this channel, stop and keep it, or cancel.
+    RecordStart(Snowflake),
+    RecordStop,
+    RecordCancel,
+    /// Upload the recorded message.
+    RecordSend,
+    /// The push-to-talk key went down or up in the window.
+    PushToTalk(bool),
+    /// "Join" in the already-in-voice confirmation.
+    ConfirmJoin(Option<Snowflake>, Snowflake),
 }
 
 impl ShellState {
     /// Clicking a voice channel: join it (switching from another one).
     pub fn join_voice(&mut self, guild: Option<Snowflake>, channel: Snowflake) {
         let v = &mut self.voice;
+        // Clicking the channel we're in opens its call view (`VoiceCallView`).
+        v.call_view = guild.is_some();
         if v.channel == Some((guild, channel)) {
             return;
         }
         (v.channel, v.connected, v.failed, v.screen, v.ping, v.watching) = (Some((guild, channel)), false, None, false, None, None);
+        (v.camera, v.encrypted, v.server, v.reconnecting, v.focus) = (false, false, None, false, None);
         v.speaking.clear();
         v.pings.clear();
+        v.videos.clear();
         self.intents.push(Intent::JoinVoice { guild, channel });
     }
 
@@ -232,16 +426,24 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .child(control_button(&icons::X_BOLD, "Dismiss", p, move |s: &mut S| acc(s).voice.failed = None));
         return Some(shell.child(status_row).child(divider));
     };
-    let (label, color) = if v.connected { ("In voice chat", p.status_online) } else { ("Connecting...", p.status_idle) };
+    let (label, color) = match (v.connected, v.reconnecting) {
+        (_, true) => ("Reconnecting...", p.status_idle),
+        (true, _) => ("In voice chat", p.status_online),
+        _ => ("Connecting...", p.status_idle),
+    };
     let mut status_row = row().w_full().h(32.0).gap(8.0).center_y();
     if v.connected {
         status_row = status_row.child(signal_icon(v, p));
     }
-    // shortcut: the noise-suppression button and the details popout aren't implemented.
-    status_row = status_row
-        .child(status(label, color))
-        .child(control_button(&icons::PHONE_X_FILL, "Disconnect", p, move |s: &mut S| acc(s).leave_voice()));
-    let channel_name = store.channels.get(&channel).and_then(|c| c.name.clone()).unwrap_or_default();
+    // The status opens `VoiceDetailsPopout`; the lock is `VoiceE2EEIndicator`.
+    // shortcut: no noise-suppression quick toggle; it lives in the Voice & video tab.
+    let details = status(label, color).key(super::call::DETAILS).cursor(rune::Cursor::Pointer).role("button").on_press(move |s: &mut S| acc(s).popups.toggle(super::call::DETAILS));
+    status_row = status_row.child(details);
+    if v.encrypted {
+        status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted"));
+    }
+    status_row = status_row.child(control_button(&icons::PHONE_X_FILL, "Disconnect", p, move |s: &mut S| acc(s).leave_voice()));
+    let channel_name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
     let source = match guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()) {
         Some(g) => format!("{channel_name} / {}", g.name),
         None => channel_name,
@@ -269,18 +471,32 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         (_, _, true) => "Stop sharing your screen",
         _ => "Share your screen",
     };
-    // shortcut: camera publishing isn't implemented; the button is shown disabled.
+    let cam_ok = crate::gst::available();
+    let camera_label = match (v.connected, can_stream && cam_ok, v.camera) {
+        (false, _, _) => "Waiting for connection...",
+        (_, false, _) if !cam_ok => "Camera needs Reflux built with GStreamer",
+        (_, false, _) => "You don't have permission to use video in this channel",
+        (_, _, true) => "Turn off camera",
+        _ => "Turn on camera",
+    };
     let media = row()
         .w_full()
         .gap(4.0)
-        .child(media_button(&icons::CAMERA_SLASH_FILL, "Camera isn't supported yet", false, true, p, |_: &mut S| {}))
+        .child(media_button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, !v.connected || !can_stream || !cam_ok, p, move |s: &mut S| {
+            acc(s).intents.push(Intent::Voice(Op::ToggleCamera))
+        }))
         .child(media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, !v.connected || !can_stream, p, move |s: &mut S| {
-            acc(s).intents.push(Intent::ToggleScreen)
+            let sh = acc(s);
+            if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { sh.voice.modal = Some(Modal::ScreenShare) }
         }));
     Some(shell.child(status_row).child(source_row).child(media).child(divider))
 }
 
-/// The screen share being watched, in place of the chat column.
+/// The screen share being watched, in place of the chat column (`WatchStreamOverlay`): full
+/// window toggle and the spectators (`StreamSpectatorsPopout`: voice states whose
+/// `viewer_stream_keys` hold this stream).
+// shortcut: no stream volume; the Rust SDK has no per-track volume and stream audio isn't
+// published by anyone on Linux yet.
 pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let user = st.voice.watching?;
     let guild = st.voice.channel.and_then(|(g, _)| g);
@@ -293,12 +509,34 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .center_y()
         .child(icon(&icons::MONITOR_PLAY_FILL, 20.0).color(p.text_tertiary))
         .child(text(format!("{name}'s screen")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
+        .child(spectators(store, st, guild, user, p))
+        .child(control_button(if st.voice.stream_fullscreen { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }, "Full screen", p, move |s: &mut S| {
+            acc(s).voice.stream_fullscreen ^= true;
+        }))
         .child(control_button(&icons::X_BOLD, "Stop watching", p, move |s: &mut S| {
-            acc(s).voice.watching = None;
-            acc(s).intents.push(Intent::Watch(None));
+            let sh = acc(s);
+            (sh.voice.watching, sh.voice.stream_fullscreen) = (None, false);
+            sh.intents.push(Intent::Watch(None));
         }));
     let video = el().w_full().grow(1.0).min_h(0.0).pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit);
     Some(col().grow(1.0).min_w(0.0).h_full().fill(Color::BLACK).child(header.fill(p.background_primary)).child(video))
+}
+
+/// Avatars of who else watches `user`'s stream.
+fn spectators(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake, p: &Palette) -> El {
+    let Some(key) = store.voice_states.get(&(guild, user)).and_then(|v| {
+        let (_, c) = st.voice.channel?;
+        Some(format!("{}:{c}:{}", guild.map_or("dm".to_string(), |g| g.to_string()), v.connection_id.as_deref()?))
+    }) else {
+        return el();
+    };
+    let watchers: Vec<Snowflake> = store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.viewer_stream_keys.contains(&key)).map(|((_, u), _)| *u).collect();
+    let mut r = row().gap(4.0).center_y().role("group").label(format!("{} watching", watchers.len()));
+    r = r.child(icon(&icons::EYE_FILL, 16.0).color(p.text_tertiary)).child(text(watchers.len().to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary));
+    for u in watchers.into_iter().take(5) {
+        r = r.child(super::avatar(store, st, u, 20.0, None, p.background_primary, p));
+    }
+    r
 }
 
 #[cfg(test)]

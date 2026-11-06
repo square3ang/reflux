@@ -102,6 +102,8 @@ pub struct Store {
     pub pinned_dms: Vec<Snowflake>,
     /// Keyed by (guild, user); DM calls use `None`.
     pub voice_states: HashMap<(Option<Snowflake>, Snowflake), VoiceState>,
+    /// Active DM / group DM calls by channel (CALL_CREATE / CALL_UPDATE).
+    pub calls: HashMap<Snowflake, reflux_model::Call>,
     pub messages: HashMap<Snowflake, MessageWindow>,
     pub member_lists: HashMap<(Snowflake, String), MemberList>,
     /// Channel → (user, expires at ms).
@@ -353,7 +355,20 @@ impl Store {
             }
 
             E::VoiceStateUpdate(v) => self.voice_state(v),
-            E::CallCreate(c) | E::CallUpdate(c) => c.voice_states.iter().for_each(|v| self.voice_state(v)),
+            E::CallCreate(c) | E::CallUpdate(c) => {
+                c.voice_states.iter().for_each(|v| self.voice_state(v));
+                let old = self.calls.remove(&c.channel_id);
+                let mut call = c.clone();
+                if let Some(old) = old {
+                    call.recipients = call.recipients.or(old.recipients);
+                    call.created_at = call.created_at.or(old.created_at);
+                }
+                self.calls.insert(c.channel_id, call);
+            }
+            E::CallDelete(d) => {
+                self.calls.remove(&d.channel_id);
+                self.voice_states.retain(|(g, _), v| g.is_some() || v.channel_id != Some(d.channel_id));
+            }
             _ => {}
         }
     }

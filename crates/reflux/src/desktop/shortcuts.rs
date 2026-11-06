@@ -31,7 +31,6 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static PTT: AtomicBool = AtomicBool::new(false);
 
 /// The push-to-talk shortcut is held down.
-#[allow(dead_code)] // for voice's push-to-talk transmit mode, which isn't written yet
 pub fn ptt_held() -> bool {
     PTT.load(Ordering::Relaxed)
 }

@@ -1,6 +1,7 @@
 mod app;
 mod desktop;
 mod guild;
+mod gst;
 mod i18n;
 mod keybinds;
 mod icons;
@@ -14,6 +15,7 @@ mod social;
 mod theme;
 #[allow(dead_code, unused_imports)] // the kit exposes variants the screens don't use yet
 mod ui;
+mod voice_input;
 
 use rune::{AppSpec, Cx, El};
 

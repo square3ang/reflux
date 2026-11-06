@@ -25,6 +25,8 @@ pub struct MediaUi {
     pub revealed: HashSet<String>,
     /// The clip playing inline, by its tile key.
     pub playing: Option<(String, Player)>,
+    /// The same through GStreamer, where Rune's player can't decode (`clip::native`).
+    pub gst: Option<super::clip::GstClip>,
     /// Invite previews by code (`InviteEmbed`).
     pub invites: HashMap<String, super::invite_embed::Preview>,
     /// Mature channels the user chose to see this session (`MatureContentChannelGate`).
@@ -245,7 +247,9 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
         }
     }
     for a in m.attachments.iter().filter(|a| !is_media(a)) {
-        out.push(if a.content_type.starts_with("audio/") && a.url.is_some() {
+        out.push(if a.waveform.is_some() && a.url.is_some() {
+            super::voice_message::player(st, a, p, acc)
+        } else if a.content_type.starts_with("audio/") && a.url.is_some() {
             audio_player(st, &format!("audio-{}", a.id), a, p, acc)
         } else if is_textual(a) {
             text_preview(st, a, p, acc)
@@ -265,6 +269,15 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
         && let Some((_, clip)) = st.media_ui.playing.as_ref().filter(|(k, _)| *k == t.key)
     {
         return video_player(clip, &t, p, acc, open);
+    }
+    if t.video
+        && let Some(c) = super::clip::get(st, &t.key)
+    {
+        let full: Rc<dyn Fn(&mut S)> = Rc::new(move |s: &mut S| {
+            acc(s).media_ui.gst = None;
+            open(s)
+        });
+        return super::clip::video(c, (w, h), p, acc, Some(full));
     }
     let ui = &st.media_ui;
     // `render_spoilers` 0 shows spoilers outright; on click and moderator-only both blur.
@@ -331,7 +344,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
                 .radius(28.0)
                 .fill(rgba(0, 0, 0, 0.75))
                 .child(icon(&icons::PLAY_FILL, 28.0).color(p.text_on_dark))
-                .on_press(move |s: &mut S| play(acc(s), key.clone(), Player::url(url.clone()))),
+                .on_press(move |s: &mut S| super::clip::start(acc(s), key.clone(), url.clone(), false)),
         ));
     } else if t.animated && !auto && !hovered {
         // `GifIndicator` while the GIF waits for a hover.
@@ -455,15 +468,17 @@ fn name_line(name: &str, size: f32, weight: f32, lh: f32, p: &Palette) -> El {
 pub fn audio_player<S: 'static>(st: &ShellState, key: &str, a: &Attachment, p: &Palette, acc: ShellAccess<S>) -> El {
     let key = key.to_owned();
     let clip = st.media_ui.playing.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
-    let playing = clip.as_ref().is_some_and(|c| c.state() == PlayerState::Playing);
-    let failed = clip.as_ref().and_then(|c| if let PlayerState::Failed(e) = c.state() { Some(e) } else { None });
+    let gst = super::clip::get(st, &key);
+    let playing = clip.as_ref().is_some_and(|c| c.state() == PlayerState::Playing) || gst.is_some_and(|c| c.player.playing);
+    let failed = clip.as_ref().and_then(|c| if let PlayerState::Failed(e) = c.state() { Some(e) } else { None }).or(gst.filter(|c| c.failed).map(|_| "This file can't be played.".to_string()));
     let url = a.url.clone().unwrap_or_default();
     let toggle = {
-        let (key, url, clip) = (key.clone(), url.clone(), clip.clone());
+        let (key, url, clip, has_gst) = (key.clone(), url.clone(), clip.clone(), gst.is_some());
         move |s: &mut S| match &clip {
             Some(c) if c.state() == PlayerState::Playing => c.pause(),
             Some(c) => c.play(),
-            None => play(acc(s), key.clone(), Player::audio(url.clone())),
+            None if has_gst => super::clip::toggle(acc, &key, s),
+            None => super::clip::start(acc(s), key.clone(), url.clone(), true),
         }
     };
     let button = row()
@@ -478,17 +493,16 @@ pub fn audio_player<S: 'static>(st: &ShellState, key: &str, a: &Attachment, p: &
         .on_press(toggle);
     let size = super::upload::format_size(a.size);
     let info = col().grow(1.0).min_w(0.0).gap(2.0).child(name_line(a.title.as_deref().unwrap_or(&a.filename), 14.0, 500.0, 18.2, p)).child(text(size).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary));
-    let dur = clip.as_ref().and_then(|c| c.duration()).or(a.duration).unwrap_or(0.0);
-    let now = clip.as_ref().map_or(0.0, |c| c.time());
+    let dur = clip.as_ref().and_then(|c| c.duration()).or(gst.and_then(|c| c.player.duration())).or(a.duration).unwrap_or(0.0);
+    let now = clip.as_ref().map(|c| c.time()).or(gst.and_then(|c| c.player.position())).unwrap_or(0.0);
     let seek = {
-        let clip = clip.clone();
+        let (clip, k, has_gst) = (clip.clone(), key.clone(), gst.is_some());
         crate::ui::Slider::new(format!("{key}-seek"), now as f32, 0.0, dur.max(0.01) as f32)
             .mini()
-            .disabled(clip.is_none())
-            .on_change(move |_: &mut S, v| {
-                if let Some(c) = &clip {
-                    c.seek(v as f64)
-                }
+            .disabled(clip.is_none() && !has_gst)
+            .on_change(move |s: &mut S, v| match &clip {
+                Some(c) => c.seek(v as f64),
+                None => super::clip::seek(acc, &k, s, v as f64),
             })
             .el(p)
     };

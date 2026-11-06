@@ -12,6 +12,7 @@ mod privacy;
 mod profile;
 pub mod sudo;
 pub(crate) mod tabs;
+mod voice_tabs;
 
 pub use account::{AccountModal, view_shell_modals};
 

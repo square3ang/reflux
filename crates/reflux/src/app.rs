@@ -557,6 +557,8 @@ pub fn import_session(s: &mut State) {
 fn restore_voice_devices(s: &mut State) {
     let v = &mut s.app.shell.voice;
     (v.input, v.output) = (s.app.saved.voice_input.clone(), s.app.saved.voice_output.clone());
+    v.settings = s.app.saved.voice_settings.clone();
+    voice::apply_encoder(&v.settings);
 }
 
 /// Drops the connection and everything loaded for it.
@@ -745,6 +747,10 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         s.app.voice.devices_loading = true;
         sh.intents.push(crate::shell::Intent::LoadDevices);
     }
+    if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.cameras.is_none() {
+        sh.voice.cameras = Some(Vec::new());
+        sh.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::LoadCameras));
+    }
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
     use crate::shell::Intent;
@@ -789,7 +795,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             | Intent::ToggleScreen
             | Intent::Watch(_)
             | Intent::LoadDevices
-            | Intent::VoiceDevices) => voice::run(s, i),
+            | Intent::VoiceDevices
+            | Intent::Voice(_)) => voice::run(s, i),
             other => actions::run(s, other),
         }
     }
@@ -798,6 +805,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let threads_changed = threads::tick(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s, tx);
+    voice::tick(s, tx);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
     actions::tick(s) || ran || shell || threads_changed
