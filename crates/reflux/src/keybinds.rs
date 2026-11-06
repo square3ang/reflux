@@ -28,6 +28,7 @@ pub enum Action {
     ToggleMembers,
     ToggleMute,
     ToggleDeafen,
+    QuickSwitcher,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +88,7 @@ pub const BINDS: &[Bind] = &[
     b(GuildSlot(7), "Go to sixth community", "navigation", c(Char('7'), true, false, false)),
     b(GuildSlot(8), "Go to seventh community", "navigation", c(Char('8'), true, false, false)),
     b(GuildSlot(9), "Go to eighth community", "navigation", c(Char('9'), true, false, false)),
+    b(QuickSwitcher, "Toggle quick switcher", "navigation", c(Char('k'), true, false, false)),
     b(ToggleMembers, "Toggle the member list or voice chat", "chat", c(Char('u'), true, false, false)),
     b(MarkChannelRead, "Mark channel as read", "chat", c(Escape, false, false, false)),
     b(MarkGuildRead, "Mark community as read", "chat", c(Escape, false, false, true)),
@@ -134,11 +136,12 @@ impl Combo {
 
 /// `AppSpec::on_key`: keys nothing focused took (or the focused control passed on).
 pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
-    if s.app.route != Route::Main {
-        return false;
-    }
     let Some(bind) = BINDS.iter().find(|b| b.combo.matches(k)) else { return false };
-    run(&s.app.store, &mut s.app.shell, bind.action)
+    match &mut s.shell_demo {
+        Some(d) => run(&d.store, &mut d.shell, bind.action),
+        None if s.app.route == Route::Main => run(&s.app.store, &mut s.app.shell, bind.action),
+        None => false,
+    }
 }
 
 /// Runs a keybind; false when it did nothing (the key goes on).
@@ -182,6 +185,7 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         ToggleMembers => sh.member_list = !sh.member_list,
         ToggleMute => sh.toggle_mute(),
         ToggleDeafen => sh.toggle_deaf(),
+        QuickSwitcher => sh.toggle_switcher(),
     }
     true
 }

@@ -1,7 +1,7 @@
 //! HTTP API client (`http-api/index.md`, `topics/rate-limits.md`, `topics/captcha.md`).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use reflux_model::{
@@ -249,6 +249,91 @@ impl Client {
         self.request(Method::POST, &format!("/channels/{channel}/messages"), Some(msg)).await
     }
 
+    /// `multipart/form-data`: `payload_json` plus `files[N]` (`msg.attachments` holds the direct
+    /// multipart metadata). `progress` hears the file bytes sent so far.
+    pub async fn send_message_multipart(
+        &self,
+        channel: Snowflake,
+        msg: &CreateMessage,
+        files: Vec<(String, Arc<Vec<u8>>, String)>,
+        progress: impl Fn(u64) + Send + Sync + 'static,
+    ) -> Result<Message> {
+        let progress = Arc::new(progress);
+        let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let mut form = reqwest::multipart::Form::new().text("payload_json", serde_json::to_string(msg)?);
+        for (i, (name, bytes, ctype)) in files.into_iter().enumerate() {
+            let len = bytes.len() as u64;
+            let body = counted(bytes, sent.clone(), progress.clone());
+            let part = reqwest::multipart::Part::stream_with_length(body, len).file_name(name).mime_str(&ctype).map_err(|e| Error::Upload(e.to_string()))?;
+            form = form.part(format!("files[{i}]"), part);
+        }
+        let mut req = self.http.post(format!("{}/channels/{channel}/messages", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES).multipart(form);
+        if let Some(token) = self.token.read().unwrap().as_deref() {
+            req = req.header(header::AUTHORIZATION, token);
+        }
+        if let Some(id) = &self.installation_id {
+            req = req.header("X-Fluxer-Client-Installation-ID", id);
+        }
+        let res = req.send().await?;
+        let status = res.status();
+        let bytes = res.bytes().await?;
+        if status.is_success() {
+            return Ok(serde_json::from_slice(&bytes)?);
+        }
+        let error = serde_json::from_slice::<ApiError>(&bytes)
+            .unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
+        Err(Error::Api { status, error: Box::new(error) })
+    }
+
+    // --- Pre-uploaded attachments (`topics/uploads.md`) ---
+
+    /// `POST /channels/{id}/attachments`: upload URLs for up to 10 `(id, filename, size,
+    /// content_type)` files, in request order.
+    pub async fn upload_plan(&self, channel: Snowflake, files: &[(u32, String, u64, String)]) -> Result<Vec<UploadPlan>> {
+        let attachments: Vec<_> = files
+            .iter()
+            .map(|(id, name, size, ctype)| serde_json::json!({ "id": id, "filename": name, "file_size": size, "content_type": ctype }))
+            .collect();
+        #[derive(serde::Deserialize)]
+        struct Res {
+            attachments: Vec<UploadPlan>,
+        }
+        let r: Res = self.request(Method::POST, &format!("/channels/{channel}/attachments"), Some(&serde_json::json!({ "attachments": attachments }))).await?;
+        Ok(r.attachments)
+    }
+
+    /// `PUT`s `bytes` to an upload URL exactly as issued, without `Authorization`.
+    pub async fn put_upload(&self, url: &str, bytes: Arc<Vec<u8>>, range: std::ops::Range<usize>, content_type: Option<&str>, sent: Arc<std::sync::atomic::AtomicU64>, progress: Arc<dyn Fn(u64) + Send + Sync>) -> Result<()> {
+        let len = range.len() as u64;
+        let body = counted_range(bytes, range, sent, progress);
+        let mut req = self.http.put(url).header(header::CONTENT_LENGTH, len).body(reqwest::Body::wrap_stream(body));
+        if let Some(t) = content_type {
+            req = req.header(header::CONTENT_TYPE, t);
+        }
+        let res = req.send().await?;
+        if !res.status().is_success() {
+            return Err(Error::Upload(format!("upload failed ({})", res.status())));
+        }
+        Ok(())
+    }
+
+    /// `POST /channels/{id}/attachments/complete` for multipart uploads.
+    pub async fn complete_uploads(&self, channel: Snowflake, uploads: &[(String, String)]) -> Result<()> {
+        let uploads: Vec<_> = uploads.iter().map(|(f, id)| serde_json::json!({ "upload_filename": f, "upload_id": id })).collect();
+        self.empty(Method::POST, &format!("/channels/{channel}/attachments/complete"), Some(&serde_json::json!({ "uploads": uploads }))).await
+    }
+
+    /// `GET /channels/{id}/messages/pins`, newest pin first; `before` is a `pinned_at`.
+    pub async fn pins(&self, channel: Snowflake, before: Option<&str>) -> Result<PinsPage> {
+        let before = before.map(|b| format!("&before={}", url::form_urlencoded::byte_serialize(b.as_bytes()).collect::<String>())).unwrap_or_default();
+        self.get(&format!("/channels/{channel}/messages/pins?limit=50{before}")).await
+    }
+
+    /// `POST /search/messages` with a body built from the search syntax.
+    pub async fn search_messages(&self, body: &serde_json::Value) -> Result<SearchResponse> {
+        self.request(Method::POST, "/search/messages", Some(body)).await
+    }
+
     // --- Message actions (`http-api/messages.mdx`) ---
 
     /// Changes only the text; other fields stay.
@@ -344,6 +429,73 @@ impl Client {
     async fn empty(&self, method: Method, path: &str, body: Option<&serde_json::Value>) -> Result<()> {
         self.request::<serde_json::Value, _>(method, path, body).await.map(drop)
     }
+}
+
+/// One file of an upload plan: `upload_url` (singlepart) or `upload_id` + `parts` (multipart).
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct UploadPlan {
+    pub id: u32,
+    pub upload_filename: String,
+    pub content_type: String,
+    pub upload_url: Option<String>,
+    pub upload_id: Option<String>,
+    pub part_size: u64,
+    pub parts: Vec<UploadPart>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct UploadPart {
+    pub part_number: u32,
+    pub upload_url: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ChannelPin {
+    pub message: Message,
+    pub pinned_at: String,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct PinsPage {
+    pub items: Vec<ChannelPin>,
+    pub has_more: bool,
+}
+
+/// A results page, or `{"indexing": true}` while the channel's index is being built.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+pub enum SearchResponse {
+    Indexing { indexing: bool },
+    Results {
+        messages: Vec<Message>,
+        #[serde(default)]
+        total: u32,
+    },
+}
+
+/// Chunks of `bytes[range]` that count what's been read into `sent` and report it.
+fn counted_range(
+    bytes: Arc<Vec<u8>>,
+    range: std::ops::Range<usize>,
+    sent: Arc<std::sync::atomic::AtomicU64>,
+    progress: Arc<dyn Fn(u64) + Send + Sync>,
+) -> impl futures_util::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Send + Sync + 'static {
+    const CHUNK: usize = 256 * 1024;
+    let starts: Vec<usize> = range.clone().step_by(CHUNK).collect();
+    futures_util::stream::iter(starts.into_iter().map(move |at| {
+        let end = (at + CHUNK).min(range.end);
+        let n = sent.fetch_add((end - at) as u64, std::sync::atomic::Ordering::Relaxed) + (end - at) as u64;
+        progress(n);
+        Ok(bytes[at..end].to_vec())
+    }))
+}
+
+fn counted(bytes: Arc<Vec<u8>>, sent: Arc<std::sync::atomic::AtomicU64>, progress: Arc<impl Fn(u64) + Send + Sync + 'static>) -> reqwest::Body {
+    let len = bytes.len();
+    reqwest::Body::wrap_stream(counted_range(bytes, 0..len, sent, Arc::new(move |n| progress(n))))
 }
 
 /// The `{emoji}` path value: `name:id` for a custom emoji, else the URL-encoded character.

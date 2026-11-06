@@ -13,6 +13,7 @@ use reflux_store::Store;
 use rune::text::Span;
 use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el, icon, rich, row, text, text_input};
 
+use super::autocomplete;
 use super::markdown::{self, Md};
 use crate::media::Load;
 use super::{Intent, ReplyTo, ShellAccess, ShellState, Target, avatar, channel_icon, emoji, members, role_color};
@@ -35,15 +36,29 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter);
     };
     let show_members = st.member_list && c.guild_id.is_some();
-    let chat = col()
+    let mut chat = col()
         .grow(1.0)
         .min_w(0.0)
         .h_full()
         .min_h(0.0)
+        // Fixed-width cards stay under the search panel when the column narrows.
+        .clip_rounded(0.0)
         .child(messages(store, st, c, p, acc, layer))
-        .child(composer(store, st, c, p, acc));
+        .child(composer(store, st, c, p, acc))
+        // Files dragged in from other apps join the tray.
+        .on_drop_files(move |s: &mut S, files, _| {
+            let st = acc(s);
+            st.drop_hover = false;
+            super::upload::add_paths(st, files);
+        })
+        .on_drop_hover(move |s: &mut S, over, _| acc(s).drop_hover = over);
+    if st.drop_hover {
+        chat = chat.child(drop_overlay(c, p));
+    }
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
-    if show_members {
+    if let Some(panel) = super::search::panel(store, st, p, acc) {
+        content = content.child(panel);
+    } else if show_members {
         content = content
             .child(members::list(store, st, c, p, acc))
             .child(el().pin(None, Some(0.0), Some(dim::LAYOUT_MEMBER_LIST_WIDTH), Some(0.0)).w(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
@@ -51,13 +66,36 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     if let Some(m) = st.confirm_delete.and_then(|id| find(store, c.id, id)) {
         layer.push(delete_modal(store, st, m, p, acc));
     }
+    super::pins::popout(store, st, c, p, acc, layer);
+    super::upload::plus_menu(st, p, acc, layer);
     col()
         .grow(1.0)
         .min_w(0.0)
         .h_full()
         .fill(p.background_secondary_lighter)
-        .child(header(store, st, c, p, acc))
+        .child(header(store, st, c, p, acc, layer))
         .child(content)
+}
+
+/// `.dropTarget` overlay while files are dragged over the chat.
+fn drop_overlay(c: &Channel, p: &Palette) -> El {
+    let name = c.name.clone().map_or_else(|| "this conversation".to_string(), |n| format!("#{n}"));
+    row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().fill(Color { a: 0.6, ..Color::BLACK }).inert().child(
+        col()
+            .padding(32.0)
+            .gap(8.0)
+            .center()
+            .radius(16.0)
+            .fill(p.brand_primary)
+            .child(icon(&icons::UPLOAD_SIMPLE_FILL, 48.0).color(Color::WHITE))
+            .child(text(format!("Upload to {name}")).font(font(20.0, 600.0)).color(Color::WHITE))
+            .child(text("You can add comments before uploading.").font(font(14.0, 400.0)).color(Color::WHITE)),
+    )
+}
+
+/// A message drawn on its own as a group head (pins, search results).
+pub(super) fn message_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
+    message(store, st, m, true, md, p, acc)
 }
 
 fn find(store: &Store, channel: Snowflake, id: Snowflake) -> Option<&Message> {
@@ -119,7 +157,7 @@ fn channel_title(store: &Store, c: &Channel) -> String {
     }
 }
 
-fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let muted = p.text_primary_muted;
     let action = |i: &'static rune::Icon, label: &str, selected: bool| {
         row()
@@ -158,32 +196,26 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
             );
     }
     let mut right = row().gap(dim::CHANNEL_HEADER_ACTIONS_GAP).center_y();
+    let cid = c.id;
+    let pins = action(&icons::PUSH_PIN, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
+        .key(super::pins::POPOUT)
+        .on_press(move |s: &mut S| super::pins::open(acc(s), cid));
     if c.guild_id.is_some() {
         right = right
             .child(action(&icons::BELL, "Notification Settings", false))
-            .child(action(&icons::PUSH_PIN, "Pinned Messages", false))
+            .child(pins)
             .child(
                 action(&icons::USERS, "Toggle Member List", st.member_list)
                     .key("toggle-members")
                     .on_press(move |s: &mut S| acc(s).member_list ^= true),
             );
     } else {
-        right = right.child(action(&icons::PHONE, "Start Voice Call", false)).child(action(&icons::VIDEO_CAMERA, "Start Video Call", false));
+        right = right
+            .child(action(&icons::PHONE, "Start Voice Call", false))
+            .child(action(&icons::VIDEO_CAMERA, "Start Video Call", false))
+            .child(pins);
     }
-    // `MessageSearchBar`: 244×36, radius 12, 1px accent border, `background-textarea`.
-    let search = row()
-        .w(dim::MESSAGE_SEARCH_BAR_WIDTH)
-        .h(dim::MESSAGE_SEARCH_BAR_HEIGHT)
-        .px(dim::INPUT_CONTAINER_PADDING + 1.0)
-        .gap(dim::MESSAGE_SEARCH_BAR_ICON_GAP)
-        .center_y()
-        .radius(dim::RADIUS_XL)
-        .fill(p.background_textarea)
-        .border(1.0, over(p.background_modifier_accent, p.background_textarea))
-        .cursor(rune::Cursor::Text)
-        .child(icon(&icons::MAGNIFYING_GLASS, dim::MESSAGE_SEARCH_BAR_ICON_SIZE).color(p.text_tertiary))
-        .child(text("Search").font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary));
-    right = right.child(search);
+    right = right.child(super::search::bar(st, p, acc, layer));
     row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
@@ -318,7 +350,18 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     } else {
         sticky
     };
-    let md = Md::new(store, &st.media, c.guild_id, p, "");
+    let mut md = Md::new(store, &st.media, c.guild_id, p, "");
+    // Links to messages on this instance jump in-app; others open in the browser.
+    let web = st.web_base.clone();
+    md.on_link = Some(std::rc::Rc::new(move |t: El| {
+        let web = web.clone();
+        t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| match super::parse_message_link(&web, url) {
+            Some((g, ch, m)) => super::jump(acc(s), g, ch, m),
+            None => {
+                let _ = tx.open_url(url);
+            }
+        })
+    }));
     let copy = RefCell::new(markdown::CopyMap::new());
     let mut heads = HashSet::new();
     let perms = Perms::of(store, c);
@@ -382,6 +425,7 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         }
     }
     let more = store.messages.get(&c.id).is_some_and(|w| w.has_more_before);
+    let newer = store.messages.get(&c.id).is_some_and(|w| w.has_more_after);
     let cid = c.id;
     let list = col()
         .w_full()
@@ -406,17 +450,57 @@ fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             }
             // The clearance row is the last; seeing it means the newest message is on screen.
             let bottom = r.end > n_items;
-            let changed = st.at_bottom != bottom;
+            if bottom && newer && !st.intents.contains(&Intent::LoadNewer { channel: cid }) {
+                st.intents.push(Intent::LoadNewer { channel: cid });
+            }
+            let below = (n_items + 1).saturating_sub(r.end);
+            let changed = st.at_bottom != bottom || (st.rows_below > PRESENT_ROWS) != (below > PRESENT_ROWS);
             st.at_bottom = bottom;
+            st.rows_below = below;
             changed
         });
-    let viewport = col().w_full().grow(1.0).min_h(0.0).justify_end().scroll(ScrollSpec { stick_bottom: true }).child(list);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).justify_end().scroll(ScrollSpec { stick_bottom: !newer }).child(list);
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
+    if newer || st.rows_below > PRESENT_ROWS {
+        area = area.child(present_bar(cid, p, acc));
+    }
     let typing = store.typing_users(c.id, st.now_ms);
     if !typing.is_empty() {
         area = area.child(typing_rail(store, c.guild_id, &typing, p));
     }
     area
+}
+
+/// Rows below the screen past which the jump-to-present bar shows.
+const PRESENT_ROWS: usize = 30;
+
+/// `.jumpToPresentBar`: a pill over the list's foot while reading history.
+fn present_bar<S: 'static>(channel: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+    let bg = mix(p.background_textarea, p.background_tertiary, 90.0);
+    row()
+        // Above the typing rail.
+        .pin(Some(PAD), None, Some(PAD), Some(dim::COMPOSER_STATUS_ROW_HEIGHT + 4.0))
+        .min_h(44.0)
+        .pl(16.0)
+        .pr(6.0)
+        .gap(12.0)
+        .center_y()
+        .radius(dim::RADIUS_FULL)
+        .fill(bg)
+        .border(1.0, over(p.background_modifier_accent, bg))
+        .key("jump-present-bar")
+        .child(text("You're viewing older messages").font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary).truncate().grow(1.0).shrink().min_w(0.0))
+        .child(
+            Button::new("Jump to present")
+                .size(crate::ui::ButtonSize::Compact)
+                .key("jump-present")
+                .on_press(move |s: &mut S| {
+                    let st = acc(s);
+                    st.highlight = None;
+                    st.intents.push(Intent::JumpToPresent(channel));
+                })
+                .el(p),
+        )
 }
 
 fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
@@ -669,7 +753,12 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     let ms = message_ms(m);
     let mentioned = m.mention_everyone || m.mentions.iter().any(|u| u.id == store.my_id());
     let mut root = col().w_full().pr(PAD + dim::MESSAGE_ACTION_BAR_OFFSET).py(dim::MESSAGE_SPACING_Y).hover_group();
-    if mentioned {
+    if st.highlight == Some(m.id) {
+        // `.messageHighlight`: the jumped-to message.
+        root = root
+            .fill(p.message_reply_bg)
+            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(dim::MESSAGE_HIGHLIGHT_BAR_WIDTH).fill(p.brand_primary_light));
+    } else if mentioned {
         root = root
             .fill(p.message_mention_bg)
             .hover(mix(p.message_mention_bg_hover, Color::TRANSPARENT, 40.0))
@@ -678,7 +767,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
         root = root.hover(p.background_modifier_hover);
     }
     if head && m.kind == MessageType::REPLY {
-        root = root.child(reply_preview(store, st, m, md, p));
+        root = root.child(reply_preview(store, st, m, md, p, acc));
     }
 
     // Avatar column: the avatar on a group head, the hover time on the rest.
@@ -810,7 +899,7 @@ fn save_edit(st: &mut ShellState, id: Snowflake, original: &str) {
 }
 
 /// The reply bar above a reply: spine from the avatar, mini avatar, name and a one-line preview.
-fn reply_preview(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette) -> El {
+fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>) -> El {
     let h = dim::MESSAGE_REPLY_HEIGHT;
     let spine_c = mix(p.text_chat_muted, Color::BLACK, 82.0);
     let w = dim::MESSAGE_REPLY_SPINE_WIDTH;
@@ -840,7 +929,9 @@ fn reply_preview(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palet
             } else {
                 markdown::inline_text(&r.content, md, font(14.0, 400.0).lh(h), p.text_primary_muted)
             };
-            line = line.child(preview.shrink().min_w(0.0));
+            // Clicking the preview jumps to the replied message.
+            let (g, ch, id) = (store.channels.get(&m.channel_id).and_then(|c| c.guild_id), m.channel_id, r.id);
+            line = line.child(preview.shrink().min_w(0.0)).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::jump(acc(s), g, ch, id));
         }
         None => {
             line = line
@@ -907,6 +998,10 @@ fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Pale
     }
     for a in &m.attachments {
         c = c.child(attachment(st, a, p));
+    }
+    // An optimistic message's upload progress.
+    if let Some(&f) = st.progress.get(&m.id) {
+        c = c.child(row().w(432.0).h(4.0).radius(2.0).fill(p.background_modifier_accent).child(el().w(432.0 * f).h(4.0).radius(2.0).fill(p.brand_primary)));
     }
     if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) {
         for (i, e) in m.embeds.iter().enumerate() {
@@ -1102,6 +1197,16 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     // The newest own user message, for Up-arrow editing.
     let me = store.my_id();
     let last_own = store.messages(cid).iter().rev().find(|m| m.author.id == me && is_user_message(m) && !is_pending(m)).cloned();
+    // The completions for the word at the caret, unless dismissed with Escape.
+    let ac = autocomplete::trigger(&st.composer.text, st.composer.focus)
+        .filter(|t| st.composer.focused && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())))
+        .map(|t| {
+            let items = autocomplete::completions(store, c, &t);
+            (t, items)
+        })
+        .filter(|(_, items)| !items.is_empty());
+    let ac_keys = ac.clone();
+    let (limit, slow) = (st.limits.message_length, slowmode(store, c));
     let field = text_input(&st.composer, font(16.0, 400.0).lh(22.0))
         .key("composer")
         .w_full()
@@ -1109,18 +1214,18 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .placeholder(placeholder, p.text_tertiary_secondary)
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).composer })
-        .on_input_key(move |s: &mut S, k, _| composer_key(acc(s), cid, k, last_own.as_ref()))
-        // Enter sends; Shift+Enter is the field's own newline.
-        .on_submit(move |s: &mut S, _| {
-            let st = acc(s);
-            let content = st.composer.text.trim().to_string();
-            if !content.is_empty() {
-                let reply = st.reply.take().filter(|r| r.channel == cid).map(|r| (r.message, r.mention));
-                st.intents.push(Intent::SendMessage { channel: cid, content, reply });
-                st.composer.clear();
-                st.typing_sent = None; // `handleOwnMessageSent`
+        .on_input_key(move |s: &mut S, k, _| composer_key(acc(s), cid, k, last_own.as_ref(), ac_keys.as_ref()))
+        // A pasted image joins the tray.
+        .on_input_paste(move |s: &mut S, content, _| match content.image() {
+            Some(img) => {
+                super::upload::add_png(acc(s), img.png().to_vec());
+                true
             }
-        });
+            None => false,
+        })
+        // Enter sends; Shift+Enter is the field's own newline.
+        .on_submit(move |s: &mut S, _| send(acc(s), cid, limit, slow));
+    let plus = button(&icons::PLUS_BOLD, "Upload").key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
     let input_row = row()
@@ -1131,8 +1236,9 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .gap(dim::MESSAGE_GUTTER)
         .items_start()
         .cursor(rune::Cursor::Text)
-        .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(button(&icons::PLUS_BOLD, "Upload")))
-        .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).child(field))
+        .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
+        // shortcut: a fixed 15-line cap before the field scrolls; Fluxer caps at half the window.
+        .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(15.0 * 22.0 + 5.0).scroll(ScrollSpec { stick_bottom: true }).child(field))
         .child(
             row()
                 .gap(dim::COMPOSER_ACTION_GAP)
@@ -1152,13 +1258,111 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     {
         boxed = boxed.child(reply_bar(store, target, r, p, acc));
     }
-    row().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color).child(boxed.child(input_row))
+    if let Some(tray) = super::upload::tray(st, p, acc) {
+        boxed = boxed.child(tray);
+    }
+    boxed = boxed.child(input_row);
+    // `CharacterCounter`: from 80% of the limit; red under 50 left.
+    let len = st.composer.text.chars().count();
+    if len * 10 > limit * 8 {
+        let left = limit as i64 - len as i64;
+        boxed = boxed.child(
+            text(left.to_string())
+                .font(font(12.0, 400.0).mono())
+                .color(if left < 50 { p.status_danger } else { p.text_tertiary })
+                .label(if left < 0 { format!("Character limit exceeded by {}", -left) } else { format!("{left} characters left") })
+                .pin(None, None, Some(12.0), Some(4.0)),
+        );
+    }
+    let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
+    // The autocomplete list hangs above the box, as wide as it.
+    if let Some((t, items)) = &ac {
+        out = out.child(el().w_full().h(0.0).child(autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0))));
+    }
+    if slow > 0 {
+        out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p));
+    }
+    out.child(boxed)
 }
 
-/// The composer's own keys: Escape drops the reply, Up in an empty composer edits the last own
-/// message, and typing sends a typing notice at most every 8 s (`TypingSendThrottle`).
+/// The channel's slowmode in seconds, 0 if none or the user bypasses it.
+fn slowmode(store: &Store, c: &Channel) -> u32 {
+    let bypass = store.permissions(c.id).intersects(Permissions::MANAGE_MESSAGES | Permissions::MANAGE_CHANNELS);
+    if bypass { 0 } else { c.rate_limit_per_user }
+}
+
+/// `SlowmodeIndicator`, right of the typing rail: "Slowmode is active (m:ss)" while cooling down.
+fn slowmode_label(left_ms: u64, p: &Palette) -> El {
+    let secs = left_ms.div_ceil(1000);
+    let (line, color) = if secs > 0 {
+        (format!("Slowmode is active ({}:{:02})", secs / 60, secs % 60), p.status_danger)
+    } else {
+        ("Slowmode is enabled".to_string(), p.text_primary_muted)
+    };
+    el().w_full().h(0.0).child(
+        row()
+            .pin(None, None, Some(PAD - dim::FOOTER_BOX_INSET), Some(0.0))
+            .h(dim::COMPOSER_STATUS_ROW_HEIGHT)
+            .gap(4.0)
+            .center_y()
+            .inert()
+            .child(icon(&icons::CLOCK_FILL, 12.0).color(color))
+            .child(text(line).font(font(12.0, 500.0).lh(dim::COMPOSER_STATUS_LINE_HEIGHT)).color(color)),
+    )
+}
+
+/// Enter: sends the text (after `/me`, `/spoiler`) with the tray's files, unless over the length
+/// limit or cooling down from slowmode.
+fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
+    let content = autocomplete::apply_command(st.composer.text.trim());
+    if (content.is_empty() && st.uploads.is_empty()) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
+        return;
+    }
+    let len = content.chars().count();
+    if len > limit {
+        st.notice = Some(("Message is too long".into(), format!("Character limit exceeded by {}", len - limit)));
+        return;
+    }
+    let reply = st.reply.take().filter(|r| r.channel == channel).map(|r| (r.message, r.mention));
+    let attachments = std::mem::take(&mut st.uploads);
+    st.intents.push(Intent::SendMessage { channel, content, reply, attachments });
+    if slowmode > 0 {
+        st.cooldowns.insert(channel, st.now_ms + slowmode as u64 * 1000);
+    }
+    st.composer.clear();
+    st.typing_sent = None; // `handleOwnMessageSent`
+    st.ac_dismissed = None;
+}
+
+type Ac = (autocomplete::Trigger, Vec<autocomplete::Completion>);
+
+/// The composer's own keys: the autocomplete's Up/Down/Tab/Enter/Escape when it is open, Escape
+/// drops the reply, Up in an empty composer edits the last own message, and typing sends a
+/// typing notice at most every 8 s (`TypingSendThrottle`).
 // shortcut: no 1.5 s send delay or stop-typing on clear; the notice goes out at once.
-fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, last_own: Option<&Message>) -> bool {
+fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, last_own: Option<&Message>, ac: Option<&Ac>) -> bool {
+    if let Some((t, items)) = ac {
+        let n = items.len();
+        match &k.key {
+            Key::Up => {
+                st.ac_index = (st.ac_index.min(n - 1) + n - 1) % n;
+                return true;
+            }
+            Key::Down => {
+                st.ac_index = (st.ac_index.min(n - 1) + 1) % n;
+                return true;
+            }
+            Key::Tab | Key::Enter if !k.mods.shift => {
+                autocomplete::accept(st, t, &items[st.ac_index.min(n - 1)]);
+                return true;
+            }
+            Key::Escape => {
+                st.ac_dismissed = Some((t.start, t.query.clone()));
+                return true;
+            }
+            _ => {}
+        }
+    }
     match &k.key {
         Key::Escape if st.reply.is_some() => {
             st.reply = None;
@@ -1172,6 +1376,7 @@ fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, las
             None => false,
         },
         Key::Text(_) if !k.mods.cmd => {
+            st.ac_index = 0;
             if st.typing_sent.is_none_or(|(c, at)| c != channel || st.now_ms.saturating_sub(at) >= TYPING_THROTTLE_MS) {
                 st.typing_sent = Some((channel, st.now_ms));
                 st.intents.push(Intent::Typing(channel));
@@ -1292,25 +1497,66 @@ mod tests {
         let ch = Snowflake(5);
         let key = |k: Key| rune::KeyEvent { key: k, mods: Default::default() };
         let mut st = ShellState { now_ms: 10_000, ..Default::default() };
-        assert!(!composer_key(&mut st, ch, &key(Key::Text("a".into())), None), "typing still reaches the field");
+        assert!(!composer_key(&mut st, ch, &key(Key::Text("a".into())), None, None), "typing still reaches the field");
         st.now_ms += TYPING_THROTTLE_MS - 1;
-        composer_key(&mut st, ch, &key(Key::Text("b".into())), None);
+        composer_key(&mut st, ch, &key(Key::Text("b".into())), None, None);
         assert_eq!(st.intents, [Intent::Typing(ch)], "one notice per 8 s");
         st.now_ms += 1;
-        composer_key(&mut st, ch, &key(Key::Text("c".into())), None);
+        composer_key(&mut st, ch, &key(Key::Text("c".into())), None, None);
         assert_eq!(st.intents.len(), 2);
 
         let mut mine = msg(9, 1, "2026-11-06T12:00:00Z");
         mine.content = "hi".into();
-        assert!(composer_key(&mut st, ch, &key(Key::Up), Some(&mine)));
+        assert!(composer_key(&mut st, ch, &key(Key::Up), Some(&mine), None));
         assert_eq!(st.editing.as_ref().map(|e| (e.0, e.1.text.as_str())), Some((Snowflake(9), "hi")));
         st.composer = TextEdit::new("draft");
         st.editing = None;
-        assert!(!composer_key(&mut st, ch, &key(Key::Up), Some(&mine)), "Up only edits from an empty composer");
+        assert!(!composer_key(&mut st, ch, &key(Key::Up), Some(&mine), None), "Up only edits from an empty composer");
 
         st.reply = Some(ReplyTo { channel: ch, message: Snowflake(9), mention: true });
-        assert!(composer_key(&mut st, ch, &key(Key::Escape), None));
+        assert!(composer_key(&mut st, ch, &key(Key::Escape), None, None));
         assert!(st.reply.is_none());
+
+        // The autocomplete takes the arrows, Tab and Escape while open.
+        st.composer = TextEdit::new("/sh");
+        let t = crate::shell::autocomplete::trigger("/sh", 3).unwrap();
+        let item = |i: &str| crate::shell::autocomplete::Completion { glyph: crate::shell::autocomplete::Glyph::Text("/"), label: i.into(), detail: String::new(), insert: format!("{i} ") };
+        let ac = (t.clone(), vec![item("a"), item("b")]);
+        assert!(composer_key(&mut st, ch, &key(Key::Up), None, Some(&ac)));
+        assert_eq!(st.ac_index, 1, "Up wraps to the last");
+        assert!(composer_key(&mut st, ch, &key(Key::Tab), None, Some(&ac)));
+        assert_eq!(st.composer.text, "b ");
+        assert!(composer_key(&mut st, ch, &key(Key::Escape), None, Some(&ac)));
+        assert_eq!(st.ac_dismissed, Some((0, "sh".into())));
+    }
+
+    #[test]
+    fn sending_applies_commands_limits_and_slowmode() {
+        let ch = Snowflake(5);
+        let mut st = ShellState { now_ms: 1000, limits: crate::shell::upload::Limits { message_length: 10, ..Default::default() }, ..Default::default() };
+        st.composer = TextEdit::new("/me waves");
+        send(&mut st, ch, 10, 30);
+        assert_eq!(st.intents, [Intent::SendMessage { channel: ch, content: "_waves_".into(), reply: None, attachments: vec![] }]);
+        assert_eq!(st.cooldowns[&ch], 31_000);
+        st.composer = TextEdit::new("hi");
+        send(&mut st, ch, 10, 30);
+        assert_eq!(st.intents.len(), 1, "cooling down");
+        st.now_ms = 31_000;
+        st.composer = TextEdit::new("way too long text");
+        send(&mut st, ch, 10, 0);
+        assert_eq!(st.notice.as_ref().map(|n| n.0.as_str()), Some("Message is too long"));
+        assert_eq!(st.composer.text, "way too long text", "kept for shortening");
+    }
+
+    #[test]
+    fn message_links_parse_on_this_instance_only() {
+        let web = "https://web.fluxer.app/";
+        let p = |u: &str| crate::shell::parse_message_link(web, u);
+        assert_eq!(p("https://web.fluxer.app/channels/@me/5/9"), Some((None, Snowflake(5), Snowflake(9))));
+        assert_eq!(p("https://web.fluxer.app/channels/1/5/9"), Some((Some(Snowflake(1)), Snowflake(5), Snowflake(9))));
+        assert_eq!(p("https://web.fluxer.app/channels/1/5"), None, "a channel link isn't a message");
+        assert_eq!(p("https://example.com/channels/1/5/9"), None);
+        assert_eq!(crate::shell::parse_message_link("", "https://x/channels/1/5/9"), None);
     }
 
     #[test]

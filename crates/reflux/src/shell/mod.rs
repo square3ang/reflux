@@ -5,6 +5,7 @@
 //! Views are pure; what needs the network goes out as an [`Intent`] queued on
 //! [`ShellState::intents`] for the runtime to drain.
 
+mod autocomplete;
 mod chat;
 pub mod demo;
 mod emoji;
@@ -13,8 +14,13 @@ mod guilds;
 mod markdown;
 mod members;
 mod menus;
+pub mod pins;
 mod profile;
+pub mod search;
+mod search_query;
 mod sidebar;
+pub mod switcher;
+pub mod upload;
 pub mod voice;
 
 pub use friends::FriendsTab;
@@ -40,9 +46,19 @@ pub enum Intent {
     /// Fetch its newest messages if none are loaded; ack it.
     SelectChannel(Snowflake),
     /// `reply`: the message replied to and whether to ping its author.
-    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)> },
+    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>, attachments: Vec<upload::Upload> },
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
+    /// The list reached its newest loaded message while in history: fetch the page after it.
+    LoadNewer { channel: Snowflake },
+    /// Show a message: scroll to it if loaded, else load the page around it first.
+    JumpTo { channel: Snowflake, message: Snowflake },
+    /// Back to the newest messages (reloading them if the window is in history).
+    JumpToPresent(Snowflake),
+    /// Fetch the channel's pins (`more`: the next page).
+    LoadPins { channel: Snowflake, more: bool },
+    /// `POST /search/messages` with this body; results land in `search.results`.
+    Search(serde_json::Value),
     /// The user typed in the composer (already throttled by the shell).
     Typing(Snowflake),
     /// Move the read marker back so `message` and everything after it is unread.
@@ -222,6 +238,37 @@ pub struct ShellState {
     pub invite_base: String,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
+    /// Files waiting in the composer's tray, and the last tray ID given out.
+    pub uploads: Vec<upload::Upload>,
+    pub upload_seq: u64,
+    /// The tray file whose alt text is being edited.
+    pub upload_edit: Option<(u64, TextEdit)>,
+    /// Upload progress (0..1) of optimistic messages, by their nonce ID.
+    pub progress: std::collections::HashMap<Snowflake, f32>,
+    /// An error dialog: (title, body).
+    pub notice: Option<(String, String)>,
+    /// The account's resolved instance limits.
+    pub limits: upload::Limits,
+    /// A file drag is over the chat.
+    pub drop_hover: bool,
+    /// Loaded pins by channel, and the pin waiting on the unpin confirmation.
+    pub pins: std::collections::HashMap<Snowflake, pins::Pins>,
+    pub confirm_unpin: Option<(Snowflake, Snowflake)>,
+    pub search: search::Search,
+    /// A handler asked for a search (run where the store is at hand).
+    pub search_requested: bool,
+    /// The message jumped to, drawn highlighted until another jump or channel.
+    pub highlight: Option<Snowflake>,
+    /// A key to scroll into view on the next frame (`msg-{id}`, or `msgs-end`).
+    pub scroll_to: Option<String>,
+    /// Rows between the last one on screen and the end of the list.
+    pub rows_below: usize,
+    pub switcher: Option<switcher::Switcher>,
+    /// The highlighted autocomplete row, and the trigger word dismissed with Escape.
+    pub ac_index: usize,
+    pub ac_dismissed: Option<(usize, String)>,
+    /// When slowmode lets the user send again, by channel (unix ms).
+    pub cooldowns: std::collections::HashMap<Snowflake, u64>,
 }
 
 impl Default for ShellState {
@@ -267,6 +314,24 @@ impl Default for ShellState {
             form: Default::default(),
             invite_base: String::new(),
             prefs: Default::default(),
+            uploads: Vec::new(),
+            upload_seq: 0,
+            upload_edit: None,
+            progress: Default::default(),
+            notice: None,
+            limits: Default::default(),
+            drop_hover: false,
+            pins: Default::default(),
+            confirm_unpin: None,
+            search: Default::default(),
+            search_requested: false,
+            highlight: None,
+            scroll_to: None,
+            rows_below: 0,
+            switcher: None,
+            ac_index: 0,
+            ac_dismissed: None,
+            cooldowns: Default::default(),
         }
     }
 }
@@ -311,12 +376,71 @@ impl ShellState {
     pub fn select_channel(&mut self, channel: Snowflake) {
         if self.channel != Some(channel) {
             self.composer = TextEdit::new("");
-            (self.reply, self.editing, self.sticky_unread, self.hold_ack) = (None, None, None, None);
+            (self.reply, self.editing, self.sticky_unread, self.hold_ack, self.highlight) = (None, None, None, None, None);
+            self.uploads.clear();
             self.at_bottom = true;
+            self.rows_below = 0;
         }
         self.channel = Some(channel);
         self.intents.push(Intent::SelectChannel(channel));
     }
+
+    /// Opens the quick switcher, or closes it.
+    pub fn toggle_switcher(&mut self) {
+        self.switcher = if self.switcher.is_some() { None } else { Some(switcher::Switcher::new()) };
+    }
+}
+
+/// Goes to a message: opens its channel if needed, then scrolls to it (loading around it when
+/// it isn't loaded) and highlights it.
+pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, message: Snowflake) {
+    if st.channel != Some(channel) {
+        if st.guild != guild {
+            st.guild = guild;
+            st.intents.push(Intent::SelectGuild(guild));
+        }
+        st.select_channel(channel);
+    }
+    st.highlight = Some(message);
+    st.intents.push(Intent::JumpTo { channel, message });
+}
+
+/// Once a frame, where the store and a `Tx` are at hand: runs a requested search, settles jumps
+/// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
+pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    let mut changed = false;
+    if std::mem::take(&mut st.search_requested) {
+        search::run(store, st, st.search.page.max(1));
+        changed = true;
+    }
+    // A jump to a loaded message only scrolls; the runtime loads the others first.
+    st.intents.retain(|i| match i {
+        Intent::JumpTo { channel, message } if store.messages(*channel).iter().any(|m| m.id == *message) => {
+            st.scroll_to = Some(format!("msg-{message}"));
+            false
+        }
+        _ => true,
+    });
+    // A jumped-to message lands centred (`scrollToMessage`); the end just comes into view.
+    match st.scroll_to.take() {
+        Some(key) if key.starts_with("msg-") => tx.scroll_center(key),
+        Some(key) => tx.scroll_into_view(key),
+        None => return changed,
+    }
+    true
+}
+
+/// A message link (`https://{webapp}/channels/{guild or @me}/{channel}/{message}`) on this
+/// instance: (guild, channel, message).
+pub fn parse_message_link(web_base: &str, url: &str) -> Option<(Option<Snowflake>, Snowflake, Snowflake)> {
+    let base = web_base.trim_end_matches('/');
+    let rest = url.strip_prefix(base).filter(|_| !base.is_empty())?.strip_prefix("/channels/")?;
+    let mut parts = rest.trim_end_matches('/').split('/');
+    let g = parts.next()?;
+    let c: u64 = parts.next()?.parse().ok()?;
+    let m: u64 = parts.next()?.parse().ok()?;
+    let guild = if g == "@me" { None } else { Some(Snowflake(g.parse().ok()?)) };
+    Some((guild, Snowflake(c), Snowflake(m)))
 }
 
 /// Decodes the six default avatars (they are tiny; waits for them).
@@ -387,6 +511,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }
+    layer.extend(upload::edit_modal(st, p, acc));
+    layer.extend(switcher::view(store, st, p, acc));
+    layer.extend(upload::notice_modal(st, p, acc));
     rune_kit::root(body, layer)
 }
 

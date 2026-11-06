@@ -361,6 +361,16 @@ impl Store {
         trim_oldest(w);
     }
 
+    /// Replaces the window with a page around a message (`around=`, jump to message). It's the
+    /// newest only when it reaches the channel's last message.
+    pub fn set_around_messages(&mut self, channel: Snowflake, page: Vec<Message>, limit: usize) {
+        let last = self.channels.get(&channel).and_then(|c| c.last_message_id);
+        let newest = page.iter().map(|m| m.id).max();
+        let w = self.messages.entry(channel).or_default();
+        *w = MessageWindow { has_more_before: page.len() >= limit, has_more_after: newest.is_some_and(|n| last.is_some_and(|l| l > n)), ..Default::default() };
+        merge(&mut w.messages, page);
+    }
+
     /// Inserts an optimistic own message. Its `id` must be the nonce parsed as a snowflake and
     /// `nonce` must be set; the matching `MESSAGE_CREATE` replaces it.
     pub fn add_local_message(&mut self, m: Message) {

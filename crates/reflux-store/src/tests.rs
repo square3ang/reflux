@@ -313,3 +313,16 @@ fn iso_parse() {
     assert_eq!(parse_iso_ms("2024-02-29T12:34:56.789+00:00"), Some(1_709_210_096_789));
     assert_eq!(parse_iso_ms("bad"), None);
 }
+
+#[test]
+fn around_window_knows_if_it_is_the_newest() {
+    let mut s = store();
+    let page = |ids: &[u64]| ids.iter().map(|&i| serde_json::from_value::<Message>(msg(i, 300, 6)).unwrap()).collect::<Vec<_>>();
+    s.set_around_messages(S(300), page(&[290, 300]), 50);
+    let w = &s.messages[&S(300)];
+    assert!(w.has_more_after && !w.has_more_before, "300 < last 310: history");
+    apply(&mut s, "MESSAGE_CREATE", msg(311, 300, 6));
+    assert_eq!(s.messages(S(300)).len(), 2, "live messages wait while in history");
+    s.set_around_messages(S(300), page(&[305, 311]), 50);
+    assert!(!s.messages[&S(300)].has_more_after, "reaches the last message");
+}

@@ -56,7 +56,10 @@ fn main() {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
-        poll: Some(|s, _, _| app::poll(s)),
+        poll: Some(|s, _, tx| match &mut s.shell_demo {
+            Some(d) => shell::poll_shell(&d.store, &mut d.shell, tx),
+            None => app::poll(s, tx),
+        }),
         on_key: Some(keybinds::on_key),
         setup: Some(|s, waker| {
             ui::gallery::setup(s, waker.clone());

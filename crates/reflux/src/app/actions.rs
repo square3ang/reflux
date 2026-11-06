@@ -226,6 +226,10 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
         s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
     }
+    if let Some(inst) = &s.app.instance {
+        let traits = s.app.store.me.as_ref().map_or(&[][..], |m| &m.traits[..]);
+        s.app.shell.limits = crate::shell::upload::resolve(&inst.discovery.limits, traits);
+    }
     let now = now_ms();
     let sh = &s.app.shell;
     if let Some(ch) = sh.channel.filter(|&c| sh.at_bottom && sh.hold_ack != Some(c) && s.app.store.has_unread(c)) {

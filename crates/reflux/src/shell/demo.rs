@@ -312,7 +312,7 @@ impl Demo {
             }
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--msg-scene=")) {
-            stage(&mut shell, &store, sc);
+            stage(&mut shell, &mut store, sc);
         }
         for a in rune::extra_args() {
             if a == "--shell-home" {
@@ -422,8 +422,10 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
 }
 
-/// `--msg-scene=hover|menu|more|emoji|reply|edit|delete`: message actions mid-use.
-fn stage(st: &mut ShellState, store: &Store, scene: &str) {
+/// `--msg-scene=hover|menu|more|emoji|reply|edit|delete`: message actions mid-use;
+/// `uploads|pins|search|search-options|switcher|autocomplete|jump|present|slowmode|counter`: the
+/// composer and navigation tools.
+fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
     let ids: Vec<Snowflake> = store.messages(Snowflake(GENERAL)).iter().map(|m| m.id).collect();
     let (shot, mine, ada) = (ids[6], ids[7], ids[8]);
     match scene {
@@ -446,6 +448,63 @@ fn stage(st: &mut ShellState, store: &Store, scene: &str) {
             st.editing = Some((m.id, rune::TextEdit::new(m.content)));
         }
         "delete" => st.confirm_delete = Some(mine),
+        "uploads" => {
+            // A gradient stands in for a pasted screenshot.
+            let img = image::RgbaImage::from_fn(320, 180, |x, y| image::Rgba([(x * 255 / 320) as u8, (y * 255 / 180) as u8, 160, 255]));
+            let mut png = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("png");
+            super::upload::add_png(st, png);
+            let notes = super::upload::Source::Bytes(std::sync::Arc::new(b"notes".to_vec()));
+            super::upload::add(st, vec![("release-notes.pdf".into(), 1_572_864, notes)]);
+            st.uploads[1].spoiler = true;
+            st.composer = rune::TextEdit::new("Here are the files");
+        }
+        "pins" => {
+            st.popups.toggle(super::pins::POPOUT);
+            let ms = store.messages(Snowflake(GENERAL));
+            let items = [&ms[8], &ms[6]].map(|m| (m.clone(), m.timestamp.clone())).to_vec();
+            st.pins.insert(Snowflake(GENERAL), super::pins::Pins { items, ..Default::default() });
+        }
+        "search" => {
+            st.search.query = rune::TextEdit::new("from:ada ship");
+            let messages = [8, 3].map(|i| store.messages(Snowflake(GENERAL))[i].clone()).to_vec();
+            st.search.results = Some(super::search::Results::Done { messages, total: 2 });
+            st.search.ran = "from:ada ship".into();
+        }
+        "search-options" => st.search.query.focused = true,
+        "switcher" => {
+            st.toggle_switcher();
+            if let Some(sw) = &mut st.switcher {
+                sw.query = rune::TextEdit::new("#");
+                sw.query.focused = true;
+            }
+        }
+        "autocomplete" => {
+            st.composer = rune::TextEdit::new("hey @a");
+            st.composer.focused = true;
+        }
+        "jump" => {
+            st.highlight = Some(ids[4]);
+            st.scroll_to = Some(format!("msg-{}", ids[4]));
+        }
+        "present" => {
+            if let Some(w) = store.messages.get_mut(&Snowflake(GENERAL)) {
+                w.has_more_after = true;
+            }
+        }
+        "slowmode" | "counter" => {
+            if let Some(c) = store.channels.get_mut(&Snowflake(GENERAL)) {
+                c.rate_limit_per_user = 90;
+            }
+            // Owners bypass slowmode; hand the community to Ada for the shot.
+            if let Some(info) = store.guilds.get_mut(&Snowflake(HQ)).and_then(|g| g.info.as_mut()) {
+                info.owner_id = Snowflake(1001);
+            }
+            st.cooldowns.insert(Snowflake(GENERAL), st.now_ms + 75_000);
+            if scene == "counter" {
+                st.composer = rune::TextEdit::new("lorem ipsum ".repeat(166));
+            }
+        }
         _ => {}
     }
 }

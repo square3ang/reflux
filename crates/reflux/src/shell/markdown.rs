@@ -30,11 +30,13 @@ pub struct Md<'a> {
     /// A message body: its texts are selectable and note what they copy as here.
     pub copy: Option<(Snowflake, &'a RefCell<CopyMap>)>,
     texts: Cell<u32>,
+    /// Makes a text's links pressable (adds its `on_link`); links are reported by URL.
+    pub on_link: Option<std::rc::Rc<dyn Fn(El) -> El>>,
 }
 
 impl<'a> Md<'a> {
     pub fn new(store: &'a Store, media: &'a crate::media::Media, guild: Option<Snowflake>, p: &'a Palette, key: impl Into<String>) -> Self {
-        Md { store, media, guild, p, key: key.into(), copy: None, texts: Cell::new(0) }
+        Md { store, media, guild, p, key: key.into(), copy: None, texts: Cell::new(0), on_link: None }
     }
 
     /// The same markdown context for another body.
@@ -175,6 +177,8 @@ struct Run {
     emoji: Vec<InlineEmoji>,
     /// One-line previews draw emoji as text.
     plain_emoji: bool,
+    /// Link byte ranges and their URLs.
+    links: Vec<(Range<usize>, String)>,
 }
 
 impl Run {
@@ -235,6 +239,13 @@ impl Run {
         let mut t = rich(self.text, self.spans).font(font(size, weight).lh(lh)).color(color).w_full();
         for (a, b) in self.strikes {
             t = t.strike(a, b, None);
+        }
+        if let Some(f) = md.on_link.as_ref().filter(|_| !self.links.is_empty()) {
+            let p_link = md.p.text_link;
+            for (r, url) in std::mem::take(&mut self.links) {
+                t = t.link(rune::Link::new(r, url).hover(rune::LinkPaint::new().underline(p_link)));
+            }
+            t = f(t);
         }
         let subs = self.emoji.iter().map(|e| (e.range.clone(), e.copy.clone())).collect();
         if self.emoji.is_empty() {
@@ -472,10 +483,12 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
         Node::CodeBlock { content, .. } => run.push_span(content, |s| s.mono().size(13.6).color(p.text_code).bg(p.bg_code, 2.0)),
         Node::Link { text: label, url, .. } => {
             let st = Style { color: Some(p.text_link), ..st };
+            let start = run.text.len();
             match label {
                 Some(t) => inline(t, st, run, md),
                 None => run.push(url, st, md),
             }
+            run.links.push((start..run.text.len(), url.clone()));
         }
         Node::Mention { kind } => {
             let label = match kind {

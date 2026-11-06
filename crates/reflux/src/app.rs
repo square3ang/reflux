@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reflux_model::{
-    AuthResponse, CloseCode, CreateMessage, IdentifyProperties, InstanceDiscovery, LoginRequest, Message,
+    AuthResponse, CloseCode, IdentifyProperties, InstanceDiscovery, LoginRequest,
     RegisterRequest, SessionFlags, Snowflake, TotpLoginRequest, WebAuthnLoginRequest,
 };
 use reflux_net::{Client, Command, ConnectionState, Gateway, GatewayConfig, GatewayEvent, MessagePage};
@@ -20,6 +20,7 @@ use crate::ui::{Button, ButtonVariant, spinner};
 use crate::{State, session};
 
 mod actions;
+mod chat;
 mod guild;
 mod voice;
 
@@ -145,8 +146,8 @@ pub struct App {
 pub enum Action {
     /// Select a channel and fetch its newest messages if none are loaded.
     SelectChannel(Snowflake),
-    /// `reply`: (message, ping its author).
-    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)> },
+    /// `reply`: (message, ping its author); `attachments`: the tray's files.
+    SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>, attachments: Vec<crate::shell::upload::Upload> },
     /// Fetch the page before the oldest loaded message.
     LoadOlder(Snowflake),
     Logout,
@@ -160,7 +161,7 @@ pub fn act(s: &mut State, a: Action) {
                 fetch_messages(s, ch);
             }
         }
-        Action::SendMessage { channel, content, reply } => send_message(s, channel, content, reply),
+        Action::SendMessage { channel, content, reply, attachments } => chat::send(s, channel, content, reply, attachments),
         Action::LoadOlder(ch) => fetch_older(s, ch),
         Action::Logout => {
             if let Some(inst) = s.app.instance.clone() {
@@ -679,7 +680,7 @@ fn fetch_older(s: &State, channel: Snowflake) {
 }
 
 /// Runs what the shell queued since the last frame; true when anything ran.
-pub fn poll(s: &mut State) -> bool {
+pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.now_ms = now_ms();
     let f = s.app.instance.as_ref().map(|i| &i.discovery.features);
     s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
@@ -693,12 +694,16 @@ pub fn poll(s: &mut State) -> bool {
     }
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
+    use crate::shell::Intent;
+    // A jump loads around its message itself; the latest page would race it.
+    let jumps: Vec<Snowflake> = intents.iter().filter_map(|i| if let Intent::JumpTo { channel, .. } = i { Some(*channel) } else { None }).collect();
     for i in intents {
-        use crate::shell::Intent;
         match i {
             Intent::SelectGuild(_) => {}
+            Intent::SelectChannel(c) if jumps.contains(&c) => s.app.selected_channel = Some(c),
             Intent::SelectChannel(c) => act(s, Action::SelectChannel(c)),
-            Intent::SendMessage { channel, content, reply } => act(s, Action::SendMessage { channel, content, reply }),
+            Intent::SendMessage { channel, content, reply, attachments } => act(s, Action::SendMessage { channel, content, reply, attachments }),
+            i @ (Intent::LoadNewer { .. } | Intent::JumpTo { .. } | Intent::JumpToPresent(_) | Intent::LoadPins { .. } | Intent::Search(_)) => chat::run(s, i),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
             Intent::Api(c) => guild::run(s, c),
@@ -729,49 +734,8 @@ pub fn poll(s: &mut State) -> bool {
     actions::subscribe_member_list(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s);
-    actions::tick(s) || ran
-}
-
-fn send_message(s: &mut State, channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>) {
-    let (Some(inst), Some(me)) = (s.app.instance.clone(), s.app.store.me.as_ref()) else { return };
-    if content.trim().is_empty() {
-        return;
-    }
-    let now = now_ms();
-    // A snowflake for now, so the optimistic message sorts last; the server echoes it back.
-    let nonce = Snowflake(Snowflake::from_timestamp_ms(now).0 | fastrand::u64(..1 << 22));
-    let target = reply.and_then(|(id, _)| s.app.store.messages(channel).iter().find(|m| m.id == id).cloned());
-    let reference = reply.map(|(id, _)| reflux_model::MessageReferenceInput { message_id: id, channel_id: Some(channel), ..Default::default() });
-    s.app.store.add_local_message(Message {
-        id: nonce,
-        channel_id: channel,
-        author: me.base.clone(),
-        content: content.clone(),
-        timestamp: iso8601(now),
-        nonce: Some(nonce.to_string()),
-        kind: if reply.is_some() { reflux_model::MessageType::REPLY } else { Default::default() },
-        message_reference: reply.map(|(id, _)| reflux_model::MessageReference { channel_id: channel, message_id: Some(id), ..Default::default() }),
-        referenced_message: reply.map(|_| target.map(Box::new)),
-        ..Default::default()
-    });
-    // A reply pings its author only when the bar's toggle is on.
-    let allowed_mentions = reply.map(|(_, ping)| reflux_model::AllowedMentions {
-        parse: Some(vec!["users".into(), "roles".into(), "everyone".into()]),
-        replied_user: Some(ping),
-        ..Default::default()
-    });
-    let body = CreateMessage { nonce: Some(nonce.to_string()), content: Some(content), message_reference: reference, allowed_mentions, ..Default::default() };
-    spawn(async move {
-        if let Err(e) = inst.rest.send_message(channel, &body).await {
-            eprintln!("reflux: send to {channel}: {e}");
-            // shortcut: a failed send just disappears; add a "failed, retry" message state later.
-            update(move |s| {
-                if let Some(w) = s.app.store.messages.get_mut(&channel) {
-                    w.messages.retain(|m| m.id != nonce);
-                }
-            });
-        }
-    });
+    let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
+    actions::tick(s) || ran || shell
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.

@@ -9,7 +9,7 @@ mod zstd_stream;
 
 pub use discovery::discover;
 pub use gateway::{Command, ConnectionState, Gateway, GatewayConfig, GatewayEvent};
-pub use rest::{Client, MessagePage};
+pub use rest::{ChannelPin, Client, MessagePage, PinsPage, SearchResponse, UploadPlan};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -27,6 +27,8 @@ pub enum Error {
     Discovery(String),
     #[error("invalid url: {0}")]
     Url(String),
+    #[error("{0}")]
+    Upload(String),
 }
 
 impl Error {

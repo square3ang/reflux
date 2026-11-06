@@ -216,6 +216,20 @@ impl Media {
         })
     }
 
+    /// A local file or pasted image (upload previews), read and decoded off the UI thread.
+    pub fn local(&self, key: &str, read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static) -> Load {
+        self.entry(key, |cache| {
+            if self.0.fixture.get().is_some() {
+                return read().and_then(|b| decode(cache, b)).map_or(Slot::Failed, |img| {
+                    let _ = img.wait();
+                    Slot::Ready(img)
+                });
+            }
+            self.decode_later(key.to_owned(), move |cache| read().and_then(|b| decode(cache, b)));
+            Slot::Pending
+        })
+    }
+
     fn entry(&self, key: &str, start: impl FnOnce(&ImageCache) -> Slot) -> Load {
         let Some(cache) = self.0.cache.get() else { return Load::Pending };
         let mut e = self.0.entries.lock().unwrap_or_else(|e| e.into_inner());
