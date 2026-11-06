@@ -14,5 +14,6 @@ reflux-markdown.workspace = true
 reflux-model.workspace = true
 reflux-net.workspace = true
 reflux-store.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
 fastrand = "2"

@@ -3689,6 +3689,7 @@ dependencies = [
 name = "reflux"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs",
  "fastrand",
  "reflux-markdown",
