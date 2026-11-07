@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use reflux_model::{ChannelType, Message, Snowflake};
+use reflux_model::{ChannelType, Message, MessageType, Snowflake};
 use reflux_store::Store;
 
 use crate::i18n::t;
@@ -32,14 +32,19 @@ pub fn title(store: &Store, m: &Message) -> String {
 /// `buildMessageNotificationBody` (`MessageNotificationPreview.ts`): the content rendered to
 /// plain text with markdown kept (mentions as `@name` / `@role` / `#channel`, custom emoji as
 /// `:name:`), else a sticker, attachment or embed line, else the forwarded message's.
-// shortcut: system messages show their raw content (Fluxer's `SystemMessageUtils.stringify`
-// isn't ported).
+/// System messages use `SystemMessageUtils.stringify`.
 pub fn body(store: &Store, m: &Message) -> String {
     let guild = store.channels.get(&m.channel_id).and_then(|c| c.guild_id);
-    let users: Vec<Snowflake> = m.mentions.iter().map(|u| u.id).collect();
-    let text = markdown(store, guild, &m.content, &users, &m.mention_roles, &m.mention_channels);
-    if !text.is_empty() {
-        return text;
+    if !matches!(m.kind, MessageType::DEFAULT | MessageType::REPLY) {
+        if let Some(s) = crate::shell::system_msg::stringify(store, m) {
+            return s;
+        }
+    } else {
+        let users: Vec<Snowflake> = m.mentions.iter().map(|u| u.id).collect();
+        let text = markdown(store, guild, &m.content, &users, &m.mention_roles, &m.mention_channels);
+        if !text.is_empty() {
+            return text;
+        }
     }
     if let Some(s) = fallback(&m.stickers, &m.attachments, &m.embeds) {
         return s;

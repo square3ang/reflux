@@ -40,11 +40,8 @@ pub fn on_message(s: &State, m: &Message) {
     }
     let name = store.display_name(c.guild_id, m.author.id);
     let line = if !matches!(m.kind, MessageType::DEFAULT | MessageType::REPLY) {
-        // shortcut: system messages read their raw content (`SystemMessageUtils.stringify` isn't ported).
-        if m.content.trim().is_empty() {
-            return;
-        }
-        m.content.clone()
+        let Some(text) = crate::shell::system_msg::stringify(store, m) else { return };
+        text
     } else if !m.content.trim().is_empty() {
         let reply = m.referenced_message.as_ref().and_then(|r| r.as_deref()).map(|r| store.display_name(c.guild_id, r.author.id)).or_else(|| {
             let id = m.message_reference.as_ref()?.message_id?;

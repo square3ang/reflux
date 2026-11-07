@@ -155,6 +155,8 @@ pub struct App {
     acks: actions::PendingAcks,
     /// The member list subscription last sent: (guild, channel, ranges).
     member_sub: Option<(Snowflake, Snowflake, Vec<[u32; 2]>)>,
+    /// Guilds whose member list was already sent `sync: true` this session (`syncedMemberListGuildIds`).
+    member_synced: std::collections::HashSet<Snowflake>,
     /// The thread subscription last sent: (guild, thread whose member list is open).
     thread_sub: Option<(Snowflake, Option<Snowflake>)>,
     voice: voice::VoiceRt,
@@ -594,6 +596,7 @@ fn reset(s: &mut State) {
     s.app.connection = None;
     s.app.selected_channel = None;
     s.app.member_sub = None;
+    s.app.member_synced.clear();
     let avatars = std::mem::take(&mut s.app.shell.default_avatars);
     let media = s.app.shell.media.clone();
     media.set_base("");
@@ -725,6 +728,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             }
             if let reflux_model::DispatchEvent::Ready(r) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
+                s.app.member_synced.clear();
                 s.app.thread_sub = None;
                 s.app.shell.threads.forum.sent_acks.clear(); // `ForumReadState.handleGatewayReady`
                 s.app.route = Route::Main;

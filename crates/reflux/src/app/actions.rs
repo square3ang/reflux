@@ -196,8 +196,8 @@ where
 }
 
 /// Keeps the lazy member list subscription (opcode 14) on the open guild channel and the rows
-/// on screen, like `MemberSidebar.applyChannelSubscription`.
-// shortcut: no unsubscribe when the list closes, and no one-time `sync: true` per guild.
+/// on screen, like `MemberSidebar.applyChannelSubscription` (the first one per guild in a
+/// session asks for `sync: true`). Closing the list sends nothing, as in Fluxer.
 pub(super) fn subscribe_member_list(s: &mut State) {
     let sh = &s.app.shell;
     let want = match (sh.guild, sh.channel.and_then(|c| s.app.store.channels.get(&c))) {
@@ -209,10 +209,12 @@ pub(super) fn subscribe_member_list(s: &mut State) {
     }
     let Some((guild, channel, ranges)) = want.clone() else { return };
     let Some(gw) = &s.app.gateway else { return };
-    let sub = GuildSubscription { active: Some(true), member_list_channels: [(channel, ranges)].into(), ..Default::default() };
+    let sync = (!s.app.member_synced.contains(&guild)).then_some(true);
+    let sub = GuildSubscription { active: Some(true), sync, member_list_channels: [(channel, ranges)].into(), ..Default::default() };
     let req = LazyRequest { subscriptions: [(guild, sub)].into() };
     if gw.send(Command::Send(GatewayPayload::command(OpCode::LAZY_REQUEST, req))).is_ok() {
         s.app.member_sub = want;
+        s.app.member_synced.insert(guild);
     }
 }
 

@@ -85,8 +85,6 @@ pub struct AccountUi {
     pub accounts: Vec<crate::session::Account>,
     /// The signed-in user's ID.
     pub me: Snowflake,
-    /// "Not now" on the recovery kit reminder.
-    pub recovery_reminder_dismissed: bool,
     /// Adding a passkey: the key asked for its PIN (reply, the last one was wrong).
     pub passkey_pin: Option<(std::sync::mpsc::Sender<authenticator::Pin>, bool)>,
 }

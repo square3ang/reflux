@@ -3,8 +3,7 @@
 //! replace confirmation and the kit itself (key, Download PDF via [`super::recovery_pdf`], Print,
 //! Copy, include backup codes, "stored it" check). Status is `form.data["recovery_kit"]`
 //! (`GET /users/@me/recovery-kit`); a new kit is `form.data["m.kit"]`.
-// shortcut: "Not now" on the reminder lasts for this session (Fluxer keeps it in local storage);
-// Print opens the PDF in the system viewer (Rune can't print).
+// shortcut: Print opens the PDF in the system viewer (Rune can't print).
 
 use reflux_store::Store;
 use reqwest::Method;
@@ -48,7 +47,7 @@ fn has_kit(st: &ShellState) -> Option<bool> {
 
 /// `RecoveryKitReminderAlert` (a `WarningAlert`).
 pub(super) fn reminder<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if has_kit(st) != Some(false) || st.account.recovery_reminder_dismissed {
+    if has_kit(st) != Some(false) || st.prefs.recovery_reminder_dismissed.contains(&st.account.me) {
         return None;
     }
     let c = p.alert_warning_color;
@@ -56,7 +55,13 @@ pub(super) fn reminder<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAcces
         .gap(8.0)
         .mt(6.0)
         .child(Button::new(t("Create recovery kit")).size(ButtonSize::Small).key("rk-remind-create").on_press(create(acc)).el(p))
-        .child(Button::new(t("Not now")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| acc(s).account.recovery_reminder_dismissed = true).el(p));
+        .child(Button::new(t("Not now")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            let me = sh.account.me;
+            crate::shell::expr::image_search::save_prefs(sh, |p| {
+                p.recovery_reminder_dismissed.insert(me);
+            });
+        }).el(p));
     Some(
         row()
             .w_full()

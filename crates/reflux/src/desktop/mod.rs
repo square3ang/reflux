@@ -85,6 +85,8 @@ pub struct Prefs {
     pub thread_panel_width: Option<f32>,
     /// `UI_CHANNEL_PINS_POPOUT_SIZE` (None = the default 480×640).
     pub pins_popout_size: Option<(f32, f32)>,
+    /// Users who chose "Not now" on the recovery kit reminder (`RecoveryKitReminderDismissed:<id>`).
+    pub recovery_reminder_dismissed: std::collections::HashSet<Snowflake>,
     /// Voice message playback speed (`fluxer:media:playbackRates`, voice kind).
     pub voice_message_rate: f32,
     /// Media player volume (0..1) and mute (`fluxer:media:volume` / `:muted`), shared by players.
@@ -126,6 +128,7 @@ impl Default for Prefs {
             search_history: Default::default(),
             thread_panel_width: None,
             pins_popout_size: None,
+            recovery_reminder_dismissed: Default::default(),
             voice_message_rate: 1.0,
             media_volume: 1.0,
             media_muted: false,
