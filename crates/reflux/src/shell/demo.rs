@@ -928,6 +928,8 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.hover_msg = store.messages(Snowflake(GENERAL)).last().map(|m| m.id);
             st.shift_held = true;
         }
+        // `/nick` answered by a Fluxerbot note.
+        "client-system" => store.add_local_message(super::client_system::build(Snowflake(GENERAL), "You changed your nickname in this community from **Square** to **Sq**.".into(), st.now_ms)),
         "failed" | "send-error" => {
             let nonce = Snowflake::from_timestamp_ms(st.now_ms);
             let mut m: reflux_model::Message = serde_json::from_value(message(st.now_ms, 0, ME, "this one **didn't** make it, <@1001>", json!({}))).expect("message");

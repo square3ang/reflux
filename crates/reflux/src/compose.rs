@@ -311,22 +311,19 @@ pub fn parse(content: &str) -> Option<Command> {
 
 /// Runs a parsed command from the composer of `channel` (in `guild`), clearing it. `false`
 /// when the text should be sent as a message instead.
-// shortcut: no "nickname changed" system message; a failed /msg DM only logs.
+/// `/nick` and `/msg` report back through Fluxerbot notes ([`crate::shell::client_system`]).
 pub fn run(st: &mut ShellState, channel: Snowflake, guild: Option<Snowflake>, content: &str) -> bool {
     let Some(cmd) = parse(content) else { return false };
     let req = |method, path: String, body, reason: Option<String>| Intent::Social(crate::social::Req { method, path, body, reason, done: crate::social::Done::Nothing });
     use reqwest::Method;
     match (cmd, guild) {
-        (Command::Nick(n), Some(g)) => st.intents.push(req(Method::PATCH, format!("/guilds/{g}/members/@me"), Some(json!({ "nick": Some(n).filter(|n| !n.is_empty()) })), None)),
+        (Command::Nick(n), Some(g)) => st.intents.push(Intent::Nick { guild: g, channel, nick: Some(n).filter(|n| !n.is_empty()) }),
         (Command::Kick { user, reason }, Some(g)) => st.intents.push(req(Method::DELETE, format!("/guilds/{g}/members/{user}"), None, reason)),
         (Command::Ban { user, delete, reason }, Some(g)) => {
             let body = json!({ "delete_message_seconds": delete, "ban_duration_seconds": 0 });
             st.intents.push(req(Method::PUT, format!("/guilds/{g}/bans/{user}"), Some(body), reason));
         }
-        (Command::Msg { user, message }, _) => {
-            st.nav.pending_dm = Some((user, message));
-            st.intents.push(Intent::OpenDm(user));
-        }
+        (Command::Msg { user, message }, _) => st.intents.push(Intent::MsgCommand { from: channel, user, message }),
         (Command::Tts(text), _) => {
             let nonce = st.now_ms.to_string();
             st.intents.push(Intent::Fetch { key: String::new(), method: Method::POST, path: format!("/channels/{channel}/messages"), body: Some(json!({ "content": text, "tts": true, "nonce": nonce })) });
@@ -350,17 +347,6 @@ pub fn run(st: &mut ShellState, channel: Snowflake, guild: Option<Snowflake>, co
 fn finish(st: &mut ShellState) -> bool {
     st.composer.clear();
     st.ac_dismissed = None;
-    true
-}
-
-/// Sends a `/msg` once its DM channel exists.
-pub fn poll(store: &reflux_store::Store, st: &mut ShellState) -> bool {
-    let Some((user, _)) = &st.nav.pending_dm else { return false };
-    let me = store.my_id();
-    let dm = store.private_channels().into_iter().find(|c| c.kind == reflux_model::ChannelType::DM && c.recipients.iter().any(|u| u.id == *user) && *user != me).map(|c| c.id);
-    let Some(channel) = dm else { return false };
-    let (_, content) = st.nav.pending_dm.take().unwrap_or_default();
-    st.intents.push(Intent::SendMessage { channel, content, reply: None, attachments: Vec::new() });
     true
 }
 

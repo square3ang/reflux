@@ -44,6 +44,7 @@ pub mod upload;
 pub mod voice;
 pub mod call;
 pub mod clip;
+pub(crate) mod client_system;
 pub mod gifv;
 pub mod voice_message;
 pub mod system_msg;
@@ -79,6 +80,10 @@ pub enum Intent {
     /// Send a failed message again / drop it (`MessageRetryUtils`, `deleteLocal`).
     RetrySend { channel: Snowflake, nonce: Snowflake },
     DropLocal { channel: Snowflake, nonce: Snowflake },
+    /// `/nick` in `channel`: set the nickname, then say so there.
+    Nick { guild: Snowflake, channel: Snowflake, nick: Option<String> },
+    /// `/msg`: open the DM, send `message` and show it; a DM that can't open is noted in `from`.
+    MsgCommand { from: Snowflake, user: Snowflake, message: String },
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
     /// The list reached its newest loaded message while in history: fetch the page after it.

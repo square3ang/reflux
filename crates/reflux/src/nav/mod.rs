@@ -69,9 +69,6 @@ pub struct Nav {
     pub favorite_edit: Option<favorites::Edit>,
     pub favorite_text: TextEdit,
     pub favorite_drag: Option<favorites_drag::Drag>,
-    /// A `/msg` waiting for its DM channel (`crate::compose::poll`).
-    // shortcut: kept until the DM shows up; a DM that can't open leaves it pending.
-    pub pending_dm: Option<(Snowflake, String)>,
     /// The custom keybind (by index) whose recorder is listening.
     pub recording: Option<usize>,
     /// The Keybinds tab's "Search keybinds…" box.
@@ -127,7 +124,7 @@ pub fn update_mine(st: &mut ShellState, f: impl FnOnce(&mut AccountPrefs)) {
 
 /// Once a frame with the store: writes a released rail drop as the new `guild_folders`.
 pub fn poll(store: &Store, st: &mut ShellState) -> bool {
-    let changed = favorites::reconcile(store, st) | favorites_sync::poll(store, st) | keybind_sync::poll(store, st) | look_sync::poll(store, st) | crate::compose::poll(store, st) | oauth::poll(store, st);
+    let changed = favorites::reconcile(store, st) | favorites_sync::poll(store, st) | keybind_sync::poll(store, st) | look_sync::poll(store, st) | oauth::poll(store, st);
     let folders = match (st.nav.pending.take(), st.nav.folder_edit.take()) {
         (Some((src, drop)), _) => rail::apply(store, src, drop),
         (None, Some(edit)) => Some(folder::edited(&store.settings.guild_folders, &edit)),

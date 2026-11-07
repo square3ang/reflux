@@ -84,8 +84,7 @@ pub fn send_error(e: &reflux_net::Error, files: bool, kind: u16) -> (String, Str
             },
         ),
         "FILE_SIZE_TOO_LARGE" => (t("File size too large").into(), t("This limit is configured by your instance administrator.").into()),
-        // shortcut: Fluxer posts these as a local "Only you can see this" system message; here
-        // they're the modal's body.
+        // These four go in a Fluxerbot note instead of a modal ([`posts_note`]).
         "CANNOT_SEND_MESSAGES_TO_USER" => (
             undelivered,
             tf(
@@ -101,6 +100,12 @@ pub fn send_error(e: &reflux_net::Error, files: bool, kind: u16) -> (String, Str
         ),
         _ => failed(),
     }
+}
+
+/// DM, unclaimed-account and safety blocks are told in a Fluxerbot note in the channel
+/// (`MessageQueue.handleSendError`'s `createSystemMessage`s), not a modal.
+pub fn posts_note(e: &reflux_net::Error) -> bool {
+    matches!(e, reflux_net::Error::Api { error, .. } if matches!(error.code.as_str(), "CANNOT_SEND_MESSAGES_TO_USER" | "UNCLAIMED_ACCOUNT_CANNOT_SEND_DIRECT_MESSAGES" | "UNCLAIMED_ACCOUNT_CANNOT_SEND_MESSAGES" | "CONTENT_BLOCKED"))
 }
 
 /// `formatUserSettingsPath`: "User Settings > <tab>".

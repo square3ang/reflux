@@ -939,6 +939,9 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     if m.kind == MessageType::THREAD_STARTER_MESSAGE {
         return super::threads::starter_message(store, st, m, p, acc);
     }
+    if super::client_system::is(m) {
+        return super::client_system::view(store, st, m, md, p, acc);
+    }
     if !is_user_message(m) {
         return super::system_msg::view(store, st, m, p, acc);
     }

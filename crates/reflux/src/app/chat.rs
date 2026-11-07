@@ -211,7 +211,12 @@ fn failed(s: &mut State, channel: Snowflake, nonce: Snowflake, content: String, 
         let wait = (error.retry_after.unwrap_or(0.0) * 1000.0) as u64;
         sh.cooldowns.insert(channel, now_ms() + wait);
     }
-    sh.notice = Some(crate::shell::queue::send_error(&e, !files.is_empty(), kind));
+    let (title, body) = crate::shell::queue::send_error(&e, !files.is_empty(), kind);
+    if crate::shell::queue::posts_note(&e) {
+        super::commands::post(s, channel, body);
+    } else {
+        sh.notice = Some((title, body));
+    }
 }
 
 /// `deleteLocal`: forget an optimistic message.

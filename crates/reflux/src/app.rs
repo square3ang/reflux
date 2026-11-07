@@ -23,6 +23,7 @@ mod account;
 mod actions;
 mod cache;
 mod chat;
+mod commands;
 mod expr;
 mod guild;
 pub(crate) mod idle;
@@ -828,6 +829,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::SendMessage { channel, content, reply, attachments } => act(s, Action::SendMessage { channel, content, reply, attachments }),
             Intent::RetrySend { channel, nonce } => chat::retry(s, channel, nonce),
             Intent::DropLocal { channel, nonce } => chat::drop_local(s, channel, nonce),
+            Intent::Nick { guild, channel, nick } => commands::nick(s, guild, channel, nick),
+            Intent::MsgCommand { from, user, message } => commands::msg(s, from, user, message),
             i @ (Intent::LoadNewer { .. } | Intent::JumpTo { .. } | Intent::JumpToPresent(_) | Intent::LoadPins { .. } | Intent::Search(_)) => chat::run(s, i),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
