@@ -26,6 +26,10 @@ pub enum Step {
     Forgot { sent: bool },
     /// Waiting on a security key, for a password-less sign-in or as the second factor.
     Passkey(Passkey),
+    /// Waiting on a browser sign-in (`crate::handoff`).
+    Handoff(crate::handoff::Handoff),
+    /// Suspended, closed or network-blocked (`crate::restrict`).
+    Restricted(crate::restrict::Restriction),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -229,6 +233,8 @@ fn card(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
                 Step::Register => register_step(s, p, layer),
                 Step::Forgot { sent } => forgot_step(s, *sent, p),
                 Step::Passkey(k) => passkey_step(s, k, p),
+                Step::Handoff(h) => crate::handoff::view(h, p),
+                Step::Restricted(r) => crate::restrict::view(r, p),
             }),
         )
 }
@@ -247,7 +253,7 @@ fn brand(p: &Palette) -> El {
     .a11y_hidden()
 }
 
-fn title(t: &str, p: &Palette) -> El {
+pub(crate) fn title(t: &str, p: &Palette) -> El {
     // `.title`: 20px/600, letter-spacing .025em, margin-bottom 20.
     text(t).w_full().align(Align::Center).font(font(20.0, 600.0).lh(30.0).tracking(0.5)).color(p.text_primary).mb(20.0)
 }
@@ -281,6 +287,21 @@ fn method_step(s: &State, p: &Palette) -> El {
                         .disabled(disabled)
                         .key("login-passkey")
                         .on_press(|s: &mut State| crate::app::start_passkey(s, None))
+                        .el(p),
+                )
+                // `AuthSsoPanel`: single sign-on runs in the browser, then hands the session back.
+                .children(s.app.instance.as_ref().map(|i| &i.discovery.sso).filter(|sso| sso.enabled).map(|sso| {
+                    let label = sso.button_label.clone().or_else(|| sso.display_name.as_ref().map(|n| crate::i18n::tf("Continue with {providerName}", &[("providerName", n)]))).unwrap_or_else(|| t("Continue with SSO").into());
+                    Button::<State>::new(label).variant(ButtonVariant::Secondary).icon(&icons::BUILDINGS).fit_container().disabled(disabled).key("login-sso").on_press(|s: &mut State| crate::handoff::start(s, true)).el(p)
+                }))
+                .child(
+                    Button::<State>::new(t("Sign in with your browser"))
+                        .variant(ButtonVariant::Secondary)
+                        .icon(&icons::GLOBE)
+                        .fit_container()
+                        .disabled(disabled)
+                        .key("login-browser")
+                        .on_press(|s: &mut State| crate::handoff::start(s, false))
                         .el(p),
                 )
                 .child(
@@ -349,7 +370,7 @@ fn form_note(l: &crate::login::Login, p: &Palette) -> Option<El> {
 
 /// The 1px rule and right-aligned Back / primary buttons of every step.
 #[allow(clippy::type_complexity)]
-fn footer(p: &Palette, submitting: bool, back: fn(&mut State), primary: Option<(&str, &str, fn(&mut State))>) -> El {
+pub(crate) fn footer(p: &Palette, submitting: bool, back: fn(&mut State), primary: Option<(&str, &str, fn(&mut State))>) -> El {
     let footer_rule = mix(p.background_modifier_accent, Color::TRANSPARENT, 72.0);
     let mut buttons = row().w_full().justify_end().gap(12.0).child(
         Button::new(t("Back"))
@@ -435,7 +456,7 @@ fn mfa_step(s: &State, m: &crate::login::Mfa, p: &Palette) -> El {
 }
 
 /// `.description`: 14/20 centred, tertiary.
-fn description(t: &str, p: &Palette) -> El {
+pub(crate) fn description(t: &str, p: &Palette) -> El {
     text(t).w_full().align(Align::Center).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).wrap()
 }
 

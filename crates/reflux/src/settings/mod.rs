@@ -9,7 +9,8 @@
 mod account;
 mod desktop_tabs;
 mod look_tabs;
-mod privacy;
+pub(crate) mod dev;
+pub(crate) mod privacy;
 mod profile;
 pub mod sudo;
 pub(crate) mod tabs;
@@ -417,6 +418,7 @@ pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
         "linked_accounts" => sh.load("connections", "/users/@me/connections"),
         "privacy_safety" => sh.load("harvest", "/users/@me/harvest/latest"),
         "my_profile" => profile::load(sh),
+        "applications" => dev::load(sh),
         _ => {}
     }
 }

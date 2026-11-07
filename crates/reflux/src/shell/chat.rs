@@ -918,8 +918,19 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
             Span::new(n + 2, line.len()).size(dim::MESSAGE_TIMESTAMP_FONT_SIZE).color(mix(p.message_timestamp_color, Color::TRANSPARENT, 60.0)),
         ];
         // shortcut: the whole name line is the click target, not just the name.
+        let role_icon = m.guild_id.or_else(|| store.channels.get(&m.channel_id).and_then(|c| c.guild_id)).and_then(|g| super::role_icon::icon_role(store, g, m.author.id)).and_then(|r| super::role_icon::view(st, r, 20.0));
+        let line = match role_icon {
+            // `.messageRoleIcon`: 4px after the name, the time after it.
+            Some(ic) => row()
+                .center_y()
+                .min_w(0.0)
+                .child(rich(name.clone(), spans[..1].to_vec()).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).truncate())
+                .child(ic.ml(4.0))
+                .child(rich(line[n..].to_string(), spans[1..].iter().map(|s| Span { start: s.start - n as u32, end: s.end - n as u32, ..s.clone() }).collect()).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))),
+            None => rich(line, spans),
+        };
         content = content.child(
-            rich(line, spans)
+            line
                 .font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))
                 .color(p.text_primary)
                 .truncate()
@@ -1308,7 +1319,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         (Slot::Create, Some(super::threads::Panel::Create { message: Some(m), .. })) => super::threads::suggested_name(store, c.guild_id, find(store, cid, m)),
         _ => String::new(),
     };
-    let spelling = if st.prefs.spellcheck { crate::desktop::spell::spans(&draft.text, draft.range().0, p.status_danger) } else { Vec::new() };
+    let spelling = if st.prefs.spellcheck { crate::compose::unpilled(crate::desktop::spell::spans(&draft.text, draft.range().0, p.status_danger), draft) } else { Vec::new() };
     let field = text_input(draft, font(16.0, 400.0).lh(22.0))
         .key(match slot {
             Slot::Main => "composer",
@@ -1316,7 +1327,9 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             Slot::Create => "thread-create-composer",
         })
         .decorations(spelling)
-        // shortcut: the spelling menu edits the main composer only.
+        .pill_colors(p.markup_mention_fill, Some(p.markup_mention_text))
+        .pill_icon(crate::compose::pill_icon)
+        // shortcut: the context menu edits the main composer only.
         .on_secondary_press(move |s: &mut S, at, _| {
             if slot == Slot::Main {
                 crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y]);
@@ -1414,6 +1427,10 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     }
     let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
     // The autocomplete list hangs above the box, as wide as it.
+    let (sel_a, sel_b) = draft.range();
+    if ac.is_none() && slot == Slot::Main && draft.focused && sel_a != sel_b {
+        out = out.child(el().w_full().h(0.0).child(crate::compose::toolbar(draft, p, acc).pin(Some(dim::MESSAGE_GUTTER + 40.0), None, None, Some(8.0))));
+    }
     if let Some((t, items)) = &ac {
         // shortcut: in the thread panels the list is keyboard-only (its clicks edit the main draft).
         let list = autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0));
@@ -1460,7 +1477,11 @@ pub(super) fn send_now(st: &mut ShellState, channel: Snowflake) {
 }
 
 fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
-    let mut content = autocomplete::apply_command(st.composer.text.trim());
+    let text = crate::compose::serialize(&st.composer);
+    if crate::compose::run(st, channel, st.guild, &text) {
+        return;
+    }
+    let mut content = autocomplete::apply_command(text.trim());
     if crate::look::with(|l| l.convert_emoticons) {
         content = crate::look::convert_emoticons(&content);
     }

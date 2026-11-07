@@ -31,8 +31,7 @@ impl Default for Gallery {
     fn default() -> Self {
         Self {
             theme: Kind::Dark,
-            // The menu shows open, with its submenu, so a snapshot has it.
-            popups: Popups { open: Some("g-menu".into()), sub: Some("status".into()), ..Popups::default() },
+            popups: Popups::default(),
             switch_on: true,
             checked: true,
             radio: "cozy".into(),
@@ -42,6 +41,13 @@ impl Default for Gallery {
             notify: true,
             avatar: None,
         }
+    }
+}
+
+impl Gallery {
+    /// The `--gallery` screen: the menu shows open, with its submenu, so a snapshot has it.
+    pub fn screen() -> Self {
+        Self { popups: Popups { open: Some("g-menu".into()), sub: Some("status".into()), ..Popups::default() }, ..Self::default() }
     }
 }
 
@@ -70,8 +76,15 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     }),
 ];
 
+/// The `--gallery` screen's state, else the Design system settings tab's.
 fn g(s: &mut State) -> &mut Gallery {
-    s.gallery.get_or_insert_with(Gallery::default)
+    if s.gallery.is_some() {
+        return s.gallery.get_or_insert_with(Gallery::screen);
+    }
+    match s.shell_demo.as_mut() {
+        Some(d) => &mut d.shell.nav.gallery,
+        None => &mut s.app.shell.nav.gallery,
+    }
 }
 
 fn pops(s: &mut State) -> &mut Popups {
@@ -96,6 +109,12 @@ fn section(t: &str, p: &Palette, body: El) -> El {
 }
 
 pub fn view(gal: &Gallery, _cx: &mut Cx<State>) -> El {
+    let (body, layer) = parts(gal, false);
+    rune_kit::root(body, layer)
+}
+
+/// The gallery and its overlays: three columns for the screen, `stacked` for a settings tab.
+pub fn parts(gal: &Gallery, stacked: bool) -> (El, Vec<El>) {
     let p = theme::palette(gal.theme);
     let mut layer = Vec::new();
     let px = gal.avatar.as_ref().map(|i| i.pixels());
@@ -277,7 +296,8 @@ pub fn view(gal: &Gallery, _cx: &mut Cx<State>) -> El {
         .child(el().h(300.0))
         .child(section("SCROLLER", p, col().w_full().radius(8.0).fill(p.background_secondary).child(scroll)));
 
-    let body = row().w_full().h_full().padding(24.0).gap(24.0).fill(p.background_primary).child(left).child(middle).child(right);
+    let body = if stacked { col().w_full().radius(8.0) } else { row().w_full().h_full() };
+    let body = body.padding(24.0).gap(24.0).fill(p.background_primary).child(left).child(middle).child(right);
     if gal.modal {
         layer.push(
             Modal::new("Delete Message", |s: &mut State| g(s).modal = false)
@@ -297,5 +317,5 @@ pub fn view(gal: &Gallery, _cx: &mut Cx<State>) -> El {
                 .el(p),
         );
     }
-    rune_kit::root(body, layer)
+    (body, layer)
 }

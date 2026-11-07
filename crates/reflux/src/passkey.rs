@@ -2,6 +2,7 @@
 //! CTAP1/2 stack) talks to USB HID keys on Linux, Windows and macOS, and we build the
 //! `clientDataJSON` a browser would. Fluxer checks its `origin` against the instance's allowed web
 //! origins, which is what the official desktop app's native addon also fills in itself.
+//! Sign-in and sudo use `get`, adding a passkey `create`.
 //! shortcut: USB keys only — no platform authenticators (Windows Hello via webauthn.dll, macOS
 //! ASAuthorization, which needs entitlements) and no hybrid/phone flow; add them per platform.
 
@@ -92,23 +93,7 @@ pub fn get(
         use_ctap1_fallback: false,
     };
 
-    let (status_tx, status_rx) = channel::<StatusUpdate>();
-    std::thread::spawn(move || {
-        while let Ok(up) = status_rx.recv() {
-            match up {
-                StatusUpdate::PresenceRequired => status(Status::Touch),
-                StatusUpdate::SelectDeviceNotice => status(Status::SelectDevice),
-                StatusUpdate::PinUvError(StatusPinUv::PinRequired(reply)) => status(Status::Pin { reply, wrong: false, attempts: None }),
-                StatusUpdate::PinUvError(StatusPinUv::InvalidPin(reply, attempts)) => status(Status::Pin { reply, wrong: true, attempts }),
-                // Several discoverable credentials: take the first, like a one-account key.
-                StatusUpdate::SelectResultNotice(reply, _) => {
-                    let _ = reply.send(Some(0));
-                }
-                // Other PIN/UV failures end the request; the callback reports them.
-                _ => {}
-            }
-        }
-    });
+    let status_tx = status_channel(status);
 
     let timeout = u64::from(opts.timeout.max(30_000));
     let (tx, rx) = channel();
@@ -135,6 +120,103 @@ pub fn get(
         "clientExtensionResults": {},
         "authenticatorAttachment": "cross-platform",
     }))
+}
+
+/// `navigator.credentials.create()` (`performRegistration`) on the attached keys from Fluxer's
+/// `PublicKeyCredentialCreationOptionsJSON`; blocks until done. The result is the
+/// `RegistrationResponseJSON` `POST /users/@me/mfa/webauthn/credentials` takes.
+pub fn create(
+    opts: &serde_json::Value,
+    origin: &str,
+    status: impl Fn(Status) + Send + 'static,
+    cancel: impl FnOnce(Cancel),
+) -> Result<serde_json::Value, String> {
+    use authenticator::authenticatorservice::RegisterArgs;
+    use authenticator::ctap2::server::{PublicKeyCredentialParameters, PublicKeyCredentialUserEntity, RelyingParty, ResidentKeyRequirement};
+    let s = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
+    let bytes = |v: &serde_json::Value| B64.decode(v.as_str().unwrap_or_default().trim_end_matches('=')).map_err(|e| e.to_string());
+    let rp_id = s(&opts["rp"]["id"]);
+    let challenge = s(&opts["challenge"]);
+    let client_data = json!({"type": "webauthn.create", "challenge": challenge, "origin": origin, "crossOrigin": false}).to_string();
+    let sel = &opts["authenticatorSelection"];
+    let mut service = AuthenticatorService::new().map_err(|e| format!("{e:?}"))?;
+    service.add_u2f_usb_hid_platform_transports();
+    let service = Arc::new(Mutex::new(service));
+    cancel(Cancel(service.clone()));
+    let args = RegisterArgs {
+        client_data_hash: Sha256::digest(client_data.as_bytes()).into(),
+        relying_party: RelyingParty { id: rp_id, name: opts["rp"]["name"].as_str().map(str::to_owned) },
+        origin: origin.to_owned(),
+        user: PublicKeyCredentialUserEntity {
+            id: bytes(&opts["user"]["id"])?,
+            name: opts["user"]["name"].as_str().map(str::to_owned),
+            display_name: opts["user"]["displayName"].as_str().map(str::to_owned),
+        },
+        pub_cred_params: opts["pubKeyCredParams"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| PublicKeyCredentialParameters::try_from(p["alg"].as_i64()? as i32).ok())
+            .collect(),
+        exclude_list: opts["excludeCredentials"].as_array().into_iter().flatten().filter_map(|c| bytes(&c["id"]).ok()).map(|id| PublicKeyCredentialDescriptor { id, transports: vec![] }).collect(),
+        user_verification_req: match sel["userVerification"].as_str() {
+            Some("required") => UserVerificationRequirement::Required,
+            Some("discouraged") => UserVerificationRequirement::Discouraged,
+            _ => UserVerificationRequirement::Preferred,
+        },
+        resident_key_req: match sel["residentKey"].as_str() {
+            Some("required") => ResidentKeyRequirement::Required,
+            Some("discouraged") => ResidentKeyRequirement::Discouraged,
+            _ => ResidentKeyRequirement::Preferred,
+        },
+        extensions: Default::default(),
+        pin: None,
+        use_ctap1_fallback: false,
+    };
+    let status_tx = status_channel(status);
+    let timeout = opts["timeout"].as_u64().unwrap_or(60_000).max(30_000);
+    let (tx, rx) = channel();
+    let callback = StateCallback::new(Box::new(move |r| {
+        let _ = tx.send(r);
+    }));
+    service.lock().map_err(|e| e.to_string())?.register(timeout, args, status_tx, callback).map_err(|e| format!("{e:?}"))?;
+    let made = rx.recv().map_err(|e| e.to_string())?.map_err(describe)?;
+    let id = made.att_obj.auth_data.credential_data.as_ref().map(|c| B64.encode(&c.credential_id)).ok_or("The security key didn't return a credential.")?;
+    let attestation = serde_cbor::to_vec(&made.att_obj).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "id": id,
+        "rawId": id,
+        "type": "public-key",
+        "response": {
+            "clientDataJSON": B64.encode(client_data),
+            "attestationObject": B64.encode(attestation),
+            "transports": ["usb"],
+        },
+        "clientExtensionResults": {},
+        "authenticatorAttachment": "cross-platform",
+    }))
+}
+
+/// Forwards the key's prompts to `status` on a thread of its own.
+fn status_channel(status: impl Fn(Status) + Send + 'static) -> Sender<StatusUpdate> {
+    let (status_tx, status_rx) = channel::<StatusUpdate>();
+    std::thread::spawn(move || {
+        while let Ok(up) = status_rx.recv() {
+            match up {
+                StatusUpdate::PresenceRequired => status(Status::Touch),
+                StatusUpdate::SelectDeviceNotice => status(Status::SelectDevice),
+                StatusUpdate::PinUvError(StatusPinUv::PinRequired(reply)) => status(Status::Pin { reply, wrong: false, attempts: None }),
+                StatusUpdate::PinUvError(StatusPinUv::InvalidPin(reply, attempts)) => status(Status::Pin { reply, wrong: true, attempts }),
+                // Several discoverable credentials: take the first, like a one-account key.
+                StatusUpdate::SelectResultNotice(reply, _) => {
+                    let _ = reply.send(Some(0));
+                }
+                // Other PIN/UV failures end the request; the callback reports them.
+                _ => {}
+            }
+        }
+    });
+    status_tx
 }
 
 fn describe(e: authenticator::errors::AuthenticatorError) -> String {

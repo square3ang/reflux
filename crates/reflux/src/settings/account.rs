@@ -34,6 +34,8 @@ pub enum AccountModal {
     Delete,
     RenamePasskey(String),
     DeletePasskey(String),
+    /// `PasskeyNameModal`: names the passkey, then runs the key ceremony.
+    NamePasskey,
     /// Sign out these sessions (`id_hash`es).
     SignOutDevices(Vec<String>),
     DeleteMessages,
@@ -175,7 +177,13 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
         .size(ButtonSize::Small)
         .disabled(unverified)
         .key("acct-passkey-add")
-        .on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::AddPasskey)))
+        // `startPasskeyRegistration`: the options (sudo first, if the server wants it), then
+        // `PasskeyNameModal`.
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.open_account_modal(AccountModal::NamePasskey);
+            sh.api(Method::POST, "/users/@me/mfa/webauthn/credentials/registration-options", Some(json!({})), Then::Keep("m.passkey_options".into()));
+        })
         .el(p);
     let mut rows = Vec::new();
     if passkeys.is_empty() && !unverified {
@@ -510,6 +518,24 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
                 sh.api(Method::PATCH, format!("/users/@me/mfa/webauthn/credentials/{id}"), Some(body), Then::Saved { clear: "m.".into(), reload: Some(("passkeys".into(), "/users/@me/mfa/webauthn/credentials".into())) });
             });
             dialog(st, t("Rename passkey"), vec![input(st, acc, "m.name", &name, t("Name"), "", false, p)], Some((t("Save"), false, save)), p, acc)
+        }
+        AccountModal::NamePasskey => {
+            let ready = data(st, "m.passkey_options").is_some();
+            let save = Box::new(move |s: &mut S| {
+                let sh = acc(s);
+                if data(sh, "m.passkey_options").is_some() && !sh.form.busy {
+                    sh.intents.push(Intent::Account(Op::AddPasskey));
+                }
+            });
+            let mut body = vec![
+                input(st, acc, "m.name", "", t("Passkey name"), t("e.g., YubiKey, iPhone, work computer"), false, p),
+                // shortcut: a security key's PIN is asked up front, not when the key wants it.
+                input(st, acc, "m.pin", "", t("Security key PIN (if it has one)"), "", true, p),
+            ];
+            if st.form.busy && ready {
+                body.push(desc(t("Touch your security key to continue."), p));
+            }
+            dialog(st, t("Name passkey"), body, Some((t("Save"), false, save)), p, acc)
         }
         AccountModal::DeletePasskey(id) => {
             let id = id.clone();

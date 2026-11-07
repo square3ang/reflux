@@ -9,13 +9,14 @@ pub mod attachments;
 mod autocomplete;
 mod chat;
 mod compact;
-mod embeds;
-mod highlight;
+pub(crate) mod embeds;
+pub(crate) mod highlight;
 pub mod invite_embed;
 pub mod lightbox;
 mod links;
 pub mod demo;
 mod emoji;
+pub(crate) mod role_icon;
 pub mod expr;
 pub(crate) mod friends;
 mod guilds;
@@ -40,7 +41,7 @@ pub mod voice_message;
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
 pub(crate) use chat::{channel_title, format_relative};
-pub(crate) use guilds::acronym;
+pub(crate) use guilds::{acronym, folder_glyph, guild_face};
 
 use std::collections::HashSet;
 
@@ -314,6 +315,8 @@ pub struct ShellState {
     /// Thread panel, browser and forum state.
     pub threads: threads::Threads,
     pub social: crate::social::Social,
+    /// Rail folders and drag and drop, favorites, keybinds and other navigation extras.
+    pub nav: crate::nav::Nav,
 }
 
 impl Default for ShellState {
@@ -385,6 +388,7 @@ impl Default for ShellState {
             account: Default::default(),
             threads: Default::default(),
             social: crate::social::Social::new(),
+            nav: Default::default(),
         }
     }
 }
@@ -397,6 +401,7 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 
 impl ShellState {
     pub fn select_guild(&mut self, guild: Option<Snowflake>, channel: Option<Snowflake>) {
+        self.nav.favorites = false;
         self.guild = guild;
         self.social.discovery = false;
         self.intents.push(Intent::SelectGuild(guild));
@@ -473,6 +478,7 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 /// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let mut changed = expr::poll(store, st, tx);
+    changed |= crate::nav::poll(store, st);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;
@@ -580,6 +586,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let channel = st.channel.and_then(|c| store.channels.get(&c).or((c == notes.id).then_some(&notes)));
     let mut layer = Vec::new();
     let side = match st.guild {
+        _ if st.nav.favorites => crate::nav::favorites::sidebar(store, st, p, acc),
         Some(g) => sidebar::guild(store, st, g, p, acc),
         None => sidebar::home(store, st, p, acc),
     };
@@ -610,13 +617,14 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
+    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
     expr::layer(store, st, p, acc, &mut layer);
     crate::desktop::nagbar::layer(st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
     crate::social::layer(store, st, p, acc, &mut layer);
+    crate::nav::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
     }

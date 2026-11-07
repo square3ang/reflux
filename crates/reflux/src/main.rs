@@ -1,14 +1,18 @@
 mod app;
+mod compose;
 mod desktop;
 mod guild;
 mod gst;
+mod handoff;
 mod i18n;
 mod keybinds;
 mod look;
 mod icons;
 mod login;
 mod media;
+mod nav;
 mod passkey;
+mod restrict;
 mod session;
 mod settings;
 mod shell;
@@ -41,7 +45,7 @@ fn init() -> State {
     if let Some(z) = std::env::var("REFLUX_ZOOM").ok().and_then(|z| z.parse().ok()) {
         desktop::window::set_zoom(z);
     }
-    let gallery = rune::extra_args().iter().any(|a| a == "--gallery").then(ui::gallery::Gallery::default);
+    let gallery = rune::extra_args().iter().any(|a| a == "--gallery").then(ui::gallery::Gallery::screen);
     let shell_demo = rune::extra_args().iter().any(|a| a == "--shell-demo").then(shell::demo::Demo::new);
     State { gallery, shell_demo, ..State::default() }
 }

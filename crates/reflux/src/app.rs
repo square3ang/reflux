@@ -325,7 +325,7 @@ where
     });
 }
 
-fn on_auth(s: &mut State, r: reflux_net::Result<AuthResponse>) {
+pub(crate) fn on_auth(s: &mut State, r: reflux_net::Result<AuthResponse>) {
     match r {
         Ok(AuthResponse::Token(t)) => signed_in(s, t.token),
         Ok(AuthResponse::Mfa(m)) => {
@@ -342,6 +342,11 @@ fn on_auth(s: &mut State, r: reflux_net::Result<AuthResponse>) {
             let ip = IpAuth { ticket: error.ticket.unwrap_or_default(), email, alive: Arc::new(()) };
             poll_ip_authorization(s, ip.ticket.clone(), Arc::downgrade(&ip.alive));
             s.login.step = Step::IpAuth(ip);
+        }
+        Err(reflux_net::Error::Api { error, .. })
+            if let Some(r) = crate::restrict::from_error(&error.code, &error.extra.clone().into_iter().collect()) =>
+        {
+            s.login.step = Step::Restricted(r);
         }
         Err(e) => s.login.errors = crate::login::Errors::from_error(&e),
     }

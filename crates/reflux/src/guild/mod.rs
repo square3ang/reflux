@@ -9,7 +9,7 @@ mod channel;
 mod forum;
 mod menu;
 mod modals;
-mod perms;
+pub(crate) mod perms;
 mod settings;
 mod stickers;
 

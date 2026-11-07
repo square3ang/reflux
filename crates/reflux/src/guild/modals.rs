@@ -505,7 +505,7 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
             "Delete community",
             Method::POST,
             format!("/guilds/{g}/delete"),
-            Some(json!({ "password": st.form.value("password", "") })),
+            Some(json!({})),
             Then::Close,
         ),
         Confirm::DeleteChannel(ch) => {
@@ -517,23 +517,13 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
             (format!("Delete '{n}'"), format!("Are you sure you want to delete the {n} role? This can't be undone."), "Delete role", Method::DELETE, format!("/guilds/{g}/roles/{r}"), None, Then::Nothing)
         }
     };
+    // `POST /guilds/{id}/delete` needs sudo mode: its `SUDO_MODE_REQUIRED` answer opens the
+    // sudo prompt (password, authenticator, passkey or emailed code) and retries.
     let mut content = col().w_full().gap(16.0).child(desc(&msg, p));
-    if matches!(c, Confirm::DeleteGuild(_)) {
-        // `POST /guilds/{id}/delete` needs sudo mode: the account password.
-        // shortcut: no authenticator or passkey sudo verification yet.
-        content = content.child(field(st, acc, "password", "", t("Password"), "", p));
-    }
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    let go = move |s: &mut S| {
-        let sh = acc(s);
-        let mut body = body.clone();
-        if let Some(b) = body.as_mut().filter(|_| matches!(c, Confirm::DeleteGuild(_))) {
-            b["password"] = json!(sh.form.value("password", ""));
-        }
-        sh.api(method.clone(), path.clone(), body, then.clone());
-    };
+    let go = move |s: &mut S| acc(s).api(method.clone(), path.clone(), body.clone(), then.clone());
     Modal::new(title, cancel)
         .body(content)
         .footer(buttons(vec![

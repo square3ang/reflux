@@ -203,7 +203,7 @@ pub(super) fn submit_create(st: &mut ShellState, suggested: &str) {
         st.threads.name_error = Some(t("Give the thread a name before you send.").into());
         return;
     }
-    let content = super::autocomplete::apply_command(st.threads.composer.text.trim());
+    let content = super::autocomplete::apply_command(crate::compose::serialize(&st.threads.composer).trim());
     let private = st.threads.private && message.is_none();
     op(st, Op::Create { parent, message, name, private, content });
     st.threads.composer.clear();

@@ -1,16 +1,17 @@
 //! Fluxer's default keybinds (`input/state/InputKeybind.ts`) that Reflux has features for, and
-//! the window key handler that runs them. The Keybinds settings tab lists [`BINDS`].
-// shortcut: no custom keybinds or editing. System-wide shortcuts are `desktop::shortcuts`.
+//! the window key handler that runs them, after the account's custom keybinds
+//! (`crate::nav::keys`). System-wide shortcuts are `desktop::shortcuts`.
 
 use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
 use rune::{Key, KeyEvent, Tx};
+use serde::{Deserialize, Serialize};
 
 use crate::State;
 use crate::app::Route;
 use crate::shell::{Intent, ShellState};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
     ShowKeybinds,
     GuildPrev,
@@ -34,7 +35,7 @@ pub enum Action {
     ZoomReset,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum K {
     Up,
     Down,
@@ -44,7 +45,7 @@ pub enum K {
 }
 
 /// `ctrl` is Fluxer's `ctrlOrMeta` (Cmd on macOS).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Combo {
     pub key: K,
     pub ctrl: bool,
@@ -108,7 +109,22 @@ pub const SECTIONS: &[(&str, &str)] =
     &[("defaults", "Defaults"), ("navigation", "Navigation"), ("chat", "Chat"), ("voice_and_video", "Voice and video")];
 
 impl Combo {
-    fn matches(&self, k: &KeyEvent) -> bool {
+    /// What a recorder makes of a key: Ctrl (Cmd) + a character, or an arrow / Escape with any
+    /// modifiers.
+    // shortcut: plain and Alt-only character combos aren't recordable (they'd type).
+    pub fn from_event(k: &KeyEvent) -> Option<Combo> {
+        let m = &k.mods;
+        let key = match &k.key {
+            Key::Up => Up,
+            Key::Down => Down,
+            Key::Escape => Escape,
+            Key::Command(ch) => Char(ch.to_ascii_lowercase()),
+            _ => return None,
+        };
+        Some(c(key, m.cmd || matches!(key, Char(_)), m.alt, m.shift))
+    }
+
+    pub fn matches(&self, k: &KeyEvent) -> bool {
         let m = &k.mods;
         let key = match (&k.key, self.key) {
             (Key::Up, Up) | (Key::Down, Down) | (Key::Escape, Escape) => true,
@@ -152,13 +168,14 @@ pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
         None if s.app.route == Route::Main => Some(&mut s.app.shell),
         None => None,
     };
-    if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k) || push_to_talk(sh, k)) {
+    if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k) || push_to_talk(sh, k) || crate::nav::keys::on_key(sh, k)) {
         return true;
     }
-    let Some(bind) = BINDS.iter().find(|b| b.combo.matches(k)) else { return false };
+    let mine = crate::nav::mine(s.shell_demo.as_ref().map_or(&s.app.shell, |d| &d.shell));
+    let Some(action) = crate::nav::keys::action(&mine, k) else { return false };
     match &mut s.shell_demo {
-        Some(d) => run(&d.store, &mut d.shell, bind.action),
-        None if s.app.route == Route::Main || matches!(bind.action, ZoomIn | ZoomOut | ZoomReset) => run(&s.app.store, &mut s.app.shell, bind.action),
+        Some(d) => run(&d.store, &mut d.shell, action),
+        None if s.app.route == Route::Main || matches!(action, ZoomIn | ZoomOut | ZoomReset) => run(&s.app.store, &mut s.app.shell, action),
         None => false,
     }
 }
@@ -201,7 +218,7 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         return false;
     }
     match a {
-        ShowKeybinds => sh.open_settings(Some("keybinds")),
+        ShowKeybinds => sh.nav.cheatsheet = !sh.nav.cheatsheet,
         GuildPrev | GuildNext => {
             let rail = rail(store);
             let i = rail.iter().position(|g| *g == sh.guild).unwrap_or(0);

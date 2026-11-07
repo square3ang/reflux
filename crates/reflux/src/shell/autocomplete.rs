@@ -1,7 +1,6 @@
 //! Composer autocomplete (`channel/components/Autocomplete*`): `@` members, `#` channels,
 //! `:` emoji and `/` commands (`devtools/hooks/useCommands.ts`, the text-only ones).
-// shortcut: no role mentions, GIF/sticker/meme pickers or the moderation commands (/nick, /kick,
-// /ban, /tts, /dm, /gif); custom emoji come from the open guild only.
+// shortcut: no role mentions or command option hints; custom emoji come from the open guild only.
 
 use reflux_model::{Channel, ChannelType, Permissions, Snowflake};
 use reflux_store::Store;
@@ -54,15 +53,6 @@ pub struct Completion {
     pub insert: String,
 }
 
-/// The text commands: (name, description, what a simple one inserts; `None` = a command run
-/// at send).
-const COMMANDS: [(&str, &str, Option<&str>); 5] = [
-    ("shrug", "Appends ¯\\_(ツ)_/¯ to your message.", Some("¯\\_(ツ)_/¯")),
-    ("tableflip", "Appends (╯°□°)╯︵ ┻━┻ to your message.", Some("(╯°□°)╯︵ ┻━┻")),
-    ("unflip", "Appends ┬─┬ ノ( ゜-゜ノ) to your message.", Some("┬─┬ ノ( ゜-゜ノ)")),
-    ("me", "Send an action message (wraps in italics).", None),
-    ("spoiler", "Send a spoiler message (wraps in spoiler tags).", None),
-];
 
 /// `/me` and `/spoiler` at send (`useTextareaSubmit`).
 pub fn apply_command(content: &str) -> String {
@@ -136,8 +126,9 @@ pub fn completions(store: &Store, c: &Channel, t: &Trigger) -> Vec<Completion> {
             }
         }
         '/' => {
-            for (name, detail, simple) in COMMANDS {
-                if let Some(r) = rank(name) {
+            let have = store.permissions(c.id);
+            for (name, detail, perm, simple) in crate::compose::COMMANDS {
+                if let Some(r) = rank(name).filter(|_| crate::compose::offered(perm, c.guild_id.is_some(), have)) {
                     let insert = format!("{} ", simple.map_or_else(|| format!("/{name}"), str::to_string));
                     out.push((r, Completion { glyph: Glyph::Text("/"), label: format!("/{name}"), detail: detail.into(), insert }));
                 }
@@ -151,8 +142,13 @@ pub fn completions(store: &Store, c: &Channel, t: &Trigger) -> Vec<Completion> {
 
 /// Puts a completion in place of the trigger word.
 pub fn accept(st: &mut ShellState, t: &Trigger, c: &Completion) {
-    st.composer.set_selection(t.start, t.end);
-    st.composer.insert(&c.insert);
+    match crate::compose::pill_for(&c.insert, &c.label) {
+        Some((token, label)) => crate::compose::put_pill(&mut st.composer, t.start..t.end, token, &label),
+        None => {
+            st.composer.set_selection(t.start, t.end);
+            st.composer.insert(&c.insert);
+        }
+    }
     st.ac_index = 0;
 }
 

@@ -85,10 +85,55 @@ pub(super) fn run(s: &mut State, op: Op) {
                 }
             });
         }
+        // `createPasskeyRegistration`: `makeCredential` on the key, then
+        // `POST /users/@me/mfa/webauthn/credentials`.
         Op::AddPasskey => {
-            // shortcut: no WebAuthn registration (makeCredential) client yet; passkeys are added
-            // in the web app and then listed, renamed and removed here.
-            s.app.shell.form.error = Some(crate::i18n::t("Adding a passkey isn't supported in Reflux yet. Add it from the Fluxer web app.").into());
+            let Some(inst) = s.app.instance.clone() else { return };
+            let sh = &mut s.app.shell;
+            let Some(opts) = sh.form.data.get("m.passkey_options").cloned() else { return };
+            let text = |k: &str| sh.form.text.get(k).map(|t| t.text.trim().to_string()).unwrap_or_default();
+            let (name, pin) = (text("m.name"), text("m.pin"));
+            let name = if name.is_empty() { "Passkey".to_string() } else { name };
+            (sh.form.busy, sh.form.error) = (true, None);
+            spawn(async move {
+                let origin = crate::passkey::origin_for(&inst.discovery, opts["rp"]["id"].as_str().unwrap_or_default());
+                let challenge = opts["challenge"].clone();
+                let r = tokio::task::spawn_blocking(move || {
+                    crate::passkey::create(
+                        &opts,
+                        &origin,
+                        move |st| {
+                            if let crate::passkey::Status::Pin { reply, wrong, .. } = st {
+                                // A wrong PIN drops the reply, which ends the request.
+                                if !wrong && !pin.is_empty() {
+                                    let _ = reply.send(authenticator::Pin::new(&pin));
+                                }
+                            }
+                        },
+                        |_| {},
+                    )
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+                let r = match r {
+                    Ok(response) => {
+                        let body = json!({ "response": response, "challenge": challenge, "name": name });
+                        inst.rest.request::<Value, Value>(Method::POST, "/users/@me/mfa/webauthn/credentials", Some(&body)).await.map(drop).map_err(|e| describe(&e))
+                    }
+                    Err(e) => Err(e),
+                };
+                update(move |s| {
+                    let sh = &mut s.app.shell;
+                    sh.form.busy = false;
+                    match r {
+                        Ok(()) => {
+                            sh.close_account_modals();
+                            sh.load("passkeys", "/users/@me/mfa/webauthn/credentials");
+                        }
+                        Err(e) => sh.form.error = Some(e),
+                    }
+                });
+            });
         }
     }
 }

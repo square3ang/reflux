@@ -3,12 +3,11 @@
 //! (`DesktopSettingsTab.tsx`), and Appearance's Scaling and Streaming privacy sections
 //! (`appearance_tab/{ScalingTab,StreamerModeTab}.tsx`).
 
-use rune::{El, col, el, row, text};
+use rune::{El, col, row, text};
 
 use super::tabs::section;
 use crate::desktop::Prefs;
 use crate::i18n::{self, t, tf};
-use crate::keybinds::{BINDS, SECTIONS};
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::Switch;
@@ -154,54 +153,6 @@ pub fn streamer_gate<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
                 .on_press(super::select(acc, "appearance"))
                 .el(p),
         )
-}
-
-/// One key cap (`KeyboardKey`): a small raised chip.
-fn cap(label: String, p: &Palette) -> El {
-    row()
-        .min_w(22.0)
-        .h(22.0)
-        .px(6.0)
-        .center()
-        .radius(4.0)
-        .fill(p.background_tertiary)
-        .border(1.0, p.background_modifier_accent)
-        .child(text(label).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary))
-}
-
-pub fn keybinds(p: &Palette) -> El {
-    let mut out = col().w_full();
-    for (i, &(id, heading)) in SECTIONS.iter().enumerate() {
-        let mut rows = col().w_full();
-        let binds: Vec<_> = BINDS.iter().filter(|b| b.section == id).collect();
-        // Rows with the same label (prev / next) merge into one, combos separated by "/".
-        let mut k = 0;
-        while k < binds.len() {
-            let label = binds[k].label;
-            let mut combos = row().gap(6.0).center_y();
-            let mut first = true;
-            while k < binds.len() && binds[k].label == label {
-                if !first {
-                    combos = combos.child(text("/").font(font(13.0, 400.0)).color(p.text_tertiary));
-                }
-                first = false;
-                combos = combos.children(binds[k].combo.caps().into_iter().map(|c| cap(c, p)));
-                k += 1;
-            }
-            rows = rows.child(
-                row()
-                    .w_full()
-                    .py(12.0)
-                    .gap(12.0)
-                    .center_y()
-                    .child(text(t(label)).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0).min_w(0.0).wrap())
-                    .child(combos)
-                    .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).h(1.0).fill(p.background_modifier_accent)),
-            );
-        }
-        out = out.child(section(t(heading), rows, i == 0, p));
-    }
-    out
 }
 
 pub fn language<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {

@@ -145,7 +145,7 @@ impl Demo {
         let roles = vec![
             json!({"id": HQ.to_string(), "name": "@everyone", "permissions": "0", "position": 0}),
             json!({"id": staff.to_string(), "name": "Staff", "color": 0x4641D9, "position": 3, "hoist": true, "permissions": "0"}),
-            json!({"id": mods.to_string(), "name": "Moderators", "color": 0x2ECC71, "position": 2, "hoist": true, "permissions": "0"}),
+            json!({"id": mods.to_string(), "name": "Moderators", "color": 0x2ECC71, "unicode_emoji": "🛡️", "position": 2, "hoist": true, "permissions": "0"}),
             json!({"id": contrib.to_string(), "name": "Contributor", "color": 0xE67E22, "position": 1, "permissions": "0"}),
         ];
         let hq_channels = vec![
@@ -380,6 +380,9 @@ impl Demo {
             voice_scene(&mut shell, &mut store, sc.trim_start_matches('='));
         }
         shell.voice.devices = Some((vec!["Built-in Microphone".into(), "USB Headset".into()], vec!["Speakers".into(), "USB Headset".into()]));
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--nav=")) {
+            crate::nav::demo(&mut shell, &store, sc);
+        }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--desktop=")) {
             crate::desktop::demo(&mut shell, &mut store, sc);
         }

@@ -3,7 +3,7 @@
 
 use reflux_model::{Channel, MemberListGroup, Snowflake};
 use reflux_store::{MemberRow, Store};
-use rune::{El, ScrollSpec, col, el, icon, row, text};
+use rune::{El, ScrollSpec, col, icon, row, text};
 
 use super::{ShellAccess, ShellState, Target, avatar, presence, role_color};
 use crate::icons;
@@ -22,7 +22,6 @@ pub fn group_label(store: &Store, guild: Snowflake, g: &MemberListGroup) -> Stri
 
 /// The lazy member list of a channel, from `GUILD_MEMBER_LIST_UPDATE`; reports the rows on
 /// screen to [`ShellState::member_rows`] so the runtime subscribes to them.
-// shortcut: rows not synced yet are blank, where Fluxer draws skeletons.
 pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let gid = c.guild_id.unwrap_or_default();
     let owner = store.guilds.get(&gid).and_then(|g| g.info.as_ref()).map(|i| i.owner_id);
@@ -36,11 +35,13 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                 .pt(12.0 + if i > 0 { dim::MEMBER_LIST_GROUP_SPACER_HEIGHT } else { 0.0 })
                 .pb(4.0)
                 .px(8.0)
+                .center_y()
+                .children(store.guilds.get(&gid).and_then(|gs| gs.roles.iter().find(|r| r.id.to_string() == g.id)).and_then(|r| super::role_icon::view(st, r, 16.0)).map(|i| i.mr(4.0)))
                 .child(text(label).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate())
                 .key(format!("group-{}", g.id))
         }
         Some(MemberRow::Member(u)) => col().w_full().pb(dim::MEMBER_LIST_ROW_GAP).child(member(store, st, gid, *u, owner == Some(*u), p, acc)).key(format!("member-row-{u}")),
-        None => el().w_full().h(item_h + dim::MEMBER_LIST_ROW_GAP).key(format!("member-gap-{i}")),
+        None => col().w_full().pb(dim::MEMBER_LIST_ROW_GAP).child(crate::nav::skeleton::member_row(i, p)).key(format!("member-gap-{i}")),
     });
     let body = col()
         .w_full()
@@ -57,6 +58,8 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             st.member_rows = r;
             changed
         });
+    // Before the first sync: `MemberListSkeleton`.
+    let body = if rows.is_empty() { col().w_full().pt(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_START).px(dim::MEMBER_LIST_SCROLLER_PADDING_INLINE).child(crate::nav::skeleton::member_list(p)) } else { body };
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body);
     col()
         .w(dim::LAYOUT_MEMBER_LIST_WIDTH)

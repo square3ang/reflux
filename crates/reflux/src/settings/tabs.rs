@@ -27,9 +27,16 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         "advanced_settings" => advanced(store, p, acc),
         "voice_video" => super::voice_tabs::tab(st, p, acc, layer),
         "notifications" => super::look_tabs::notifications(store, st, p, acc),
-        "keybinds" => super::desktop_tabs::keybinds(p),
+        "keybinds" => crate::nav::keys::tab(st, p, acc, layer),
         "language" => super::desktop_tabs::language(store, st, p, acc),
         "desktop_settings" => super::desktop_tabs::desktop(st, p, acc),
+        "applications" => super::dev::applications(st, p, acc, layer),
+        "embed_debugger" => super::dev::embed_debugger(store, st, p, acc),
+        "component_gallery" => {
+            let (body, mut over) = crate::ui::gallery::parts(&st.nav.gallery, true);
+            layer.append(&mut over);
+            body
+        }
         _ => not_available(p),
     }
 }

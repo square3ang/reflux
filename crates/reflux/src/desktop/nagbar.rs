@@ -132,8 +132,12 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
             .on_press(move |s: &mut S| acc(s).desktop.toasts.clear());
         layer.push(row().pin(Some(0.0), Some(24.0), Some(0.0), None).justify_center().items_start().child(pill));
     }
-    let Some((range, word)) = st.desktop.spell_menu.clone() else { return };
+    if !st.popups.is_open("spell-menu") {
+        return;
+    }
     let mut m = Menu::new("spell-menu");
+    let spell = st.desktop.spell_menu.clone();
+    if let Some((range, word)) = spell.clone() {
     let suggestions = super::spell::suggest(&word);
     if suggestions.is_empty() {
         m = m.item(MenuItem::new("spell-none", t("No spelling suggestions")).disabled(true));
@@ -163,17 +167,16 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
         sh.desktop.spell_menu = None;
         sh.popups.close();
     }));
+    }
+    let m = crate::compose::edit_items(st, m, spell.is_some(), acc);
     m.el(&st.popups, popup_access(move |s: &mut S| &mut acc(s).popups), p, layer);
 }
 
-/// The composer's right click: the spelling menu for the misspelling at (or before) the caret.
+/// The composer's right click (`TextareaContextMenu`): the spelling items for the misspelling
+/// at (or before) the caret, then the edit groups.
 pub fn open_spell_menu(sh: &mut ShellState, at: [f32; 2]) -> bool {
-    if !sh.prefs.spellcheck {
-        return false;
-    }
     let (caret, _) = sh.composer.range();
-    let Some(hit) = super::spell::pick(&sh.composer.text, caret) else { return false };
-    sh.desktop.spell_menu = Some(hit);
+    sh.desktop.spell_menu = if sh.prefs.spellcheck { super::spell::pick(&sh.composer.text, caret) } else { None };
     sh.popups.open_at("spell-menu", at);
     true
 }

@@ -11,7 +11,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
 | Profile | PARTIAL | interactive crop (auto centre-crop), timezone, badges | F/user/components/modals/tabs/MyProfileTab.tsx |
-| Account | PARTIAL | add passkey (no WebAuthn registration), recovery kit | tabs/account_security_tab/* |
+| Account | PARTIAL | recovery kit; a security key's PIN is asked up front | tabs/account_security_tab/* |
 | Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
 | Connections | PARTIAL | Bluesky (browser OAuth) | tabs/LinkedAccountsTab.tsx, F/connection/* |
 | Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
@@ -25,12 +25,12 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Voice & video | PARTIAL | input/output volume stored but not applied (no SDK volume); EC/NS/AGC only switch hardware processors; no entrance sound, no camera effects; mic test/VAD always use the default input | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | PARTIAL | keyboard mode (so "Escape exits keyboard mode" is stored only); keep-animating-under-reduced-motion flags | tabs/AccessibilityTab.tsx |
 | Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
-| Keybinds | PARTIAL | custom keybinds, recorder, PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
+| Keybinds | PARTIAL | search box, sync across devices, global custom binds; PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
 | Advanced | PARTIAL | action bar toggles, double-click edit, encoder options, hide blocked, hw accel, auto-update | tabs/AdvancedSettingsTab.tsx |
-| Applications (dev) | MISSING | | tabs/applications_tab/* |
-| Embed debugger (dev) | MISSING | | tabs/EmbedDebuggerTab.tsx |
-| Design system (dev) | PARTIAL | only `--gallery` | tabs/component_gallery_tab/* |
+| Applications (dev) | PARTIAL | bot avatar/banner and friendly-bot flags; a created app stays on the list | tabs/applications_tab/* |
+| Embed debugger (dev) | DONE | | tabs/EmbedDebuggerTab.tsx |
+| Design system (dev) | DONE | | tabs/component_gallery_tab/* |
 | Settings search | PARTIAL | sections/subtabs | SettingsConstants.tsx |
 
 ### 1.2 Community settings (ours guild/settings.rs)
@@ -48,7 +48,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Members | PARTIAL | filters, paging | GuildMembersPage.tsx |
 | Invites | DONE | | DisableInvitesButton.tsx |
 | Bans | DONE | | GuildBansTab.tsx |
-| Delete community | DONE | sudo: password only | GuildDeleteModal.tsx |
+| Delete community | DONE | | GuildDeleteModal.tsx |
 | Transfer ownership | DONE | | TransferOwnershipModal.tsx |
 
 ### 1.3 Channel / thread / forum / group settings (ours guild/channel.rs)
@@ -71,25 +71,25 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Instance picker, login, TOTP, IP auth, register, forgot pw, verify nagbar | DONE | | F/auth/* |
 | Passkeys | PARTIAL | USB only | D/Passkeys.ts |
 | Reset pw / verify email / recover pages | MISSING | web-only links | F/auth/… |
-| SSO login | MISSING | | AuthSsoPanel.tsx |
+| SSO login | DONE | via the browser handoff | AuthSsoPanel.tsx |
 | Browser login handoff | MISSING | | BrowserLoginHandoffModal.tsx |
 | Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
 | Sudo verification | DONE | | SudoVerificationModal.tsx |
-| Account restriction / age gate / new-device | MISSING | | AccountRestrictionScreen.tsx |
-| OAuth2 authorize | MISSING | | OAuthAuthorizeModal.tsx |
-| Terms acceptance | MISSING | | TermsAcceptanceModal.tsx |
+| Account restriction / age gate / new-device | PARTIAL | age gate, new-device prompt; rule links are plain text | AccountRestrictionScreen.tsx |
+| OAuth2 authorize | PARTIAL | scopes can't be unticked; bot permissions not listed; no group DM destination | OAuthAuthorizeModal.tsx |
+| Terms acceptance | DONE | | TermsAcceptanceModal.tsx |
 | Token in OS keyring | DONE | falls back to the 0600 file when no keyring | D/DesktopAppStorage.ts |
 
 ### app / navigation / window / ui
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Guild rail, user area, UI kit, keyboard nav | DONE | | |
-| Guild folders | PARTIAL | expand/collapse | GuildFolderItem.tsx |
-| Rail drag-reorder / create folder | MISSING | | F/app/components/layout/dnd/* |
-| Favorites | MISSING | | FavoritesButton.tsx |
+| Guild folders | DONE | | GuildFolderItem.tsx |
+| Rail drag-reorder / create folder | DONE | | F/app/components/layout/dnd/* |
+| Favorites | PARTIAL | kept in local per-account prefs, not the synced settings | FavoritesButton.tsx |
 | Set custom status | PARTIAL | emoji picker, live preview | CustomStatusModal.tsx |
 | Nagbars (connection, notice, maintenance…) | PARTIAL | instance notice, maintenance, desktop-notification, premium ones (connection, update, streamer, verify done) | app_layout/nagbars/* |
-| Skeletons | PARTIAL | member rows | F/app/components/skeleton/* |
+| Skeletons | DONE | | F/app/components/skeleton/* |
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
@@ -112,11 +112,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
 | Typing indicator tiers | PARTIAL | channel-list dots don't animate | ChannelTyping.tsx |
-| Rich composer (pills, toolbar) | MISSING | | F/lexical/* |
+| Rich composer (pills, toolbar) | PARTIAL | custom emoji pills show `:name:`; toolbar sits at the composer's left, not over the selection | F/lexical/* |
 | Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
-| Composer context menu | MISSING | | TextareaContextMenu.tsx |
-| Slash commands | PARTIAL | /nick /kick /ban /tts /dm /gif | useCommands.ts |
+| Composer context menu | DONE | | TextareaContextMenu.tsx |
+| Slash commands | DONE | no option hints | useCommands.ts |
 | @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
 | Attachments | PARTIAL | video/audio play only where Rune's `Player` does (macOS); elsewhere "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
 | @everyone confirmation | MISSING | | MentionEveryonePopout.tsx |
@@ -184,8 +184,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Edit community profile | DONE | | MyProfileTab.tsx |
 | Delete my messages | MISSING | | useDeleteMyMessagesInGuild.tsx |
 | Preview nagbar | MISSING | | GuildPreviewNagbar.tsx |
-| Role icons | MISSING | | RoleIcon.tsx |
-| Folder settings | MISSING | | GuildFolderSettingsModal.tsx |
+| Role icons | DONE | | RoleIcon.tsx |
+| Folder settings | DONE | | GuildFolderSettingsModal.tsx |
 
 ### moderation
 | Feature | Status | Missing | Official source |
@@ -233,7 +233,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Discovery page | PARTIAL | card images, language filter | DiscoveryPage.tsx |
 | Search UI chips/suggestions, history | PARTIAL/MISSING | | F/search/* |
 | Quick switcher recents | PARTIAL | | QuickSwitcher.tsx |
-| Custom keybinds, cheatsheet modal, keyboard mode | MISSING/PARTIAL | | F/input/* |
+| Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
 | Reduced motion, screen reader announcements | DONE | | F/accessibility/* |

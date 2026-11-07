@@ -9,6 +9,8 @@ pub enum Link {
     Invite(String),
     /// `guild` `None` = `@me` (a DM).
     Channel { guild: Option<Snowflake>, channel: Snowflake },
+    /// `fluxer://oauth2/authorize?…`: its query (`crate::nav::oauth`).
+    OAuth2(Vec<(String, String)>),
 }
 
 /// `fluxer://invite/CODE`, `fluxer://channels/@me/C`, `fluxer://channels/G/C[/M]`. Like Fluxer,
@@ -16,6 +18,9 @@ pub enum Link {
 /// signed-in account only.
 pub fn parse(url: &str) -> Option<Link> {
     let rest = url.trim().strip_prefix("fluxer://").or_else(|| url.trim().strip_prefix("fluxer:"))?;
+    if let Some(params) = crate::nav::oauth::parse(rest) {
+        return Some(Link::OAuth2(params));
+    }
     if rest.contains(['?', '"', '\'', '<', '>', '\\']) {
         return None;
     }

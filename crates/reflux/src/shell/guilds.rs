@@ -1,36 +1,82 @@
 //! The guild rail (`GuildsLayout.module.css`, `sidebar_nav/*`, `guild/components/GuildAcronym`).
 
-use reflux_model::Snowflake;
+use reflux_model::{GuildFolder, Snowflake};
 use reflux_store::{GuildListItem, Store};
+use std::rc::Rc;
+
 use rune::{Align, El, ScrollSpec, Shadow, col, el, icon, row, text};
 
 use super::{ShellAccess, ShellState, user_area_overlay, first_channel, role_color};
 use crate::icons;
 use crate::media::{self, Load};
+use crate::nav::RailDrag;
+use crate::nav::rail::{self, Drop, ROW, Slot};
 use crate::theme::{Palette, dim, font};
 use crate::ui::{mention_badge, mix, scroller};
 use crate::i18n::t;
 
 const ICON: f32 = dim::GUILD_ICON_SIZE;
-/// `.guildListReorderTarget`: box size plus the item gap.
-const ROW: f32 = dim::GUILD_LIST_ITEM_TARGET_SIZE;
 
 pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let rows = Rc::new(rail::rows(store, &st.nav.open));
     let mut list = col()
         .w_full()
         .pt(dim::SPACING_1)
         .pb(user_area_overlay(st) + dim::SPACING_2)
         .child(home(store, st, p, acc))
+        .child(crate::nav::favorites::rail_button(st, p, acc))
         .child(divider(p));
     for item in store.guild_list() {
         list = match item {
-            GuildListItem::Guild(id) => list.child(guild(store, st, id, p, acc)),
-            GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder.color, &guilds, p)),
+            GuildListItem::Guild(id) => list.child(guild(store, st, id, &rows, p, acc)),
+            GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder, &guilds, &rows, p, acc)),
         };
     }
     list = list.child(add_button(p, acc)).child(explore_button(st, p, acc));
     let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false });
     scroller(viewport.child(list), false, p).key("guild-rail")
+}
+
+/// Makes a rail row draggable (`UseGuildListItemDragAndDrop`): the pointer maps onto the rail's
+/// rows, and a release queues the drop for [`crate::nav::poll`].
+fn draggable<S: 'static>(e: El, src: Slot, rows: &Rc<Vec<rail::Row>>, acc: ShellAccess<S>) -> El {
+    let Some(top) = rows.iter().find(|r| r.slot == src).map(|r| r.top) else { return e };
+    let rows = rows.clone();
+    e.on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+        let nav = &mut acc(s).nav;
+        match d.phase {
+            rune::Phase::Down => nav.drag = None,
+            rune::Phase::Move => {
+                // `DRAG_THRESHOLD`: a short wobble stays a click.
+                if nav.drag.is_none() && d.dx.abs().max(d.dy.abs()) < 4.0 {
+                    return;
+                }
+                nav.drag = Some(RailDrag { src, drop: rail::resolve(&rows, src, top + d.y) });
+            }
+            rune::Phase::Up => {
+                if let Some(RailDrag { drop: Some(drop), .. }) = nav.drag.take().filter(|_| !d.cancelled()) {
+                    nav.pending = Some((src, drop));
+                }
+            }
+        }
+    })
+}
+
+/// The drop line over (`top`) or under a row: 2px `brand-primary-light`, box-wide, centred.
+fn drop_line(top: bool, p: &Palette) -> El {
+    let c = if crate::ui::is_light(p) { p.brand_primary } else { p.brand_primary_light };
+    let w = dim::GUILD_LIST_ITEM_BOX_SIZE;
+    let y = if top { 0.0 } else { ROW - 2.0 };
+    el().absolute((dim::LAYOUT_GUILD_LIST_WIDTH - w) / 2.0, y).size(w, 2.0).radius(1.0).fill(c).inert()
+}
+
+/// Drop lines for `slot` while a drag would land beside it.
+fn drop_marks(st: &ShellState, slot: Slot, p: &Palette) -> Option<El> {
+    match st.nav.drag.and_then(|d| d.drop)? {
+        Drop::Before(s) if s == slot => Some(drop_line(true, p)),
+        Drop::After(s) if s == slot => Some(drop_line(false, p)),
+        _ => None,
+    }
 }
 
 /// `.guildIndicator`: the white pill on the rail's edge (8 unread, 20 hovered, 40 selected).
@@ -109,18 +155,44 @@ fn divider(p: &Palette) -> El {
     )
 }
 
-fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let selected = st.guild == Some(id);
+fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, rows: &Rc<Vec<rail::Row>>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let selected = st.guild == Some(id) && !st.nav.favorites;
     let lit = selected || st.hover_guild == Some(Some(id));
     let name = store.guilds.get(&id).and_then(|g| g.info.as_ref()).map_or("", |i| i.name.as_str());
     let (unread, mentions) = store.guild_unread(id);
-    let face = guild_face(store, st, id, ICON, lit, p);
+    let drag = st.nav.drag;
+    let face = match drag {
+        // `CombinePreview`: the target and the dragged guild in a ringed 2×2 grid.
+        Some(RailDrag { src: Slot::Guild(src), drop: Some(Drop::Combine(t)) }) if t == id => {
+            let c = if crate::ui::is_light(p) { p.brand_primary } else { p.brand_primary_light };
+            let mini = |g| guild_face(store, st, g, (ICON - 10.0) / 2.0, true, p);
+            row()
+                .size(ICON, ICON)
+                .padding(4.0)
+                .gap(2.0)
+                .items_start()
+                .radius(ICON * 0.3)
+                .fill(mix(c, p.background_secondary, 8.0))
+                .outline(2.0, 1.0, c)
+                .child(mini(id))
+                .child(mini(src))
+        }
+        _ => guild_face(store, st, id, ICON, lit, p),
+    };
     let first = first_channel(store, id);
-    slot(Some(id), selected, unread, st, face, mention_badge(mentions as u64, true, p), p, acc)
+    let dragging = drag.is_some_and(|d| d.src == Slot::Guild(id));
+    let item = slot(Some(id), selected, unread, st, face, mention_badge(mentions as u64, true, p), p, acc)
         .label(name.to_string())
         .key(format!("guild-{id}"))
-        .on_press(move |s: &mut S| acc(s).select_guild(Some(id), first))
-        .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::Guild(id), [at.x, at.y]))
+        .opacity(if dragging { 0.5 } else { 1.0 })
+        .children(drop_marks(st, Slot::Guild(id), p))
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.nav.favorites = false;
+            sh.select_guild(Some(id), first)
+        })
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::Guild(id), [at.x, at.y]));
+    draggable(item, Slot::Guild(id), rows, acc)
 }
 
 /// `GuildIcon`: the icon from the media proxy, else the acronym; a circle that rounds to a
@@ -170,19 +242,147 @@ fn acronym_font_size(a: &str, size: f32) -> f32 {
     (SIZES[n - 1] / 48.0 * size).max(8.0)
 }
 
-/// A closed folder: up to four mini acronyms on the folder colour.
-// shortcut: folders always show closed and don't open; add expand state when folders matter.
-fn folder_item(store: &Store, st: &ShellState, color: Option<u32>, guilds: &[Snowflake], p: &Palette) -> El {
-    let bg = color.map_or(mix(p.brand_primary, p.background_secondary, 40.0), |c| mix(role_color(c), p.background_secondary, 40.0));
-    let mini = |id: &Snowflake| guild_face(store, st, *id, 16.0, false, p);
-    let cells: Vec<El> = guilds.iter().take(4).map(mini).collect();
-    let grid = col()
-        .gap(2.0)
-        .child(row().gap(2.0).children(cells.iter().take(2).cloned()))
-        .child(row().gap(2.0).children(cells.iter().skip(2).cloned()));
-    row().w_full().h(ROW).center().child(
-        row().size(ICON, ICON).center().radius(dim::FOLDER_RADIUS).fill(bg).child(grid),
-    )
+/// The folder's accent: its colour, else `brand-primary-light` (`brand-primary` on light).
+fn folder_accent(color: Option<u32>, p: &Palette) -> rune::Color {
+    match color.filter(|&c| c != 0) {
+        Some(c) => role_color(c),
+        None if crate::ui::is_light(p) => p.brand_primary,
+        None => p.brand_primary_light,
+    }
+}
+
+/// `GuildFolderIcons` → the Phosphor fill glyph.
+pub(crate) fn folder_glyph(icon: &str) -> &'static rune::Icon {
+    match icon {
+        "star" => &icons::STAR_FILL,
+        "heart" => &icons::HEART_FILL,
+        "bookmark" => &icons::BOOKMARK_SIMPLE_FILL,
+        "game_controller" => &icons::GAME_CONTROLLER_FILL,
+        "shield" => &icons::SHIELD_FILL,
+        "music_note" => &icons::MUSIC_NOTE_FILL,
+        _ => &icons::FOLDER_FILL,
+    }
+}
+
+/// `GuildFolderItem`: closed, a 2×2 grid of mini icons (or the folder glyph with
+/// SHOW_ICON_WHEN_COLLAPSED) on the folder surface; open, the glyph over a tinted backdrop
+/// that runs behind its guilds. A click toggles it; no expand animation.
+#[allow(clippy::too_many_arguments)]
+fn folder_item<S: 'static>(store: &Store, st: &ShellState, folder: &GuildFolder, guilds: &[Snowflake], rows: &Rc<Vec<rail::Row>>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let fid = folder.id;
+    let open = st.nav.open.contains(&fid);
+    let light = crate::ui::is_light(p);
+    let accent = folder_accent(folder.color, p);
+    let hovered = st.nav.hover_folder == Some(fid) || st.popups.is_open("ctx-menu") && st.nav.menu_folder == Some(fid);
+    let selected = !st.nav.favorites && st.guild.is_some_and(|g| guilds.contains(&g));
+    let (fill, base) = match (selected, hovered) {
+        (true, _) => (if light { 16.0 } else { 18.0 }, p.surface_interactive_selected_bg),
+        (_, true) => (if light { 12.0 } else { 14.0 }, p.surface_interactive_hover_bg),
+        _ => (if light { 8.0 } else { 10.0 }, p.surface_interactive_hover_bg),
+    };
+    let surface = mix(accent, base, fill);
+    let size = dim::GUILD_FOLDER_EXPANDED_SURFACE_SIZE;
+    let radius = if hovered || selected { size * 0.24 } else { dim::FOLDER_RADIUS };
+    let glyph_color = mix(accent, p.text_primary, if selected { 28.0 } else { 14.0 });
+    let glyph = || row().size(size, size).center().radius(radius).fill(surface).child(icon(folder_glyph(&folder.icon), 24.0).color(glyph_color));
+    let mut unread = false;
+    let mut mentions = 0;
+    for &g in guilds {
+        let (u, m) = store.guild_unread(g);
+        unread |= u;
+        mentions += m;
+    }
+    let inside = matches!(st.nav.drag.and_then(|d| d.drop), Some(Drop::Inside(f)) if f == fid);
+    let mut face = if open || folder.flags & 1 != 0 {
+        glyph()
+    } else {
+        // `.collapsedFolder`: 4px padding, 2px gaps, minis at 38% of the folder radius.
+        let mini_bg = if light { mix(accent, p.background_primary, 12.0) } else { mix(accent, p.background_secondary, 14.0) };
+        let cell = (size - 8.0 - 2.0) / 2.0;
+        let mini = |id: &Snowflake| mini_face(store, st, *id, cell, dim::FOLDER_RADIUS * 0.38, mini_bg, p);
+        let cells: Vec<El> = guilds.iter().take(4).map(mini).collect();
+        col()
+            .size(size, size)
+            .padding(4.0)
+            .gap(2.0)
+            .radius(radius)
+            .fill(surface)
+            .child(row().gap(2.0).children(cells.iter().take(2).cloned()))
+            .child(row().gap(2.0).children(cells.iter().skip(2).cloned()))
+    };
+    if inside {
+        face = face.outline(2.0, 2.0, if light { p.brand_primary } else { p.brand_primary_light });
+    }
+    let mut frame = el().size(size, size).child(face);
+    if !open && let Some(b) = mention_badge(mentions as u64, true, p) {
+        frame = frame.child(
+            row()
+                .pin(None, None, Some(-4.0), Some(-4.0))
+                .radius(dim::RADIUS_MD + 3.0)
+                .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 3.0, color: surface, inset: false })
+                .child(b),
+        );
+    }
+    let mut header = row().w_full().h(ROW).center();
+    if !open && (selected || hovered || unread) && st.nav.drag.is_none() {
+        header = header.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p));
+    }
+    let name = crate::nav::folder::display_name(store, folder);
+    let header = header
+        .child(frame)
+        .children(drop_marks(st, Slot::Folder(fid), p))
+        .opacity(if st.nav.drag.is_some_and(|d| d.src == Slot::Folder(fid)) { 0.5 } else { 1.0 })
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(format!("{name} folder, {}", if open { "expanded" } else { "collapsed" }))
+        .key(format!("folder-{}", fid.unwrap_or(0)))
+        .on_hover_change(move |s: &mut S, inside, _| {
+            let nav = &mut acc(s).nav;
+            if inside {
+                nav.hover_folder = Some(fid);
+            } else if nav.hover_folder == Some(fid) {
+                nav.hover_folder = None;
+            }
+        })
+        .on_press(move |s: &mut S| {
+            let open = &mut acc(s).nav.open;
+            if !open.remove(&fid) {
+                open.insert(fid);
+            }
+        })
+        .on_secondary_press(move |s: &mut S, at, _| crate::nav::folder::open_menu(acc(s), fid, [at.x, at.y]));
+    let header = draggable(header, Slot::Folder(fid), rows, acc);
+    if !open {
+        return header;
+    }
+    let n = guilds.len();
+    let mut list = col().w_full().pb(rail::FOLDER_PAD).gap(rail::FOLDER_GAP);
+    for &g in guilds {
+        list = list.child(guild(store, st, g, rows, p, acc));
+    }
+    let h = ROW * (n as f32 + 1.0) + rail::FOLDER_GAP * n.saturating_sub(1) as f32;
+    // `.expandedFolderBackground`: 4px wider than the surface, radius 32% of the box.
+    let back_w = size + 4.0;
+    let back = el()
+        .absolute((dim::LAYOUT_GUILD_LIST_WIDTH - back_w) / 2.0, (ROW - size) / 2.0)
+        .size(back_w, h - (ROW - size) / 2.0)
+        .radius(dim::GUILD_LIST_ITEM_BOX_SIZE * 0.32)
+        .fill(mix(accent, p.background_secondary, if light { 7.0 } else { 8.0 }))
+        .inert();
+    col().w_full().child(back).child(header).child(list)
+}
+
+/// `MiniGuildIcon`: the icon, else the acronym on the mini surface.
+fn mini_face(store: &Store, st: &ShellState, id: Snowflake, size: f32, radius: f32, bg: rune::Color, p: &Palette) -> El {
+    let info = store.guilds.get(&id).and_then(|g| g.info.as_ref());
+    match info.and_then(|i| i.icon.as_deref()).map(|h| st.media.asset(|b, s| media::guild_icon_url(b, id, h, size, s))) {
+        Some(Load::Ready(px)) => el().size(size, size).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill),
+        _ => {
+            let a = acronym(info.map_or("", |i| i.name.as_str()));
+            let fs = acronym_font_size(&a, size);
+            row().size(size, size).center().radius(radius).fill(bg).child(text(a).font(font(fs, 500.0).lh(fs)).color(p.text_primary))
+        }
+    }
 }
 
 /// `.createGuildButton`: a dashed ring with a plus.

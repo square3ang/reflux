@@ -152,7 +152,7 @@ fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: She
             .item(MenuItem::new("create-channel", t("Create channel")).icon(&icons::PLUS_CIRCLE_FILL).on_select(create(false)))
             .item(MenuItem::new("create-category", t("Create category")).icon(&icons::FOLDER_PLUS_FILL).on_select(create(true)));
     }
-    m = m.separator();
+    m = m.separator().item(MenuItem::new("delete-mine", "Delete my messages").icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).nav.confirm_purge = Some(g)));
     if !owner {
         let r = crate::social::Modal::Report { target: "guild", guild: Some(g), channel: None, id: g };
         m = m.item(MenuItem::new("report-guild", "Report community").icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| crate::social::open_report(acc(s), r.clone())));
@@ -165,7 +165,6 @@ fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: She
 }
 
 /// `ChannelContextMenu` (`useChannelMenuData`): guild channels and group DMs.
-// shortcut: favorites aren't listed.
 fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
     let Some(ch) = store.channels.get(&c) else { return Menu::new("ctx-menu") };
     let guild = ch.guild_id;
@@ -184,6 +183,14 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
         }
         if ch.kind == ChannelType::GUILD_ANNOUNCEMENT {
             m = m.item(MenuItem::new("follow-channel", t("Follow channel")).icon(&icons::BELL_RINGING_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Follow(c))));
+        }
+        if !category {
+            let fav = crate::nav::favorites::is_favorite(st, c);
+            m = m.item(
+                MenuItem::new("favorite", if fav { "Remove from favorites" } else { "Add to favorites" })
+                    .icon(&icons::STAR_FILL)
+                    .on_select(move |s: &mut S| crate::nav::favorites::toggle(acc(s), g, c)),
+            );
         }
         if category && manage {
             m = m.item(MenuItem::new("create-channel", t("Create channel")).icon(&icons::PLUS_CIRCLE_FILL).on_select(move |s: &mut S| {

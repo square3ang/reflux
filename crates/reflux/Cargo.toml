@@ -23,6 +23,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 fastrand = "2"
 # Firefox's CTAP2 stack: USB security keys on Linux (hidraw + libudev), Windows and macOS.
 authenticator = { version = "0.5", default-features = false, features = ["crypto_rust"] }
+serde_cbor = "0.11"
 base64 = "0.22"
 sha2 = "0.10"
 url.workspace = true

@@ -63,6 +63,8 @@ pub struct Prefs {
     pub look: crate::look::Prefs,
     /// The update version whose bar was dismissed.
     pub skipped_update: Option<String>,
+    /// Per-account preferences (favorites, keybinds), by user ID.
+    pub accounts: std::collections::HashMap<String, crate::nav::AccountPrefs>,
 }
 
 impl Default for Prefs {
@@ -86,6 +88,7 @@ impl Default for Prefs {
             streamer: Default::default(),
             look: Default::default(),
             skipped_update: None,
+            accounts: Default::default(),
         }
     }
 }
@@ -237,6 +240,7 @@ pub fn ready(s: &mut State) {
             sh.dialog = Some(crate::guild::Dialog::Add(crate::guild::AddView::Join));
         }
         link::Link::Channel { guild, channel } => sh.select_guild(guild, Some(channel)),
+        link::Link::OAuth2(params) => crate::nav::oauth::open(sh, params),
     }
 }
 
