@@ -26,7 +26,7 @@ Rules:
 | Quick CSS applies only `:root` colour/font variables | Rune has no CSS engine | `settings/look_tabs.rs`, `quick_css.rs` | never (by design) |
 | Spellcheck uses our own dictionary; the caret stands in for the pointer position | no OS text services; no pointer→text-offset API | `desktop/spell.rs` | Rune exposes hit-testing into text |
 | Undo/Redo always enabled | Rune doesn't expose the edit history depth | `compose.rs` | history API |
-| Inline video on Windows/Linux doesn't use Rune's `Player` | `Player` has only a macOS (AVFoundation) backend | `gst.rs` (Linux), Windows backend in progress | `Player` gains Windows/Linux backends |
+| Inline video/audio and gifv on Windows/Linux don't use Rune's `Player`: our `VideoPlayer` (GStreamer `playbin` on Linux, Media Foundation `IMFSourceReader` on Windows) draws RGBA frames into a `Pixels` with our own control bar | `Player` has only a macOS (AVFoundation) backend | `gst.rs`, `mf.rs`, `shell/{clip,gifv}.rs` | `Player` gains Windows/Linux backends |
 | RTL: bidi text runs only, layout isn't mirrored | Rune has no layout direction | `i18n.rs` | layout direction in Rune |
 | No minimize-to-tray, window size only (no position/maximized) — **WONTFIX** (user decision) | no minimize event; position impossible on Wayland | `desktop/window.rs` | — |
 | Icons can't be mirrored (missed-call phone) | no icon transform | `shell/system_msg.rs` | icon flip/transform |
@@ -49,6 +49,8 @@ Rules:
 | Passkeys: Windows via webauthn.dll; Linux/macOS USB keys only | no Linux platform authenticator; macOS iCloud passkeys need an entitlement only fluxer.app has | `passkey.rs` | — |
 | App-audio capture on Linux: `pw-dump` to find the node + `pipewiresrc`; appsink with `sync=false` (with sync it dropped ~70% of the audio) | no PipeWire API in libwebrtc | `gst.rs`, `reflux-voice` | — |
 | Camera and inline video on Linux go through GStreamer (`gst` feature, default) | libwebrtc's capture isn't exposed by the Rust SDK; Rune has no Linux player | `gst.rs` | — |
+| Windows playback pump: one decode thread per clip reads the source reader synchronously and paces samples against a wall clock (pause/seek/rate move the clock); sound goes to rodio (`Player` per clip, rebuilt on seek, ~0.5 s queued ahead, rate = rodio speed so the pitch shifts), frames RGB32 → RGBA | Media Foundation's own renderers (EVR/SAR, Media Engine) draw into a window, not into Rune's `Pixels`; rodio is already the app's sound output | `mf.rs` | Rune `Player` on Windows |
+| Media Foundation readers open/close one at a time and an `E_UNEXPECTED` open is retried | under wine concurrent opens deadlocked and an open right after a close failed; not seen on Windows (untested there) | `mf.rs` | a real Windows run shows it's not needed |
 
 ## Voice / LiveKit Rust SDK
 
@@ -85,6 +87,7 @@ Rules:
 | Shared `CARGO_TARGET_DIR` across worktrees; stale cross-worktree errors fixed by `touch`ing the crate's `lib.rs`/`main.rs` | disk is tight; libwebrtc builds are huge | HANDOFF.md | more disk |
 | NVENC needs the gitignored `.cuda` symlink before the first build | webrtc-sys looks for CUDA headers there | HANDOFF.md | — |
 | `scripts/cross-check.sh`: Windows/macOS `cargo check` with zig; webrtc-sys's MSVC C++ and the Objective-C sources get empty objects, a fake `xcrun` satisfies the macOS build script — nothing links | no mingw/MSVC toolchain or Mac here | `scripts/cross-check.sh` | real Windows/macOS CI |
+| `scripts/mf-wine-test.sh`: builds only `mf.rs` (via `#[path]`) for windows-gnu with zig as linker (empty libgcc stubs, msvcrt/winpthreads args dropped, `zig dlltool` for raw-dylib) and runs its tests under wine on GStreamer-encoded clips | the whole app can't link here (webrtc-sys); wine's MF (winegstreamer) stands in for Windows' decoders | `scripts/mf-wine-test.{sh,rs}` | real Windows CI |
 | `winapi` with the `std` feature on Windows | `authenticator` 0.5's Windows HID transport doesn't compile otherwise | `crates/reflux/Cargo.toml` | authenticator fix |
 | The live probe reads the token from the keyring off the async runtime (`spawn_blocking`) | the Secret Service client blocks and panics inside tokio | `reflux-net/examples/live_probe.rs` | — |
 
@@ -122,6 +125,8 @@ Rules:
 - `crates/reflux/src/keybinds.rs:114` plain and Alt-only character combos aren't recordable (they'd type).
 - `crates/reflux/src/look.rs:4` emoticons are matched as whole space-separated words from a short list.
 - `crates/reflux/src/look.rs:5` Fluxer also syncs some of these through `synced_preferences` (a protobuf in the
+- `crates/reflux/src/mf.rs:100` rodio's speed shifts the pitch (no `preservesPitch` like playbin's scaletempo);
+- `crates/reflux/src/mf.rs:157` readers open and close one at a time, and an E_UNEXPECTED open is retried: under
 - `crates/reflux/src/nav/favorites.rs:4` categories and nicknames are kept in the snapshot but not shown; no drag reordering.
 - `crates/reflux/src/nav/keys.rs:81` a Tab inside a field moves focus without showing the intro.
 - `crates/reflux/src/nav/keys.rs:279` records in place instead of in a popout.
@@ -189,5 +194,6 @@ Rules:
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so only text built by the shared helpers
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
+- `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 
 <!-- END GENERATED -->

@@ -171,12 +171,12 @@ fn video<S: 'static>(store: &Store, st: &ShellState, m: &Message, key: &str, v: 
     // The poster comes from the thumbnail when there is one.
     let poster = EmbedMedia { proxy_url: thumb.and_then(|t| t.proxy_url.clone()).or_else(|| v.proxy_url.clone()), ..v.clone() };
     let t = tile(store, st, m, key.to_owned(), &poster, super::chat::fit(w, h, (EMBED_W, max_h)), true, p, acc);
-    if st.media_ui.playing.as_ref().is_some_and(|(k, _)| k == key) {
+    if st.media_ui.playing.as_ref().is_some_and(|(k, _)| k == key) || super::clip::get(st, key).is_some() {
         return t;
     }
     // The tile plays `poster.url`; the clip is the video's own.
     let (k, url) = (key.to_owned(), v.proxy_url.clone().unwrap_or_else(|| v.url.clone()));
-    t.on_press(move |s: &mut S| attachments::play(acc(s), k.clone(), rune::Player::url(url.clone())))
+    t.on_press(move |s: &mut S| super::clip::start(acc(s), k.clone(), url.clone(), false))
 }
 
 /// `EmbedAudio`: the inline audio player for an audio link.

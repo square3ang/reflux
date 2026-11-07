@@ -75,8 +75,9 @@ See `git log` for details. Crates:
   entries to `assets/i18n/*.json` (re-run after adding strings). Only login + settings chrome are
   converted; the remaining files are listed in `i18n.rs`. Headless snapshots: `REFLUX_LOCALE=ko`.
 - Media (`shell/{attachments,embeds,lightbox,links,highlight,invite_embed}.rs`, `media.rs`):
-  mosaic, spoiler/mature blur, inline video/audio (Rune `Player`; it only plays on macOS, so
-  Linux/Windows show "Open in browser"; gifv uses it on macOS), file cards + text previews, rich/YouTube/gifv embeds,
+  mosaic, spoiler/mature blur, inline video/audio + gifv (`shell/clip.rs`/`gifv.rs` →
+  `gst::VideoPlayer`: GStreamer on Linux, Media Foundation `mf.rs` on Windows; Rune `Player` on
+  macOS), file cards + text previews, rich/YouTube/gifv embeds,
   invite cards (`Intent::FetchInvite` → `app/invites.rs`), lightbox (zoom/pan/arrows/Esc,
   download, copy image/link), external link warning + trusted domains, syntect highlighting,
   GIF/animated-WebP frames on a shared clock (`Media::take_next_frame` → `wake_after`).
@@ -124,8 +125,12 @@ See `git log` for details. Crates:
   `LIVEKIT_PREFERRED_HW_ENCODER` / software), local mute, voice details popout (ping graph),
   E2EE (`e2ee_key` → shared-key AES-GCM frame encryption + lock badge), moderator move follow,
   reconnecting state, join-confirm / channel-full / refused modals, watch-stream full window +
-  spectators, video/audio attachment playback through GStreamer (`gst` feature, default; Linux
-  only, `--no-default-features` drops it), voice messages (composer "+" → record WAV via cpal,
+  spectators, video/audio attachment playback through GStreamer (`gst` feature, default; Linux,
+  `--no-default-features` drops it; tested end to end by `cargo test -p reflux gst::` on clips it
+  encodes) and Media Foundation on Windows (`mf.rs`; `scripts/mf-wine-test.sh` builds just that
+  module for windows-gnu with zig and runs it under wine: H.264/AAC mp4 + mp3, frames/sound/
+  pause/seek/end/replay/4 at once — wine-verified only, never run on real Windows; https via MF's
+  network source untested), voice messages (composer "+" → record WAV via cpal,
   Fluxer waveform, `VOICE_MESSAGE` flag; waveform player). The mic gate enables/disables the
   local track (no mute signalling). Scenes: `--shell-demo --voice=call|focus|details|tile-menu|
   camera|share|full|refused|incoming|dm|voice-message|meter`, `--msg-scene=media-files`.
