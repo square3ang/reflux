@@ -38,6 +38,9 @@ pub struct Prefs {
     pub tts_rate: f32,
     pub tts_command: bool,
     pub tts_mode: u8,
+    /// Accessibility: joining a voice channel needs a double click (or asks first).
+    pub join_double_click: bool,
+    pub confirm_join_voice: bool,
     /// Keyboard: `showTextareaFocusRing`, `escapeExitsKeyboardMode`, `showContextMenuShortcuts`,
     /// `confirmBeforeStartingCalls`.
     pub focus_ring: bool,
@@ -133,6 +136,8 @@ impl Default for Prefs {
             tts_rate: 1.0,
             tts_command: true,
             tts_mode: 2,
+            join_double_click: false,
+            confirm_join_voice: false,
             focus_ring: true,
             escape_exits_keyboard: false,
             menu_shortcuts: false,

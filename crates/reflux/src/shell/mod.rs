@@ -50,6 +50,7 @@ pub mod threads;
 pub mod upload;
 pub mod voice;
 pub mod call;
+pub mod voice_join;
 pub mod clip;
 pub(crate) mod client_system;
 pub mod gifv;
@@ -329,6 +330,8 @@ pub struct ShellState {
     /// Member list rows on screen (drives the lazy list subscription).
     pub member_rows: std::ops::Range<usize>,
     pub voice: voice::Voice,
+    /// `ConfirmModal` before joining a voice channel (`confirmBeforeJoiningVoiceChannels`).
+    pub join_confirm: Option<(Option<Snowflake>, Snowflake)>,
     /// The open community management dialog and its form.
     pub dialog: Option<crate::guild::Dialog>,
     pub form: crate::guild::Form,
@@ -453,6 +456,7 @@ impl Default for ShellState {
             confirm_leave: None,
             member_rows: 0..0,
             voice: voice::Voice::default(),
+            join_confirm: None,
             dialog: None,
             form: Default::default(),
             invite_base: String::new(),
@@ -795,6 +799,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(account_gate::help_modal(store, st, p, acc));
     layer.extend(crate::desktop::top_bars::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);
+    layer.extend(voice_join::modal(store, st, p, acc));
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));

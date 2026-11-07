@@ -123,6 +123,13 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
                 .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::Providers(mode)))
                 .el(p)
         }
+        "appearance-voice-channel-join-behavior" => crate::ui::Button::new(t("Configure"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Compact)
+            .icon(&icons::GEAR_BOLD)
+            .key("advanced-voice-join-configure")
+            .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::SwitchGroup("appearance-voice-channel-join-behavior")))
+            .el(p),
         "advanced-unread-badge-customization" => look_switch(
             st,
             p,
@@ -201,6 +208,11 @@ pub fn switch_group_modal<S: 'static>(st: &ShellState, id: &str, p: &Palette, ac
             .child(look_switch(st, p, acc, Some("Show stickers button"), false, |p| p.look.show_stickers_button, |p, v| p.look.show_stickers_button = v))
             .child(look_switch(st, p, acc, Some("Show emoji button"), false, |p| p.look.show_emoji_button, |p, v| p.look.show_emoji_button = v))
             .child(look_switch(st, p, acc, Some("Show send button"), false, |p| p.look.show_send_button, |p, v| p.look.show_send_button = v))
+    } else if id == "appearance-voice-channel-join-behavior" {
+        let double = st.prefs.look.join_double_click;
+        col().w_full().gap(12.0)
+            .child(look_switch(st, p, acc, Some("Require double click to join voice channels"), false, |p| p.look.join_double_click, |p, v| p.look.join_double_click = v))
+            .child(look_switch(st, p, acc, Some("Confirm before joining voice channels"), double, |p| p.look.confirm_join_voice, |p, v| p.look.confirm_join_voice = v))
     } else {
         let off = !st.prefs.look.action_bar;
         col()

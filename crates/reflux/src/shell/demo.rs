@@ -649,6 +649,11 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
     match scene {
         "menu" => st.popups.toggle(crate::guild::HEADER_MENU),
         "voice-chat" => st.select_guild(Some(g), Some(Snowflake(2301))),
+        "voice-join-confirm" => {
+            st.select_guild(Some(g), Some(Snowflake(2301)));
+            st.prefs.look.confirm_join_voice = true;
+            st.join_confirm = Some((Some(g), Snowflake(2301)));
+        }
         "voice-chat-joined" => {
             st.select_guild(Some(g), Some(Snowflake(2301)));
             st.voice.channel = Some((Some(g), Snowflake(2301)));

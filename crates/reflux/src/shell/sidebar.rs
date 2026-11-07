@@ -224,7 +224,21 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     };
     let guild = c.guild_id;
     if c.kind == ChannelType::GUILD_VOICE {
-        item = item.on_press(move |s: &mut S| acc(s).join_voice(guild, id));
+        // `Accessibility.voiceChannelJoinRequiresDoubleClick` / `confirmBeforeJoiningVoiceChannels`.
+        let double = crate::look::with(|l| l.join_double_click);
+        item = item.on_press(move |s: &mut S| {
+            let sh: &mut ShellState = acc(s);
+            if double {
+                if sh.channel != Some(id) {
+                    sh.select_channel(id);
+                }
+            } else {
+                super::voice_join::request::<S>(sh, guild, id);
+            }
+        });
+        if double {
+            item = item.on_double_press(move |s: &mut S| acc(s).join_voice(guild, id));
+        }
     } else if !link {
         item = item.on_press(move |s: &mut S| acc(s).select_channel(id));
     }
