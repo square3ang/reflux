@@ -248,7 +248,6 @@ impl<S: 'static> Slider<S> {
             .fill(mix(p.interactive_muted, p.background_tertiary, 82.0))
             .box_shadow(sh(0.0, 0.0, 0.0, 1.0, mix(p.background_primary, Color::TRANSPARENT, 20.0), true))
             .child(bar);
-        // shortcut: the grabber's hover border (brand 62%) is skipped; Rune's hover paints an overlay, not a border.
         let grab = el()
             .size(thumb, thumb)
             .radius(thumb / 2.0)
@@ -256,7 +255,9 @@ impl<S: 'static> Slider<S> {
             .gradient(rgba(255, 255, 255, 0.96), rgba(245, 246, 248, 0.92))
             .border(2.0, mix(p.background_primary, p.brand_primary, 80.0))
             .box_shadow(sh(0.0, 1.0, 2.0, 0.0, rgba(0, 0, 0, 0.22), false))
-            .box_shadow(sh(0.0, 6.0, 14.0, 0.0, rgba(0, 0, 0, 0.18), false));
+            .box_shadow(sh(0.0, 6.0, 14.0, 0.0, rgba(0, 0, 0, 0.18), false))
+            // `.sliderControl:hover .grabber`: the border turns brand 62%.
+            .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(thumb / 2.0).border(2.0, mix(p.brand_primary, p.background_primary, 62.0)).group_opacity(0.0, if self.disabled { 0.0 } else { 1.0 }).inert());
         // Free space split frac : 1 - frac puts the thumb's left edge at frac of the track.
         let thumb_row = row()
             .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -273,7 +274,8 @@ impl<S: 'static> Slider<S> {
             .child(rail)
             .child(thumb_row)
             .range_value(self.value as f64, self.min as f64, self.max as f64)
-            .range_step(self.step as f64);
+            .range_step(self.step as f64)
+            .hover_group();
         if self.disabled {
             return ctl.opacity(0.55).disabled(true).role("slider");
         }

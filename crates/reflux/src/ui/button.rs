@@ -140,6 +140,13 @@ impl<S: 'static> Button<S> {
             }
         };
         let live = !self.disabled && !self.submitting;
+        // `:hover` `border-color` (primary, secondary, danger).
+        let hover_border = match self.variant {
+            ButtonVariant::Primary => Some(mix(p.brand_secondary, white, 84.0)),
+            ButtonVariant::Secondary => Some(mix(p.background_modifier_accent, p.text_tertiary, 88.0)),
+            ButtonVariant::Danger => Some(mix(p.button_danger_active_fill, Color::TRANSPARENT, 72.0)),
+            _ => None,
+        };
 
         let mut content = row().center().gap(self.icon_gap).opacity(if self.submitting { 0.0 } else { 1.0 });
         if let Some(i) = self.icon.filter(|_| !self.icon_right) {
@@ -179,9 +186,11 @@ impl<S: 'static> Button<S> {
             b = b.key(k);
         }
         if live {
-            // shortcut: hover/press replace the fill only; CSS also shifts the border colour, which
-            // Rune's overlay (drawn under the border) can't do. Upgrade with a hover-driven border if visible.
             b = b.hover(hover).press(press).cursor(rune::Cursor::Pointer);
+            // The hover border: a second border over the first, shown while the button is hovered.
+            if let Some(c) = hover_border {
+                b = b.hover_group().child(rune::el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(radius).border(1.0, over(c, hover)).group_opacity(0.0, 1.0).inert());
+            }
             if let Some(f) = self.on_press {
                 b = b.on_press(f);
             }
