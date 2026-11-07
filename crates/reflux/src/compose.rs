@@ -187,38 +187,44 @@ pub fn edit_items<S: 'static>(st: &ShellState, mut m: Menu<S>, after_spelling: b
         sh.desktop.spell_menu = None;
         sh.popups.close();
     };
-    let has_sel = st.composer.range().0 != st.composer.range().1;
+    let draft = if st.desktop.menu_pane { &st.threads.composer } else { &st.composer };
+    let has_sel = draft.range().0 != draft.range().1;
     if after_spelling {
         m = m.separator();
     }
     m.item(MenuItem::new("undo", "Undo").icon(&icons::ARROW_COUNTER_CLOCKWISE).on_select(move |s: &mut S| {
-        acc(s).composer.undo();
+        menu_draft(acc(s)).undo();
         close(s);
     }))
     .item(MenuItem::new("redo", "Redo").icon(&icons::ARROW_CLOCKWISE).on_select(move |s: &mut S| {
-        acc(s).composer.redo();
+        menu_draft(acc(s)).redo();
         close(s);
     }))
     .separator()
     .item(MenuItem::new("cut", "Cut").icon(&icons::SCISSORS).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
         let c = acc(s);
-        tx.copy(c.composer.selected().to_string());
-        c.composer.insert("");
+        tx.copy(menu_draft(c).selected().to_string());
+        menu_draft(c).insert("");
         close(s);
     }))
     .item(MenuItem::new("copy", "Copy").icon(&icons::COPY).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
-        tx.copy(acc(s).composer.selected().to_string());
+        tx.copy(menu_draft(acc(s)).selected().to_string());
         close(s);
     }))
     .item(MenuItem::new("paste", "Paste").icon(&icons::CLIPBOARD_TEXT).on_select_tx(move |s: &mut S, tx: &mut Tx| {
-        tx.read_clipboard(move |s: &mut S, content: &rune::ClipboardContent, _| acc(s).composer.insert(content.text()));
+        tx.read_clipboard(move |s: &mut S, content: &rune::ClipboardContent, _| menu_draft(acc(s)).insert(content.text()));
         close(s);
     }))
-    .item(MenuItem::new("select-all", "Select all").icon(&icons::SELECTION).disabled(st.composer.text.is_empty()).on_select(move |s: &mut S| {
-        let c = &mut acc(s).composer;
+    .item(MenuItem::new("select-all", "Select all").icon(&icons::SELECTION).disabled(draft.text.is_empty()).on_select(move |s: &mut S| {
+        let c = menu_draft(acc(s));
         c.set_selection(0, c.text.len());
         close(s);
     }))
+}
+
+/// The draft the textarea context menu was opened on: the main composer's or the thread panel's.
+pub fn menu_draft(sh: &mut ShellState) -> &mut TextEdit {
+    if sh.desktop.menu_pane { &mut sh.threads.composer } else { &mut sh.composer }
 }
 
 // ---- slash commands ----

@@ -147,9 +147,10 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
         m = m.item(MenuItem::new(format!("spell-{i}"), sug.clone()).on_select(move |s: &mut S| {
             let sh = acc(s);
             // The text may have changed since the menu opened.
-            if sh.composer.text.get(r.clone()).is_some() {
-                sh.composer.set_selection(r.start, r.end);
-                sh.composer.insert(&sug);
+            let d = crate::compose::menu_draft(sh);
+            if d.text.get(r.clone()).is_some() {
+                d.set_selection(r.start, r.end);
+                d.insert(&sug);
             }
             sh.desktop.spell_menu = None;
             sh.popups.close();
@@ -173,10 +174,12 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
 }
 
 /// The composer's right click (`TextareaContextMenu`): the spelling items for the misspelling
-/// at (or before) the caret, then the edit groups.
-pub fn open_spell_menu(sh: &mut ShellState, at: [f32; 2]) -> bool {
-    let (caret, _) = sh.composer.range();
-    sh.desktop.spell_menu = if sh.prefs.spellcheck { super::spell::pick(&sh.composer.text, caret) } else { None };
+/// at (or before) the caret, then the edit groups. `pane`: the thread panel's composer.
+pub fn open_spell_menu(sh: &mut ShellState, at: [f32; 2], pane: bool) -> bool {
+    sh.desktop.menu_pane = pane;
+    let d = if pane { &sh.threads.composer } else { &sh.composer };
+    let (caret, _) = d.range();
+    sh.desktop.spell_menu = if sh.prefs.spellcheck { super::spell::pick(&d.text, caret) } else { None };
     sh.popups.open_at("spell-menu", at);
     true
 }

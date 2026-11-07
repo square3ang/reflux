@@ -547,6 +547,7 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
             let t = store.thread(id).filter(|t| t.parent_id == Some(parent.id))?;
             let mut body = col().w_full().grow(1.0).min_h(0.0).child(super::chat::messages(store, st, t, p, acc, layer, true));
             body = body.children(composer_area(store, st, t, true, p, acc));
+            super::upload::plus_menu(store, st, t, true, p, acc, layer);
             (t.name.clone().unwrap_or_default(), body, Some(t))
         }
         Panel::Create { parent: pid, message } if pid == parent.id => (t("New thread").to_string(), create_pane(store, st, parent, message, p, acc), None),

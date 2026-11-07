@@ -225,41 +225,49 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
 /// thread" (`canStartThreadIn`) follow Upload file.
 // shortcut: no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
 // web app) and no "Customize" submenu for the composer's button visibility.
-pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &reflux_model::Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
-    let has_text = !st.composer.text.trim().is_empty();
+/// `pane`: the thread side panel's composer (its own menu, draft and tray).
+#[allow(clippy::too_many_arguments)]
+pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &reflux_model::Channel, pane: bool, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    use super::chat::{Slot, in_slot};
+    let slot = if pane { Slot::Pane } else { Slot::Main };
+    let draft = if pane { &st.threads.composer } else { &st.composer };
+    let has_text = !draft.text.trim().is_empty();
     let parent = c.id;
     let can_thread = !c.kind.is_thread()
         && c.guild_id.is_some()
         && [reflux_store::threads::CreateKind::Public, reflux_store::threads::CreateKind::Private].into_iter().any(|k| store.can_create_thread(c, k));
-    let mut m = Menu::new("composer-plus").placement(Placement::Top);
+    let mut m = Menu::new(if pane { "thread-composer-plus" } else { "composer-plus" }).placement(Placement::Top);
     m = m
         .item(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
-            crate::file_picker::open_files(tx, "Upload file", None, acc, |sh, r| match r {
-                Ok(paths) => add_paths(sh, &paths),
+            crate::file_picker::open_files(tx, "Upload file", None, acc, move |sh, r| match r {
+                Ok(paths) => in_slot(sh, slot, |sh| add_paths(sh, &paths)),
                 Err(e) => sh.notice = Some(("Upload failed".into(), e)),
             });
         }));
     if has_text {
-        m = m.item(MenuItem::new("upload-text", t("Upload your message as a file")).icon(&icons::FILE_TEXT_FILL).on_select(move |s: &mut S| text_as_file(acc(s))));
+        m = m.item(MenuItem::new("upload-text", t("Upload your message as a file")).icon(&icons::FILE_TEXT_FILL).on_select(move |s: &mut S| in_slot(acc(s), slot, text_as_file)));
     }
     if can_thread {
         m = m.item(MenuItem::new("create-thread", t("Create thread")).icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, None)));
     }
-    m.item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
-            let sh = acc(s);
-            if let Some(c) = sh.channel {
-                sh.intents.push(super::Intent::Voice(super::voice::Op::RecordStart(c)));
-            }
+    m.item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).on_select(move |s: &mut S| {
+            acc(s).intents.push(super::Intent::Voice(super::voice::Op::RecordStart(parent)));
         }))
         .el(&st.popups, super::pops(acc), p, layer);
 }
 
+/// A tray file by ID, in the main composer's tray or the thread panel's.
+fn find_mut(st: &mut ShellState, id: u64) -> Option<&mut Upload> {
+    st.uploads.iter_mut().chain(st.threads.uploads.iter_mut()).find(|u| u.id == id)
+}
+
 /// `ChannelAttachmentArea`: a row of 200×200 cards above the composer field.
-pub fn tray<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if st.uploads.is_empty() {
+pub fn tray<S: 'static>(st: &ShellState, pane: bool, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let list = if pane { &st.threads.uploads } else { &st.uploads };
+    if list.is_empty() {
         return None;
     }
-    let cards = st.uploads.iter().map(|u| card(st, u, p, acc));
+    let cards = list.iter().map(|u| card(st, u, p, acc));
     let strip = row().gap(24.0).pt(20.0).px(10.0).pb(10.0).children(cards);
     // The bar hangs above each card's top edge; the strip's top padding leaves it room.
     Some(row().w_full().ml(6.0).mb(2.0).scroll_x().child(strip))
@@ -326,18 +334,22 @@ fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S
         .border(1.0, over(p.background_modifier_accent, bg))
         .box_shadow(Shadow { x: 0.0, y: 6.0, blur: 14.0, spread: 0.0, color: Color { a: 0.18, ..Color::BLACK }, inset: false })
         .child(button(spoiler_icon, spoiler_label, false).key(format!("upload-spoiler-{id}")).on_press(move |s: &mut S| {
-            if let Some(u) = acc(s).uploads.iter_mut().find(|u| u.id == id) {
+            if let Some(u) = find_mut(acc(s), id) {
                 u.spoiler ^= true;
             }
         }))
         .child(button(&icons::PENCIL_SIMPLE_FILL, t("Edit attachment"), false).key(format!("upload-edit-{id}")).on_press(move |s: &mut S| {
             let st = acc(s);
-            let d = st.uploads.iter().find(|u| u.id == id).map(|u| u.description.clone()).unwrap_or_default();
+            let d = find_mut(st, id).map(|u| u.description.clone()).unwrap_or_default();
             let mut e = TextEdit::new(d);
             e.focused = true;
             st.upload_edit = Some((id, e));
         }))
-        .child(button(&icons::TRASH_FILL, t("Remove attachment"), true).key(format!("upload-remove-{id}")).on_press(move |s: &mut S| acc(s).uploads.retain(|u| u.id != id)));
+        .child(button(&icons::TRASH_FILL, t("Remove attachment"), true).key(format!("upload-remove-{id}")).on_press(move |s: &mut S| {
+            let st = acc(s);
+            st.uploads.retain(|u| u.id != id);
+            st.threads.uploads.retain(|u| u.id != id);
+        }));
     col()
         .size(200.0, 200.0)
         .padding(8.0)
@@ -354,12 +366,12 @@ fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S
 pub fn edit_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (id, edit) = st.upload_edit.as_ref()?;
     let id = *id;
-    let u = st.uploads.iter().find(|u| u.id == id)?;
+    let u = st.uploads.iter().chain(&st.threads.uploads).find(|u| u.id == id)?;
     let close = move |s: &mut S| acc(s).upload_edit = None;
     let save = move |s: &mut S| {
         let st = acc(s);
         if let Some((_, e)) = st.upload_edit.take()
-            && let Some(u) = st.uploads.iter_mut().find(|u| u.id == id)
+            && let Some(u) = find_mut(st, id)
         {
             u.description = e.text.trim().chars().take(4096).collect();
         }

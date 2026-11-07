@@ -206,7 +206,8 @@ fn heading(sigil: char, q: &str) -> String {
 }
 
 /// `.containerAttached`: the list above the composer box.
-pub fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, items: &[Completion], p: &Palette, acc: ShellAccess<S>) -> El {
+/// `slot`: the composer it completes for (a press there edits that draft).
+pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, items: &[Completion], p: &Palette, acc: ShellAccess<S>, slot: super::chat::Slot) -> El {
     let selected = st.ac_index.min(items.len().saturating_sub(1));
     let mut list = col().w_full().py(8.0).gap(4.0).child(text(heading(t.sigil, &t.query)).font(font(12.0, 600.0)).color(p.text_primary_muted).px(12.0).py(4.0));
     for (i, c) in items.iter().enumerate() {
@@ -243,7 +244,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, items: &[Co
             .child(text(label).font(font(16.0, 400.0).lh(20.0)).color(color).truncate().shrink().min_w(0.0))
             .child(el().grow(1.0))
             .child(text(c.detail.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).truncate().ml(16.0).shrink())
-            .on_press(move |s: &mut S| accept(acc(s), &t2, &c2));
+            .on_press(move |s: &mut S| super::chat::in_slot(acc(s), slot, |st| accept(st, &t2, &c2)));
         if i == selected {
             r = r.fill(p.background_modifier_hover);
         }

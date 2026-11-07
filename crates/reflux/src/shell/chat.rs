@@ -85,7 +85,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     }
     super::pins::popout(store, st, c, p, acc, layer);
     super::threads::layer(store, st, Some(c), p, acc, layer);
-    super::upload::plus_menu(store, st, c, p, acc, layer);
+    super::upload::plus_menu(store, st, c, false, p, acc, layer);
     col()
         .grow(1.0)
         .min_w(0.0)
@@ -1370,7 +1370,7 @@ pub(super) enum Slot {
 
 /// Runs a composer handler on the slot's draft: the panel's composer and tray are swapped into
 /// the main fields for the duration, so every composer helper works on either.
-fn in_slot<R>(st: &mut ShellState, slot: Slot, f: impl FnOnce(&mut ShellState) -> R) -> R {
+pub(super) fn in_slot<R>(st: &mut ShellState, slot: Slot, f: impl FnOnce(&mut ShellState) -> R) -> R {
     if slot == Slot::Main {
         return f(st);
     }
@@ -1432,11 +1432,8 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .decorations(spelling)
         .pill_colors(p.markup_mention_fill, Some(p.markup_mention_text))
         .pill_icon(crate::compose::pill_icon)
-        // shortcut: the context menu edits the main composer only.
         .on_secondary_press(move |s: &mut S, at, _| {
-            if slot == Slot::Main {
-                crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y]);
-            }
+            crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y], slot != Slot::Main);
         })
         .w_full()
         .color(p.text_chat)
@@ -1476,9 +1473,10 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
             }
         });
-    // shortcut: the thread panels have no upload tray; files go through the full view.
-    let plus = button(&icons::PLUS_BOLD, t("Upload")).key("composer-plus").on_press(move |s: &mut S| acc(s).popups.toggle("composer-plus"));
-    let plus = if slot == Slot::Main { plus } else { el().size(32.0, 32.0) };
+    // The thread side panel has its own "+" menu and tray; the new-thread pane has none.
+    let plus_id = if slot == Slot::Pane { "thread-composer-plus" } else { "composer-plus" };
+    let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id).on_press(move |s: &mut S| acc(s).popups.toggle(plus_id));
+    let plus = if slot == Slot::Create { el().size(32.0, 32.0) } else { plus };
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
     let input_row = row()
@@ -1512,7 +1510,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     {
         boxed = boxed.child(reply_bar(store, target, r, p, acc));
     }
-    if let Some(tray) = super::upload::tray(st, p, acc).filter(|_| slot == Slot::Main) {
+    if let Some(tray) = super::upload::tray(st, slot == Slot::Pane, p, acc).filter(|_| slot != Slot::Create) {
         boxed = boxed.child(tray);
     }
     if let Some(sticker) = super::expr::pending_sticker(store, st, cid, p, acc).filter(|_| slot == Slot::Main) {
@@ -1534,9 +1532,8 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
     // The autocomplete list hangs above the box, as wide as it.
     if let Some((t, items)) = &ac {
-        // shortcut: in the thread panels the list is keyboard-only (its clicks edit the main draft).
-        let list = autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0));
-        out = out.child(el().w_full().h(0.0).child(if slot == Slot::Main { list } else { list.inert() }));
+        let list = autocomplete::view(store, st, t, items, p, acc, slot).pin(Some(0.0), None, Some(0.0), Some(8.0));
+        out = out.child(el().w_full().h(0.0).child(list));
     }
     if slow > 0 {
         out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p));

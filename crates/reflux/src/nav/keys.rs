@@ -717,10 +717,14 @@ mod tests {
         update_mine(&mut st, |m| m.keybinds.push(Custom { action: Some(Action::ToggleMute), combo: None, enabled: true }));
         st.nav.recording = Some(0);
         st.popups.toggle(&editor_id(0));
-        assert!(on_key(&mut st, &ev(Key::Text("x".into()), false)), "typing is swallowed while recording");
+        assert!(on_key(&mut st, &ev(Key::Text(" ".into()), false)), "an unrecordable key is swallowed while recording");
+        assert_eq!(st.nav.recording, Some(0));
         assert!(on_key(&mut st, &ev(Key::Command('l'), true)));
         assert_eq!(st.nav.recording, None);
         assert_eq!(mine(&st).keybinds[0].combo.map(|c| c.caps().len()), Some(2));
+        st.nav.recording = Some(0);
+        assert!(on_key(&mut st, &ev(Key::Text("x".into()), false)), "a plain letter records too");
+        assert_eq!(mine(&st).keybinds[0].combo.map(|c| c.caps().len()), Some(1));
         st.nav.recording = Some(0);
         st.popups.close();
         assert!(!on_key(&mut st, &ev(Key::Text("x".into()), false)), "a closed popout stops recording");

@@ -153,6 +153,8 @@ pub struct ShellView {
     pub maintenance: Option<notices::Maintenance>,
     /// The misspelling the composer's context menu is about: (byte range, word).
     pub spell_menu: Option<(std::ops::Range<usize>, String)>,
+    /// The textarea menu belongs to the thread panel's composer, not the main one.
+    pub menu_pane: bool,
     /// The window's width (0 before the first layout).
     pub width: f32,
 }
@@ -181,7 +183,7 @@ pub fn demo(sh: &mut crate::shell::ShellState, store: &mut reflux_store::Store, 
             spell::insert("dictionary-en", dict);
             sh.composer = rune::TextEdit::new("this is a tset of speling ");
             sh.composer.set_caret(12);
-            nagbar::open_spell_menu(sh, [560.0, 640.0]);
+            nagbar::open_spell_menu(sh, [560.0, 640.0], false);
         }
         "toast" => toast(&mut sh.desktop, "Added \"Fluxer\" to dictionary", true),
         "streamer" => {
