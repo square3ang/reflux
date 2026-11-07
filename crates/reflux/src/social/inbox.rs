@@ -489,14 +489,20 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
 }
 
 /// `EditAltTextModal`: the attachment's description, saved with a message PATCH that lists every
-/// attachment (only this one changes).
-// shortcut: a single-line field with a counter (Fluxer's is a 3–8 row textarea).
+/// attachment (only this one changes). A textarea at least 3 rows tall with a character count.
 pub fn alt_text<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, id: Snowflake, att: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     const MAX: usize = 4096; // `MAX_ATTACHMENT_ALT_TEXT_LENGTH`
     let Some(m) = store.messages(ch).iter().find(|m| m.id == id).cloned() else { return Dialog::new(t("Edit alt text"), super::close(acc)).el(p) };
     let len = st.form.value("alt", "").chars().count();
     let mut items = vec![
-        super::field(st, acc, "alt", "", t("Alt text description"), t("Describe this media for screen readers"), p),
+        {
+            let edit = st.form.text.get("alt").cloned().unwrap_or_default();
+            crate::ui::Input::new("form-alt", &edit, move |s: &mut S| -> &mut rune::TextEdit { acc(s).form.text.entry("alt".into()).or_default() })
+                .label(t("Alt text description"))
+                .placeholder(t("Describe this media for screen readers"))
+                .rows(3, 8)
+                .el(p)
+        },
         text(format!("{len}/{MAX}")).font(font(12.0, 400.0).lh(16.0)).color(if len > MAX { p.status_danger } else { p.text_tertiary }),
     ];
     items.extend(super::error(st, p));

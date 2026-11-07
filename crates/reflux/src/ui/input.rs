@@ -20,6 +20,8 @@ pub struct Input<'a, S: 'static> {
     secure: bool,
     /// `<Textarea>`: wraps and takes Enter, at least this tall.
     multiline: Option<f32>,
+    /// `minRows` / `maxRows`: grows with its text, then scrolls inside.
+    rows: Option<(usize, usize)>,
     /// `leftElement` / `rightElement`: buttons inside the box beside the text.
     left: Option<El>,
     right: Option<El>,
@@ -27,7 +29,7 @@ pub struct Input<'a, S: 'static> {
 
 impl<'a, S: 'static> Input<'a, S> {
     pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
-        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None, left: None, right: None }
+        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None, rows: None, left: None, right: None }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
@@ -35,6 +37,7 @@ impl<'a, S: 'static> Input<'a, S> {
     pub fn password(mut self, revealed: bool, toggle: fn(&mut S)) -> Self { self.password = Some((revealed, toggle)); self }
     pub fn secure(mut self) -> Self { self.secure = true; self }
     pub fn multiline(mut self, min_h: f32) -> Self { self.multiline = Some(min_h); self }
+    pub fn rows(mut self, min: usize, max: usize) -> Self { self.multiline = Some(0.0); self.rows = Some((min, max)); self }
     pub fn left(mut self, e: El) -> Self { self.left = Some(e); self }
     pub fn right(mut self, e: El) -> Self { self.right = Some(e); self }
 
@@ -42,6 +45,7 @@ impl<'a, S: 'static> Input<'a, S> {
         let style = font(14.0, 400.0).lh(20.0);
         let mut field = text_input(self.edit, style);
         field = match self.multiline {
+            Some(_) if self.rows.is_some() => field,
             Some(h) => field.min_h(h - 22.0),
             None => field.single_line(),
         };
@@ -98,6 +102,10 @@ impl<'a, S: 'static> Input<'a, S> {
                     .child(icon(eye, 18.0).color(p.text_tertiary)),
             );
         } else {
+            let field = match self.rows {
+                Some((min, max)) => rune::auto_grow(field.w_full(), min, max).grow(1.0),
+                None => field,
+            };
             boxed = boxed.children(self.left).child(field).children(self.right);
         }
 
