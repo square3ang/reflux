@@ -37,7 +37,7 @@ pub struct VoiceRt {
     /// The published camera track, and the slot the capture pushes frames into.
     camera: Option<Arc<Camera>>,
     feed: Arc<Mutex<Option<Arc<Camera>>>>,
-    capture: Option<crate::gst::CameraCapture>,
+    capture: Option<crate::camera::CameraCapture>,
     /// Remote camera renderers by user.
     videos: HashMap<Snowflake, tokio::task::AbortHandle>,
     /// The second microphone stream (meter, voice activity, voice messages), and the
@@ -119,7 +119,7 @@ fn run_op(s: &mut State, op: Op) {
             if on { ensure_capture(s) } else { release_capture(s) }
         }
         Op::LoadCameras => spawn(async move {
-            let names = tokio::task::spawn_blocking(crate::gst::cameras).await.unwrap_or_default();
+            let names = tokio::task::spawn_blocking(crate::camera::cameras).await.unwrap_or_default();
             update(move |s| s.app.shell.voice.cameras = Some(names));
         }),
         Op::Settings => {
@@ -1233,11 +1233,13 @@ fn ensure_capture(s: &mut State) {
     }
     let st = &s.app.shell.voice.settings;
     let (w, h) = st.camera_size();
+    // Fluxer's camera takes the shared `videoFrameRate` (our screen share fps), at most 60.
+    let fps = st.screen_fps.min(60);
     let mirror = st.mirror_camera;
     let feed = s.app.voice.feed.clone();
     let view = s.app.shell.voice.self_view.clone();
     let device = st.camera.clone();
-    s.app.voice.capture = crate::gst::CameraCapture::start(device.as_deref(), w, h, move |w, h, mut rgba| {
+    s.app.voice.capture = crate::camera::CameraCapture::start(device.as_deref(), w, h, fps, move |w, h, mut rgba| {
         if let Some(c) = feed.lock().unwrap().clone() {
             c.push_rgba(w, h, &rgba);
         }

@@ -289,7 +289,7 @@ impl Run {
             Step::Camera => {
                 if first {
                     self.pending = false;
-                    let cams = crate::gst::cameras();
+                    let cams = crate::camera::cameras();
                     if cams.is_empty() {
                         say("no camera; skipped");
                         return Some(true);

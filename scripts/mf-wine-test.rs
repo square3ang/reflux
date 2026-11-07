@@ -1,7 +1,16 @@
-//! The Media Foundation player alone, for `scripts/mf-wine-test.sh` (which fills in MF_RS).
+//! The Media Foundation player and camera alone, for `scripts/mf-wine-test.sh` (which fills in
+//! MF_RS and CAMERA_DIR).
 #[path = "MF_RS"]
 #[allow(dead_code)] // rate and volume controls the tests don't touch
 mod mf;
+/// The Media Foundation camera (`camera/mf.rs`) and its mode / pacing helpers.
+mod camera {
+    #[path = "CAMERA_DIR/pick.rs"]
+    #[allow(dead_code)] // the macOS helper
+    pub mod pick;
+    #[path = "CAMERA_DIR/mf.rs"]
+    pub mod mf;
+}
 
 fn main() {}
 
@@ -80,6 +89,35 @@ mod wine {
             let f = f.clone();
             until(p, "frames", move |_| f.lock().unwrap().0 > 3);
         }
+    }
+
+    /// Lists cameras; opens the first and waits for frames when there is one, else checks that
+    /// opening fails cleanly (wine has no MF video capture source; see the script).
+    #[test]
+    fn camera_list_and_capture() {
+        use super::camera::mf::{CameraCapture, cameras};
+        let cams = cameras();
+        eprintln!("  cameras: {cams:?}");
+        let frames: Frames = Arc::default();
+        let f = frames.clone();
+        let cap = CameraCapture::start(None, 640, 480, 30, move |w, h, rgba| {
+            let mut f = f.lock().unwrap();
+            *f = (f.0 + 1, w, h, rgba);
+        });
+        if cams.is_empty() {
+            assert!(cap.is_none(), "no camera, but capture started");
+            return;
+        }
+        let cap = cap.expect("the camera opens");
+        let t = Instant::now();
+        while frames.lock().unwrap().0 < 5 {
+            assert!(t.elapsed() < Duration::from_secs(10), "no camera frames");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let f = frames.lock().unwrap();
+        eprintln!("  camera frame {}x{} after {:.2}s", f.1, f.2, t.elapsed().as_secs_f64());
+        assert_eq!(f.3.len(), (f.1 * f.2 * 4) as usize);
+        drop(cap);
     }
 
     #[test]

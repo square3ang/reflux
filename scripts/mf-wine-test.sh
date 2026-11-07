@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the Media Foundation player (crates/reflux/src/mf.rs) for real under wine: builds a tiny
-# crate holding only that module for x86_64-pc-windows-gnu (zig as linker; the whole app can't
+# Runs the Media Foundation player (crates/reflux/src/mf.rs) and camera (camera/mf.rs) for real
+# under wine: builds a tiny crate holding only those modules for x86_64-pc-windows-gnu (zig as linker; the whole app can't
 # link here because of webrtc-sys) and plays clips GStreamer encodes here: an H.264 (4:2:0 main
 # profile: like Windows', wine's decoder has no 4:4:4) / AAC mp4
 # and an mp3. Needs `wine`, `zig`, `gst-launch-1.0` (x264, avenc_aac, lame) and the rustup
@@ -26,7 +26,7 @@ edition = "2024"
 [dependencies]
 $(grep -E '^(rodio|windows) = ' "$repo/crates/reflux/Cargo.toml")
 EOF
-sed "s|MF_RS|$repo/crates/reflux/src/mf.rs|" "$repo/scripts/mf-wine-test.rs" > "$dir/src/main.rs"
+sed -e "s|MF_RS|$repo/crates/reflux/src/mf.rs|" -e "s|CAMERA_DIR|$repo/crates/reflux/src/camera|" "$repo/scripts/mf-wine-test.rs" > "$dir/src/main.rs"
 # Rust's windows-gnu target asks for libgcc's pieces; zig's mingw has what they provide.
 for l in gcc gcc_eh; do zig ar rc "$dir/lib/lib$l.a"; done
 # zig links the UCRT and its own threads, so rustc's msvcrt/winpthreads asks are dropped.

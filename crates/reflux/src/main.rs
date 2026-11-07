@@ -3,6 +3,7 @@ mod compose;
 mod desktop;
 mod file_picker;
 mod guild;
+mod camera;
 mod gst;
 #[cfg(windows)]
 mod mf;

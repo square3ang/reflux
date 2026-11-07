@@ -754,7 +754,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         (_, _, true) => "Stop sharing your screen",
         _ => t("Share your screen"),
     };
-    let cam_ok = crate::gst::available();
+    let cam_ok = crate::camera::available();
     let camera_label = match (v.connected, can_stream && cam_ok, v.camera) {
         (false, _, _) => t("Waiting for connection..."),
         (_, false, _) if !cam_ok => "Camera needs Reflux built with GStreamer",

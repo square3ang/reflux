@@ -1,7 +1,8 @@
 //! GStreamer media: video attachment playback (Rune's `Player` decodes only on macOS) and camera
 //! capture. Both hand straight RGBA frames to the same `Pixels` path as the stream viewer.
 //! Built with the `gst` feature on Linux; elsewhere [`available`] is false and callers keep their
-//! fallbacks ("Open in browser", the camera button disabled). On Windows `VideoPlayer` is the
+//! fallbacks ("Open in browser", the camera button disabled). The camera goes through `camera/`
+//! (Media Foundation / AVFoundation on Windows / macOS). On Windows `VideoPlayer` is the
 //! Media Foundation one (`mf.rs`), see [`video_available`].
 
 #[cfg(all(feature = "gst", target_os = "linux"))]
@@ -227,14 +228,14 @@ mod imp {
         names
     }
 
-    /// A running camera: RGBA frames at `width`×`height` (letterboxed) and up to 30 fps.
+    /// A running camera: RGBA frames at `width`×`height` (letterboxed) and up to `fps`.
     pub struct CameraCapture {
         pipeline: gst::Pipeline,
     }
 
     impl CameraCapture {
         /// `device`: a name from [`cameras`] (`None` = the first one).
-        pub fn start(device: Option<&str>, width: u32, height: u32, sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
+        pub fn start(device: Option<&str>, width: u32, height: u32, fps: u32, sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
             if !init() {
                 return None;
             }
@@ -245,20 +246,28 @@ mod imp {
             let src = dev.create_element(None).ok()?;
             let convert = gst::ElementFactory::make("videoconvert").build().ok()?;
             let scale = gst::ElementFactory::make("videoscale").build().ok()?;
-            let rate = gst::ElementFactory::make("videorate").property("drop-only", true).build().ok()?;
             let caps = gst::Caps::builder("video/x-raw")
                 .field("format", "RGBA")
                 .field("width", width as i32)
                 .field("height", height as i32)
                 .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
-                .field("framerate", gst::Fraction::new(30, 1))
                 .build();
-            let appsink = rgba_sink(caps, sink);
+            // Paced here, not by `videorate` + caps: those hand the rate upstream, and pipewiresrc
+            // fails to negotiate one the camera lacks (15 fps on a 10/20/30/60 one, tested).
+            // shortcut: dropped frames were converted and scaled first; pace with a pad probe on the
+            // source if capture CPU use matters.
+            let (mut pacer, start) = (crate::camera::pick::Pacer::new(fps), std::time::Instant::now());
+            let mut sink = sink;
+            let appsink = rgba_sink(caps, move |w, h, rgba| {
+                if pacer.due(start.elapsed()) {
+                    sink(w, h, rgba);
+                }
+            });
             // Capture, not playback: hand frames over as they come instead of waiting on the clock.
             appsink.set_sync(false);
             let pipeline = gst::Pipeline::new();
-            pipeline.add_many([&src, &convert, &scale, &rate, appsink.upcast_ref()]).ok()?;
-            gst::Element::link_many([&src, &convert, &scale, &rate, appsink.upcast_ref()]).ok()?;
+            pipeline.add_many([&src, &convert, &scale, appsink.upcast_ref()]).ok()?;
+            gst::Element::link_many([&src, &convert, &scale, appsink.upcast_ref()]).ok()?;
             pipeline.set_state(gst::State::Playing).map_err(|e| eprintln!("reflux: camera: {e}")).ok()?;
             Some(Self { pipeline })
         }
@@ -498,14 +507,17 @@ mod stub {
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub fn cameras() -> Vec<String> {
         Vec::new()
     }
 
+    #[cfg(target_os = "linux")]
     pub struct CameraCapture;
 
+    #[cfg(target_os = "linux")]
     impl CameraCapture {
-        pub fn start(_device: Option<&str>, _width: u32, _height: u32, _sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
+        pub fn start(_device: Option<&str>, _width: u32, _height: u32, _fps: u32, _sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
             None
         }
     }

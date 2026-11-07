@@ -183,7 +183,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     // ---- Video
     let cams = v.cameras.clone().unwrap_or_default();
     let cam_opts: Vec<(&str, &str)> = std::iter::once(("", "Default")).chain(cams.iter().map(|n| (n.as_str(), n.as_str()))).collect();
-    let cam_ok = crate::gst::available();
+    let cam_ok = crate::camera::available();
     let camera = Select::new("settings-camera", &cam_opts, Some(set_.camera.as_deref().unwrap_or("")))
         .label(t("Camera"))
         .width(340.0)

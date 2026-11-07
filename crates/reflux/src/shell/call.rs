@@ -226,7 +226,7 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: Sh
     let deaf = pick(v.self_deaf, red, neutral);
     let cam = pick(v.camera, success, neutral);
     let scr = pick(v.screen, success, neutral);
-    let can_video = super::voice::can(store, v, Permissions::STREAM) && crate::gst::available();
+    let can_video = super::voice::can(store, v, Permissions::STREAM) && crate::camera::available();
     let mut bar = row()
         .padding(6.0)
         .gap(4.0)

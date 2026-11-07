@@ -59,6 +59,7 @@ Rules:
 | Animated WebP avatars/banners crop to their first frame | the `image` crate has no animated WebP encoder | `settings/crop.rs` | an encoder |
 | Skin-tone and other emoji missing from the base spritesheet use the font glyph | Fluxer loads those twemoji SVGs from its static host; we ship only the sheet | `shell/markdown.rs` | bundle or fetch the SVGs |
 | Camera and inline video on Linux go through GStreamer (`gst` feature, default) | libwebrtc's capture isn't exposed by the Rust SDK; Rune has no Linux player | `gst.rs` | — |
+| Camera capture is ours per OS behind one `camera::{available, cameras, CameraCapture}` interface: GStreamer on Linux, Media Foundation `IMFSourceReader` over the device source (native mode picked by `camera::pick::mode`, RGB32 through the reader's video processor) on Windows, `AVCaptureSession` + `AVCaptureVideoDataOutput` (BGRA, session preset by height) on macOS; all pace frames to the fps setting with `camera::pick::Pacer` instead of asking the device for the rate | libwebrtc's own capture modules aren't exposed by the LiveKit Rust SDK; asking GStreamer/PipeWire for a rate the camera lacks fails to negotiate (15 fps on a 10/20/30/60 fps device) | `camera/`, `gst.rs` | the SDK exposes libwebrtc's `VideoCaptureModule` |
 | Windows playback pump: one decode thread per clip reads the source reader synchronously and paces samples against a wall clock (pause/seek/rate move the clock); sound goes to rodio (`Player` per clip, rebuilt on seek, ~0.5 s queued ahead, rate = rodio speed so the pitch shifts), frames RGB32 → RGBA | Media Foundation's own renderers (EVR/SAR, Media Engine) draw into a window, not into Rune's `Pixels`; rodio is already the app's sound output | `mf.rs` | Rune `Player` on Windows |
 | Media Foundation readers open/close one at a time and an `E_UNEXPECTED` open is retried | under wine concurrent opens deadlocked and an open right after a close failed; not seen on Windows (untested there) | `mf.rs` | a real Windows run shows it's not needed |
 
@@ -109,7 +110,7 @@ Rules:
 | Shared `CARGO_TARGET_DIR` across worktrees; stale cross-worktree errors fixed by `touch`ing the crate's `lib.rs`/`main.rs` | disk is tight; libwebrtc builds are huge | HANDOFF.md | more disk |
 | NVENC needs the gitignored `.cuda` symlink before the first build | webrtc-sys looks for CUDA headers there | HANDOFF.md | — |
 | `scripts/cross-check.sh`: Windows/macOS `cargo check` with zig; webrtc-sys's MSVC C++ and the Objective-C sources get empty objects, a fake `xcrun` satisfies the macOS build script — nothing links | no mingw/MSVC toolchain or Mac here | `scripts/cross-check.sh` | real Windows/macOS CI |
-| `scripts/mf-wine-test.sh`: builds only `mf.rs` (via `#[path]`) for windows-gnu with zig as linker (empty libgcc stubs, msvcrt/winpthreads args dropped, `zig dlltool` for raw-dylib) and runs its tests under wine on GStreamer-encoded clips | the whole app can't link here (webrtc-sys); wine's MF (winegstreamer) stands in for Windows' decoders | `scripts/mf-wine-test.{sh,rs}` | real Windows CI |
+| `scripts/mf-wine-test.sh`: builds only `mf.rs` and `camera/{pick,mf}.rs` (via `#[path]`) for windows-gnu with zig as linker (empty libgcc stubs, msvcrt/winpthreads args dropped, `zig dlltool` for raw-dylib) and runs its tests under wine on GStreamer-encoded clips; the camera test only sees an empty device list (wine has no MF video capture source) | the whole app can't link here (webrtc-sys); wine's MF (winegstreamer) stands in for Windows' decoders | `scripts/mf-wine-test.{sh,rs}` | real Windows CI |
 | `winapi` with the `std` feature on Windows | `authenticator` 0.5's Windows HID transport doesn't compile otherwise | `crates/reflux/Cargo.toml` | authenticator fix |
 | The live probe reads the token from the keyring off the async runtime (`spawn_blocking`) | the Secret Service client blocks and panics inside tokio | `reflux-net/examples/live_probe.rs` | — |
 
@@ -130,6 +131,7 @@ Rules:
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
+- `crates/reflux/src/gst.rs:257` dropped frames were converted and scaled first; pace with a pad probe on the
 - `crates/reflux/src/guild/modals.rs:82` "Import template" (a third-party platform's template API) isn't offered.
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
 - `crates/reflux/src/i18n.rs:11` Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't

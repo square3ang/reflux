@@ -14,7 +14,7 @@ use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::{GUID, HSTRING};
 
-const VIDEO: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
+pub(crate) const VIDEO: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 const AUDIO: u32 = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
 /// How far ahead of the clock sound is queued once it plays (rodio plays what it gets at once).
 const AUDIO_LEAD: f64 = 0.5;
@@ -139,18 +139,18 @@ impl VideoPlayer {
 }
 
 #[derive(Clone, Copy)]
-struct VideoFormat {
+pub(crate) struct VideoFormat {
     h: u32,
     stride: i32,
     /// The picture inside the decoded frame: x, y, width, height.
-    crop: (u32, u32, u32, u32),
+    pub(crate) crop: (u32, u32, u32, u32),
 }
 
-struct Sample {
+pub(crate) struct Sample {
     stream: u32,
-    ts: f64,
+    pub(crate) ts: f64,
     end: f64,
-    sample: IMFSample,
+    pub(crate) sample: IMFSample,
 }
 
 fn run(url: &str, rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>, sink: impl FnMut(u32, u32, Vec<u8>)) {
@@ -348,7 +348,7 @@ unsafe fn open(url: &str) -> windows::core::Result<IMFSourceReader> {
     }
 }
 
-unsafe fn video_format(reader: &IMFSourceReader) -> Option<VideoFormat> {
+pub(crate) unsafe fn video_format(reader: &IMFSourceReader) -> Option<VideoFormat> {
     unsafe {
         let mt = reader.GetCurrentMediaType(VIDEO).ok()?;
         let size = mt.GetUINT64(&MF_MT_FRAME_SIZE).ok()?;
@@ -376,7 +376,7 @@ unsafe fn audio_format(reader: &IMFSourceReader) -> Option<(NonZero<u16>, NonZer
 }
 
 /// The next sample of `stream` (none at a gap or the end) and the reader's flags.
-unsafe fn read(reader: &IMFSourceReader, stream: u32) -> windows::core::Result<(u32, Option<Sample>)> {
+pub(crate) unsafe fn read(reader: &IMFSourceReader, stream: u32) -> windows::core::Result<(u32, Option<Sample>)> {
     unsafe {
         let (mut flags, mut ts, mut sample) = (0u32, 0i64, None);
         reader.ReadSample(stream, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut sample))?;
@@ -404,7 +404,7 @@ unsafe fn with_bytes<T>(sample: &IMFSample, f: impl FnOnce(&[u8]) -> T) -> Optio
     }
 }
 
-unsafe fn frame(sample: &IMFSample, f: &VideoFormat) -> Option<Vec<u8>> {
+pub(crate) unsafe fn frame(sample: &IMFSample, f: &VideoFormat) -> Option<Vec<u8>> {
     unsafe { with_bytes(sample, |b| bgrx_to_rgba(b, f.h, f.stride, f.crop)).flatten() }
 }
 

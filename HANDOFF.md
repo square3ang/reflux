@@ -115,8 +115,11 @@ See `git log` for details. Crates:
   runs `cargo check -p reflux --no-default-features` for both with zig as the C compiler (webrtc-sys
   C++ / Objective-C stubbed, nothing links); neither has been run on real Windows or a Mac.
 - Voice & video (`app/voice.rs`, `shell/{voice,call,clip,voice_message}.rs`, `settings/voice_tabs.rs`,
-  `gst.rs`, `voice_input.rs`, `reflux-voice`): camera (GStreamer `DeviceMonitor` → RGBA appsink →
-  `Camera::push_rgba` → H.264 track, `CameraPreviewModal`), `VoiceCallView` (click the joined
+  `gst.rs`, `camera/`, `voice_input.rs`, `reflux-voice`): camera (`camera::CameraCapture`: GStreamer
+  `DeviceMonitor` → RGBA appsink on Linux, Media Foundation source reader on Windows, AVFoundation
+  capture session on macOS; paced to the fps setting by `camera::pick::Pacer` → `Camera::push_rgba` →
+  H.264 track, `CameraPreviewModal`; real-camera check: `cargo test -p reflux camera::real --
+  --ignored`; Windows only wine-run (no camera there), macOS compile-checked only), `VoiceCallView` (click the joined
   voice channel; grid / focused tile, camera + stream tiles, speaking border, mute icons, control
   bar), DM calls (header buttons, `/call` eligibility → join → `/call/ring`, `IncomingCallUI`
   from `Store::calls`, DM call strip, ring / stop-ringing in the tile menu, `CallMessage`
@@ -128,7 +131,7 @@ See `git log` for details. Crates:
   spectators, video/audio attachment playback through GStreamer (`gst` feature, default; Linux,
   `--no-default-features` drops it; tested end to end by `cargo test -p reflux gst::` on clips it
   encodes) and Media Foundation on Windows (`mf.rs`; `scripts/mf-wine-test.sh` builds just that
-  module for windows-gnu with zig and runs it under wine: H.264/AAC mp4 + mp3, frames/sound/
+  module (and the MF camera; set `TMPDIR` to a disk dir when /tmp is a full tmpfs) for windows-gnu with zig and runs it under wine: H.264/AAC mp4 + mp3, frames/sound/
   pause/seek/end/replay/4 at once — wine-verified only, never run on real Windows; https via MF's
   network source untested), voice messages (composer "+" → record WAV via cpal,
   Fluxer waveform, `VOICE_MESSAGE` flag; waveform player). The mic gate enables/disables the
