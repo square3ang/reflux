@@ -423,7 +423,7 @@ pub(super) fn modal<S: 'static>(_store: &Store, st: &ShellState, m: &AccountModa
             let go: Box<dyn Fn(&mut S)> = Box::new(move |s: &mut S| {
                 acc(s).api(Method::POST, "/auth/sessions/logout", Some(json!({ "session_id_hashes": ids })), Then::Saved { clear: "m.".into(), reload: Some(("sessions".into(), "/auth/sessions".into())) })
             });
-            let label = if n == 1 { t("Sign out 1 device").to_string() } else { format!("Sign out {n} devices") };
+            let label = crate::i18n::tf("Sign out {deviceCount, plural, one {# device} other {# devices}}", &[("deviceCount", &n.to_string())]);
             build(t("Sign out devices"), vec![desc(t("Those devices will need to sign in again."))], Some((&label, true, go)))
         }
         AccountModal::DeleteMessages => {

@@ -20,6 +20,7 @@ pub(crate) mod crop;
 mod timezone;
 mod timezones;
 pub(crate) mod search;
+pub mod theme_folder;
 mod theme_library;
 mod search_index;
 pub mod sudo;

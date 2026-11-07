@@ -29,6 +29,8 @@ pub fn native() -> bool {
 pub fn start(st: &mut ShellState, key: String, url: String, audio: bool) {
     if !native() {
         let clip = if audio { Player::audio(url) } else { Player::url(url) };
+        // Rune's player has mute but no volume.
+        clip.set_muted(st.prefs.media_muted);
         return super::attachments::play(st, key, clip);
     }
     if let Some((_, old)) = st.media_ui.playing.take() {
@@ -37,9 +39,10 @@ pub fn start(st: &mut ShellState, key: String, url: String, audio: bool) {
     st.media_ui.gst = None;
     let pixels = Pixels::default();
     let Some(mut player) = crate::gst::VideoPlayer::new(&url, pixels.clone()) else { return };
-    player.set_volume(1.0, false);
+    let (volume, muted) = (st.prefs.media_volume, st.prefs.media_muted);
+    player.set_volume(volume as f64, muted);
     player.play();
-    st.media_ui.gst = Some(GstClip { key, player, pixels, volume: 1.0, muted: false, failed: false });
+    st.media_ui.gst = Some(GstClip { key, player, pixels, volume, muted, failed: false });
 }
 
 pub fn get<'a>(st: &'a ShellState, key: &str) -> Option<&'a GstClip> {
@@ -57,7 +60,25 @@ pub fn toggle<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S) {
 }
 
 pub fn set_rate<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, rate: f64) {
+    if let Some((_, c)) = acc(s).media_ui.playing.as_ref().filter(|(k, _)| k == key) {
+        c.set_rate(rate as f32);
+    }
     with(acc, key, s, |c| c.player.set_rate(rate));
+}
+
+/// Sets the shared media volume / mute (saved), and the clip `key`'s if it plays.
+pub fn set_volume<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, volume: f32, muted: bool) {
+    let st = acc(s);
+    (st.prefs.media_volume, st.prefs.media_muted) = (volume.clamp(0.0, 1.0), muted);
+    let prefs = Box::new(st.prefs.clone());
+    st.intents.push(super::Intent::Prefs(prefs));
+    if let Some((_, c)) = st.media_ui.playing.as_ref().filter(|(k, _)| k == key) {
+        c.set_muted(muted);
+    }
+    with(acc, key, s, |c| {
+        (c.volume, c.muted) = (volume.clamp(0.0, 1.0), muted);
+        c.player.set_volume(c.volume as f64, c.muted);
+    });
 }
 
 pub fn seek<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, secs: f64) {
@@ -114,12 +135,7 @@ pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellA
         .el(p);
     let volume = crate::ui::Slider::new(format!("{key}-volume"), if c.muted { 0.0 } else { c.volume * 100.0 }, 0.0, 100.0)
         .mini()
-        .on_change(move |s: &mut S, v| {
-            with(acc, &k4, s, |c| {
-                (c.volume, c.muted) = (v / 100.0, v <= 0.0);
-                c.player.set_volume(c.volume as f64, c.muted);
-            })
-        })
+        .on_change(move |s: &mut S, v| set_volume(acc, &k4, s, v / 100.0, v <= 0.0))
         .el(p);
     let mute_icon = if c.muted || c.volume <= 0.0 { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL };
     let mut bar = row()
@@ -133,14 +149,12 @@ pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellA
         .child(text(format!("{} / {}", super::attachments::clock(now), super::attachments::clock(dur))).font(font(12.0, 500.0).mono().lh(16.0)).color(Color::WHITE))
         .child(el().grow(1.0).min_w(0.0).px(8.0).child(seek))
         .child(hud(mute_icon, t("Mute"), move |s: &mut S| {
-            with(acc, &k3, s, |c| {
-                c.muted = !c.muted;
-                c.player.set_volume(c.volume as f64, c.muted);
-            })
+            let (v, m) = (acc(s).prefs.media_volume, acc(s).prefs.media_muted);
+            set_volume(acc, &k3, s, v, !m)
         }))
         .child(el().w(64.0).child(volume));
     if let Some(full) = full {
-        bar = bar.child(hud(&icons::CORNERS_OUT, "Full screen", move |s: &mut S| full(s)));
+        bar = bar.child(hud(&icons::CORNERS_OUT, crate::i18n::t("Enter fullscreen"), move |s: &mut S| full(s)));
     }
     frame.child(el().w_full().h_full().pixels_fit(&c.pixels, rune::SurfaceFit::Fit)).child(bar)
 }

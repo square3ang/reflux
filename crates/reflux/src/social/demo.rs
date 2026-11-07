@@ -101,6 +101,14 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.open_social(Modal::AltText { channel: s(GENERAL), message: m, attachment: s(9001) });
             st.form.text.insert("alt".into(), rune::TextEdit::new("The settings window with the theme picker open"));
         }
+        "add-meme" => {
+            let found = store.messages(s(GENERAL)).iter().find_map(|m| m.attachments.iter().find(|a| a.id == s(9001)).map(|a| (m.id, a.clone())));
+            if let Some((m, a)) = found {
+                super::saved_media::open_add(st, s(GENERAL), m, &a);
+                st.form.data.insert("meme-tags".into(), json!(["settings", "themes"]));
+            }
+        }
+        "edit-meme" => super::saved_media::open_edit(st, &json!({"id": "1", "name": "Party parrot", "alt_text": "A parrot dancing", "tags": ["parrot", "party", "dance"]})),
         "debug-message" => {
             let m = store.messages(s(GENERAL)).last().map(|m| m.id).unwrap_or_default();
             st.open_debug(crate::shell::debug::Subject::Message(s(GENERAL), m));

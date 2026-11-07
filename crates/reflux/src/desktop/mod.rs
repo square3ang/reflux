@@ -85,6 +85,11 @@ pub struct Prefs {
     pub thread_panel_width: Option<f32>,
     /// Voice message playback speed (`fluxer:media:playbackRates`, voice kind).
     pub voice_message_rate: f32,
+    /// Media player volume (0..1) and mute (`fluxer:media:volume` / `:muted`), shared by players.
+    pub media_volume: f32,
+    pub media_muted: bool,
+    /// The reverse image search engine picked (`searchEngines.reverseImageSearchEngineId`).
+    pub reverse_image_engine: Option<String>,
 }
 
 impl Default for Prefs {
@@ -116,6 +121,9 @@ impl Default for Prefs {
             search_history: Default::default(),
             thread_panel_width: None,
             voice_message_rate: 1.0,
+            media_volume: 1.0,
+            media_muted: false,
+            reverse_image_engine: None,
         }
     }
 }

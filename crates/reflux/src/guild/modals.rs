@@ -198,13 +198,13 @@ fn num(st: &ShellState, key: &str, default: u64) -> u64 {
 
 /// "Your invite link expires in 7 days." (`getExpirationText`).
 fn expiry_text(max_age: u64) -> String {
-    let plural = |n: u64, unit: &str| format!("Your invite link expires in {n} {unit}{}.", if n == 1 { "" } else { "s" });
+    let plural = |n: u64, msg: &str, arg: &str| crate::i18n::tf(msg, &[(arg, &n.to_string())]);
     match max_age {
         0 => t("This invite link never expires.").into(),
-        s if s % 86_400 == 0 => plural(s / 86_400, "day"),
-        s if s % 3600 == 0 => plural(s / 3600, "hour"),
-        s if s % 60 == 0 => plural(s / 60, "minute"),
-        s => plural(s, "second"),
+        s if s % 86_400 == 0 => plural(s / 86_400, "{days, plural, one {Your invite link expires in # day.} other {Your invite link expires in # days.}}", "days"),
+        s if s % 3600 == 0 => plural(s / 3600, "{hours, plural, one {Your invite link expires in # hour.} other {Your invite link expires in # hours.}}", "hours"),
+        s if s % 60 == 0 => plural(s / 60, "{minutes, plural, one {Your invite link expires in # minute.} other {Your invite link expires in # minutes.}}", "minutes"),
+        s => plural(s, "{seconds, plural, one {Your invite link expires in # second.} other {Your invite link expires in # seconds.}}", "seconds"),
     }
 }
 
@@ -629,12 +629,15 @@ pub fn confirm<S: 'static>(store: &Store, st: &ShellState, c: Confirm, p: &Palet
             Then::Close,
         ),
         Confirm::DeleteChannel(ch) => {
-            let n = store.channels.get(&ch).and_then(|c| c.name.clone()).unwrap_or_default();
-            (format!("Delete '{n}'"), format!("Are you sure you want to delete {n}? This can't be undone."), "Delete channel", Method::DELETE, format!("/channels/{ch}"), None, Then::Close)
+            let c = store.channels.get(&ch);
+            let kind = t(if c.is_some_and(|c| c.kind == ChannelType::GUILD_VOICE) { "voice channel" } else { "text channel" });
+            let label = c.and_then(|c| c.name.clone()).map_or_else(|| t("this channel").to_string(), |n| format!("#{n}"));
+            let (title, body) = (crate::i18n::tf("Delete {channelType}", &[("channelType", kind)]), crate::i18n::tf("Are you sure you want to delete {channelLabel}? This cannot be undone.", &[("channelLabel", &label)]));
+            (title, body, "Delete channel", Method::DELETE, format!("/channels/{ch}"), None, Then::Close)
         }
         Confirm::DeleteRole(g, r) => {
             let n = store.guilds.get(&g).and_then(|gs| gs.roles.iter().find(|x| x.id == r)).map_or(String::new(), |x| x.name.clone());
-            (format!("Delete '{n}'"), format!("Are you sure you want to delete the {n} role? This can't be undone."), "Delete role", Method::DELETE, format!("/guilds/{g}/roles/{r}"), None, Then::Nothing)
+            (t("Delete role").to_string(), crate::i18n::tf_plain("Are you sure you want to delete the <0>{0}</0> role? Any members with this role will no longer have it.", &[("0", &n)]), "Delete role", Method::DELETE, format!("/guilds/{g}/roles/{r}"), None, Then::Nothing)
         }
     };
     // `POST /guilds/{id}/delete` needs sudo mode: its `SUDO_MODE_REQUIRED` answer opens the

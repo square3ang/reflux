@@ -782,18 +782,35 @@ fn quick_css<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> E
         .child(muted(&summary, p))
         .child(boxed(editor, p))
         .child(
-            row().gap(8.0).child(
-                Button::new(t("Save"))
-                    .size(ButtonSize::Small)
-                    .key("quick-css-save")
-                    .on_press(move |s: &mut S| {
-                        let sh = acc(s);
-                        let Some(v) = sh.form.text.get("quick-css").map(|e| e.text.to_string()) else { return };
-                        sh.form.text.retain(|k, _| !k.starts_with("tok-"));
-                        update(s, acc, |l| l.css = v);
-                    })
-                    .el(p),
-            ),
+            row()
+                .gap(8.0)
+                .child(
+                    Button::new(t("Save"))
+                        .size(ButtonSize::Small)
+                        .key("quick-css-save")
+                        .on_press(move |s: &mut S| {
+                            let sh = acc(s);
+                            let Some(v) = sh.form.text.get("quick-css").map(|e| e.text.to_string()) else { return };
+                            sh.form.text.retain(|k, _| !k.starts_with("tok-"));
+                            update(s, acc, |l| l.css = v);
+                        })
+                        .el(p),
+                )
+                .child({
+                    // The editor's own window, on the text as typed here.
+                    let pal = *p;
+                    Button::new(t("Open in a new window"))
+                        .variant(ButtonVariant::Secondary)
+                        .size(ButtonSize::Small)
+                        .icon(&crate::icons::ARROW_SQUARE_OUT)
+                        .key("quick-css-window")
+                        .on_press(move |s: &mut S| {
+                            let sh = acc(s);
+                            let css = sh.form.value("quick-css", &sh.prefs.look.css);
+                            crate::quick_css::open(&css, &pal);
+                        })
+                        .el(p)
+                }),
         );
     // Rune draws no CSS: say what of it is used.
     let note = if ignored > 0 {

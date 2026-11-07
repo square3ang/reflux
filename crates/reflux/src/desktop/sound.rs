@@ -137,24 +137,37 @@ pub fn custom_path(s: Sound) -> Option<std::path::PathBuf> {
 
 /// Plays an encoded clip (MP3 / Ogg / WAV) at `volume` without waiting.
 pub fn play_bytes(bytes: Vec<u8>, volume: f32) {
-    send(Sound::Message, volume, Some(bytes));
+    send(Sound::Message, volume, Some(bytes), false);
+}
+
+/// The one stoppable clip (voice message review); replaces the previous one.
+static PREVIEW: std::sync::Mutex<Option<rodio::Player>> = std::sync::Mutex::new(None);
+
+/// Plays `bytes` as the stoppable preview.
+pub fn preview(bytes: Vec<u8>) {
+    send(Sound::Message, 1.0, Some(bytes), true);
+}
+
+/// Stops the preview (a dropped `Player` stops).
+pub fn stop_preview() {
+    PREVIEW.lock().map(|mut p| p.take()).ok();
 }
 
 /// Plays `s` at `volume` (0..=2) without waiting, from `custom` when that file reads. Never
 /// plays headless (snapshots).
 pub fn play(s: Sound, volume: f32, custom: Option<&str>) {
-    send(s, volume, custom.and_then(|p| std::fs::read(p).ok()));
+    send(s, volume, custom.and_then(|p| std::fs::read(p).ok()), false);
 }
 
-fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
-    /// A sound, its volume and a custom file's bytes.
-    type Job = (Sound, f32, Option<Vec<u8>>);
+fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>, keep: bool) {
+    /// A sound, its volume, a custom file's bytes and whether it is the preview.
+    type Job = (Sound, f32, Option<Vec<u8>>, bool);
     static TX: OnceLock<Option<Sender<Job>>> = OnceLock::new();
     if rune::is_headless() {
         return;
     }
     let tx = TX.get_or_init(|| {
-        let (tx, rx) = channel::<(Sound, f32, Option<Vec<u8>>)>();
+        let (tx, rx) = channel::<Job>();
         std::thread::Builder::new()
             .name("reflux-sound".into())
             .spawn(move || {
@@ -162,7 +175,7 @@ fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
                     Ok(s) => s,
                     Err(e) => return eprintln!("reflux: sound output: {e}"),
                 };
-                for (s, volume, custom) in rx {
+                for (s, volume, custom, keep) in rx {
                     let played = match custom {
                         Some(b) => rodio::play(sink.mixer(), Cursor::new(b)),
                         None => rodio::play(sink.mixer(), Cursor::new(s.bytes())),
@@ -170,7 +183,10 @@ fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
                     match played {
                         Ok(p) => {
                             p.set_volume(volume);
-                            p.detach()
+                            match keep {
+                                true => drop(PREVIEW.lock().map(|mut slot| slot.replace(p))),
+                                false => p.detach(),
+                            }
                         }
                         Err(e) => eprintln!("reflux: sound {s:?}: {e}"),
                     }
@@ -180,6 +196,6 @@ fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
         Some(tx)
     });
     if let Some(tx) = tx {
-        let _ = tx.send((s, volume.clamp(0.0, 2.0), custom));
+        let _ = tx.send((s, volume.clamp(0.0, 2.0), custom, keep));
     }
 }

@@ -401,9 +401,17 @@ pub struct VoiceMessage {
     /// The kept span in seconds while reviewing (`AudioWaveform` selection).
     pub start: f32,
     pub end: f32,
+    /// When the selection preview started playing (Pause = stop, like Fluxer).
+    pub playing: Option<std::time::Instant>,
 }
 
 impl VoiceMessage {
+    /// The preview's position in seconds while it plays (`AudioWaveform` playhead).
+    pub fn playhead(&self) -> Option<f32> {
+        let at = self.start + self.playing?.elapsed().as_secs_f32();
+        (at < self.end).then_some(at)
+    }
+
     /// `VOICE_MESSAGE_MIN_SEND_DURATION_MS`.
     pub const MIN_SECS: f32 = 0.5;
 

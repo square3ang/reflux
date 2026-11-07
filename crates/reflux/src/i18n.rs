@@ -3,10 +3,11 @@
 //! `t("Welcome back")` is "다시 오신 것을 환영합니다" in Korean and the English text itself when a
 //! locale has no entry. Placeholders are lingui's `{name}`; [`tf`] fills them.
 // shortcut: UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
-// settings nav and section headings), but sentences Reflux builds with `format!` and Fluxer has
-// no msgid for (dynamic errors, "Delete '{name}'", "Signing in to {host}", some confirm bodies)
-// stay English, as do the component gallery and the shell demo. Wrap new literals in `t(...)`
-// and re-run scripts/i18n-extract.py.
+// settings nav and section headings), and sentences with a Fluxer msgid go through `tf` with
+// that exact msgid (rich `<0>` markers via `tf_plain` / `tf_marked`). Text only Reflux has
+// (gateway/passkey errors, "Signing in to {host}", the quick CSS note, "Delete '{name}'" for a
+// community) has no translation anywhere, so it stays English, as do the component gallery
+// and the shell demo. Wrap new literals in `t(...)` and re-run scripts/i18n-extract.py.
 // shortcut: Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
 // mirrored: Rune has no layout-direction setting, so rows still run left to right.
 
@@ -134,6 +135,27 @@ pub fn t(s: &str) -> &str {
 /// `=N`, the locale's CLDR categories and `#`), `{n, selectordinal, …}` and `{x, select, …}`.
 pub fn tf(s: &str, args: &[(&str, &str)]) -> String {
     format(t(s), args, locale())
+}
+
+/// [`tf`] for a message with lingui rich-text markers (`<0>{name}</0>`) drawn as plain text.
+pub fn tf_plain(s: &str, args: &[(&str, &str)]) -> String {
+    let mut out = tf(s, args);
+    for n in 0..4 {
+        out = out.replace(&format!("<{n}>"), "").replace(&format!("</{n}>"), "");
+    }
+    out
+}
+
+/// [`tf_plain`] plus the byte range the `<0>…</0>` part ended up at (to draw it bold).
+pub fn tf_marked(s: &str, args: &[(&str, &str)]) -> (String, std::ops::Range<usize>) {
+    let full = tf(s, args);
+    let (a, b) = (full.find("<0>"), full.find("</0>"));
+    let range = match (a, b) {
+        (Some(a), Some(b)) if a < b => a..b - 3,
+        _ => 0..0,
+    };
+    let plain = full.replacen("<0>", "", 1).replacen("</0>", "", 1);
+    (plain, range)
 }
 
 /// [`tf`] with `count` set (the usual name of the plural argument).
@@ -300,6 +322,14 @@ mod tests {
         assert_eq!(resolve("es_MX"), Some("es-ES"));
         assert_eq!(resolve("es-419"), Some("es-419"));
         assert_eq!(resolve("xx"), None);
+    }
+
+    #[test]
+    fn rich_markers_are_stripped_and_located() {
+        // A msgid no catalog has, so the English text is used whatever the global locale is.
+        let (s, r) = tf_marked("Hi <0>{name}</0>, welcome.", &[("name", "Ada")]);
+        assert_eq!((s.as_str(), &s[r]), ("Hi Ada, welcome.", "Ada"));
+        assert_eq!(tf_plain("<0>{n}</0> and <1>more</1>", &[("n", "1")]), "1 and more");
     }
 
     #[test]

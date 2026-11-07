@@ -702,6 +702,10 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 reflux_model::DispatchEvent::VoiceSignal(v) => voice::on_signal(s, v),
                 reflux_model::DispatchEvent::EntranceSoundPlay(e) => voice::on_entrance(s, e),
                 reflux_model::DispatchEvent::ForumUnreads(f) => threads::on_forum_unreads(s, f),
+                reflux_model::DispatchEvent::FavoriteMemeCreate(m) | reflux_model::DispatchEvent::FavoriteMemeUpdate(m) => {
+                    crate::shell::expr::on_meme(&mut s.app.shell, &m.id.to_string(), serde_json::to_value(m).ok())
+                }
+                reflux_model::DispatchEvent::FavoriteMemeDelete(d) => crate::shell::expr::on_meme(&mut s.app.shell, &d.meme_id.to_string(), None),
                 _ => {}
             }
             if let reflux_model::DispatchEvent::Ready(r) = &d {

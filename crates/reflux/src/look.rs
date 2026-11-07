@@ -77,6 +77,8 @@ pub struct Prefs {
     pub themes: Vec<LibraryTheme>,
     pub enabled_themes: Vec<String>,
     pub theme_assets: Vec<serde_json::Value>,
+    /// `ThemeLibrary.folderPaths`: watched theme folders ([`crate::settings::theme_folder`]).
+    pub theme_folders: Vec<String>,
 }
 
 /// `ThemeLibraryTheme` (the fields an export carries).
@@ -93,6 +95,11 @@ pub struct LibraryTheme {
     pub file_name: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The CSS file on disk and the watched folder it came from (folder themes only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder_path: Option<String>,
 }
 
 impl Default for Prefs {
@@ -136,6 +143,7 @@ impl Default for Prefs {
             themes: Vec::new(),
             enabled_themes: Vec::new(),
             theme_assets: Vec::new(),
+            theme_folders: Vec::new(),
         }
     }
 }

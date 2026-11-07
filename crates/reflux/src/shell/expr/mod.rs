@@ -10,6 +10,7 @@
 
 mod emoji;
 pub mod gif;
+mod image_search;
 mod info;
 mod memes;
 mod reactions;
@@ -33,6 +34,7 @@ use crate::ui::{mix, over, scroller};
 use crate::i18n::t;
 
 pub use info::{Info, open_emoji_info, open_sticker_info};
+pub use memes::{Tool, hover_tools, on_meme, tool};
 pub use reactions::{message_menu_items, pill_hover, reactor_tip_key};
 
 /// The composer's picker in [`crate::ui::Popups`]; the reaction picker is `emoji-{message}`.
@@ -214,6 +216,8 @@ pub struct Expr {
     pub gif_import: Option<gif::GifImport>,
     /// Saved media waiting on its delete confirmation: (id, name).
     pub confirm_meme: Option<(String, String)>,
+    /// The reverse image search provider picker: (image URL, engine selected).
+    pub image_search: Option<(String, String)>,
 }
 
 
@@ -378,7 +382,8 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         let e = popout(store, st, t, p, acc).modal(true, move |s: &mut S| close(acc(s)));
         layer.push(e.anchored_fit("composer-expr", Side::Top, Align::End, 8.0));
     }
-    menu_layer(st, p, acc, layer);
+    menu_layer(store, st, p, acc, layer);
+    image_search::layer(st, p, acc, layer);
     gif::import_layer(st, p, acc, layer);
     memes::confirm_layer(st, p, acc, layer);
     reactions::layer(store, st, p, acc, layer);
@@ -888,9 +893,11 @@ fn with_menu<S: 'static>(e: El, item: &Item, acc: ShellAccess<S>) -> El {
     })
 }
 
-/// `ExpressionContextMenuItems`: Favorite, Copy ID, then the image's Copy URL / Open in browser.
-// shortcut: no "Clone emoji to..." submenu here (the info card clones) and no reverse image search.
-fn menu_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+/// `ExpressionContextMenuItems`: Favorite, Copy ID, "Clone … to…", then the image's Copy URL,
+/// Open in browser and reverse image search.
+// shortcut: Clone shows without Fluxer's Advanced "Emoji and sticker cloning shortcuts" switch
+// (off there by default); that switch belongs to the Advanced tab.
+fn menu_layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let Some(item) = &st.expr.menu_item else { return };
     let sticker = matches!(item, Item::Sticker { .. });
     let key = item.key();
@@ -918,8 +925,12 @@ fn menu_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, lay
             close(s);
         }));
     }
+    if let (Some(id), Some(g)) = (id, item.guild()) {
+        m = clone_entries(store, st, item, id, g, acc, m);
+    }
     if let Some(url) = url {
         let u = url.clone();
+        let search = image_search::entries(st, &url, acc, close);
         m = m
             .separator()
             .item(crate::ui::MenuItem::new("expr-copy-url", label("Copy emoji URL", "Copy sticker URL")).icon(&icons::LINK).on_select_tx(move |s: &mut S, tx: &mut Tx| {
@@ -931,8 +942,55 @@ fn menu_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, lay
                 crate::settings::privacy::open_url(&url);
                 close(s);
             }));
+        for e in search {
+            m = m.entry(e);
+        }
     }
     m.el(&st.expr.menu, crate::ui::popup_access(move |s: &mut S| &mut acc(s).expr.menu), p, layer);
+}
+
+/// `CloneExpressionMenuItem`: when the source community allows cloning (`CLONE_EMOJI_ENABLED` /
+/// `CLONE_STICKER_ENABLED`), a submenu of the other communities you manage expressions in, by
+/// name, full ones disabled with "… slots full".
+fn clone_entries<S: 'static>(store: &Store, st: &ShellState, item: &Item, id: Snowflake, source: Snowflake, acc: ShellAccess<S>, m: crate::ui::Menu<S>) -> crate::ui::Menu<S> {
+    let sticker = matches!(item, Item::Sticker { .. });
+    let feature = if sticker { "CLONE_STICKER_ENABLED" } else { "CLONE_EMOJI_ENABLED" };
+    let allowed = store.guilds.get(&source).and_then(|g| g.info.as_ref()).is_some_and(|i| i.features.iter().any(|f| f == feature));
+    let mut targets: Vec<(Snowflake, String)> = store
+        .guilds
+        .iter()
+        .filter(|(g, x)| **g != source && x.info.is_some() && store.guild_permissions(**g).contains(Permissions::MANAGE_EXPRESSIONS))
+        .map(|(g, x)| (*g, x.info.as_ref().map(|i| i.name.clone()).unwrap_or_default()))
+        .collect();
+    if !allowed || targets.is_empty() {
+        return m;
+    }
+    targets.sort_by_key(|t| t.1.to_lowercase());
+    let name = match item {
+        Item::Emoji { name, .. } | Item::Sticker { name, .. } => name.clone(),
+        Item::Unicode(_) => return m,
+    };
+    let (kind, field) = if sticker { ("stickers", "source_sticker_id") } else { ("emojis", "source_emoji_id") };
+    let entries = targets
+        .into_iter()
+        .map(|(g, n)| {
+            let done = if sticker {
+                crate::i18n::tf("Cloned sticker {stickerName} to {targetName}", &[("stickerName", &name), ("targetName", &n)])
+            } else {
+                crate::i18n::tf("Cloned :{sourceName}: to {targetName}", &[("sourceName", &name), ("targetName", &n)])
+            };
+            let full = info::slots_full(store, st, g, sticker);
+            let mut it = crate::ui::MenuItem::new(format!("clone-{g}"), n).disabled(full).on_select(move |s: &mut S| {
+                let body = serde_json::json!({ field: id.to_string() });
+                acc(s).social(reqwest::Method::POST, format!("/guilds/{g}/{kind}/clone"), Some(body), crate::social::Done::Toast(done.clone()));
+            });
+            if full {
+                it = it.hint(if sticker { t("Sticker slots full") } else { t("Emoji slots full") });
+            }
+            crate::ui::MenuEntry::Item(it)
+        })
+        .collect();
+    m.separator().submenu("expr-clone", if sticker { t("Clone sticker to…") } else { t("Clone emoji to...") }, entries)
 }
 
 fn hover_cell<S: 'static>(e: El, key: String, acc: ShellAccess<S>) -> El {

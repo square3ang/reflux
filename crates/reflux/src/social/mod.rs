@@ -13,6 +13,7 @@ mod discovery;
 mod dm;
 mod inbox;
 pub(crate) mod moderation;
+mod saved_media;
 mod tabs;
 
 use std::collections::{HashMap, HashSet};
@@ -32,6 +33,7 @@ use crate::i18n::t;
 pub use channel::{bell_button, blocked_bar, blocked_runs, mass_mention, mute_entry, welcome};
 pub use discovery::{discovery_page, gift_code, invite_code, open as open_discovery, open_invite, preview_nagbar};
 pub use dm::{group_items, open_create_dm};
+pub use saved_media::{open_add as open_add_meme, open_edit as open_edit_meme};
 pub use inbox::{inbox_button, message_items};
 pub use moderation::{member_items, open_report};
 pub use tabs::{channel_tab, guild_tab, load_channel_tab, load_guild_tab, pause_invites};
@@ -106,6 +108,10 @@ pub enum Modal {
     Webhook { guild: Snowflake, channel: Option<Snowflake>, id: Snowflake },
     /// `EditAltTextModal` for one of a message's attachments.
     AltText { channel: Snowflake, message: Snowflake, attachment: Snowflake },
+    /// `AddFavoriteMemeModal` for one of a message's attachments.
+    AddMeme { channel: Snowflake, message: Snowflake, attachment: Snowflake },
+    /// `EditFavoriteMemeModal` for a saved media entry (by ID).
+    EditMeme(String),
 }
 
 /// A request a view asks for.
@@ -302,6 +308,8 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             Modal::GiftAccept(code) => crate::settings::gift_accept(st, &code, p, acc),
             Modal::Webhook { guild, channel, id } => tabs::webhook_editor(store, st, guild, channel, id, p, acc, layer),
             Modal::AltText { channel, message, attachment } => inbox::alt_text(store, st, channel, message, attachment, p, acc),
+            Modal::AddMeme { channel, message, attachment } => saved_media::add(st, channel, message, attachment, p, acc),
+            Modal::EditMeme(id) => saved_media::edit(st, &id, p, acc),
         };
         // Under any select list it opened.
         layer.insert(start, modal);

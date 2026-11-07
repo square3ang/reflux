@@ -154,8 +154,8 @@ pub fn format_size(n: u64) -> String {
 pub fn add(st: &mut ShellState, files: Vec<(String, u64, Source)>) {
     let l = st.limits;
     if st.uploads.len() + files.len() > l.files {
-        let s = if l.files == 1 { "" } else { "s" };
-        st.notice = Some(("Whoa, this is heavy".into(), format!("You can only upload {} file{s} at a time. Try again with fewer files.", l.files)));
+        let msg = crate::i18n::tp("{count, plural, one {You can only upload # file at a time. Try again with fewer files.} other {You can only upload # files at a time. Try again with fewer files.}}", l.files as i64, &[]);
+        st.notice = Some((t("Whoa, this is heavy").into(), msg));
         return;
     }
     let big = files.iter().filter(|f| f.1 > l.file_size).count();

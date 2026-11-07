@@ -556,6 +556,16 @@ fn media_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let mut changed = invite_embed::request(store, st);
     changed |= clip::poll(st, tx);
     changed |= gifv::poll(st, tx);
+    changed |= voice_message::poll_volume(st);
+    changed |= crate::settings::theme_folder::poll(st, tx);
+    // Saved media, once a session, so message media know which are saved (`FavoriteMemes`).
+    if store.me.is_some() && !st.expr.fetched.contains_key("memes") {
+        expr::fetch(st, "memes", "/users/@me/memes");
+    }
+    if st.voice.voice_message.as_ref().is_some_and(|vm| vm.playhead().is_some()) {
+        tx.wake_after(std::time::Duration::from_millis(33));
+        changed = true;
+    }
     if let Some(d) = st.media.take_next_frame() {
         tx.wake_after(d);
         changed = true;
@@ -683,6 +693,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
+    voice_message::volume_layer(st, p, acc, &mut layer);
     layer.extend(call::incoming(store, st, p, acc));
     birthday::view(store, st, p, acc, &mut layer);
     let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {

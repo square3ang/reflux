@@ -191,7 +191,7 @@ fn vanity<S: 'static>(_store: &Store, st: &ShellState, g: Snowflake, p: &Palette
         .child(small("Give your community a short, memorable invite link.", p).wrap())
         .child(row().w_full().gap(8.0).items_end().child(text(format!("{base}/")).font(font(14.0, 500.0).lh(40.0)).color(p.text_primary_muted)).child(col().grow(1.0).child(field(st, acc, "vanity_code", &code, "", "your-community", p))));
     if !code.is_empty() {
-        content = content.child(small(format!("Current uses: {uses}"), p));
+        content = content.child(small(format!("{} {uses}", t("Current uses:")), p));
     }
     let mut buttons = row().gap(8.0);
     let code2 = code.clone();

@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -22,7 +22,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Themes | DONE | (impossible: Quick CSS beyond `:root` variables — Rune has no CSS engine; the rest is counted and reported) | F/theme_settings/* |
 | Notifications | DONE | | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
-| Voice & video | PARTIAL | no camera background effects; input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
+| Voice & video | DONE | (impossible: camera background effects — Fluxer runs MediaPipe selfie segmentation (`selfie_segmentation_256x256.onnx`) in onnxruntime-web; GStreamer has no person-segmentation element and Reflux has no ML runtime) input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | DONE | (Fluxer's current Motion tab has no keep-animating flags) | tabs/AccessibilityTab.tsx |
 | Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
 | Keybinds | DONE | custom Toggle mute / Toggle deafen combos and the PTT key are global where a hook backend runs (X11, Windows, macOS); on Wayland the portal's keys are set in the desktop | tabs/KeybindsTab.tsx |
@@ -93,7 +93,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
-| Pop-out windows | PARTIAL | one voice pop-out at a time (Fluxer keeps several, keyed by call/tile); no Quick CSS editor pop-out; Fluxer has no chat pop-outs |  | PopoutWindow.tsx |
+| Pop-out windows | DONE | (voice pop-outs keyed by call/tile from a pool of 4 windows — Rune can't open windows after start, the oldest gives way; Quick CSS editor pop-out; Fluxer has no chat pop-outs) | PopoutWindow.tsx |
 | Error / rate-limit modals | DONE | DM-restricted/content-blocked texts are the modal body | GenericErrorModal.tsx |
 
 ### channel/
@@ -110,7 +110,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
 | Typing indicator tiers | DONE | (tier strings >4 typers are English-only) | ChannelTyping.tsx |
 | Rich composer (pills, toolbar) | PARTIAL | custom emoji pills show `:name:`: impossible without a Rune change (pill chips take only a vector `Icon` and no pill rect is exposed to overlay the image); toolbar floats over the selection, centred on its caret end (Rune exposes the caret rect, not the range's) | F/lexical/* |
-| Emoji / GIF / sticker / memes pickers | PARTIAL | right-click menu lacks "Clone to…" (on the info card) and reverse image search; "Add to saved media" from message media (AddFavoriteMemeModal) and saved-media edit; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
+| Emoji / GIF / sticker / memes pickers | PARTIAL | premium upsell; "Clone to…" shows without Advanced's cloning-shortcuts switch (Advanced is another agent's tab); reverse image search uses Fluxer's built-in engines with a local default (no Search engines settings); message media hover has no Delete; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
 | Composer context menu | DONE | | TextareaContextMenu.tsx |
 | Slash commands | DONE | no option hints | useCommands.ts |
@@ -197,7 +197,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Join/leave, panel, mute/deafen, rings, devices, HW encode | DONE | | |
 | Screen share | PARTIAL | in-app thumbnails only on X11/Windows (Wayland keeps the portal); NVENC live-verified | ScreenSharePickerModal.tsx |
 | Watch stream | DONE |  | WatchStreamOverlay.tsx |
-| Camera | PARTIAL | Linux only (GStreamer); no background effects; never tested in a real call | CameraPreviewModal.tsx |
+| Camera | PARTIAL | Linux only (GStreamer); background effects impossible (see Voice & video); never tested in a real call | CameraPreviewModal.tsx |
 | Call view grid | DONE |  | VoiceCallView.tsx |
 | DM calls / ringing / P2P | PARTIAL | P2P mesh (op 13, STUN-only) verified by a loopback test only, never against a real peer; conversion watchdog (10 s) and the 16 KB outbound-signal check ported; rollout read once per session; DM calls untested against a server | IncomingCallUI.tsx, VoiceMeshEngine.ts |
 | Per-user volume / local mute | DONE |  | VoiceParticipantMenuItems.tsx |
@@ -210,7 +210,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | E2EE indicator | PARTIAL | key derivation matched to livekit-client (PBKDF2, ratchet window 0); the test server grants no e2ee_key, so untested live | VoiceE2EEIndicator.tsx |
 | Stream audio (Linux) | PARTIAL | PipeWire app capture (pw-dump + pipewiresrc) never exercised in a real call | | AudioSourcePickerLinux.tsx |
 | Join confirm / channel full | DONE | | VoiceConnectionConfirmModal.tsx |
-| Voice messages | PARTIAL | selection preview has no Pause/playhead; no volume control on the player; speed stays 1x without GStreamer (hold-to-record is mobile-only in Fluxer) | VoiceMessageComposerModal.tsx |
+| Voice messages | DONE | (Windows has no inline playback; hold-to-record is mobile-only in Fluxer) | VoiceMessageComposerModal.tsx |
 
 ### threads / forum
 | Feature | Status | Missing | Official source |
@@ -230,10 +230,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
-| i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
+| i18n coverage, plurals, RTL, locale dates | DONE | (impossible: RTL layout mirroring — Rune has no layout direction, bidi text only; text only Reflux has, e.g. gateway/passkey errors, has no translation in Fluxer's catalogs and stays English) | F/i18n/* |
 | Reduced motion, screen reader announcements | DONE | | F/accessibility/* |
 | Streamer mode | DONE | | F/streamer_mode/* |
-| Debug modals, experiments, account engine cache, premium *(low)* | PARTIAL | debug user/channel/community/member/message + Developer tools (state, settings, `/experiments` read-only); offline cache (last READY + 50 msgs × 30 channels per account); premium see §1.1; JSON not syntax-highlighted | |
+| Debug modals, experiments, account engine cache, premium *(low)* | PARTIAL | debug user/channel/community/member/message + Developer tools (state, settings, `/experiments` read-only); offline cache (last READY + 50 msgs × 30 channels per account); premium see §1.1 (JSON is syntax-highlighted; Fluxer's experiment switches live in Advanced) | |
 
 ## 3. Desktop shell
 | Feature | Status | Missing | Official source |
@@ -253,4 +253,4 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | App menu (macOS) | DONE | built on Rune standard menus; not verified on a Mac | D/Menu.ts |
 | File downloads | DONE | | D/FileDownloads.ts |
 | Copy image | DONE | | D/MediaClipboard.ts |
-| Streamer-mode detection, theme folder, troubleshooting *(low)* | PARTIAL | theme folder, troubleshooting (OBS/XSplit detection done) | |
+| Streamer-mode detection, theme folder, troubleshooting *(low)* | DONE | (OBS/XSplit detection; watched theme folders polled every 2 s like Fluxer's fallback; impossible: Help › Troubleshooting — it's a native app-menu item, Rune's native menus are macOS-only, Reflux has no app menu, Rune always renders on the GPU and there is no web view to reload) | |

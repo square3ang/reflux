@@ -234,8 +234,8 @@ fn dm_welcome<S: 'static>(store: &Store, st: &ShellState, u: Snowflake, p: &Pale
             _ => None,
         }
     };
-    let say = format!("Say hi to {name}. Your DM starts here.");
-    let bold = rune::Span::new(10, 10 + name.len()).weight(700.0);
+    let (say, r) = crate::i18n::tf_marked("Say hi to <0>{displayName}</0>. Your DM starts here.", &[("displayName", &name)]);
+    let bold = rune::Span::new(r.start, r.end).weight(700.0);
     col()
         .w_full()
         .px(32.0)
@@ -350,7 +350,7 @@ pub fn mass_mention(store: &Store, c: &Channel, content: &str) -> Option<(&'stat
 pub fn mass_popout<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let Some((ch, mention, n)) = st.social.mass else { return };
     let cancel = move |s: &mut S| acc(s).social.mass = None;
-    let line = if mention == "@here" { format!("This will notify up to {n} online members in this channel. Are you sure you want to do this?") } else { format!("This will notify {n} members in this channel. Are you sure you want to do this?") };
+    let line = crate::i18n::tf_plain(if mention == "@here" { "This will notify up to <0>{memberCount, plural, one {# online member} other {# online members}}</0> in this channel. Are you sure you want to do this?" } else { "This will notify <0>{memberCount, plural, one {# member} other {# members}}</0> in this channel. Are you sure you want to do this?" }, &[("memberCount", &n.to_string())]);
     let go = move |s: &mut S| {
         let sh = acc(s);
         sh.social.mass = None;

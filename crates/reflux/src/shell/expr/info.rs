@@ -119,7 +119,7 @@ fn join_confirm<S: 'static>(st: &ShellState, j: &(Snowflake, String, Option<Stri
 }
 
 /// `slotsFull`: the target has no room for another emoji or sticker.
-fn slots_full(store: &Store, st: &ShellState, g: Snowflake, sticker: bool) -> bool {
+pub(super) fn slots_full(store: &Store, st: &ShellState, g: Snowflake, sticker: bool) -> bool {
     let Some(x) = store.guilds.get(&g) else { return false };
     let features = x.info.as_ref().map(|i| i.features.as_slice()).unwrap_or_default();
     let (unlimited, count, max) = if sticker { ("UNLIMITED_STICKERS", x.stickers.len(), st.limits.guild_stickers) } else { ("UNLIMITED_EMOJI", x.emojis.len(), st.limits.guild_emojis) };
@@ -141,9 +141,9 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
     };
     let description = match (i.id, guild, member) {
         (None, ..) => "A default emoji. You can use it anywhere on Fluxer.".to_string(),
-        (_, Some(_), true) if st.limits.global_expressions => format!("A custom {what} from this community. You can use it anywhere on Fluxer."),
-        (_, Some(_), true) => format!("A custom {what} from this community. You can use it in this community."),
-        _ => format!("This is a custom {what} from a community."),
+        (_, Some(_), true) if st.limits.global_expressions => crate::i18n::tf(if i.sticker { "A custom sticker from this community. You can use it anywhere on {productName}." } else { "A custom emoji from this community. You can use it anywhere on {productName}." }, &[("productName", "Fluxer")]),
+        (_, Some(_), true) => t(if i.sticker { "A custom sticker from this community. You can use it in this community." } else { "A custom emoji from this community. You can use it in this community." }).to_string(),
+        _ => t(if i.sticker { "This is a custom sticker from a community." } else { "This is a custom emoji from a community." }).to_string(),
     };
     let name = if i.sticker || i.id.is_none() && i.glyph.is_none() { i.name.clone() } else { format!(":{}:", i.name) };
     let summary = row()
@@ -184,7 +184,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
         .key("expr-info")
         .child(summary);
     if i.id.is_some() {
-        let from = format!("This {what} is from");
+        let from = t(if i.sticker { "This sticker is from" } else { "This emoji is from" }).to_string();
         let gname = guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()).map(|x| x.name.clone());
         let body = match (guild, gname) {
             (Some(g), Some(n)) if member => row()
@@ -197,7 +197,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
                 .hover(mix(p.text_primary, rune::Color::TRANSPARENT, 8.0))
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label(format!("Go to {n}"))
+                .label(crate::i18n::tf("Go to {communityName}", &[("communityName", &n)]))
                 .child(guild_icon(store, st, g, 40.0, p))
                 .child(text(n).font(font(14.0, 600.0).lh(17.5)).color(p.text_primary).truncate().shrink().min_w(0.0))
                 .on_press(move |s: &mut S| {

@@ -158,6 +158,7 @@ fn run_op(s: &mut State, op: Op) {
         }
         Op::MicTest(on) => s.app.shell.voice.mic_test = on,
         Op::RecordStart(channel) => {
+            crate::desktop::sound::stop_preview();
             s.app.voice.recorded = None;
             s.app.shell.voice.voice_message = Some(VoiceMessage { channel, recording: true, ..Default::default() });
             ensure_mic(s);
@@ -182,6 +183,7 @@ fn run_op(s: &mut State, op: Op) {
             }
         }
         Op::RecordCancel => {
+            crate::desktop::sound::stop_preview();
             if let Some(m) = &s.app.voice.mic {
                 m.stop_recording();
             }
@@ -189,10 +191,16 @@ fn run_op(s: &mut State, op: Op) {
             s.app.shell.voice.voice_message = None;
         }
         Op::RecordSend => send_voice_message(s),
-        // shortcut: fire-and-forget, so no Pause or playhead while it plays.
         Op::RecordPlay => {
-            if let (Some((samples, rate)), Some(vm)) = (&s.app.voice.recorded, &s.app.shell.voice.voice_message) {
-                crate::desktop::sound::play_bytes(crate::voice_input::wav(&samples[vm.range(samples.len(), *rate)], *rate), 1.0);
+            crate::desktop::sound::stop_preview();
+            if let (Some((samples, rate)), Some(vm)) = (&s.app.voice.recorded, &mut s.app.shell.voice.voice_message) {
+                vm.playing = match vm.playhead() {
+                    Some(_) => None,
+                    None => {
+                        crate::desktop::sound::preview(crate::voice_input::wav(&samples[vm.range(samples.len(), *rate)], *rate));
+                        Some(std::time::Instant::now())
+                    }
+                };
             }
         }
         Op::PushToTalk(held) => s.app.shell.voice.ptt_held = held,
@@ -1345,6 +1353,7 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
 
 /// `sendVoiceMessage`: the recording as `voice-message.wav` with its waveform and duration.
 fn send_voice_message(s: &mut State) {
+    crate::desktop::sound::stop_preview();
     let Some(vm) = s.app.shell.voice.voice_message.clone() else { return };
     let Some((all, rate)) = s.app.voice.recorded.take() else { return };
     if vm.end - vm.start < VoiceMessage::MIN_SECS {

@@ -28,6 +28,9 @@ pub struct MediaUi {
     pub playing: Option<(String, Player)>,
     /// The same through GStreamer, where Rune's player can't decode (`clip::native`).
     pub gst: Option<super::clip::GstClip>,
+    /// The voice message whose volume popout shows, and when it closes (200 ms after the
+    /// pointer leaves, `MediaVerticalVolumeControl`).
+    pub volume_pop: Option<(String, Option<std::time::Instant>)>,
     /// gifv embeds playing in place.
     pub gifv: super::gifv::Gifv,
     /// Invite previews by code (`InviteEmbed`).
@@ -260,6 +263,9 @@ pub struct Tile<'a> {
     pub spoiler: bool,
     /// Flagged media the filter blurs.
     pub mature: bool,
+    /// The message attachment it shows (channel, message, attachment): the hover toolbar's
+    /// Download and Add to saved media.
+    pub saved: Option<(Snowflake, Snowflake, &'a Attachment)>,
 }
 
 /// The message's media attachments (minus blocked ones) as one picture or the mosaic, then
@@ -287,6 +293,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             alt: a.description.as_deref(),
             spoiler: is_spoiler(a) && !unspoil,
             mature: flagged(a.nsfw, a.flags) && level == 1,
+            saved: Some((m.channel_id, m.id, a)),
         };
         let (items, msg) = (items.clone(), (m.channel_id, m.id));
         media_tile(store, st, t, hovered, media.len() > 1, p, acc, Rc::new(move |s: &mut S| lightbox::open(acc(s), (*items).clone(), i, Some(msg))))
@@ -429,7 +436,41 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
                 .label(alt.to_owned()),
         );
     }
+    if let Some(bar) = media_tools(st, &t, p, acc) {
+        tile = tile.hover_group().child(bar);
+    }
     tile.on_press(move |s: &mut S| open(s))
+}
+
+/// `MediaContainer`'s hover toolbar: Download, then the saved media star (`useMediaFavorite`:
+/// a saved one is removed at once, otherwise `AddFavoriteMemeModal` opens). Hidden on media
+/// under 110×50 (`shouldShowOverlays`).
+// shortcut: no Delete button (it needs Fluxer's attachment-delete confirmation flow).
+fn media_tools<S: 'static>(st: &ShellState, t: &Tile, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    use super::expr::{Fetched, Tool, hover_tools, tool};
+    let (channel, message, a) = t.saved?;
+    if t.size.0 < 110.0 || t.size.1 < 50.0 {
+        return None;
+    }
+    let saved = match (&a.content_hash, st.expr.fetched.get("memes")) {
+        (Some(h), Some(Fetched::Done(v))) => v.as_array().and_then(|l| l.iter().find(|m| m["content_hash"].as_str() == Some(h.as_str()))).and_then(|m| m["id"].as_str()).map(str::to_owned),
+        _ => None,
+    };
+    let (url, name) = (a.url.clone().unwrap_or_default(), a.filename.clone());
+    let what = if t.video { "Download video" } else if t.animated { "Download GIF" } else { "Download image" };
+    let download = tool(&icons::DOWNLOAD_SIMPLE, crate::i18n::t(what), 20.0, Tool::Plain, p, move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx));
+    let att = a.clone();
+    let star = match saved {
+        Some(id) => tool(&icons::STAR_FILL, crate::i18n::t("Remove from favorites"), 20.0, Tool::Active, p, move |s: &mut S, _: &mut Tx| {
+            let st = acc(s);
+            if let Some(Fetched::Done(serde_json::Value::Array(l))) = st.expr.fetched.get_mut("memes") {
+                l.retain(|m| m["id"].as_str() != Some(id.as_str()));
+            }
+            st.social(reqwest::Method::DELETE, format!("/users/@me/memes/{id}"), None, crate::social::Done::Toast(crate::i18n::t("Removed from saved media").into()));
+        }),
+        None => tool(&icons::STAR_BOLD, crate::i18n::t("Add to favorites"), 20.0, Tool::Plain, p, move |s: &mut S, _: &mut Tx| crate::social::open_add_meme(acc(s), channel, message, &att)),
+    };
+    Some(hover_tools(vec![download, star], p))
 }
 
 /// Starts `clip` as the one clip playing inline (pausing the last).

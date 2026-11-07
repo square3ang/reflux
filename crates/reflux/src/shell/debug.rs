@@ -122,12 +122,14 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         body = body.child(bar);
     }
     let code = tabs.get(active).map(|(_, c)| c.clone()).unwrap_or_default();
+    // Records are JSON; the message AST (Rust debug output) gets the same colouring.
+    let spans = if code.starts_with(['{', '[']) { super::highlight::spans("json", &code, crate::ui::is_light(p)) } else { Vec::new() };
     let block = col()
         .w_full()
         .padding(12.0)
         .radius(6.0)
         .fill(p.background_secondary_alt)
-        .child(text(code).font(font(13.0, 400.0).lh(18.0).mono()).color(p.text_primary).wrap().selectable(true));
+        .child(rune::rich(code, spans).font(font(13.0, 400.0).lh(18.0).mono()).color(p.text_primary).wrap().selectable(true));
     body = body.child(col().w_full().h(420.0).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(block), false, p)));
     Some(Modal::new(title, move |s: &mut S| acc(s).debug = None).size(ModalSize::Large).body(body).el(p))
 }

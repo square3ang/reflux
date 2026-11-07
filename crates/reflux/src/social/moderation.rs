@@ -146,7 +146,7 @@ pub fn voice_items<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: S
 
 pub fn kick<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let tag = user_name(store, u);
-    let mut items = vec![desc(format!("Are you sure you want to kick {tag} from the community? They will be able to rejoin with a new invite."), p)];
+    let mut items = vec![desc(crate::i18n::tf_plain("Are you sure you want to kick <0>{targetUserTag}</0> from the community? They will be able to rejoin with a new invite.", &[("targetUserTag", &tag)]), p)];
     items.extend(error(st, p));
     let go = move |s: &mut S| send(acc(s), Method::DELETE, format!("/guilds/{g}/members/{u}"), None, "", Done::Close);
     Dialog::new(t("Kick member"), close(acc)).body(body(items)).footer(footer(st, t("Kick"), true, "kick-confirm", acc, go, p)).el(p)
@@ -243,7 +243,7 @@ pub fn timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snow
 
 pub fn remove_timeout<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let tag = user_name(store, u);
-    let mut items = vec![desc(format!("Removing the timeout will allow {tag} to send messages, react, and join voice channels again."), p)];
+    let mut items = vec![desc(crate::i18n::tf_plain("Removing the timeout will allow <0>{targetUserTag}</0> to send messages, react, and join voice channels again.", &[("targetUserTag", &tag)]), p)];
     items.extend(error(st, p));
     let go = move |s: &mut S| send(acc(s), Method::PATCH, format!("/guilds/{g}/members/{u}"), Some(json!({ "communication_disabled_until": null })), "", Done::Close);
     Dialog::new(t("Remove timeout"), close(acc)).body(body(items)).footer(footer(st, t("Remove timeout"), true, "untimeout-confirm", acc, go, p)).el(p)
@@ -296,7 +296,7 @@ pub fn nickname<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Sno
 pub fn transfer<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let who = store.display_name(Some(g), u);
     let mut items = vec![
-        desc(format!("You are about to transfer ownership of this community to {who}. Once you do this, you will lose all owner privileges."), p),
+        desc(crate::i18n::tf_plain("You are about to transfer ownership of this community to <0>{0}</0>. This action is <1>irreversible</1> and you will lose all owner privileges.", &[("0", &who)]), p),
         field(st, acc, "password", "", t("Password"), "", p),
     ];
     items.extend(error(st, p));

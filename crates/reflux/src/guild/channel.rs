@@ -332,7 +332,7 @@ fn overwrite_set(c: &reflux_model::Channel) -> Vec<(Snowflake, u8, u64, u64)> {
 fn sync_banner<S: 'static>(store: &Store, ch: &reflux_model::Channel, parent: &reflux_model::Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let synced = overwrite_set(ch) == overwrite_set(parent);
     let name = parent.name.clone().unwrap_or_default();
-    let line = if synced { format!("This channel is synced with the parent category {name}.") } else { format!("This channel is not synced with the parent category {name}.") };
+    let line = if synced { crate::i18n::tf_plain("This channel is synced with the parent category <0>{0}</0>.", &[("0", &name)]) } else { crate::i18n::tf_plain("This channel is not synced with the parent category <0>{0}</0>.", &[("0", &name)]) };
     let mut b = row()
         .w_full()
         .gap(8.0)

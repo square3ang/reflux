@@ -2,7 +2,7 @@
 //! `ShareAndBackUpSection.tsx`): CSS files saved on this device that can be turned on over the
 //! base theme, and the library backup file (`fluxer-theme-library.json`, export version 1).
 // shortcut: each row has a delete button instead of Fluxer's options menu (edit details/CSS, move
-// up/down, export one, duplicate); no folder watching or linked files; theme names come from the
+// up/down, export one, duplicate); single CSS files aren't linked (folders are, see `theme_folder`); theme names come from the
 // file name, not the CSS header metadata.
 
 use rune::{El, Tx, col, row, text};
@@ -20,7 +20,7 @@ fn now() -> i64 {
 }
 
 /// `createThemeFromCss`: a new theme named after its file.
-fn theme(css: String, file_name: &str, at: i64, n: usize) -> LibraryTheme {
+pub(super) fn theme(css: String, file_name: &str, at: i64, n: usize) -> LibraryTheme {
     let name = file_name.strip_suffix(".css").unwrap_or(file_name).to_string();
     LibraryTheme { id: format!("theme-{at}-{n}"), name, css, file_name: file_name.to_string(), created_at: at, updated_at: at, ..Default::default() }
 }
@@ -97,8 +97,9 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                 .gap(12.0)
                 .center_y()
                 .child(text(t("Themes you import from CSS files. The ones you turn on are added on top of the base theme in the order shown.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap().grow(1.0).shrink())
-                .child(import),
-        );
+                .child(row().gap(8.0).child(import).child(super::theme_folder::import_button(p, acc))),
+        )
+        .children(super::theme_folder::rows(st, p, acc));
     if l.themes.is_empty() {
         return c.child(
             col()
@@ -127,6 +128,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                 }
             })
         });
+        let (sub, deletable) = super::theme_folder::subtitle(th);
         let delete = rune::icon(&crate::icons::TRASH_BOLD, 18.0)
             .color(p.text_tertiary)
             .cursor(rune::Cursor::Pointer)
@@ -155,10 +157,10 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                         .min_w(0.0)
                         .gap(2.0)
                         .child(text(th.name.clone()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).truncate())
-                        .child(text(th.file_name.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).truncate()),
+                        .child(text(sub).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).truncate()),
                 )
                 .child(toggle.el(p).label(label))
-                .child(delete),
+                .children(deletable.then_some(delete)),
         );
     }
     c

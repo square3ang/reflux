@@ -41,7 +41,7 @@ pub fn view(st: &ShellState, role: &Role, size: f32) -> Option<El> {
         _ => return None,
     };
     let Load::Ready(px) = load else { return None };
-    Some(row_box(size).child(el().size(side, side).pixels_fit(&px, rune::SurfaceFit::Fit)).label(format!("Role icon, {}", role.name)))
+    Some(row_box(size).child(el().size(side, side).pixels_fit(&px, rune::SurfaceFit::Fit)).label(crate::i18n::tf("Role icon, {roleName}", &[("roleName", &role.name)])))
 }
 
 fn row_box(size: f32) -> El {

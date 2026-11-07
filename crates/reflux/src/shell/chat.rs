@@ -1546,9 +1546,9 @@ fn slowmode(store: &Store, c: &Channel) -> u32 {
 fn slowmode_label(left_ms: u64, p: &Palette) -> El {
     let secs = left_ms.div_ceil(1000);
     let (line, color) = if secs > 0 {
-        (format!("Slowmode is active ({}:{:02})", secs / 60, secs % 60), p.status_danger)
+        (crate::i18n::tf("Slowmode is active ({remaining})", &[("remaining", &format!("{}:{:02}", secs / 60, secs % 60))]), p.status_danger)
     } else {
-        ("Slowmode is enabled".to_string(), p.text_primary_muted)
+        (t("Slowmode is enabled").to_string(), p.text_primary_muted)
     };
     el().w_full().h(0.0).child(
         row()
@@ -1659,8 +1659,8 @@ const TYPING_THROTTLE_MS: u64 = 8000;
 /// the composer's action stack (`.composerActionStack`).
 fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palette, acc: ShellAccess<S>) -> El {
     let name = author_name(store, target);
-    let line = format!("Replying to {name}");
-    let spans = vec![Span::new(12, line.len()).weight(600.0)];
+    let (line, b) = crate::i18n::tf_marked("Replying to <0>{authorNickname}</0>", &[("authorNickname", &name)]);
+    let spans = vec![Span::new(b.start, b.end).weight(600.0)];
     let mut controls = row().gap(2.0).center_y().min_h(32.0);
     if target.author.id != store.my_id() {
         let fg = if r.mention { rgb(96, 165, 250) } else { p.text_primary_muted };

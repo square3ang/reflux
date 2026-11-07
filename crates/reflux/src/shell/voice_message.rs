@@ -82,7 +82,6 @@ pub fn player<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: She
                 super::clip::set_rate(acc, &k1, s, rate as f64);
             }
         });
-    // shortcut: the rune `Player` fallback (no GStreamer) always plays at 1x.
     let speed = text(format!("{rate}x"))
         .font(font(11.0, 600.0).lh(14.0))
         .color(p.text_secondary)
@@ -123,6 +122,104 @@ pub fn player<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: She
         .child(wave)
         .child(text(super::attachments::clock(shown)).font(font(11.0, 500.0).lh(14.0)).color(p.text_secondary))
         .child(speed)
+        .child(volume_button(st, &key, p, acc))
+}
+
+/// `getVolumeIcon`.
+fn volume_icon(volume: f32, muted: bool) -> &'static rune::Icon {
+    match volume {
+        _ if muted || volume <= 0.0 => &icons::SPEAKER_X_FILL,
+        v if v < 0.33 => &icons::SPEAKER_NONE_FILL,
+        v if v < 0.67 => &icons::SPEAKER_LOW_FILL,
+        _ => &icons::SPEAKER_HIGH_FILL,
+    }
+}
+
+/// Opens (`Some`) or schedules closing (`None`: 200 ms on) the volume popout of `key`.
+fn hover_volume<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, inside: bool, tx: &mut rune::Tx) {
+    let pop = &mut acc(s).media_ui.volume_pop;
+    if inside {
+        *pop = Some((key.to_string(), None));
+    } else if let Some((k, at)) = pop
+        && k == key
+    {
+        *at = Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
+        tx.wake_after(std::time::Duration::from_millis(210));
+    }
+}
+
+/// `MediaVerticalVolumeControl`'s mute button (16px icon); hovering it opens the slider popout.
+fn volume_button<S: 'static>(st: &ShellState, key: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let (v, m) = (st.prefs.media_volume, st.prefs.media_muted);
+    let (k1, k2) = (key.to_string(), key.to_string());
+    row()
+        .key(format!("{key}-vol"))
+        .size(28.0, 28.0)
+        .center()
+        .radius(dim::RADIUS_SM)
+        .hover(p.background_modifier_hover)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(if m { t("Unmute") } else { t("Mute") })
+        .child(icon(volume_icon(v, m), 16.0).color(p.text_secondary))
+        .on_press(move |s: &mut S| {
+            let (v, m) = (acc(s).prefs.media_volume, acc(s).prefs.media_muted);
+            super::clip::set_volume(acc, &k1, s, v, !m);
+        })
+        .on_hover_change(move |s: &mut S, inside, tx| hover_volume(acc, &k2, s, inside, tx))
+}
+
+/// The open volume popout: a vertical 0–100 slider 8px above the button.
+pub fn volume_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let Some((key, _)) = &st.media_ui.volume_pop else { return };
+    let value = if st.prefs.media_muted { 0.0 } else { st.prefs.media_volume };
+    let (k1, k2) = (key.clone(), key.clone());
+    let rail = col()
+        .w(4.0)
+        .h_full()
+        .radius(2.0)
+        .fill(mix(p.interactive_muted, p.background_tertiary, 82.0))
+        .child(el().w_full().grow(1.0 - value))
+        .child(el().w_full().grow(value).radius(2.0).fill(p.brand_primary_foreground));
+    let thumb = el().size(12.0, 12.0).radius(6.0).fill(p.background_primary).border(2.0, mix(p.background_primary, p.brand_primary, 80.0));
+    // The thumb rides the free space split (1 - value) : value, as the horizontal slider does.
+    let thumbs = col().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).items_center().child(el().grow(1.0 - value)).child(thumb).child(el().grow(value.max(0.0001)));
+    let slider = el()
+        .size(20.0, 80.0)
+        .role("slider")
+        .label(t("Volume"))
+        .cursor(rune::Cursor::Pointer)
+        .child(row().w_full().h_full().justify_center().child(rail))
+        .child(thumbs)
+        .on_drag(move |s: &mut S, d, _| {
+            if d.h > 0.0 {
+                let v = 1.0 - (d.y / d.h).clamp(0.0, 1.0);
+                if let Some((_, at)) = &mut acc(s).media_ui.volume_pop {
+                    *at = None;
+                }
+                super::clip::set_volume(acc, &k1, s, v, v <= 0.0);
+            }
+        });
+    let card = col()
+        .w(28.0)
+        .py(8.0)
+        .items_center()
+        .radius(8.0)
+        .fill(p.form_surface_background)
+        .border(1.0, p.background_modifier_accent)
+        .box_shadow(crate::ui::overlay::popout_shadow(p, 0.24, 0.14))
+        .child(slider)
+        .on_hover_change(move |s: &mut S, inside, tx| hover_volume(acc, &k2, s, inside, tx));
+    layer.push(crate::ui::overlay::anchor(card, &format!("{key}-vol"), crate::ui::overlay::Placement::Top, 8.0));
+}
+
+/// Closes the volume popout once its 200 ms grace has passed.
+pub fn poll_volume(st: &mut ShellState) -> bool {
+    let due = st.media_ui.volume_pop.as_ref().and_then(|(_, at)| *at).is_some_and(|at| std::time::Instant::now() >= at);
+    if due {
+        st.media_ui.volume_pop = None;
+    }
+    due
 }
 
 /// `formatElapsedMs`: `m:ss.t`.
@@ -140,10 +237,15 @@ fn trim_wave<S: 'static>(vm: &super::voice::VoiceMessage, p: &Palette, acc: Shel
     let values: Vec<f32> = if vm.bars.len() >= N { resample(&vm.bars, N) } else { (0..N).map(|i| vm.bars.get(i * len / N).copied().unwrap_or(0.0)).collect() };
     let total = vm.secs.max(0.01);
     let handle = || el().w(3.0).h(56.0).radius(2.0).fill(p.brand_primary);
-    let mut kids = Vec::with_capacity(N + 2);
+    let mut kids = Vec::with_capacity(N + 3);
     let (mut a, mut b) = (false, false);
+    let mut head = vm.playhead();
     for (i, v) in values.iter().enumerate() {
         let at = (i as f32 + 0.5) / N as f32 * total;
+        if head.is_some_and(|h| at >= h) {
+            head = None;
+            kids.push(el().w(2.0).h(56.0).fill(p.text_primary));
+        }
         if !a && at >= vm.start {
             a = true;
             kids.push(handle());
@@ -174,6 +276,8 @@ fn trim_wave<S: 'static>(vm: &super::voice::VoiceMessage, p: &Palette, acc: Shel
             if let Some(vm) = &mut acc(s).voice.voice_message
                 && d.w > 0.0
             {
+                crate::desktop::sound::stop_preview();
+                vm.playing = None;
                 vm.drag((d.x / d.w).clamp(0.0, 1.0) * vm.secs);
                 vm.error = None;
             }
@@ -210,13 +314,15 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
         }
     } else {
         let ch = vm.channel;
+        let playing = vm.playhead().is_some();
+        let (play, glyph) = if playing { (t("Pause"), &icons::PAUSE_FILL) } else { (t("Play"), &icons::PLAY_FILL) };
         body = body
             .child(trim_wave(vm, p, acc))
             .child(meta(t("Selection: {seconds}").replace("{seconds}", &format!("{:.2}s", vm.end - vm.start)), format!("{:.2}s → {:.2}s", vm.start, vm.end), p.text_secondary))
             .child(
                 row()
                     .gap(8.0)
-                    .child(small(t("Play"), &icons::PLAY_FILL, "vm-play").on_press(move |s: &mut S| op(s, Op::RecordPlay)).el(p))
+                    .child(small(play, glyph, "vm-play").on_press(move |s: &mut S| op(s, Op::RecordPlay)).el(p))
                     .child(small(t("Re-record"), &icons::ARROW_COUNTER_CLOCKWISE_BOLD, "vm-again").on_press(move |s: &mut S| op(s, Op::RecordStart(ch))).el(p)),
             );
     }

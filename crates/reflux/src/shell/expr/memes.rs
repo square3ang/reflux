@@ -75,20 +75,19 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                         let h = (w * mh / mw.max(1.0)).round().max(40.0);
                         let shown = (!video(&m) || url.ends_with(".gif") || url.contains(".gif?")).then_some(url.as_str());
                         let (id, name) = (m["id"].as_str().unwrap_or_default().to_string(), m["name"].as_str().unwrap_or_default().to_string());
-                        // `MemeGridItem`'s hover Delete (the danger action button).
-                        let delete = row()
-                            .pin(None, Some(6.0), Some(6.0), None)
-                            .size(28.0, 28.0)
-                            .center()
-                            .radius(6.0)
-                            .fill(rune::Color { a: 0.6, ..rune::Color::BLACK })
-                            .hover(p.status_danger)
-                            .cursor(rune::Cursor::Pointer)
-                            .role("button")
-                            .label(t("Delete saved media"))
-                            .child(icon(&icons::TRASH_FILL, 18.0).color(rune::Color::WHITE))
-                            .group_opacity(0.0, 1.0)
-                            .on_press(move |s: &mut S| acc(s).expr.confirm_meme = Some((id.clone(), name.clone())));
+                        // `MemeGridItem`'s hover Edit and Delete.
+                        let m2 = m.clone();
+                        let tools = hover_tools(
+                            vec![
+                                tool(&icons::PENCIL_SIMPLE_FILL, t("Edit saved media"), 18.0, Tool::Plain, p, move |s: &mut S, _: &mut rune::Tx| {
+                                    let st = acc(s);
+                                    close(st);
+                                    crate::social::open_edit_meme(st, &m2);
+                                }),
+                                tool(&icons::TRASH_FILL, t("Delete saved media"), 18.0, Tool::Danger, p, move |s: &mut S, _: &mut rune::Tx| acc(s).expr.confirm_meme = Some((id.clone(), name.clone()))),
+                            ],
+                            p,
+                        );
                         let e = rune::el()
                             .size(w, h)
                             .radius(6.0)
@@ -98,7 +97,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                             .label(m["name"].as_str().unwrap_or("Media").to_string())
                             .hover_group()
                             .child(super::gif::image(st, shown, w, h, p))
-                            .child(delete)
+                            .child(tools)
                             .on_press(move |s: &mut S| pick(acc(s), &m));
                         (e, h)
                     })
@@ -110,6 +109,59 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         _ => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     (bar, body)
+}
+
+/// `FAVORITE_MEME_CREATE` / `_UPDATE` (`Some`) and `_DELETE` (`None`) on the loaded list.
+pub fn on_meme(st: &mut ShellState, id: &str, meme: Option<Value>) {
+    let Some(Fetched::Done(Value::Array(list))) = st.expr.fetched.get_mut("memes") else { return };
+    let at = list.iter().position(|m| m["id"].as_str() == Some(id));
+    match (at, meme) {
+        (Some(i), Some(m)) => list[i] = m,
+        // Newest first, as `/users/@me/memes` lists them.
+        (None, Some(m)) => list.insert(0, m),
+        (Some(i), None) => drop(list.remove(i)),
+        (None, None) => {}
+    }
+}
+
+/// How an [`tool`] button looks: `.actionButton`, `.favoriteButtonActive`, `.deleteButton`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Tool {
+    Plain,
+    Active,
+    Danger,
+}
+
+/// One `ActionToolbar` item (28px, radius 6) in a media hover toolbar.
+pub fn tool<S: 'static>(glyph: &'static rune::Icon, label: &str, size: f32, kind: Tool, p: &Palette, f: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
+    let fg = match kind {
+        Tool::Plain => p.text_tertiary,
+        Tool::Active => p.text_primary,
+        Tool::Danger => crate::ui::mix(p.status_danger, p.text_primary, 78.0),
+    };
+    let b = row().size(28.0, 28.0).center().radius(6.0).cursor(rune::Cursor::Pointer).role("button").label(label.to_string()).child(icon(glyph, size).color(fg));
+    match kind {
+        Tool::Plain => b.hover(p.surface_interactive_hover_bg),
+        Tool::Active => b.fill(p.surface_interactive_selected_bg),
+        Tool::Danger => b.hover(crate::ui::mix(p.status_danger, p.surface_interactive_hover_bg, 6.0)),
+    }
+    .on_press_tx(f)
+}
+
+/// `.mediaHoverAction`: the toolbar 8px in from the top-right corner, shown while the
+/// enclosing `hover_group` is hovered.
+pub fn hover_tools(items: Vec<El>, p: &Palette) -> El {
+    let bg = p.form_surface_background;
+    row()
+        .pin(None, Some(8.0), Some(8.0), None)
+        .gap(2.0)
+        .padding(3.0)
+        .radius(8.0)
+        .fill(bg)
+        .border(1.0, crate::ui::over(p.background_modifier_accent, bg))
+        .box_shadow(rune::Shadow { x: 0.0, y: 6.0, blur: 14.0, spread: 0.0, color: rune::Color { a: if crate::ui::is_light(p) { 0.1 } else { 0.18 }, ..rune::Color::BLACK }, inset: false })
+        .children(items)
+        .group_opacity(0.0, 1.0)
 }
 
 /// `buildDeleteMemeConfirmation`: deletes on confirm and drops the tile at once.

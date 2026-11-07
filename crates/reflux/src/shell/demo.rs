@@ -662,9 +662,11 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: true, secs: 7.3, bars, ..Default::default() });
             return;
         }
-        "voice-message" => {
+        "voice-message" | "voice-message-play" => {
             let bars = (0..40).map(|i| (i as f32 * 0.7).sin().abs() * 0.8 + 0.1).collect();
-            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, end: 3.6, start: 0.4, bars, ..Default::default() });
+            // `-play`: the selection preview 1.2 s in (playhead + Pause).
+            let playing = (scene == "voice-message-play").then(|| std::time::Instant::now() - std::time::Duration::from_millis(1200));
+            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, end: 3.6, start: 0.4, bars, playing, ..Default::default() });
             return;
         }
         "meter" => {
@@ -820,6 +822,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
     let (shot, mine, ada) = (ids[6], ids[7], ids[8]);
     match scene {
         "hover" => st.hover_msg = Some(ada),
+        "debug-channel" => st.open_debug(super::debug::Subject::Channel(Snowflake(GENERAL))),
         "nagbars" => {
             st.desktop.notice = Some(reflux_model::InstanceNotice { id: "n1".into(), message: "Voice is moving to the new region tonight.".into(), url: Some("https://example.com".into()), ..Default::default() });
             st.desktop.maintenance = Some(crate::desktop::notices::Maintenance { id: "m1".into(), status: crate::desktop::notices::Status::Scheduled, start: "2026-11-08T03:00:00Z".into(), minutes: 120, url: "https://status.example.com".into() });
@@ -929,6 +932,19 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         m if m.starts_with("media-") => media_scene(st, store, &m[6..]),
         "picker-emoji" | "picker-menu" | "gif-import" | "meme-delete" | "picker-sticker" | "picker-gif" | "picker-gif-search" | "picker-memes" => expr_scene(st, scene),
+        // The menu's "Clone emoji to..." open (HQ allows cloning), or the provider picker.
+        "picker-clone" | "picker-ris" => {
+            expr_scene(st, "picker-menu");
+            if let Some(i) = store.guilds.get_mut(&Snowflake(HQ)).and_then(|g| g.info.as_mut()) {
+                i.features.push("CLONE_EMOJI_ENABLED".into());
+            }
+            if scene == "picker-clone" {
+                st.expr.menu.sub = Some("expr-clone".into());
+            } else {
+                st.expr.menu.close();
+                st.expr.image_search = Some(("https://fluxerusercontent.com/emojis/77.webp".into(), "google_lens".into()));
+            }
+        }
         "react-picker" => {
             st.limits.global_expressions = true;
             super::expr::open_react(st, Snowflake(GENERAL), shot);
@@ -1018,7 +1034,7 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     let mut msgs = Vec::new();
     // Fluxer's defaults: spoilers on click, embeds and their media shown, GIFs autoplay.
     store.settings.render_spoilers = 1;
-    (store.settings.render_embeds, store.settings.inline_embed_media, store.settings.gif_auto_play) = (true, true, true);
+    (store.settings.render_embeds, store.settings.inline_embed_media, store.settings.inline_attachment_media, store.settings.gif_auto_play) = (true, true, true, true);
     match scene {
         "mosaic" | "viewer" => {
             msgs.push(message(t(1), 0, 1001, "Three from the offsite:", json!({"attachments": [
@@ -1029,7 +1045,10 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 att(9113, "f.gif", "image/gif", 400, 400, json!({})), att(9114, "g.png", "image/png", 400, 400, json!({})),
                 att(9115, "h.png", "image/png", 400, 400, json!({}))]})));
         }
-        "files" => {
+        "files" | "files-volume" => {
+            if scene == "files-volume" {
+                (st.media_ui.volume_pop, st.prefs.media_volume) = (Some(("voice-9205".into(), None)), 0.6);
+            }
             msgs.push(message(t(1), 0, 1004, "", json!({"attachments": [att(9201, "demo.mp4", "video/mp4", 1280, 720, json!({}))]})));
             msgs.push(message(t(1), 1, 1001, "", json!({"flags": 8192, "attachments": [att(9205, "voice-message.wav", "audio/wav", 0, 0,
                 json!({"width": null, "height": null, "size": 403200, "duration": 4.0, "waveform": "IEBgf5+/3/+/n39gQCBAYH+fv9//v59/YEAgQGB/n7/f/7+ff2BAIA=="}))]})));
