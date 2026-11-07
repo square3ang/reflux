@@ -1,6 +1,7 @@
 //! Navigation extras: guild rail folders and drag and drop, folder settings, favorites.
 
 pub mod favorites;
+mod favorites_drag;
 mod favorites_sync;
 pub mod folder;
 mod keybind_sync;
@@ -60,6 +61,12 @@ pub struct Nav {
     pub add_favorite: Option<Option<Snowflake>>,
     pub favorite_query: TextEdit,
     pub favorite_hide_muted: bool,
+    /// The category "Add favorite channels" adds into.
+    pub add_favorite_category: Option<String>,
+    /// The open create-category / rename-category / nickname modal and its field.
+    pub favorite_edit: Option<favorites::Edit>,
+    pub favorite_text: TextEdit,
+    pub favorite_drag: Option<favorites_drag::Drag>,
     /// A `/msg` waiting for its DM channel (`crate::compose::poll`).
     // shortcut: kept until the DM shows up; a DM that can't open leaves it pending.
     pub pending_dm: Option<(Snowflake, String)>,
@@ -89,6 +96,9 @@ pub struct Nav {
 pub struct AccountPrefs {
     pub favorites: Vec<favorites::Favorite>,
     pub hide_muted_favorites: bool,
+    /// Favorites categories in order, and the collapsed ones' IDs.
+    pub favorite_categories: Vec<favorites::Category>,
+    pub collapsed_favorites: Vec<String>,
     pub keybinds: Vec<keys::Custom>,
     /// "Disable built-ins", and the built-ins turned off one by one.
     pub builtins_off: bool,
@@ -167,12 +177,24 @@ pub fn demo(sh: &mut ShellState, store: &Store, scene: &str) {
             };
             sh.nav.drag = Some(RailDrag { src: Slot::Guild(b), drop: Some(drop) });
         }
-        "favorites" | "add-favorite" => {
-            let ch: Vec<_> = sh.guild.map(|g| store.channel_groups(g).iter().flat_map(|grp| grp.text.iter().map(|c| (g, c.id))).take(2).collect()).unwrap_or_default();
-            for (g, c) in ch {
-                favorites::add(sh, g, c);
+        // `favorites-categories`: a "Work" category holding the third channel (a nickname),
+        // the second channel being dragged onto it.
+        "favorites" | "add-favorite" | "favorites-categories" => {
+            let n = if scene == "favorites-categories" { 3 } else { 2 };
+            let ch: Vec<_> = sh.guild.map(|g| store.channel_groups(g).iter().flat_map(|grp| grp.text.iter().map(|c| (g, c.id))).take(n).collect()).unwrap_or_default();
+            for (g, c) in &ch {
+                favorites::add(sh, *g, *c);
             }
-            if scene == "favorites" {
+            if scene == "favorites-categories" {
+                let second = ch[1].1;
+                update_mine(sh, |a| {
+                    a.favorite_categories.push(favorites::Category { id: "work".into(), name: "Work".into() });
+                    a.favorites[2].parent = Some("work".into());
+                    a.favorites[2].nickname = Some("Shipping".into());
+                });
+                sh.nav.favorite_drag = Some(favorites_drag::Drag { src: favorites_drag::Slot::Channel(second), drop: Some(favorites_drag::Drop::Into(Some("work".into()))) });
+            }
+            if scene != "add-favorite" {
                 favorites::open(sh, store);
                 favorites::reconcile(store, sh);
             } else {
