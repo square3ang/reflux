@@ -495,6 +495,7 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
 }
 
 /// `--account-ui=<scene>`: `menu` (user area), `status`, `status-emoji` (with a draft and the picker), `crop` / `crop-banner` / `crop-guild-banner` (the crop modal), `timezone`, `accounts`, `nickname`, `sudo`,
+/// `ris` / `ris-add`, `search-engines` / `translators` (Advanced's provider settings), `encoder`,
 /// `profile` (the full profile modal).
 fn account_scene(sh: &mut ShellState, scene: &str) {
     use crate::settings::ShellModal;
@@ -548,11 +549,23 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
                 .ris_enabled
                 .extend(["bing".to_string(), "custom_1".to_string()]);
             if scene == "ris" {
-                sh.open_account_modal(crate::settings::AccountModal::ReverseImageSearch);
+                sh.open_account_modal(crate::settings::AccountModal::Providers(crate::settings::search_engines::Mode::Image));
             } else {
-                sh.open_account_modal(crate::settings::AccountModal::RisEngine(None));
+                sh.open_account_modal(crate::settings::AccountModal::ProviderEdit(crate::settings::search_engines::Mode::Image, None));
                 sh.form.error =
                     Some(crate::i18n::t("URL pattern must contain the {url} placeholder.").into());
+            }
+        }
+        "search-engines" | "translators" => {
+            sh.open_settings(Some("advanced_settings"));
+            if scene == "search-engines" {
+                sh.prefs.search_custom.push(("custom_1".into(), "Kagi".into(), "https://kagi.com/search?q={query}".into()));
+                sh.prefs.search_enabled.extend(["bing".to_string(), "custom_1".to_string()]);
+                sh.open_account_modal(crate::settings::AccountModal::Providers(crate::settings::search_engines::Mode::Search));
+            } else {
+                sh.prefs.translators_custom.push(("custom_1".into(), "LibreTranslate".into(), "https://translate.example.com/?q={query}".into()));
+                sh.prefs.translators_enabled.extend(["deepl".to_string(), "custom_1".to_string()]);
+                sh.open_account_modal(crate::settings::AccountModal::Providers(crate::settings::search_engines::Mode::Translate));
             }
         }
         "encoder" => {
@@ -975,7 +988,7 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
     }
 }
 
-/// `--msg-scene=hover|shift|failed|send-error|menu|more|emoji|reply|edit|delete`: message actions mid-use;
+/// `--msg-scene=hover|shift|failed|send-error|menu|menu-selection|menu-search-submenu|more|emoji|reply|edit|delete`: message actions mid-use;
 /// `uploads|pins|search|search-options|switcher|switcher-people|switcher-link|switcher-account|autocomplete|jump|present|slowmode|counter`: the
 /// composer and navigation tools.
 /// `picker-emoji|picker-sticker|picker-gif|picker-gif-search|picker-memes|react-picker|
@@ -1017,6 +1030,21 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "menu" => {
             st.popups.open_at(&format!("msg-menu-{ada}"), [620.0, 330.0]);
+            st.active_msg = Some(ada);
+        }
+        "menu-selection" => {
+            st.msg_selection = Some("Release notes".into());
+            st.popups.open_at(&format!("msg-menu-{ada}"), [620.0, 330.0]);
+            st.active_msg = Some(ada);
+        }
+        "menu-search-submenu" => {
+            st.msg_selection = Some("Release notes".into());
+            st.prefs.search_enabled.push("bing".into());
+            let mut se = Vec::new();
+            crate::synced::bytes(&mut se, 1, b"google");
+            store.settings.synced_preferences = crate::synced::set("", crate::shell::search_providers::SEARCH_ENGINES, Some(&se));
+            st.popups.open_at(&format!("msg-menu-{ada}"), [620.0, 330.0]);
+            st.popups.sub = Some("provider-1".into());
             st.active_msg = Some(ada);
         }
         "more" => {

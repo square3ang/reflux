@@ -357,26 +357,32 @@ pub fn poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
         });
     }
     let now = st.now_ms;
-    // A reverse image search default goes out at once, in the same snapshot.
+    // New search engine defaults go out at once, in the same snapshot.
     let ris = st.expr.ris_default.take();
+    let search = st.expr.search_default.take();
+    let translate = st.expr.translate_default.take();
     let Some(seen) = st.expr.synced.as_mut() else {
         return changed;
     };
     let local = encode(&st.expr.saved, &seen.b64);
-    if local == seen.wire && ris.is_none() {
+    if local == seen.wire && ris.is_none() && search.is_none() && translate.is_none() {
         seen.dirty_since = None;
         return changed;
     }
     let since = *seen.dirty_since.get_or_insert(now);
-    if now < since + DEBOUNCE_MS && ris.is_none() {
+    if now < since + DEBOUNCE_MS && ris.is_none() && search.is_none() && translate.is_none() {
         tx.wake_after(std::time::Duration::from_millis(since + DEBOUNCE_MS - now));
         return changed;
     }
     let old = seen.b64.clone();
     let changed_wire: Vec<bool> = local.iter().zip(&seen.wire).map(|(a, b)| a != b).collect();
-    if let Some(d) = ris {
-        let with = super::image_search::with_default(&old, d.as_deref());
-        st.synced.put(me, super::image_search::SEARCH_ENGINES, synced::get(&with, super::image_search::SEARCH_ENGINES).as_deref());
+    let mut base = old;
+    for (field, d) in [(2, ris), (1, search), (3, translate)] {
+        if let Some(d) = d {
+            let with = crate::shell::search_providers::with_default(&base, field, d.as_deref());
+            st.synced.put(me, crate::shell::search_providers::SEARCH_ENGINES, synced::get(&with, crate::shell::search_providers::SEARCH_ENGINES).as_deref());
+            base = with;
+        }
     }
     for ((num, payload), dirty) in [EMOJI, STICKER, EMOJI_STATE, GIFS].into_iter().zip(&local).zip(changed_wire) {
         if dirty {

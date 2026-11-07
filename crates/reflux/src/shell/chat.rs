@@ -484,8 +484,13 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                                 st.hover_msg = None;
                             }
                         })
-                        .on_secondary_press(move |s: &mut S, at, _| {
+                        .on_secondary_press(move |s: &mut S, at, tx| {
                             let st = acc(s);
+                            // `selectionText`: the message area's selection when the menu opens.
+                            st.msg_selection = tx
+                                .text_selection()
+                                .map(|sel| sel.text().replace('\u{a0}', " ").trim().to_string())
+                                .filter(|t| !t.is_empty());
                             st.popups.open_at(&format!("msg-menu-{id}"), [at.x, at.y]);
                             st.active_msg = Some(id);
                             st.media_ui.invite_menu = (None, None);
@@ -738,6 +743,7 @@ fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellStat
     let more = |bar: El, layer: &mut Vec<El>| {
         let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
             let st = acc(s);
+            st.msg_selection = None;
             st.popups.toggle(&format!("msg-more-{id}"));
             st.active_msg = Some(id);
         });
@@ -844,6 +850,23 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
     if !m.content.is_empty() {
         let t = m.content.clone();
         menu = menu.item(MenuItem::new("copy-text", crate::i18n::t("Copy text")).icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(t.clone())));
+    }
+    // `WebSearchMenuItems` (only with a selection) and `TranslateMenuItems` (the selection, else
+    // the message's text).
+    let selected = st.msg_selection.clone().unwrap_or_default();
+    if !selected.is_empty() {
+        for e in super::search_providers::entries(store, st, super::search_providers::Kind::Search, &selected, acc) {
+            menu = menu.entry(e);
+        }
+    }
+    let translate = if selected.is_empty() {
+        let content = if m.content.is_empty() { m.message_snapshots.first().map_or("", |s| s.content.as_str()) } else { m.content.as_str() };
+        content.trim().to_string()
+    } else {
+        selected
+    };
+    for e in super::search_providers::entries(store, st, super::search_providers::Kind::Translate, &translate, acc) {
+        menu = menu.entry(e);
     }
     // `speakMessage`: reads the raw content; a second press while speaking stops.
     if !m.content.trim().is_empty() {

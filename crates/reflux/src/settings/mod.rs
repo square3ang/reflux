@@ -23,7 +23,7 @@ pub(crate) mod crop;
 mod timezone;
 mod timezones;
 pub(crate) mod search;
-mod search_engines;
+pub(crate) mod search_engines;
 pub mod theme_folder;
 mod theme_library;
 mod theme_menu;

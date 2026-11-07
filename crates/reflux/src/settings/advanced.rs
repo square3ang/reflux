@@ -109,15 +109,20 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
                 acc(s).open_account_modal(super::AccountModal::EncoderControls)
             })
             .el(p),
-        "chat-settings-reverse-image-search" => crate::ui::Button::new(t("Configure"))
-            .variant(ButtonVariant::Secondary)
-            .size(ButtonSize::Compact)
-            .icon(&icons::GEAR_BOLD)
-            .key("advanced-ris-configure")
-            .on_press(move |s: &mut S| {
-                acc(s).open_account_modal(super::AccountModal::ReverseImageSearch)
-            })
-            .el(p),
+        "chat-settings-reverse-image-search" | "chat-settings-search-engines" | "chat-settings-translators" => {
+            let mode = match id {
+                "chat-settings-search-engines" => super::search_engines::Mode::Search,
+                "chat-settings-translators" => super::search_engines::Mode::Translate,
+                _ => super::search_engines::Mode::Image,
+            };
+            crate::ui::Button::new(t("Configure"))
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Compact)
+                .icon(&icons::GEAR_BOLD)
+                .key(format!("advanced-configure-{id}"))
+                .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::Providers(mode)))
+                .el(p)
+        }
         "advanced-unread-badge-customization" => look_switch(
             st,
             p,
@@ -440,6 +445,22 @@ pub fn encoder_modal<S: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn access(s: &mut ShellState) -> &mut ShellState { s }
+
+    #[test]
+    fn provider_settings_items_have_controls() {
+        let (store, st) = (Store::default(), ShellState::default());
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        for id in [
+            "chat-settings-search-engines",
+            "chat-settings-translators",
+            "chat-settings-reverse-image-search",
+        ] {
+            assert!(ITEMS.iter().find(|i| i.0 == id).is_some_and(|i| i.6), "{id} is not an advanced item");
+            assert!(control(id, &store, &st, p, access).is_some(), "{id} has no control");
+        }
+    }
 
     #[test]
     fn new_settings_window() {

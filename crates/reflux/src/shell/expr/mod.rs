@@ -217,10 +217,15 @@ pub struct Expr {
     pub confirm_meme: Option<(String, String)>,
     /// The reverse image search provider picker: (image URL, engine selected).
     pub image_search: Option<(String, String)>,
+    /// The web search / translation provider picker: (kind, text, engine selected).
+    pub provider_picker: Option<(super::search_providers::Kind, String, String)>,
     /// The `synced_preferences` snapshot last seen or sent.
     pub synced: Option<sync::Seen>,
     /// A new reverse image search default waiting to be sent ([`image_search::set_default`]).
     pub ris_default: Option<Option<String>>,
+    /// New web search and translation defaults waiting to be sent.
+    pub search_default: Option<Option<String>>,
+    pub translate_default: Option<Option<String>>,
 }
 
 
@@ -387,6 +392,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     }
     menu_layer(store, st, p, acc, layer);
     image_search::layer(st, p, acc, layer);
+    super::search_providers::layer(st, p, acc, layer);
     gif::import_layer(st, p, acc, layer);
     memes::confirm_layer(st, p, acc, layer);
     reactions::layer(store, st, p, acc, layer);

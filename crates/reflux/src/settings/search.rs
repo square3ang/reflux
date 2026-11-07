@@ -260,4 +260,13 @@ mod tests {
         assert!(search("push to talk", |_| true).iter().any(|h| h.tab == "keybinds"));
         assert!(search("zzzz", |_| true).is_empty());
     }
+
+    #[test]
+    fn provider_items_resolve_to_advanced() {
+        for (q, label) in [("search engine", "Search engines"), ("translator", "Translators")] {
+            let hits = search(q, |_| true);
+            let advanced = hits.iter().find(|h| h.tab == "advanced_settings").expect("an Advanced hit");
+            assert!(advanced.items.contains(&label), "{q} -> {:?}", advanced.items);
+        }
+    }
 }

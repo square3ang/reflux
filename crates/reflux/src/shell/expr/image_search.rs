@@ -88,21 +88,6 @@ pub fn default_engine(store: &Store, st: &ShellState) -> Option<Engine> {
     engines(&st.prefs).into_iter().find(|e| e.id == id && e.enabled)
 }
 
-/// `b64` with the default replaced (`persistDefault`), the other search engine fields kept.
-pub fn with_default(b64: &str, id: Option<&str>) -> String {
-    let p = synced::get(b64, SEARCH_ENGINES).unwrap_or_default();
-    let mut out: Vec<u8> = synced::fields(&p)
-        .unwrap_or_default()
-        .iter()
-        .filter(|f| f.num != DEFAULT_FIELD)
-        .flat_map(|f| f.raw.iter().copied())
-        .collect();
-    if let Some(id) = id {
-        synced::bytes(&mut out, DEFAULT_FIELD, id.as_bytes());
-    }
-    synced::set(b64, SEARCH_ENGINES, (!out.is_empty()).then_some(&out[..]))
-}
-
 /// Queues a new default for [`super::sync::poll`] to send.
 pub fn set_default(st: &mut ShellState, id: Option<String>) {
     st.expr.ris_default = Some(id);
@@ -311,14 +296,14 @@ mod tests {
         let mut se = Vec::new();
         synced::bytes(&mut se, 1, b"google");
         let b64 = synced::set("", SEARCH_ENGINES, Some(&se));
-        let next = with_default(&b64, Some("bing"));
+        let next = crate::shell::search_providers::with_default(&b64, 2, Some("bing"));
         let f = synced::fields(&synced::get(&next, SEARCH_ENGINES).unwrap())
             .unwrap()
             .iter()
             .map(|f| (f.num, synced::str_of(f)))
             .collect::<Vec<_>>();
         assert_eq!(f, [(1, "google".to_string()), (2, "bing".to_string())]);
-        let cleared = with_default(&next, None);
+        let cleared = crate::shell::search_providers::with_default(&next, 2, None);
         assert_eq!(
             synced::get(&cleared, SEARCH_ENGINES).as_deref(),
             Some(&se[..])

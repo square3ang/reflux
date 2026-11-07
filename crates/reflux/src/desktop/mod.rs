@@ -99,6 +99,12 @@ pub struct Prefs {
     /// (`shell::expr::image_search`).
     pub ris_enabled: Vec<String>,
     pub ris_custom: Vec<(String, String, String)>,
+    /// `SearchEngine.engines` and `Translation.engines` (`shell::search_providers`): enabled ids
+    /// and custom (id, name, URL template with `{query}`); their defaults are synced.
+    pub search_enabled: Vec<String>,
+    pub search_custom: Vec<(String, String, String)>,
+    pub translators_enabled: Vec<String>,
+    pub translators_custom: Vec<(String, String, String)>,
     /// Developer tools overrides (Fluxer's persisted `DeveloperOptions`, kept on this device).
     pub dev: crate::shell::devtools::Options,
     /// `VoiceSessionRestore`'s snapshot, and `UnclaimedNagbarSnooze` by user (unix ms).
@@ -143,6 +149,10 @@ impl Default for Prefs {
             media_muted: false,
             ris_enabled: vec!["google_lens".into()],
             ris_custom: Vec::new(),
+            search_enabled: vec!["google".into()],
+            search_custom: Vec::new(),
+            translators_enabled: vec!["google_translate".into()],
+            translators_custom: Vec::new(),
             dev: Default::default(),
             voice_restore: None,
             unclaimed_snoozed_until: Default::default(),

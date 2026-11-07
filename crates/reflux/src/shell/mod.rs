@@ -37,6 +37,7 @@ pub mod pins;
 pub(crate) mod local_time;
 pub(crate) mod profile;
 pub mod search;
+pub mod search_providers;
 pub mod skeleton;
 mod search_query;
 mod sidebar;
@@ -278,6 +279,9 @@ pub struct ShellState {
     pub shift_held: bool,
     /// The message the open menu or picker belongs to (keeps its action bar up).
     pub active_msg: Option<Snowflake>,
+    /// The message-area selection when its context menu opened (`WebSearchMenuItems` and
+    /// `TranslateMenuItems`' `selectionText`).
+    pub msg_selection: Option<String>,
     pub reply: Option<ReplyTo>,
     /// The message being edited inline and its draft.
     pub editing: Option<(Snowflake, TextEdit)>,
@@ -423,6 +427,7 @@ impl Default for ShellState {
             popups: Popups::default(),
             hover_msg: None,
             active_msg: None,
+            msg_selection: None,
             reply: None,
             editing: None,
             confirm_delete: None,

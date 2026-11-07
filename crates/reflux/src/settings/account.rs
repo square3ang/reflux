@@ -47,11 +47,11 @@ pub enum AccountModal {
     RecoveryKit,
     /// Advanced's `ScreenShareEncoderControlsModal` (drawn by [`super::advanced::encoder_modal`]).
     EncoderControls,
-    /// Advanced's reverse image search settings, a custom engine to add (`None`) or edit, and
-    /// one to remove ([`super::search_engines`]).
-    ReverseImageSearch,
-    RisEngine(Option<String>),
-    RisRemove(String),
+    /// Advanced's `SearchProviderSettingsModal` for one provider kind, and its engine add/edit
+    /// and remove dialogs ([`super::search_engines`]).
+    Providers(super::search_engines::Mode),
+    ProviderEdit(super::search_engines::Mode, Option<String>),
+    ProviderRemove(super::search_engines::Mode, String),
     /// A library theme's `ThemeDetailsModal` and delete confirmation, and a watched folder's
     /// "Stop watching" confirmation ([`super::theme_menu`]).
     ThemeDetails(String),
@@ -586,9 +586,9 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
             dialog(st, t("Delete passkey"), vec![desc(t("Are you sure you want to delete this passkey?"), p)], Some((t("Delete passkey"), true, go)), p, acc)
         }
         AccountModal::EncoderControls
-        | AccountModal::ReverseImageSearch
-        | AccountModal::RisEngine(_)
-        | AccountModal::RisRemove(_)
+        | AccountModal::Providers(_)
+        | AccountModal::ProviderEdit(..)
+        | AccountModal::ProviderRemove(..)
         | AccountModal::ThemeDetails(_)
         | AccountModal::ThemeDelete(_)
         | AccountModal::ThemeStopWatching(_) => return None,
