@@ -21,9 +21,27 @@ pub fn title(store: &Store, m: &Message) -> String {
             let group = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| t("Group DM").into());
             format!("{name} ({group})")
         }
+        // A thread: "New post in #forum" for a post's opening message, else "#thread, #parent,
+        // Community".
+        Some(c) if c.kind.is_thread() => {
+            let context = match store.new_post_forum(c, m.id) {
+                Some(f) => crate::i18n::tf("New post in #{forumName}", &[("forumName", f.name.as_deref().unwrap_or_default())]),
+                None => {
+                    let parent = c.parent_id.and_then(|p| store.channels.get(&p)).map(|p| format!("#{}", p.name.as_deref().unwrap_or_default()));
+                    let guild = c.guild_id.and_then(|g| store.guilds.get(&g)?.info.as_ref()).map(|i| i.name.clone());
+                    [Some(format!("#{}", c.name.as_deref().unwrap_or_default())), parent, guild].into_iter().flatten().collect::<Vec<_>>().join(", ")
+                }
+            };
+            format!("{name} ({context})")
+        }
         Some(c) if c.guild_id.is_some() => {
             let prefix = if c.kind == ChannelType::GUILD_VOICE { "" } else { "#" };
-            format!("{name} ({prefix}{})", c.name.as_deref().unwrap_or_default())
+            let channel = format!("{prefix}{}", c.name.as_deref().unwrap_or_default());
+            // A system message is titled by the community, not its author.
+            match c.guild_id.and_then(|g| store.guilds.get(&g)?.info.as_ref()).filter(|_| m.kind != reflux_model::MessageType::DEFAULT) {
+                Some(g) => format!("{} ({channel})", g.name),
+                None => format!("{name} ({channel})"),
+            }
         }
         _ => name,
     }

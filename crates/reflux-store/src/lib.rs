@@ -653,7 +653,8 @@ impl Store {
 
     /// Whether a new message from someone else should alert (sound + desktop notification),
     /// leaving focus to the caller: Fluxer `validateNotificationData` + `shouldNotifyBasedOnSettings`.
-    // shortcut: forum "new post" levels aren't modelled (unjoined posts notify on mentions).
+    /// A thread we haven't joined notifies on mentions, except a forum post's opening message,
+    /// which follows the forum's level (`resolveNewPostNotificationLevel`).
     pub fn should_notify(&self, m: &Message) -> bool {
         let Some(c) = self.channels.get(&m.channel_id) else { return false };
         if m.author.id == self.my_id()
@@ -664,11 +665,23 @@ impl Store {
         {
             return false;
         }
-        match self.notification_level(c) {
+        let level = match self.new_post_forum(c, m.id) {
+            Some(forum) if c.member.is_none() => self.notification_level(forum),
+            _ => self.notification_level(c),
+        };
+        match level {
             NotificationLevel::NO_MESSAGES => false,
             NotificationLevel::ALL_MESSAGES => true,
             _ => self.mentions_me(m),
         }
+    }
+
+    /// The forum `post` was opened in when `message` is its opening message (`getPostForum`).
+    pub fn new_post_forum(&self, post: &Channel, message: Snowflake) -> Option<&Channel> {
+        if message != post.id || !post.kind.is_thread() {
+            return None;
+        }
+        self.channels.get(&post.parent_id?).filter(|f| f.kind == ChannelType::GUILD_FORUM)
     }
 
     // ---- Internals ---------------------------------------------------------------------------

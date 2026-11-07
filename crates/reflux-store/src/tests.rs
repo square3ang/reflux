@@ -381,3 +381,18 @@ fn pinned_dms_sort_first_in_pin_order() {
     s.pinned_dms = vec![S(3), S(2)];
     assert_eq!(ids(&s.private_channels()), [3, 2, 1]);
 }
+
+#[test]
+fn forum_new_posts_follow_the_forum_level() {
+    let mut s = store();
+    let mut post: Channel = serde_json::from_value(json!({"id": "131", "type": 11, "guild_id": G.to_string(), "parent_id": "130", "name": "p"})).unwrap();
+    post.guild_id = Some(S(G));
+    s.channels.insert(S(131), post);
+    let m = |id: u64| -> Message { serde_json::from_value(msg(id, 131, 6)).unwrap() };
+    // Guild default: all messages. The opening message (its ID is the post's) follows the forum;
+    // later replies in a post we haven't joined only notify on mentions.
+    assert!(s.should_notify(&m(131)), "a new post notifies like its forum");
+    assert!(!s.should_notify(&m(132)), "replies in an unjoined post don't");
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "channel_overrides": {"130": {"message_notifications": 2}}}));
+    assert!(!s.should_notify(&m(131)), "a forum set to nothing stays quiet");
+}
