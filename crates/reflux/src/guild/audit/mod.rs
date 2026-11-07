@@ -329,12 +329,7 @@ fn permissions(flags: &[u64]) -> String {
 
 /// `formatList` (long conjunction).
 fn list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [a] => a.clone(),
-        [a, b] => tf("{a} and {b}", &[("a", a), ("b", b)]),
-        [rest @ .., last] => format!("{}, {}", rest.join(", "), tf("and {b}", &[("b", last)])),
-    }
+    crate::i18n::list_and(items)
 }
 
 fn number_text(n: f64) -> String {

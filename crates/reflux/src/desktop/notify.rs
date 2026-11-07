@@ -86,7 +86,7 @@ fn fallback(stickers: &[reflux_model::StickerItem], attachments: &[reflux_model:
             [] if stickers.len() == 1 => t("Sticker").into(),
             [] => t("Stickers").into(),
             [one] if stickers.len() == 1 => crate::i18n::tf("Sticker: {stickerName}", &[("stickerName", one)]),
-            _ => crate::i18n::tf("Stickers: {stickerNames}", &[("stickerNames", &names.join(", "))]),
+            _ => crate::i18n::tf("Stickers: {stickerNames}", &[("stickerNames", &crate::i18n::list_and(&names))]),
         });
     }
     if let Some(a) = attachments.first() {

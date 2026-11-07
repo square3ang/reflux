@@ -138,15 +138,7 @@ pub(super) fn call_duration(secs: u64) -> String {
             (n, _) => tp("{count, plural, one {{countLabel} minute} other {{countLabel} minutes}}", n as i64, &args),
         });
     }
-    // shortcut: English list joining (`Intl.ListFormat` conjunction) for every locale.
-    match parts.len() {
-        1 => parts.remove(0),
-        2 => parts.join(" and "),
-        _ => {
-            let last = parts.pop().unwrap_or_default();
-            format!("{}, and {last}", parts.join(", "))
-        }
-    }
+    crate::i18n::list_and(&parts)
 }
 
 /// (ended, missed, duration) of a call message.

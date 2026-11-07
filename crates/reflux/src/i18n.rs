@@ -126,6 +126,52 @@ pub fn locale() -> &'static str {
     CURRENT.read().unwrap().code
 }
 
+/// `Intl.ListFormat(locale, {type: 'conjunction', style: 'long'})`: "a, b and c" in `loc`.
+/// Separators (between middle items, of two items, before the last) as V8's ICU gives them.
+pub fn list_and_in(loc: &str, items: &[impl AsRef<str>]) -> String {
+    let (mid, two, end) = match loc {
+        "ar" => (" و", " و", " و"),
+        "bg" | "ru" => (", ", " и ", " и "),
+        "cs" => (", ", " a ", " a "),
+        "da" | "no" => (", ", " og ", " og "),
+        "de" => (", ", " und ", " und "),
+        "el" => (", ", " και ", " και "),
+        "en-US" => (", ", " and ", ", and "),
+        "es-419" | "es-ES" => (", ", " y ", " y "),
+        "fi" => (", ", " ja ", " ja "),
+        "fr" => (", ", " et ", " et "),
+        "he" => (", ", " ו-", " ו-"),
+        "hi" => (", ", " और ", ", और "),
+        "hr" | "pl" => (", ", " i ", " i "),
+        "hu" => (", ", " és ", " és "),
+        "id" => (", ", " dan ", ", dan "),
+        "it" | "pt-BR" => (", ", " e ", " e "),
+        "ja" => ("、", "、", "、"),
+        "ko" => (", ", " 및 ", " 및 "),
+        "lt" => (", ", " ir ", " ir "),
+        "nl" => (", ", " en ", " en "),
+        "ro" => (", ", " și ", " și "),
+        "sv-SE" => (", ", " och ", " och "),
+        "th" => (" ", "และ", " และ"),
+        "tr" => (", ", " ve ", " ve "),
+        "uk" => (", ", " і ", " і "),
+        "vi" => (", ", " và ", " và "),
+        "zh-CN" | "zh-TW" => ("、", "和", "和"),
+        _ => (", ", " and ", " and "),
+    };
+    match items {
+        [] => String::new(),
+        [a] => a.as_ref().to_string(),
+        [a, b] => format!("{}{two}{}", a.as_ref(), b.as_ref()),
+        [rest @ .., last] => format!("{}{end}{}", rest.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(mid), last.as_ref()),
+    }
+}
+
+/// [`list_and_in`] the current locale.
+pub fn list_and(items: &[impl AsRef<str>]) -> String {
+    list_and_in(locale(), items)
+}
+
 /// The current locale's text for an English source string.
 pub fn t(s: &str) -> &str {
     CURRENT.read().unwrap().catalog.and_then(|c| c.get(s).copied()).unwrap_or(s)
@@ -313,6 +359,16 @@ fn plural(locale: &str, n: f64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn joins_lists_like_intl_list_format() {
+        assert_eq!(list_and_in("en-US", &["a", "b", "c"]), "a, b, and c");
+        assert_eq!(list_and_in("en-GB", &["a", "b", "c"]), "a, b and c");
+        assert_eq!(list_and_in("en-US", &["a", "b"]), "a and b");
+        assert_eq!(list_and_in("zh-CN", &["甲", "乙", "丙"]), "甲、乙和丙");
+        assert_eq!(list_and_in("th", &["a", "b", "c"]), "a b และc");
+        assert_eq!(list_and_in("ko", &["a"]), "a");
+    }
 
     #[test]
     fn resolves_posix_and_fluxer_tags() {

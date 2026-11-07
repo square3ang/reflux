@@ -621,8 +621,7 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         }
         Modal::P2pConsent { guild, channel, start, allow_standard, video, always } => p2p_consent(st, p, acc, close, (*guild, *channel), *start, *allow_standard, *video, *always),
         Modal::P2pFailed { names, allow_switch } => {
-            // shortcut: names are joined with ", ", not `Intl.ListFormat`'s localized "a, b and c".
-            let title = crate::i18n::tf("Couldn't connect to {names}", &[("names", &names.join(", "))]);
+            let title = crate::i18n::tf("Couldn't connect to {names}", &[("names", &crate::i18n::list_and(names))]);
             let mut desc = t("A direct connection couldn't be made. You can't hear or see each other.").to_string();
             if *allow_switch {
                 desc = format!("{desc} {}", t("A standard call goes through a server and works for everyone."));

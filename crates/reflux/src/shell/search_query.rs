@@ -139,12 +139,25 @@ fn channel(ctx: &Ctx, name: &str) -> Option<Snowflake> {
 const MONTHS: [&str; 12] = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 const WEEKDAYS: [&str; 7] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
+/// `Intl.Locale#getWeekInfo().firstDay` of each interface language.
+fn first_day(locale: &str) -> chrono::Weekday {
+    match locale {
+        "ar" => chrono::Weekday::Sat,
+        "en-US" | "he" | "hi" | "id" | "ja" | "ko" | "pt-BR" | "th" | "zh-TW" => chrono::Weekday::Sun,
+        _ => chrono::Weekday::Mon,
+    }
+}
+
+fn week_start(today: NaiveDate, first: chrono::Weekday) -> NaiveDate {
+    today - Duration::days((today.weekday().num_days_from_monday() as i64 - first.num_days_from_monday() as i64).rem_euclid(7))
+}
+
 fn midnight(d: NaiveDate) -> Option<DateTime<Local>> {
     Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).earliest()
 }
 
 /// `resolveSearchDatePeriod`: [start, end) of a date word, a day or an instant (start == end).
-// shortcut: weeks start on Monday rather than following the locale.
+/// Weeks start where luxon's `useLocaleWeeks` puts them for the system locale.
 pub fn period(v: &str, now: DateTime<Local>) -> Option<(DateTime<Local>, DateTime<Local>)> {
     let w = v.trim().to_lowercase();
     let today = now.date_naive();
@@ -154,7 +167,7 @@ pub fn period(v: &str, now: DateTime<Local>) -> Option<(DateTime<Local>, DateTim
         let b = if m == 12 { NaiveDate::from_ymd_opt(y + 1, 1, 1)? } else { NaiveDate::from_ymd_opt(y, m + 1, 1)? };
         Some((midnight(a)?, midnight(b)?))
     };
-    let week_start = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+    let week_start = week_start(today, first_day(crate::i18n::system()));
     match w.as_str() {
         "now" => return Some((now, now)),
         "today" => return day(today),
@@ -168,7 +181,8 @@ pub fn period(v: &str, now: DateTime<Local>) -> Option<(DateTime<Local>, DateTim
         return month(today.year(), m as u32 + 1);
     }
     if let Some(d) = WEEKDAYS.iter().position(|d| *d == w) {
-        return day(week_start + Duration::days(d as i64));
+        let offset = (d as i64 - week_start.weekday().num_days_from_monday() as i64).rem_euclid(7);
+        return day(week_start + Duration::days(offset));
     }
     if w.len() == 4
         && let Ok(y) = w.parse::<i32>()
@@ -313,6 +327,14 @@ pub const OPTIONS: [(&str, &str); 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn weeks_start_by_locale() {
+        let sat = NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
+        assert_eq!(week_start(sat, first_day("de")), NaiveDate::from_ymd_opt(2026, 11, 2).unwrap());
+        assert_eq!(week_start(sat, first_day("en-US")), NaiveDate::from_ymd_opt(2026, 11, 1).unwrap());
+        assert_eq!(week_start(sat, first_day("ar")), sat);
+    }
 
     fn store() -> Store {
         let mut s = Store::default();

@@ -140,16 +140,12 @@ fn reacted_by(e: &ReactionEmoji, names: &[String], count: u32) -> String {
     let mut parts = names.to_vec();
     let others = (count as usize).saturating_sub(names.len());
     if others > 0 {
-        parts.push(format!("{others} {}", if others == 1 { "other" } else { "others" }));
+        parts.push(crate::i18n::tp("{count, plural, one {# other} other {# others}}", others as i64, &[]));
     }
-    let list = match parts.as_slice() {
-        [] => String::new(),
-        [a] => a.clone(),
-        [a, b] => format!("{a} and {b}"),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    };
+    let list = crate::i18n::list_and(&parts);
     let label = if e.id.is_some() { format!(":{}:", e.name) } else { crate::shell::emoji::name_of(&e.name).map_or(e.name.clone(), |n| format!(":{n}:")) };
-    format!("{label} reacted by {list}")
+    let count = names.len().max(count as usize).to_string();
+    crate::i18n::tf("{reactorCount, plural, one {{emojiName} reacted by {reactors}} other {{emojiName} reacted by {reactors}}}", &[("reactorCount", &count), ("emojiName", &label), ("reactors", &list)])
 }
 
 /// A reaction's emoji at `size`.
@@ -399,7 +395,7 @@ mod tests {
         let e = ReactionEmoji { name: "👍".into(), ..Default::default() };
         let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(reacted_by(&e, &n(&["A"]), 1), ":thumbsup: reacted by A");
-        assert_eq!(reacted_by(&e, &n(&["A", "B", "C"]), 5), ":thumbsup: reacted by A, B, C and 2 others");
+        assert_eq!(reacted_by(&e, &n(&["A", "B", "C"]), 5), ":thumbsup: reacted by A, B, C, and 2 others");
         let c = ReactionEmoji { id: Some(Snowflake(7)), name: "party".into(), animated: None };
         assert_eq!(reacted_by(&c, &n(&["A", "B"]), 2), ":party: reacted by A and B");
         assert_eq!(segment(&c), "party%3A7");

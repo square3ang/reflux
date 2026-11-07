@@ -1,10 +1,10 @@
 //! `DateTimePickerField` (`fluxer_app/src/features/ui/components/form/DateTimePickerField`): a
 //! read-only field with a calendar button whose popover is react-day-picker's single-month
-//! calendar (Sunday first, outside days shown) plus a "Time" row.
+//! calendar (Sunday first, outside days shown; Fluxer passes no `locale`, so the captions stay
+//! English) plus a "Time" row; the shown value is `Intl`'s medium date and short time.
 //!
 //! The month on show lives in the popup id (`{id}@YYYY-MM`), so the picker needs no state of its
 //! own; the time row edits a caller-owned `TextEdit` (`HH:MM`) that [`with_time`] reads back.
-// shortcut: the shown value uses English month names ("Nov 7, 2026"), not `Intl`'s medium date.
 
 use std::rc::Rc;
 
@@ -75,8 +75,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
         let border = if month.is_some() { p.background_modifier_accent_focus } else { p.background_modifier_accent };
         let shown_text = self.value.map(|d| {
             let at = self.time.as_ref().map_or(d.and_time(NaiveTime::MIN), |(e, _)| with_time(d, &e.text));
-            let time = crate::desktop::time::time(&at.and_utc(), crate::i18n::locale());
-            format!("{}, {time}", d.format("%b %-d, %Y"))
+            crate::desktop::time::medium_date_time(&at.and_utc(), crate::i18n::locale())
         });
         let today = chrono::Local::now().date_naive();
         let (id, start) = (self.id.to_string(), self.value.unwrap_or(today).with_day(1).unwrap_or(today));
