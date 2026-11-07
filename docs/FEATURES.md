@@ -13,7 +13,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Profile | DONE | badges section (hide badges, Operator Pass timestamp/count, live preview), local time in the preview card, GIFs cropped frame by frame (no animated WebP); the crop modal has "Skip cropping" when the original already fits (`canSkipOriginalAssetImage`) and saving an untouched full frame keeps the original | F/user/components/modals/tabs/MyProfileTab.tsx |
 | Account | DONE | recovery kit (generate/replace, copy, PDF download, print via the system viewer; "Not now" kept per user on this device); security-key PIN asked only when the key wants one | tabs/account_security_tab/* |
-| Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
+| Privacy | PARTIAL | the "Who can message you?" privacy review modal is missing | tabs/PrivacySafetyTab.tsx |
 | Connections | DONE | Bluesky connects through browser OAuth; the dialog closes on USER_CONNECTIONS_UPDATE | tabs/LinkedAccountsTab.tsx, F/connection/* |
 | Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
@@ -22,13 +22,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Appearance | DONE | (device prefs in session.json; the ones Fluxer syncs go through synced preferences 1/80/100/112; Active now has no panel to show) | tabs/AppearanceTab.tsx |
 | Themes | DONE | "Sync theme across devices" (off keeps a device-local theme); Quick CSS editor: colours, variable completions (typed or Ctrl+Space) (impossible: Quick CSS beyond `:root` variables — Rune has no CSS engine; the rest is counted and reported, so the DOM-targeted selector / `data-flx` / property / snippet completions, hover, swatches, lint and outline have nothing to act on) | F/theme_settings/* |
 | Notifications | DONE | | tabs/NotificationsTab.tsx |
-| Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
-| Voice & video | DONE | (impossible: camera background effects — Fluxer runs MediaPipe selfie segmentation (`selfie_segmentation_256x256.onnx`) in onnxruntime-web; GStreamer has no person-segmentation element and Reflux has no ML runtime) input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise); on Linux the device pickers and the call streams use libpulse (PipeWire's real sinks/sources, cpal/ALSA only as the no-server fallback) and playout keeps an 80 ms queue in the server so a late callback is not an xrun | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
+| Chat (Messages & media) | PARTIAL | display/input settings done; selected-text "Search with <engine>" and "Translate" plus their provider settings are missing | tabs/ChatSettingsTab.tsx |
+| Voice & video | PARTIAL | settings tab and the mixer chain are done (impossible: camera background effects — MediaPipe segmentation); in-call gear menus (device switch, input profile/level, volumes, voice region, prioritize speakers, camera/screen menus) are missing | tabs/UserVoiceTab.tsx, VoiceSettingsMenus.tsx |
 | Accessibility | DONE | (Fluxer's current Motion tab has no keep-animating flags) | tabs/AccessibilityTab.tsx |
 | Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
 | Keybinds | DONE | custom Toggle mute / Toggle deafen combos and the PTT key are global where a hook backend runs (X11, Windows, macOS); on Wayland the portal's keys are set in the desktop | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
-| Advanced | DONE | (impossible: hardware acceleration — Rune always renders on the GPU). Done: "New settings" (`addedAt` within 30 days), unread badge customization (community modal radios; channel list and rail follow the levels), composer button switches, the screen-share encoder Configure modal (encoder path, SVC mode, content hint; the hint maps to libwebrtc's degradation preference, since the Rust wrapper has no content-hint setter), the expression cloning-shortcuts switch, reverse image search settings | tabs/AdvancedSettingsTab.tsx |
+| Advanced | PARTIAL | 12 controls exist ("New settings", unread badges, encoder, cloning switch, image search…), but ~35 IDs are listed and the rest are hidden: search engines/translators, codec choice (H.264 hard-coded), preview behavior, connection volume, voice join behavior (impossible: hardware acceleration) | tabs/AdvancedSettingsTab.tsx |
 | Applications (dev) | DONE | bot banner preview as Fluxer's `ImagePreviewField` | tabs/applications_tab/* |
 | Embed debugger (dev) | DONE | | tabs/EmbedDebuggerTab.tsx |
 | Design system (dev) | DONE | | tabs/component_gallery_tab/* |
@@ -74,7 +74,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Reset pw / verify email / recover pages | DONE | `fluxer://` reset, verify, recover, authorize-ip and wasntme links open the web app (Fluxer desktop doesn't route them in-app either) | F/auth/… |
 | SSO login | DONE | via the browser handoff | AuthSsoPanel.tsx |
 | Browser login handoff | DONE | (the code, its 6-6 grouping, expiry countdown, copy and regenerate; approving a code happens on Fluxer's web login page, not in the desktop client) | BrowserLoginHandoffModal.tsx |
-| Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
+| Multi-account switcher | PARTIAL | switching works; Fluxer keeps every signed-in account connected in the background for unread/notifications/inbox and instant switching (AccountEngineHost) | AccountSwitcherModal.tsx |
 | Sudo verification | DONE | | SudoVerificationModal.tsx |
 | Account restriction / age gate / new-device | DONE | audio devices are polled every 10 s (no devicechange event) and grouped by card name | AccountRestrictionScreen.tsx, DateOfBirthGate.tsx, NewDeviceMonitoring.tsx |
 | OAuth2 authorize | DONE |  | OAuthAuthorizeModal.tsx |
@@ -202,8 +202,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Join/leave, panel, mute/deafen, rings, devices, HW encode | DONE | Linux device lists come from the PulseAudio server (PipeWire sinks/sources with their descriptions, default entry, re-listed by the 10 s hotplug poll) and play/capture run on the selected sink/source; cpal/ALSA is the fallback when no server answers. Playout queues 80 ms server-side (40 ms prefill), so `pw-top` shows no xruns under load | |
 | Screen share | PARTIAL | in-app thumbnails on X11/Windows; macOS uses the system picker; Wayland: impossible — the xdg-desktop-portal ScreenCast API can't enumerate sources (the compositor's own dialog, with its own previews, picks one) and libwebrtc's PipeWire capturer only goes through it. NVENC live-verified (`--live=voice`: `TR_` sid, 90 frames, SFU receiver reports) | ScreenSharePickerModal.tsx |
-| Voice channel view | DONE | text chat under the compact call surface (`ChannelCompactCallSurface`): clicking a voice channel selects it and joins; full call view via expand | F/channel/components/channel_view/* |
-| Watch stream | DONE |  | WatchStreamOverlay.tsx |
+| Voice channel view | PARTIAL | text chat under a compact call surface (clicking the channel selects and joins), but the surface is a fixed strip: no collapse/expand with a remembered height, unread-message badge, live stream previews, audio-only layout, or the compact-call keybind | F/channel/components/channel_view/* |
+| Watch stream | PARTIAL | viewer has fullscreen, stop and the watcher count only; no per-stream volume/mute, stream info, focus/pin, spectator list, buffering frame, or "stream ended"/"watch failed" states | WatchStreamOverlay.tsx |
 | Camera | DONE | one `camera::CameraCapture` per OS: GStreamer on Linux, Media Foundation on Windows (`camera/mf.rs`: `MFEnumDeviceSources`, native mode closest to the camera quality, RGB32 via the source reader), AVFoundation on macOS (`camera/av.rs`: `AVCaptureSession` preset by quality, BGRA data output; asks for camera access on first use, a bundle needs `NSCameraUsageDescription`); device list, preview, publish, quality and Fluxer's shared frame rate (our screen-share fps, ≤ 60) everywhere. Linux live-verified with `--live=voice` (published `TR_` sid, NVENC frames, SFU receiver reports, self_video echo) and `cargo test -p reflux camera::real -- --ignored` on a real V4L2 device (640×480 at the asked 15 fps); Windows: wine runs enumeration (no cameras: wine has no MF video capture source) and the clean failure, conversion/mode/pacing unit-tested — not run on a real Windows camera; macOS compile-checked only (`scripts/cross-check.sh`). (impossible: background effects, see Voice & video) | CameraPreviewModal.tsx |
 | Call view grid | DONE |  | VoiceCallView.tsx |
 | DM calls / ringing / P2P | PARTIAL | P2P mesh (op 13, STUN-only) verified by a loopback test only, never against a real peer; conversion watchdog (10 s) and the 16 KB outbound-signal check ported; rollout read once per session; DM calls untested against a server | IncomingCallUI.tsx, VoiceMeshEngine.ts |
@@ -256,7 +256,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Global shortcuts / PTT | DONE | Fluxer's backend choice: Wayland → GlobalShortcuts portal (keys set in the desktop); X11 → XRecord hook, Windows → `WH_KEYBOARD_LL`, macOS → listen-only CGEventTap (asks for Input Monitoring), all matching the user's own mute/deafen combos and PTT key with press/release; keyboard only (no mouse-button PTT); X11 hook unit-tested, Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/GlobalShortcutsEngine.ts |
 | Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
 | Zoom | DONE | | D/Menu.ts |
-| Screen-share picker / app audio | DONE | listed sources with thumbnails (X11/Windows), own window sorted last (`isOwnWindow`), Wayland portal limited to Applications / Entire screen (`set-display-media-portal-preference`), Linux app audio; macOS uses ScreenCaptureKit's picker; the Windows DXGI composition guard isn't needed (libwebrtc's own capturer) | D/DisplayMedia.ts |
+| Screen-share picker / app audio | PARTIAL | listed sources with thumbnails (X11/Windows), own window last, Wayland portal Applications/Entire screen, resolution/fps, Linux app audio; missing Gaming/Screen-share presets, 480p, the Devices tab, thumbnail refresh, and desktop audio on Windows/macOS | ScreenSharePickerModal.tsx |
 | App menu (macOS) | DONE | built on Rune standard menus; not verified on a Mac | D/Menu.ts |
 | File downloads | DONE | | D/FileDownloads.ts |
 | Copy image | DONE | | D/MediaClipboard.ts |
