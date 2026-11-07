@@ -47,9 +47,12 @@ fn bitfield(v: &Value) -> bool {
     v.is_string() || v.as_u64().is_some()
 }
 
+/// A key, its type check, and whether null is accepted (`v.nullish`).
+type Field<'a> = (&'a str, fn(&Value) -> bool, bool);
+
 /// Copies `keys` of `src` that are present (valibot's `v.object` drops the rest); `None` when a
 /// present key fails `ok`. `nullish` keys accept null.
-fn pick(src: &Map<String, Value>, keys: &[(&str, fn(&Value) -> bool, bool)]) -> Option<Map<String, Value>> {
+fn pick(src: &Map<String, Value>, keys: &[Field]) -> Option<Map<String, Value>> {
     let mut out = Map::new();
     for &(k, ok, nullish) in keys {
         match src.get(k) {
