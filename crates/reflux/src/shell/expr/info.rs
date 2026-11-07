@@ -122,7 +122,8 @@ fn join_confirm<S: 'static>(st: &ShellState, j: &(Snowflake, String, Option<Stri
 pub(super) fn slots_full(store: &Store, st: &ShellState, g: Snowflake, sticker: bool) -> bool {
     let Some(x) = store.guilds.get(&g) else { return false };
     let features = x.info.as_ref().map(|i| i.features.as_slice()).unwrap_or_default();
-    let (unlimited, count, max) = if sticker { ("UNLIMITED_STICKERS", x.stickers.len(), st.limits.guild_stickers) } else { ("UNLIMITED_EMOJI", x.emojis.len(), st.limits.guild_emojis) };
+    let (emojis, stickers) = crate::shell::upload::guild_limits(st, features);
+    let (unlimited, count, max) = if sticker { ("UNLIMITED_STICKERS", x.stickers.len(), stickers) } else { ("UNLIMITED_EMOJI", x.emojis.len(), emojis) };
     !features.iter().any(|f| f == unlimited) && count as u64 >= max
 }
 

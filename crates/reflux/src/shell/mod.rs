@@ -323,6 +323,8 @@ pub struct ShellState {
     pub notice: Option<(String, String)>,
     /// The account's resolved instance limits.
     pub limits: upload::Limits,
+    /// The instance's limit rules and the user's traits, for per-community limits.
+    pub limit_rules: Option<std::rc::Rc<(reflux_model::LimitConfig, Vec<String>)>>,
     /// A file drag is over the chat.
     pub drop_hover: bool,
     /// Loaded pins by channel, and the pin waiting on the unpin confirmation.
@@ -422,6 +424,7 @@ impl Default for ShellState {
             failed: Default::default(),
             notice: None,
             limits: Default::default(),
+            limit_rules: None,
             drop_hover: false,
             pins: Default::default(),
             confirm_unpin: None,

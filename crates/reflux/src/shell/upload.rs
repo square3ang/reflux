@@ -98,8 +98,8 @@ pub struct Limits {
     pub files: usize,
     /// `feature_global_expressions`: custom emoji and stickers work outside their community.
     pub global_expressions: bool,
-    /// `max_guild_emojis` / `max_guild_stickers` (`Guild.maxEmojis`), for clone slot checks.
-    // shortcut: rules filtered by guild features aren't applied (user-scope rules only).
+    /// `max_guild_emojis` / `max_guild_stickers` with no guild features; a community's own come
+    /// from [`guild_limits`] (`Guild.resolveGuildLimit`).
     pub guild_emojis: u64,
     pub guild_stickers: u64,
 }
@@ -111,15 +111,18 @@ impl Default for Limits {
     }
 }
 
-/// Resolves the user-scope limits: rules sorted by filter count, a rule without filters sets a
-/// key, a matching filtered one only raises it (`http-api/instance` "Limit configuration").
-pub fn resolve(cfg: &LimitConfig, traits: &[String]) -> Limits {
+/// Resolves the limits for the user's traits and a community's features (none for the
+/// user scope): rules sorted by filter count, a rule without filters sets a key, a matching
+/// filtered one only raises it (`http-api/instance` "Limit configuration", `ruleMatches`:
+/// traits match case-insensitively, features exactly).
+pub fn resolve(cfg: &LimitConfig, traits: &[String], features: &[String]) -> Limits {
     let mut rules: Vec<_> = cfg.rules.iter().collect();
     rules.sort_by_key(|r| r.filters.as_ref().map_or(0, |f| f.traits.len() + f.guild_features.len()));
     let mut l = Limits::default();
     for r in rules {
         let filtered = r.filters.as_ref().is_some_and(|f| !f.traits.is_empty() || !f.guild_features.is_empty());
-        if r.filters.as_ref().is_some_and(|f| !f.guild_features.is_empty() || !f.traits.iter().all(|t| traits.contains(t))) {
+        let has_trait = |t: &String| traits.iter().any(|x| x.eq_ignore_ascii_case(t));
+        if r.filters.as_ref().is_some_and(|f| !f.guild_features.iter().all(|g| features.contains(g)) || !f.traits.iter().all(has_trait)) {
             continue;
         }
         let get = |k: &str| r.overrides.get(k).copied().filter(|v| *v >= 0);
@@ -136,6 +139,17 @@ pub fn resolve(cfg: &LimitConfig, traits: &[String]) -> Limits {
         l.guild_stickers = set(l.guild_stickers, get("max_guild_stickers"));
     }
     l
+}
+
+/// A community's emoji and sticker slots: [`resolve`] with its features.
+pub fn guild_limits(st: &ShellState, features: &[String]) -> (u64, u64) {
+    match &st.limit_rules {
+        Some(r) => {
+            let l = resolve(&r.0, &r.1, features);
+            (l.guild_emojis, l.guild_stickers)
+        }
+        None => (st.limits.guild_emojis, st.limits.guild_stickers),
+    }
 }
 
 /// `formatFileSize`: "25 MB", "1.5 KB".
@@ -174,6 +188,20 @@ pub fn add(st: &mut ShellState, files: Vec<(String, u64, Source)>) {
     }
 }
 
+/// `convertTextToFile`: the draft becomes `message.txt` and the field empties.
+pub fn text_as_file(st: &mut ShellState) {
+    let text = st.composer.text.to_string();
+    if text.trim().is_empty() {
+        return;
+    }
+    let before = st.uploads.len();
+    add(st, vec![("message.txt".into(), text.len() as u64, Source::Bytes(Arc::new(text.into_bytes())))]);
+    if st.uploads.len() > before {
+        st.composer = rune::TextEdit::new("");
+        st.composer.focused = true;
+    }
+}
+
 /// Files picked or dropped from disk; folders and unreadable paths are skipped.
 pub fn add_paths(st: &mut ShellState, paths: &[PathBuf]) {
     let files = paths
@@ -193,17 +221,31 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
 }
 
 /// The composer's "+" (`TextareaPlusMenu`): Upload file, Send voice message.
-// shortcut: no "upload as file" or gift items.
-pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
-    Menu::new("composer-plus")
-        .placement(Placement::Top)
+/// "Upload your message as a file" (`convertTextToFile`, shown while there's text) and "Create
+/// thread" (`canStartThreadIn`) follow Upload file.
+// shortcut: no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
+// web app) and no "Customize" submenu for the composer's button visibility.
+pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &reflux_model::Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let has_text = !st.composer.text.trim().is_empty();
+    let parent = c.id;
+    let can_thread = !c.kind.is_thread()
+        && c.guild_id.is_some()
+        && [reflux_store::threads::CreateKind::Public, reflux_store::threads::CreateKind::Private].into_iter().any(|k| store.can_create_thread(c, k));
+    let mut m = Menu::new("composer-plus").placement(Placement::Top);
+    m = m
         .item(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
             crate::file_picker::open_files(tx, "Upload file", None, acc, |sh, r| match r {
                 Ok(paths) => add_paths(sh, &paths),
                 Err(e) => sh.notice = Some(("Upload failed".into(), e)),
             });
-        }))
-        .item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
+        }));
+    if has_text {
+        m = m.item(MenuItem::new("upload-text", t("Upload your message as a file")).icon(&icons::FILE_TEXT_FILL).on_select(move |s: &mut S| text_as_file(acc(s))));
+    }
+    if can_thread {
+        m = m.item(MenuItem::new("create-thread", t("Create thread")).icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, None)));
+    }
+    m.item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
             let sh = acc(s);
             if let Some(c) = sh.channel {
                 sh.intents.push(super::Intent::Voice(super::voice::Op::RecordStart(c)));
@@ -385,10 +427,18 @@ mod tests {
             ]
         }))
         .unwrap();
-        let free = resolve(&cfg, &[]);
+        let free = resolve(&cfg, &[], &[]);
         assert_eq!(free, Limits { message_length: 2000, file_size: 50_000_000, files: 10, global_expressions: false, ..Limits::default() }, "negative values are ignored");
-        let premium = resolve(&cfg, &["premium".into()]);
+        let premium = resolve(&cfg, &["PREMIUM".into()], &[]);
         assert_eq!((premium.message_length, premium.file_size), (4000, 50_000_000), "filtered rules only raise");
+        let cfg: LimitConfig = serde_json::from_value(serde_json::json!({
+            "version": 2, "traitDefinitions": [], "defaultsHash": "x",
+            "rules": [{"id": "big", "filters": {"guildFeatures": ["MORE_EMOJI"]}, "overrides": {"max_guild_emojis": 1000}}]
+        }))
+        .unwrap();
+        assert_eq!(resolve(&cfg, &[], &[]).guild_emojis, 500);
+        assert_eq!(resolve(&cfg, &[], &["MORE_EMOJI".into()]).guild_emojis, 1000, "a community's features raise its slots");
+        assert_eq!(resolve(&cfg, &[], &["more_emoji".into()]).guild_emojis, 500, "features match exactly");
     }
 
     #[test]
@@ -404,5 +454,9 @@ mod tests {
         assert_eq!(format_size(25 * 1024 * 1024), "25 MB");
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(content_type("A.JPG"), "image/jpeg");
+        let mut st = ShellState::default();
+        st.composer = rune::TextEdit::new("a long message");
+        text_as_file(&mut st);
+        assert_eq!((st.uploads[0].name.as_str(), st.uploads[0].size, st.composer.text.is_empty()), ("message.txt", 14, true));
     }
 }

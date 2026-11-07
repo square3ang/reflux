@@ -85,7 +85,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     }
     super::pins::popout(store, st, c, p, acc, layer);
     super::threads::layer(store, st, Some(c), p, acc, layer);
-    super::upload::plus_menu(st, p, acc, layer);
+    super::upload::plus_menu(store, st, c, p, acc, layer);
     col()
         .grow(1.0)
         .min_w(0.0)

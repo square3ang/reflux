@@ -268,7 +268,11 @@ pub(super) fn tick(s: &mut State) -> bool {
     }
     if let Some(inst) = &s.app.instance {
         let traits = s.app.store.me.as_ref().map_or(&[][..], |m| &m.traits[..]);
-        s.app.shell.limits = crate::shell::upload::resolve(&inst.discovery.limits, traits);
+        s.app.shell.limits = crate::shell::upload::resolve(&inst.discovery.limits, traits, &[]);
+        let cfg = &inst.discovery.limits;
+        if s.app.shell.limit_rules.as_ref().is_none_or(|r| r.0.defaults_hash != cfg.defaults_hash || r.0.rules.len() != cfg.rules.len() || r.1 != traits) {
+            s.app.shell.limit_rules = Some(std::rc::Rc::new((cfg.clone(), traits.to_vec())));
+        }
     }
     let now = now_ms();
     let sh = &s.app.shell;
