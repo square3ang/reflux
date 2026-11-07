@@ -9,6 +9,7 @@ pub mod active_now;
 pub mod attachments;
 mod birthday;
 mod autocomplete;
+mod guild_banner;
 mod command_hints;
 mod chat;
 pub mod debug;

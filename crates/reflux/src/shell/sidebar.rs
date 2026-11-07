@@ -17,6 +17,11 @@ fn header_bar(p: &Palette) -> El {
     el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(p.user_area_divider_color, p.background_secondary))
 }
 
+fn list_following(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).on_scroll_offset(f);
+    scroller(viewport.child(content.focus_group().role("list")), false, p)
+}
+
 fn list(content: El, p: &Palette) -> El {
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
     scroller(viewport.child(content.focus_group().role("list")), false, p)
@@ -25,9 +30,8 @@ fn list(content: El, p: &Palette) -> El {
 pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let info = store.guilds.get(&gid).and_then(|g| g.info.as_ref());
     let name = info.map_or(String::new(), |i| i.name.clone());
-    // `GuildHeader` with a banner: the image (cover, wide-asset aspect 16:9 to 32:9) under a
-    // 40px dark gradient, and the header row over it in white.
-    // shortcut: the banner doesn't collapse or frost as the channel list scrolls.
+    // `GuildHeader` with a banner: the image (cover, wide-asset aspect 16:9 to 32:9) behind the
+    // header and the top of the list, collapsing as the list scrolls ([`super::guild_banner`]).
     let banner = info.and_then(|i| Some((i.banner.as_deref()?, i)));
     let banner = banner.map(|(h, i)| {
         let ratio = match (i.banner_width, i.banner_height) {
@@ -35,14 +39,23 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
             _ => 16.0 / 9.0,
         };
         let w = dim::LAYOUT_SIDEBAR_WIDTH;
+        let viewport_h = rune::memo::layout_size(super::BODY_KEY).map_or(800.0, |s| s[1]);
+        let (bh, dist) = super::guild_banner::geometry(w, viewport_h, dim::LAYOUT_HEADER_HEIGHT, ratio);
         let load = st.media.asset(|b, s| media::guild_banner_url(b, gid, h, s));
         let img = match load {
-            Load::Ready(px) => el().size(w, w / ratio).pixels_fit(&px, rune::SurfaceFit::Fill),
-            _ => el().size(w, w / ratio).fill(p.background_secondary),
+            Load::Ready(px) => el().size(w, bh).pixels_fit(&px, rune::SurfaceFit::Fill),
+            _ => el().size(w, bh).fill(p.background_secondary),
         };
-        img.child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(40.0).linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.3)), (1.0, Color::TRANSPARENT)]))
+        let lives = super::guild_banner::Lives::new(dist);
+        (lives.banner(img, w, bh), lives, dist > 0.0)
     });
-    let fg = if banner.is_some() { Color::WHITE } else { p.text_primary };
+    // The name and caret: white on the banner, the text colour once the header frosts.
+    let tinted = |white: El, plain: El| match &banner {
+        Some((_, l, _)) => el().child(plain.live_opacity(&l.frosted)).child(white.pin(Some(0.0), Some(0.0), None, None).live_opacity(&l.on_banner)),
+        None => plain,
+    };
+    let caret = if st.popups.is_open(crate::guild::HEADER_MENU) { &icons::X } else { &icons::CARET_DOWN };
+    let name_el = |c: Color| text(name.clone()).font(font(16.0, 600.0).lh(20.0)).color(c).truncate();
     // `.headerContainer` / `.headerContent`: 56 tall, padding 0 16, gap 4.
     let mut header = row()
         .w_full()
@@ -55,15 +68,25 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .label(name.clone())
         .key(crate::guild::HEADER_MENU)
         .on_press(move |s: &mut S| acc(s).popups.toggle(crate::guild::HEADER_MENU))
-        .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(fg).truncate().grow(1.0).shrink())
-        .child(icon(if st.popups.is_open(crate::guild::HEADER_MENU) { &icons::X } else { &icons::CARET_DOWN }, 16.0).color(fg));
+        .child(row().grow(1.0).shrink().min_w(0.0).child(tinted(name_el(Color::WHITE), name_el(p.text_primary)).w_full()))
+        .child(tinted(icon(caret, 16.0).color(Color::WHITE), icon(caret, 16.0).color(p.text_primary)));
     header = match &banner {
-        Some(_) => header.pin(Some(0.0), Some(0.0), Some(0.0), None),
+        Some(_) => header,
         None => header.fill(p.background_secondary).hover(p.background_modifier_hover).child(header_bar(p)),
+    };
+    let header = match &banner {
+        // `.headerGlass` (only while it can collapse) and `.bannerGradient` between the image and
+        // the header row; the image hangs below the header, behind the list's spacer.
+        Some((img, l, collapsible)) => {
+            let scrim = el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(40.0).linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.3)), (1.0, Color::TRANSPARENT)]).live_opacity(&l.scrim);
+            let glass = collapsible.then(|| el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(p.background_secondary).child(header_bar(p)).live_opacity(&l.glass));
+            el().w_full().h(dim::LAYOUT_HEADER_HEIGHT).child(img.clone()).children(glass).child(scrim).child(header)
+        }
+        None => header,
     };
 
     // `.navigationContainer`: padding-right 8; 10px drop zones above and below.
-    let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0);
+    let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0).children(banner.as_ref().map(|(_, l, _)| l.spacer()));
     groups = groups.children(super::members_page::sidebar_row(store, st, gid, p, acc));
     let hide_muted = store.guild_settings.get(&Some(gid)).is_some_and(|s| s.hide_muted_channels);
     for g in store.channel_groups(gid) {
@@ -93,11 +116,12 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .h_full()
         .min_h(0.0)
         .fill(p.background_secondary)
-        .child(match banner {
-            Some(b) => b.child(header),
-            None => header,
+        .clip_rounded(0.0)
+        .child(header)
+        .child(match &banner {
+            Some((_, l, _)) => list_following(groups, l.follow(), p),
+            None => list(groups, p),
         })
-        .child(list(groups, p))
 }
 
 /// `.channelItemCategory`: 14/600 name and a 12px bold caret that turns -90° when collapsed.
