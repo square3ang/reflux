@@ -3,6 +3,7 @@
 pub mod favorites;
 mod favorites_drag;
 mod favorites_sync;
+mod look_sync;
 pub mod folder;
 mod keybind_sync;
 pub mod keys;
@@ -50,6 +51,7 @@ pub struct Nav {
     pub hover_favorites: bool,
     pub synced_favorites: Option<favorites_sync::Seen>,
     pub synced_keys: Option<keybind_sync::Seen>,
+    pub synced_look: Option<look_sync::Seen>,
     /// "Sync keybinds" was just switched on: send this device's keybinds.
     pub push_keys: bool,
     /// The image crop modal over the settings.
@@ -125,7 +127,7 @@ pub fn update_mine(st: &mut ShellState, f: impl FnOnce(&mut AccountPrefs)) {
 
 /// Once a frame with the store: writes a released rail drop as the new `guild_folders`.
 pub fn poll(store: &Store, st: &mut ShellState) -> bool {
-    let changed = favorites::reconcile(store, st) | favorites_sync::poll(store, st) | keybind_sync::poll(store, st) | crate::compose::poll(store, st) | oauth::poll(store, st);
+    let changed = favorites::reconcile(store, st) | favorites_sync::poll(store, st) | keybind_sync::poll(store, st) | look_sync::poll(store, st) | crate::compose::poll(store, st) | oauth::poll(store, st);
     let folders = match (st.nav.pending.take(), st.nav.folder_edit.take()) {
         (Some((src, drop)), _) => rail::apply(store, src, drop),
         (None, Some(edit)) => Some(folder::edited(&store.settings.guild_folders, &edit)),

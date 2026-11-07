@@ -1,8 +1,7 @@
 //! Appearance, accessibility, chat input and notification preferences that Fluxer keeps per device
 //! (`Accessibility`, `ChatInputSettings`, `Notification`, `Sound` stores and the quick CSS). They
 //! live in session.json (`desktop::Prefs::look`) and the views read the current copy with [`get`].
-// shortcut: Fluxer also syncs some of these through `synced_preferences` (a protobuf in the
-// account settings); Reflux keeps them on this device only.
+//! The ones Fluxer syncs through `synced_preferences` go through [`crate::nav`]'s `look_sync`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
