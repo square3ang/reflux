@@ -343,7 +343,7 @@ pub(super) fn chip<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
     let t = store.thread(m.id).filter(|t| t.parent_id == Some(m.channel_id))?;
     let last = t.last_message_id.and_then(|l| store.messages(t.id).iter().find(|x| x.id == l));
     let preview = match last {
-        Some(l) => Some(format!("{}: {}", store.display_name(t.guild_id, l.author.id), notification_body(l))),
+        Some(l) => Some(format!("{}: {}", store.display_name(t.guild_id, l.author.id), notification_body(store, l))),
         None if t.message_count == 0 => Some(crate::i18n::t("There are no recent messages in this thread.").to_string()),
         None => None,
     };
@@ -388,35 +388,40 @@ pub(super) fn message_count(n: u32) -> String {
     if n == 1 { "1 message".into() } else { format!("{n} messages") }
 }
 
-/// A one-line message summary (`buildMessageNotificationBody`).
-// shortcut: content as typed (no markdown stripping); attachment-only messages say so.
-pub(super) fn notification_body(m: &Message) -> String {
-    if !m.content.is_empty() {
-        return m.content.split_whitespace().collect::<Vec<_>>().join(" ");
-    }
-    match m.attachments.len() {
-        0 => String::new(),
-        1 => t("Sent an attachment").into(),
-        n => format!("Sent {n} attachments"),
-    }
+/// A one-line message summary (`buildMessageNotificationBody`, on one line).
+pub(super) fn notification_body(store: &Store, m: &Message) -> String {
+    crate::desktop::notify::body(store, m).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// `ThreadCreatedMessage`: "{name} started a thread {thread}. See all threads."
-// shortcut: the punctuation around the links is approximated.
+/// `ThreadCreatedMessage`: "{name} started a thread {thread}. See all threads", the thread's
+/// name (when it's loaded) and "See all threads" as links.
 pub(super) fn created_message<S: 'static>(store: &Store, m: &Message, name: &str, p: &Palette, acc: ShellAccess<S>) -> El {
     let thread = m.message_reference.as_ref().and_then(|r| store.thread(r.channel_id)).cloned();
     let tname = thread.as_ref().and_then(|t| t.name.clone()).unwrap_or_else(|| m.content.clone());
-    let line = format!("{name} started a thread {tname}. See all threads.");
-    let (a, b) = (name.len() + " started a thread ".len(), name.len() + " started a thread ".len() + tname.len());
-    let see = (b + 2, line.len() - 1);
+    let (started, see_all) = (t("started a thread"), t("See all threads"));
+    let line = format!("{name} {started} {tname}. {see_all}");
+    let a = name.len() + 1 + started.len() + 1;
+    let b = a + tname.len();
+    let see = b + 2..line.len();
     let spans = vec![
         Span::new(0, name.len()).weight(500.0).color(p.text_primary),
-        Span::new(a, b).weight(600.0).color(p.text_primary),
-        Span::new(see.0, see.1).weight(500.0).color(p.text_primary),
+        Span::new(a, b).weight(if thread.is_some() { 500.0 } else { 600.0 }).color(p.text_primary),
+        Span::new(see.start, see.end).weight(500.0).color(p.text_primary),
     ];
-    let body = rich(line, spans).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_chat_muted).wrap().grow(1.0).shrink();
-    let open_t = thread.clone();
-    let row_ = row()
+    // `.systemMessageLink`: text-primary, underlined on hover.
+    let underline = || rune::LinkPaint::new().underline(p.text_primary);
+    let mut body = rich(line, spans).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_chat_muted).wrap().grow(1.0).shrink();
+    if thread.is_some() {
+        body = body.link(rune::Link::new(a..b, "thread").hover(underline()));
+    }
+    let body = body.link(rune::Link::new(see, "see-all").hover(underline())).on_link(move |s: &mut S, id: &str, tx: &mut rune::Tx| {
+        let st = acc(s);
+        match (id, &thread) {
+            ("thread", Some(t)) => open_from_event(st, t, tx.mods().shift),
+            _ => browse(st),
+        }
+    });
+    row()
         .w_full()
         .pr(dim::CHAT_HORIZONTAL_PADDING_DEFAULT + dim::MESSAGE_ACTION_BAR_OFFSET)
         .py(dim::MESSAGE_SPACING_Y)
@@ -425,16 +430,7 @@ pub(super) fn created_message<S: 'static>(store: &Store, m: &Message, name: &str
         .child(el().w(dim::CHAT_HORIZONTAL_PADDING_DEFAULT))
         .child(row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().child(icon(&icons::CHATS_BOLD, dim::SYSTEM_MESSAGE_ICON_SIZE).color(p.text_primary_muted).opacity(0.6)))
         .child(el().w(dim::MESSAGE_GUTTER))
-        .child(body);
-    // shortcut: the whole line opens the thread (or the browser when it isn't loaded), rather
-    // than the two links on their own.
-    row_.cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut S, tx| {
-        let st = acc(s);
-        match &open_t {
-            Some(t) => open_from_event(st, t, tx.mods().shift),
-            None => browse(st),
-        }
-    })
+        .child(body)
 }
 
 /// `ThreadStarterMessage`: the parent message a thread started from, at the top of the thread.

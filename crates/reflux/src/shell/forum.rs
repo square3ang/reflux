@@ -555,7 +555,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     }
     body = body.child(text(post.name.clone().unwrap_or_default()).font(font(16.0, 600.0).lh(20.0)).color(if unread { p.text_primary } else { p.text_secondary }).truncate());
     let preview = match first {
-        Some(Some(m)) => Some((Some(store.display_name(forum.guild_id, m.author.id)), threads::notification_body(m))),
+        Some(Some(m)) => Some((Some(store.display_name(forum.guild_id, m.author.id)), threads::notification_body(store, m))),
         Some(None) => Some((None, "Original message was deleted".to_string())),
         None => None,
     };
