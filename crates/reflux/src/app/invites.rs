@@ -6,8 +6,8 @@ use super::{spawn, update};
 use crate::State;
 use crate::shell::invite_embed::Preview;
 
-/// `GET /invites/{code}` into `media_ui.invites`.
-// shortcut: any failure reads as "Unknown invite"; Fluxer retries transient errors.
+/// `GET /invites/{code}` into `media_ui.invites`; like Fluxer (no retries), any failure reads as
+/// "Unknown invite".
 pub(super) fn fetch(s: &mut State, code: String) {
     let Some(inst) = s.app.instance.clone() else { return };
     spawn(async move {

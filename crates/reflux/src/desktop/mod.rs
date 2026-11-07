@@ -221,7 +221,10 @@ pub struct Desktop {
     streamer_polled: Option<std::time::Instant>,
     pub update_checked: Option<std::time::Instant>,
     pub maintenance: Option<notices::Maintenance>,
-    pub status_polled: Option<std::time::Instant>,
+    /// The status page poll: when it's next due, failures in a row, and a page that answered 4xx.
+    pub status_next: Option<std::time::Instant>,
+    pub status_failures: u32,
+    pub status_unsupported: Option<String>,
 }
 
 /// `Sound.playSound`: unless all sounds, this sound or streaming privacy mutes it; the user's

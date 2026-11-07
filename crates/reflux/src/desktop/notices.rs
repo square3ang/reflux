@@ -19,9 +19,33 @@ use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::Palette;
 use crate::ui::rgb;
 
-/// `STATUS_PAGE_POLL_INTERVAL_MS`.
-// shortcut: a flat 60 s poll, without Fluxer's jitter, start-time wakeups and failure backoff.
+/// `STATUS_PAGE_POLL_INTERVAL_MS`, `..._JITTER_MS` (the same for an active maintenance).
 const POLL: Duration = Duration::from_secs(60);
+const POLL_JITTER: Duration = Duration::from_secs(15);
+const POLL_AFTER_START: Duration = Duration::from_secs(5);
+const POLL_MIN: Duration = Duration::from_secs(10);
+/// `STATUS_PAGE_RETRY_DELAYS_MS`.
+const RETRY: [u64; 4] = [60, 5 * 60, 15 * 60, 30 * 60];
+
+/// `computeNextDelay`: failures back off; a maintenance starting within the minute is checked
+/// 5 s after it starts; otherwise a minute plus up to 15 s. `jitter` is in 0..1.
+fn next_delay(failures: u32, m: Option<&Maintenance>, now: chrono::DateTime<chrono::Utc>, jitter: f64) -> Duration {
+    if failures > 0 {
+        return Duration::from_secs(RETRY[(failures as usize).min(RETRY.len()) - 1]);
+    }
+    if let Some(m) = m.filter(|m| m.status == Status::Scheduled)
+        && let Ok(start) = chrono::DateTime::parse_from_rfc3339(&m.start)
+    {
+        let until = (start.with_timezone(&chrono::Utc) - now).num_milliseconds();
+        if until <= 0 {
+            return POLL_MIN;
+        }
+        if (until as u128) < POLL.as_millis() {
+            return (Duration::from_millis(until as u64) + POLL_AFTER_START).max(POLL_MIN);
+        }
+    }
+    POLL + POLL_JITTER.mul_f64(jitter)
+}
 const PRODUCT: &str = "Plutonium";
 const PRODUCT_FULL: &str = "Fluxer Plutonium";
 
@@ -65,6 +89,11 @@ fn select(list: &[Value]) -> Option<Maintenance> {
     best
 }
 
+/// `isUnsupportedStatusPageResponse`: a 4xx other than 408 / 429 stops polling that page.
+fn unsupported(e: &reqwest::Error) -> bool {
+    e.status().is_some_and(|s| s.is_client_error() && s.as_u16() != 408 && s.as_u16() != 429)
+}
+
 async fn check(base: &str) -> reqwest::Result<Option<Maintenance>> {
     let http = reflux_net::http_client();
     let summary: Value = http.get(format!("{base}/summary.json")).send().await?.error_for_status()?.json().await?;
@@ -80,17 +109,30 @@ async fn check(base: &str) -> reqwest::Result<Option<Maintenance>> {
 
 /// Polls the instance's Instatus page (`StatusPage.startPolling`).
 pub fn tick(s: &mut State) {
-    if rune::is_headless() || s.desktop.status_polled.is_some_and(|t| t.elapsed() < POLL) {
+    if rune::is_headless() || s.desktop.status_next.is_some_and(|t| Instant::now() < t) {
         return;
     }
     let Some(base) = s.app.instance.as_ref().map(|i| &i.discovery.app_public.branding).filter(|b| b.status_page_instatus).and_then(|b| b.status_page_url.clone()) else { return };
-    s.desktop.status_polled = Some(Instant::now());
     let base = base.trim_end_matches('/').to_string();
+    if s.desktop.status_unsupported.as_ref() == Some(&base) {
+        return;
+    }
+    // In flight: the answer sets the next time.
+    s.desktop.status_next = Some(Instant::now() + Duration::from_secs(3600));
     crate::app::spawn(async move {
-        match check(&base).await {
-            Ok(m) => crate::app::update(move |s| s.desktop.maintenance = m),
-            Err(e) => eprintln!("reflux: status page: {e}"),
-        }
+        let r = check(&base).await;
+        crate::app::update(move |s| {
+            let d = &mut s.desktop;
+            match r {
+                Ok(m) => (d.maintenance, d.status_failures) = (m, 0),
+                Err(e) if unsupported(&e) => d.status_unsupported = Some(base),
+                Err(e) => {
+                    eprintln!("reflux: status page: {e}");
+                    d.status_failures += 1;
+                }
+            }
+            d.status_next = Some(Instant::now() + next_delay(d.status_failures, d.maintenance.as_ref(), chrono::Utc::now(), fastrand::f64()));
+        });
     });
 }
 
@@ -256,6 +298,18 @@ fn onboarding(me: &reflux_model::User, now: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polls_like_status_page() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-07T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(next_delay(0, None, now, 0.5), Duration::from_millis(67_500));
+        assert_eq!(next_delay(1, None, now, 0.5), Duration::from_secs(60));
+        assert_eq!(next_delay(9, None, now, 0.5), Duration::from_secs(1800));
+        let soon = Maintenance { id: "m".into(), status: Status::Scheduled, start: "2026-11-07T12:00:30Z".into(), minutes: 30, url: String::new() };
+        assert_eq!(next_delay(0, Some(&soon), now, 0.5), Duration::from_secs(35), "5 s after it starts");
+        let started = Maintenance { start: "2026-11-07T11:59:00Z".into(), ..soon };
+        assert_eq!(next_delay(0, Some(&started), now, 0.5), Duration::from_secs(10));
+    }
 
     #[test]
     fn picks_in_progress_maintenance_and_formats_duration() {

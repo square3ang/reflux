@@ -58,6 +58,8 @@ pub struct VoiceRt {
     stream_audio: Option<(Arc<StreamAudio>, crate::gst::AudioCapture)>,
     /// `VoiceP2pConsent`: the channel whose peer-to-peer call the user agreed to.
     p2p_agreed: Option<Snowflake>,
+    /// The `/experiments` poll loop of this session.
+    pub(super) rollout: Option<tokio::task::AbortHandle>,
     /// `syncConversionWatchdog`: the armed timer's token, while our state says the server took the
     /// call off P2P and no standard grant has arrived yet.
     conversion: Option<u64>,
@@ -978,20 +980,53 @@ fn on_devices(s: &mut State, inputs: Vec<String>, outputs: Vec<String>) {
     s.app.shell.voice.devices = Some((inputs, outputs));
 }
 
-/// `VoiceP2pRollout`: whether to offer P2P calls, and their cap, from `GET /experiments`.
-// shortcut: read once per session; Fluxer polls every `poll_interval_seconds`.
-pub(super) fn load_rollout(s: &State) {
+/// `ExperimentAssignments` poll delay: `poll_interval_seconds` clamped to 60 s..24 h, doubled
+/// per failure (at most twice), ± `poll_jitter_percent` (≤ 50 %), never under 30 s. `r` in 0..1.
+fn rollout_delay(interval: Option<f64>, jitter_percent: Option<f64>, failures: u32, r: f64) -> Duration {
+    let secs = interval.filter(|s| s.is_finite()).map_or(60.0, |s| s.round().clamp(60.0, 86_400.0));
+    let jitter = jitter_percent.filter(|p| p.is_finite()).map_or(0.0, |p| p.round().clamp(0.0, 50.0) / 100.0);
+    let target = secs * 1000.0 * 2f64.powi(failures as i32);
+    Duration::from_millis((target + target * jitter * (r * 2.0 - 1.0)).round().max(30_000.0) as u64)
+}
+
+/// `VoiceP2pRollout` from `GET /experiments`, polled like `ExperimentAssignments` for the
+/// session; three 404s in a row stop it.
+// shortcut: no ETag / 304 and no ×4 slower polling while the window is hidden.
+pub(super) fn load_rollout(s: &mut State) {
     let Some(inst) = s.app.instance.clone() else { return };
-    spawn(async move {
-        match inst.rest.get::<Value>("/experiments").await {
-            Ok(v) => {
-                let a = &v["assignments"]["voice_p2p"];
-                let rollout = (a["enabled"].as_bool().unwrap_or(false), a["max_participants"].as_u64().unwrap_or(2) as usize);
-                update(move |s| s.app.shell.voice.p2p_rollout = rollout);
+    let Some(b) = super::BRIDGE.get() else { return };
+    let task = b.rt.spawn(async move {
+        let (mut failures, mut not_found) = (0u32, 0u32);
+        let mut poll = (None, None);
+        loop {
+            match inst.rest.get::<Value>("/experiments").await {
+                Ok(v) => {
+                    (failures, not_found) = (0, 0);
+                    poll = (v["poll_interval_seconds"].as_f64(), v["poll_jitter_percent"].as_f64());
+                    let a = &v["assignments"]["voice_p2p"];
+                    let rollout = (a["enabled"].as_bool().unwrap_or(false), a["max_participants"].as_u64().unwrap_or(2) as usize);
+                    update(move |s| s.app.shell.voice.p2p_rollout = rollout);
+                }
+                Err(e) => {
+                    eprintln!("reflux: experiments: {e}");
+                    failures = (failures + 1).min(2);
+                    let status = match &e {
+                        reflux_net::Error::Api { status, .. } => Some(status.as_u16()),
+                        reflux_net::Error::Http(h) => h.status().map(|s| s.as_u16()),
+                        _ => None,
+                    };
+                    not_found = if status == Some(404) { not_found + 1 } else { 0 };
+                    if not_found >= 3 {
+                        return;
+                    }
+                }
             }
-            Err(e) => eprintln!("reflux: experiments: {e}"),
+            tokio::time::sleep(rollout_delay(poll.0, poll.1, failures, fastrand::f64())).await;
         }
     });
+    if let Some(old) = s.app.voice.rollout.replace(task.abort_handle()) {
+        old.abort();
+    }
 }
 
 /// Draws a remote camera into `voice.videos[user]`.
@@ -1383,6 +1418,15 @@ fn send_voice_message(s: &mut State) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rollout_polls_like_experiment_assignments() {
+        use std::time::Duration;
+        assert_eq!(super::rollout_delay(None, None, 0, 0.5), Duration::from_secs(60));
+        assert_eq!(super::rollout_delay(Some(10.0), None, 0, 0.5), Duration::from_secs(60), "at least a minute");
+        assert_eq!(super::rollout_delay(Some(300.0), Some(20.0), 0, 1.0), Duration::from_secs(360));
+        assert_eq!(super::rollout_delay(Some(300.0), Some(90.0), 2, 0.0), Duration::from_secs(600), "jitter ≤ 50 %, two doublings");
+    }
+
     #[test]
     fn oversized_signals_are_refused() {
         use reflux_model::{OpCode, Snowflake, VoiceSignal};

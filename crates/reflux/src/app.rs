@@ -583,6 +583,9 @@ fn restore_voice_devices(s: &mut State) {
 /// Drops the connection and everything loaded for it.
 fn reset(s: &mut State) {
     voice::leave(s, true);
+    if let Some(h) = s.app.voice.rollout.take() {
+        h.abort();
+    }
     if let Some(gw) = s.app.gateway.take() {
         let _ = gw.send(Command::Close);
     }
