@@ -91,8 +91,11 @@ fn message_ast(m: &reflux_model::Message) -> (Value, f64) {
     (if out.is_empty() { Value::Null } else { out.into() }, total)
 }
 
-/// (title, [(tab label, content, summary (label, value))]).
-fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<(String, String, Option<(String, String)>)>) {
+/// (tab label, content, summary (label, value)).
+type Tab = (String, String, Option<(String, String)>);
+
+/// (title, tabs).
+fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<Tab>) {
     let pretty = |v: Value| if v.is_null() { "No data available".to_string() } else { serde_json::to_string_pretty(&v).unwrap_or_default() };
     let one = |title: &str, label: &str, v: Value| (title.to_string(), vec![(label.to_string(), pretty(v), None)]);
     match subject {
