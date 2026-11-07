@@ -59,6 +59,10 @@ pub struct Prefs {
     pub hide_blocked: bool,
     /// `AdvancedSettings.expressionCloneShortcutsEnabled`: "Clone to…" on emoji and stickers.
     pub clone_shortcuts: bool,
+    /// `AccountTheme.syncAcrossDevices` and `localTheme`: off, this device keeps its own base
+    /// theme instead of the account's.
+    pub theme_sync: bool,
+    pub local_theme: String,
     /// `AdvancedSettings.unreadBadgeCustomizationEnabled`: per-community unread badge levels.
     pub unread_badge_customization: bool,
     /// `ChatInputSettings.convertEmoticons`.
@@ -136,6 +140,8 @@ impl Default for Prefs {
             double_click_actions: false,
             hide_blocked: false,
             clone_shortcuts: false,
+            theme_sync: true,
+            local_theme: "dark".into(),
             unread_badge_customization: false,
             convert_emoticons: false,
             unread_badge: true,
@@ -161,6 +167,11 @@ impl Prefs {
     /// `Sound.isSoundDisabled`: the user's choice, else the same-channel sound is off by default.
     pub fn sound_on(&self, id: &str) -> bool {
         !self.sounds_off.get(id).copied().unwrap_or(id == "same-channel-message")
+    }
+
+    /// `themePreference`: the account's theme, or this device's while sync is off.
+    pub fn theme<'a>(&'a self, account: &'a str) -> &'a str {
+        if self.theme_sync { account } else { &self.local_theme }
     }
 
     /// The CSS that applies: the turned-on saved themes, then the quick CSS.
@@ -213,6 +224,15 @@ pub fn set_reduced_motion(on: bool) {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn theme_follows_sync() {
+        let mut p = Prefs::default();
+        assert_eq!(p.theme("coal"), "coal");
+        p.theme_sync = false;
+        p.local_theme = "light".into();
+        assert_eq!(p.theme("coal"), "light");
+    }
 
     #[test]
     fn sound_defaults_and_motion() {

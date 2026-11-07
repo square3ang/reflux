@@ -909,7 +909,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let reduced = look.reduced(cx.system_reduced_motion());
     cx.reduced_motion(reduced);
     crate::look::set_reduced_motion(reduced);
-    let pal = theme::custom::effective(&s.app.store.settings.theme, cx.system_dark(), look.saturation, &look.theme_css());
+    let pal = theme::custom::effective(look.theme(&s.app.store.settings.theme), cx.system_dark(), look.saturation, &look.theme_css());
     let p = &pal;
     let body = match s.app.route {
         Route::Auth => return crate::login::view(s, cx),

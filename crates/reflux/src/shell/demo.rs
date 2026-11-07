@@ -1456,7 +1456,7 @@ fn acc(s: &mut State) -> &mut ShellState {
 pub fn view(d: &Demo) -> El {
     let look = &d.shell.prefs.look;
     crate::look::set_reduced_motion(look.reduced(false));
-    let p = theme::custom::effective(&d.store.settings.theme, std::env::var("REFLUX_SYSTEM_LIGHT").is_err(), look.saturation, &look.theme_css());
+    let p = theme::custom::effective(look.theme(&d.store.settings.theme), std::env::var("REFLUX_SYSTEM_LIGHT").is_err(), look.saturation, &look.theme_css());
     super::view(&d.store, &d.shell, &p, acc)
 }
 

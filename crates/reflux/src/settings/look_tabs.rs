@@ -572,7 +572,10 @@ fn group_of(name: &str) -> &'static str {
 }
 
 pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    let current = store.settings.theme.as_str();
+    let look = &st.prefs.look;
+    let current = look.theme(&store.settings.theme).to_string();
+    let current = current.as_str();
+    let sync = look.theme_sync;
     let buttons = row().gap(12.0).role("radiogroup").label(t("Theme")).children(THEMES.iter().map(|&(value, label, [r, g, b])| {
         let selected = current == value || (value == "dark" && !THEMES.iter().any(|(v, ..)| *v == current));
         let light = value == "light";
@@ -593,13 +596,33 @@ pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                     .child(rune::icon(&crate::icons::CHECK_BOLD, 12.0).color(p.brand_primary_fill)),
             )
         } else {
-            b.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(json!({ "theme": value }))))
+            b.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| {
+                if sync {
+                    acc(s).intents.push(Intent::PatchSettings(json!({ "theme": value })));
+                } else {
+                    update(s, acc, |l| l.local_theme = value.to_string());
+                }
+            })
         }
     }));
-    // shortcut: "Sync theme across devices" is always on (the theme is saved to the account).
+    // `setSyncAcrossDevices`: turning it off starts this device on the theme it shows.
+    let shown = current.to_string();
+    let sync_switch = Switch::new(sync)
+        .label(t("Sync theme across devices"))
+        .description(t("Theme changes sync to all your devices. Off keeps this device on its own theme."))
+        .on_toggle(move |s: &mut S| {
+            let shown = shown.clone();
+            update(s, acc, move |l| {
+                if l.theme_sync {
+                    l.local_theme = shown;
+                }
+                l.theme_sync = !l.theme_sync;
+            })
+        })
+        .el(p);
     col()
         .w_full()
-        .child(section(t("Base theme"), buttons, true, p))
+        .child(section(t("Base theme"), col().w_full().gap(16.0).child(buttons).child(sync_switch), true, p))
         .child(section(t("Your themes"), super::theme_library::your_themes(st, p, acc, layer), false, p))
         .child(colors(store, st, p, acc))
         .child(quick_css(st, p, acc))
@@ -627,7 +650,7 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
     let css = &st.prefs.look.css;
     let (overrides, _) = custom::overrides(css);
     let search = st.form.text.get("token-search").map(|e| e.text.trim().to_lowercase()).unwrap_or_default();
-    let base = custom::effective(&store.settings.theme, !crate::ui::is_light(p), 1.0, "");
+    let base = custom::effective(st.prefs.look.theme(&store.settings.theme), !crate::ui::is_light(p), 1.0, "");
     let mut out = col()
         .w_full()
         .gap(12.0)
