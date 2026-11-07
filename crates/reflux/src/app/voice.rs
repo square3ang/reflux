@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use reflux_model::{GatewayError, GatewayPayload, OpCode, Permissions, Snowflake, UpdateVoiceState, VoiceServerUpdate, VoiceSignal, VoiceState};
 use reflux_net::Command;
+#[cfg(feature = "voice-webrtc")]
 use reflux_voice::livekit::prelude::{RemoteTrack, RoomEvent, TrackSource};
+#[cfg(feature = "voice-webrtc")]
 use reflux_voice::mesh::{self, Src};
 use reflux_voice::{Call, Camera, ScreenShare, StreamAudio};
 use reqwest::Method;
@@ -22,6 +24,7 @@ use crate::shell::voice::{Modal, Op, Settings, VoiceMessage};
 use crate::voice_input::{Gate, Mic, Mode};
 use crate::i18n::t;
 
+#[cfg(feature = "voice-webrtc")]
 const PING_EVERY: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
@@ -347,6 +350,7 @@ fn upload_trim(s: &mut State) {
 
 /// After connecting: `POST /voice/channels/{id}/entrance-sound` with the clip that fits.
 /// `restoreLocalMedia`: the camera, then the screen share (its picker; nothing to reuse after a restart).
+#[cfg(feature = "voice-webrtc")]
 fn restore_media(s: &mut State) {
     let (video, stream) = std::mem::take(&mut s.app.shell.voice.restore_media);
     if video && !s.app.shell.voice.camera {
@@ -357,6 +361,7 @@ fn restore_media(s: &mut State) {
     }
 }
 
+#[cfg(feature = "voice-webrtc")]
 fn play_own_entrance(s: &State) {
     let (Some(inst), Some((guild, channel))) = (s.app.instance.clone(), s.app.shell.voice.channel) else { return };
     spawn(async move {
@@ -557,6 +562,7 @@ fn drop_call(s: &mut State) {
     }
 }
 
+#[cfg(feature = "voice-webrtc")]
 pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     if s.app.shell.voice.channel != Some((v.guild_id, v.channel_id)) {
         return;
@@ -692,10 +698,18 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     });
 }
 
+/// No-WebRTC build: there is no room to connect to; show "Connection failed" like a refused join.
+#[cfg(not(feature = "voice-webrtc"))]
+pub(super) fn on_server_update(s: &mut State, _v: &VoiceServerUpdate) {
+    eprintln!("reflux: voice: this build has no WebRTC support; rebuild with the default features for calls");
+    fail(s);
+}
+
 // ---- Peer-to-peer calls -----------------------------------------------------------------------
 
 /// A peer-to-peer grant: our audio path and a [`mesh::Mesh`] instead of a LiveKit room. Peers
 /// come from the voice states ([`sync_roster`]) and talk over op 13.
+#[cfg(feature = "voice-webrtc")]
 fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
     drop_call(s);
     s.app.voice.connection_id = Some(v.connection_id.clone());
@@ -745,6 +759,7 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
 
 /// No server reports who speaks in a P2P call: we're speaking while the gate is open and the mic
 /// is loud (300 ms hang).
+#[cfg(feature = "voice-webrtc")]
 async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
     let (mut on, mut quiet) = (false, u32::MAX);
     loop {
@@ -764,6 +779,7 @@ async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
     }
 }
 
+#[cfg(feature = "voice-webrtc")]
 fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
     let current = move |s: &State| s.app.voice.generation == generation;
     match ev {
@@ -849,6 +865,7 @@ fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
 
 /// `VoiceMeshPeers` + `showP2pPeerFailedModal`: a new failure opens the dialog; it closes once
 /// nobody's failed.
+#[cfg(feature = "voice-webrtc")]
 fn on_peer_status(s: &mut State, user: Snowflake, status: mesh::Status) {
     let v = &mut s.app.shell.voice;
     let was = v.p2p_failed.contains(&user);
@@ -905,6 +922,7 @@ fn sync_roster(s: &mut State) {
 /// `CONVERSION_GRACE_MS`: how long a converted call may go without a standard grant.
 const CONVERSION_GRACE: Duration = Duration::from_secs(10);
 /// `VOICE_SIGNAL_MAX_JSON_BYTES`: the gateway refuses larger payloads; Fluxer fails the peer first.
+#[cfg(feature = "voice-webrtc")]
 const VOICE_SIGNAL_MAX_JSON_BYTES: usize = 16_000;
 
 /// `syncConversionWatchdog`: arms (or clears) the timer started when our own voice state left
@@ -937,6 +955,7 @@ fn sync_conversion_watchdog(s: &mut State, converting: bool) {
 }
 
 /// The op 13 payload's size, as the gateway measures it (`GatewaySocket.sendVoiceSignal`).
+#[cfg(feature = "voice-webrtc")]
 fn signal_size(sig: &VoiceSignal) -> usize {
     serde_json::to_vec(&GatewayPayload::command(OpCode::VOICE_SIGNAL, sig)).map_or(0, |b| b.len())
 }
@@ -1045,6 +1064,7 @@ pub(super) fn load_rollout(s: &mut State) {
 }
 
 /// Draws a remote camera into `voice.videos[user]`.
+#[cfg(feature = "voice-webrtc")]
 fn render_camera(s: &mut State, user: Snowflake, track: reflux_voice::livekit::webrtc::prelude::RtcVideoTrack) {
     let pixels = s.app.shell.voice.videos.entry(user).or_default().clone();
     if let Some(b) = super::BRIDGE.get() {
@@ -1055,6 +1075,7 @@ fn render_camera(s: &mut State, user: Snowflake, track: reflux_voice::livekit::w
     }
 }
 
+#[cfg(feature = "voice-webrtc")]
 async fn ping_loop(call: std::sync::Weak<Call>, generation: u64) {
     loop {
         tokio::time::sleep(PING_EVERY).await;
@@ -1444,6 +1465,7 @@ mod tests {
         assert_eq!(super::rollout_delay(Some(300.0), Some(90.0), 2, 0.0), Duration::from_secs(600), "jitter ≤ 50 %, two doublings");
     }
 
+    #[cfg(feature = "voice-webrtc")]
     #[test]
     fn oversized_signals_are_refused() {
         use reflux_model::{OpCode, Snowflake, VoiceSignal};

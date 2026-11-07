@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-livekit.workspace = true
+livekit = { workspace = true, optional = true }
 futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -18,11 +18,18 @@ nnnoiseless = { version = "0.5", default-features = false }
 
 # The PipeWire screen capture portal talks GDBus, which needs a running GLib main loop.
 [target.'cfg(target_os = "linux")'.dependencies]
-livekit = { workspace = true, features = ["glib-main-loop"] }
+livekit = { workspace = true, features = ["glib-main-loop"], optional = true }
 # The system's real sinks/sources and their streams. cpal's only Linux host is ALSA, which sees
 # raw PCM plugins; PipeWire/PulseAudio devices live on the PulseAudio protocol instead.
 libpulse-binding = "2.30"
 libpulse-simple-binding = "2.29"
+
+[features]
+# The real LiveKit implementation, and with it libwebrtc (the slowest dependency to build).
+# `--no-default-features` builds `src/stub.rs` instead: the app compiles for UI work without
+# libwebrtc, and calls / screen share / camera are unavailable.
+default = ["webrtc"]
+webrtc = ["dep:livekit"]
 
 [dev-dependencies]
 log = "0.4"

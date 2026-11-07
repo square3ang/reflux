@@ -84,5 +84,9 @@ dispatch2 = { version = "0.3", default-features = false, features = ["std", "obj
 [features]
 # Needs the GStreamer 1.x runtime (and -dev headers to build); `--no-default-features` drops it,
 # and attachments fall back to "Open in browser" and the camera is unavailable.
-default = ["gst"]
+# `voice` builds WebRTC (LiveKit + libwebrtc, the slowest dependency); without it `voice-webrtc`
+# is off and calls / screen share / camera are unavailable — `scripts/fast-build.sh` for UI work.
+default = ["gst", "voice"]
 gst = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video"]
+voice = ["voice-webrtc"]
+voice-webrtc = ["reflux-voice/webrtc"]

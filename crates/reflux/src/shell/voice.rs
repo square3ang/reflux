@@ -366,6 +366,7 @@ impl EntranceLibrary {
     }
 
     /// `resolveForScope`: `guild:{id}`, then `guilds` or `dms`, then `global`.
+    #[cfg(feature = "voice-webrtc")]
     pub fn resolve(&self, guild: Option<Snowflake>) -> Option<Snowflake> {
         let scopes = match guild {
             Some(g) => vec![format!("guild:{g}"), "guilds".into(), "global".into()],
@@ -892,8 +893,11 @@ mod tests {
         assert_eq!(lib.resolve_scope("guild:8"), Some((Snowflake(2), "guilds".into())), "inherits the community default");
         assert_eq!(lib.resolve_scope("dms"), Some((Snowflake(1), "global".into())));
         assert_eq!(lib.resolve_scope("guild:7"), Some((Snowflake(3), "guild:7".into())));
+        #[cfg(feature = "voice-webrtc")]
         assert_eq!(lib.resolve(Some(Snowflake(7))), Some(Snowflake(3)));
+        #[cfg(feature = "voice-webrtc")]
         assert_eq!(lib.resolve(Some(Snowflake(8))), Some(Snowflake(2)));
+        #[cfg(feature = "voice-webrtc")]
         assert_eq!(lib.resolve(None), Some(Snowflake(1)), "no dms selection: global");
     }
 

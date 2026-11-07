@@ -1097,4 +1097,5 @@ fn connection_path(stats: &[RtcStats], report: &mut Value) {
 }
 
 #[cfg(test)]
+#[path = "mesh/tests.rs"]
 mod tests;

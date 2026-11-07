@@ -26,7 +26,7 @@ reflux-model = { path = "crates/reflux-model" }
 reflux-net = { path = "crates/reflux-net" }
 reflux-store = { path = "crates/reflux-store" }
 reflux-markdown = { path = "crates/reflux-markdown" }
-reflux-voice = { path = "crates/reflux-voice" }
+reflux-voice = { path = "crates/reflux-voice", default-features = false }
 
 [profile.dev.package."*"]
 debug = false

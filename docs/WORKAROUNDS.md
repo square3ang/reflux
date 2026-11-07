@@ -124,6 +124,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
 | Shared `CARGO_TARGET_DIR` across worktrees; stale cross-worktree errors fixed by `touch`ing the crate's `lib.rs`/`main.rs` | disk is tight; libwebrtc builds are huge | HANDOFF.md | more disk |
+| `scripts/fast-build.sh` (`--no-default-features --features gst`) builds a stub `reflux-voice` instead of LiveKit/libwebrtc; voice calls, screen share and camera are unavailable there | libwebrtc is by far the slowest dependency and UI work doesn't need it | `crates/reflux-voice/src/{lib,stub}.rs`, `crates/reflux/Cargo.toml`, `scripts/fast-build.sh` | libwebrtc builds fast enough to stop splitting |
 | NVENC needs the gitignored `.cuda` symlink before the first build | webrtc-sys looks for CUDA headers there | HANDOFF.md | — |
 | `scripts/cross-check.sh`: Windows/macOS `cargo check` with zig; webrtc-sys's MSVC C++ and the Objective-C sources get empty objects, a fake `xcrun` satisfies the macOS build script — nothing links | no mingw/MSVC toolchain or Mac here | `scripts/cross-check.sh` | real Windows/macOS CI |
 | `scripts/mf-wine-test.sh`: builds only `mf.rs` and `camera/{pick,mf}.rs` (via `#[path]`) for windows-gnu with zig as linker (empty libgcc stubs, msvcrt/winpthreads args dropped, `zig dlltool` for raw-dylib) and runs its tests under wine on GStreamer-encoded clips; the camera test only sees an empty device list (wine has no MF video capture source) | the whole app can't link here (webrtc-sys); wine's MF (winegstreamer) stands in for Windows' decoders | `scripts/mf-wine-test.{sh,rs}` | real Windows CI |
@@ -135,7 +136,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 ## Appendix: every `shortcut:` comment in the code
 
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
-- `crates/reflux/src/app/voice.rs:1009` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux-voice/src/lib.rs:16` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
+- `crates/reflux/src/app/voice.rs:1028` no ETag / 304 and no ×4 slower polling while the window is hidden.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -181,6 +183,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/ui/menu.rs:195` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
+- `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 
 <!-- END GENERATED -->
