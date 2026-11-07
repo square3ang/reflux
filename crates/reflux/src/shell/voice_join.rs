@@ -12,7 +12,7 @@ use crate::ui::{Button, ButtonVariant, Modal};
 /// `usePendingVoiceConnection.startConnection`: asks first when the setting is on (and the
 /// double-click requirement is off).
 pub fn request(sh: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake) {
-    if guild.is_some() && sh.prefs.look.confirm_join_voice && sh.prefs.look.join_double_click == false {
+    if guild.is_some() && sh.prefs.look.confirm_join_voice && !sh.prefs.look.join_double_click {
         sh.join_confirm = Some((guild, channel));
     } else {
         sh.join_voice(guild, channel);
