@@ -78,6 +78,17 @@ impl<S: 'static> Switch<S> {
                 sw = sw.on_press(move |s: &mut S| f(s));
             }
         }
+        if let Some(f) = act.clone() {
+            // Buttons answer Enter on the web (Radix's switch is one).
+            sw = sw.on_key(move |s: &mut S, k, _| {
+                if super::enters(k) {
+                    f(s);
+                    true
+                } else {
+                    false
+                }
+            });
+        }
         if self.label.is_none() && self.description.is_none() {
             return sw;
         }
@@ -135,8 +146,16 @@ impl<S: 'static> Checkbox<S> {
             return w.opacity(0.6).disabled(true);
         }
         w = w.cursor(rune::Cursor::Pointer);
-        if let Some(f) = self.on_toggle {
-            w = w.on_press(move |s: &mut S| f(s));
+        if let Some(f) = &self.on_toggle {
+            let (press, enter) = (f.clone(), f.clone());
+            w = w.on_press(move |s: &mut S| press(s)).on_key(move |s: &mut S, k, _| {
+                if super::enters(k) {
+                    enter(s);
+                    true
+                } else {
+                    false
+                }
+            });
         }
         w
     }
@@ -186,8 +205,16 @@ impl<'a, S: 'static> RadioGroup<'a, S> {
             if self.disabled {
                 opt = opt.opacity(0.55).disabled(true);
             } else if let Some(f) = &self.on_change {
-                let (f, v) = (f.clone(), value.to_string());
-                opt = opt.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| f(s, &v));
+                let (press, enter, v) = (f.clone(), f.clone(), value.to_string());
+                let v2 = v.clone();
+                opt = opt.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| press(s, &v)).on_key(move |s: &mut S, k, _| {
+                    if super::enters(k) {
+                        enter(s, &v2);
+                        true
+                    } else {
+                        false
+                    }
+                });
             }
             opt
         }))
@@ -319,9 +346,31 @@ mod tests {
         )
     }
 
-    fn key(rt: &mut Runtime<f32>, k: Key) {
+    fn key<S>(rt: &mut Runtime<S>, k: Key) {
         rt.key(KeyEvent { key: k, mods: Mods::default() });
         rt.frame(0.0);
+    }
+
+    fn switch(on: &bool, _: &mut Cx<bool>) -> El {
+        col().w_full().h_full().child(
+            Switch::new(*on)
+                .label("Mute")
+                .on_toggle(|s: &mut bool| *s = !*s)
+                .el(crate::theme::palette(crate::theme::Kind::Dark)),
+        )
+    }
+
+    #[test]
+    fn switch_toggles_with_space_and_enter() {
+        let mut rt = Runtime::with_text(false, switch, (300.0, 80.0), Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        key(&mut rt, Key::Tab);
+        let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
+        assert_eq!((focused.role, focused.label.as_deref()), ("switch", Some("Mute")));
+        key(&mut rt, Key::Text(" ".into()));
+        assert!(rt.state, "Space toggles a switch");
+        key(&mut rt, Key::Enter);
+        assert!(!rt.state, "Enter toggles a switch too");
     }
 
     #[test]
