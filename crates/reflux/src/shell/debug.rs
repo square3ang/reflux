@@ -2,7 +2,6 @@
 //! MessageDebugModal}`): a record as pretty JSON behind "Debug user / channel / community /
 //! member / message" menu items, and a client inspector (session and store counts, user
 //! settings, the `/experiments` assignments) in place of the desktop app's Chromium devtools.
-// shortcut: the JSON is plain monospace text (Fluxer runs it through its code-block highlighter).
 
 use reflux_model::Snowflake;
 use reflux_store::Store;

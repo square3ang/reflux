@@ -92,7 +92,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .h_full()
         .fill(p.background_secondary_lighter)
         .child(header(store, st, c, p, acc, layer))
-        .children(super::call::dm_strip(store, st, c, p, acc))
+        .children(super::call::dm_strip(store, st, c, p, acc, layer))
         .child(content)
 }
 

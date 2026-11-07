@@ -308,7 +308,7 @@ pub fn e2ee_badge() -> El {
 
 /// `CompactVoiceCallView` over a DM / group DM with an active call: tiles, then Join or the
 /// control bar.
-pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> Option<El> {
     if !matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM) {
         return None;
     }
@@ -344,8 +344,9 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     };
     let mut strip = col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer);
     if super::voice::is_p2p(store, None, ch) {
-        // shortcut: the explanation is the accessible label, not a hover tooltip (no overlay layer here).
-        strip = strip.child(p2p_indicator(joined && !st.voice.p2p_failed.is_empty(), p));
+        let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+        let tip = crate::ui::Tooltip::new("dm-call-p2p", t("Direct connection. Audio and video go directly between the people in the call, who can see each other's IP address."));
+        strip = strip.child(tip.el(p2p_indicator(joined && !st.voice.p2p_failed.is_empty(), p), &st.popups, pops, p, layer));
     }
     Some(strip)
 }
