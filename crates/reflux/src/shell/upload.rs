@@ -98,12 +98,16 @@ pub struct Limits {
     pub files: usize,
     /// `feature_global_expressions`: custom emoji and stickers work outside their community.
     pub global_expressions: bool,
+    /// `max_guild_emojis` / `max_guild_stickers` (`Guild.maxEmojis`), for clone slot checks.
+    // shortcut: rules filtered by guild features aren't applied (user-scope rules only).
+    pub guild_emojis: u64,
+    pub guild_stickers: u64,
 }
 
 impl Default for Limits {
     /// `DEFAULT_STOCK_LIMITS` without premium.
     fn default() -> Self {
-        Limits { message_length: 2000, file_size: 25 * 1024 * 1024, files: 10, global_expressions: false }
+        Limits { message_length: 2000, file_size: 25 * 1024 * 1024, files: 10, global_expressions: false, guild_emojis: 500, guild_stickers: 500 }
     }
 }
 
@@ -128,6 +132,8 @@ pub fn resolve(cfg: &LimitConfig, traits: &[String]) -> Limits {
         l.file_size = set(l.file_size, get("max_attachment_file_size"));
         l.files = set(l.files as u64, get("max_attachments_per_message")) as usize;
         l.global_expressions = set(l.global_expressions as u64, get("feature_global_expressions")) > 0;
+        l.guild_emojis = set(l.guild_emojis, get("max_guild_emojis"));
+        l.guild_stickers = set(l.guild_stickers, get("max_guild_stickers"));
     }
     l
 }
@@ -383,7 +389,7 @@ mod tests {
         }))
         .unwrap();
         let free = resolve(&cfg, &[]);
-        assert_eq!(free, Limits { message_length: 2000, file_size: 50_000_000, files: 10, global_expressions: false }, "negative values are ignored");
+        assert_eq!(free, Limits { message_length: 2000, file_size: 50_000_000, files: 10, global_expressions: false, ..Limits::default() }, "negative values are ignored");
         let premium = resolve(&cfg, &["premium".into()]);
         assert_eq!((premium.message_length, premium.file_size), (4000, 50_000_000), "filtered rules only raise");
     }

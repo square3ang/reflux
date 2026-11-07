@@ -1,7 +1,9 @@
 //! Message search: the header's `MessageSearchBar` (with its filter options while empty), and
 //! the `ChannelSearchResults` panel beside the chat, whose results jump to their message.
-// shortcut: no scope menu, search chips, date pickers for before:/during:/after: or keyboard
-// navigation of the suggestions (they're clicked).
+//! Arrow keys move through the open popout's rows and Enter picks one
+//! (`useMessageSearchAutocomplete`): value lists start on their first row, the filter and
+//! history list only once an arrow was pressed.
+// shortcut: no scope menu, search chips or date pickers for before:/during:/after:.
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -40,6 +42,58 @@ pub struct Search {
     pub oldest: bool,
     /// The search the results belong to (to page and re-sort it).
     pub ran: String,
+    /// The popout row the arrow keys moved to, with the query it was for.
+    pub nav: Option<(String, usize)>,
+}
+
+/// A row of the bar's popout.
+#[derive(Clone, Debug, PartialEq)]
+enum Pick {
+    /// A filter key to type (`from:`).
+    Filter(&'static str),
+    /// A value replacing the token being typed.
+    Value(String),
+    /// A recent search to run again.
+    Recent(String),
+}
+
+fn apply(st: &mut ShellState, pick: &Pick) {
+    st.search.nav = None;
+    match pick {
+        Pick::Filter(key) => {
+            st.search.query.insert(key);
+            st.search.query.focused = true;
+        }
+        Pick::Value(token) => {
+            let q = &mut st.search.query;
+            let keep = q.text.rsplit_once(' ').map_or(String::new(), |(head, _)| format!("{head} "));
+            *q = TextEdit::new(format!("{keep}{token} "));
+            q.focused = true;
+        }
+        Pick::Recent(text) => {
+            st.search.query = TextEdit::new(text.clone());
+            st.search.page = 1;
+            st.search_requested = true;
+        }
+    }
+}
+
+/// The highlighted row: the arrowed one for this query, else the first value.
+fn selected(s: &Search, values: bool) -> Option<usize> {
+    match &s.nav {
+        Some((q, i)) if *q == s.query.text => Some(*i),
+        _ => values.then_some(0),
+    }
+}
+
+/// ArrowDown/ArrowUp wrap through `n` rows (Up from nothing lands on the last).
+fn step(cur: Option<usize>, n: usize, down: bool) -> usize {
+    match (cur, down) {
+        (None, true) => 0,
+        (None, false) => n - 1,
+        (Some(i), true) => (i + 1) % n,
+        (Some(i), false) => (i + n - 1) % n,
+    }
 }
 
 /// Builds the request for `query` in the open channel's guild (or the DM itself) and opens the
@@ -126,6 +180,21 @@ pub fn suggest(store: &Store, guild: Option<reflux_model::Snowflake>, query: &st
 pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let s = &st.search;
     let has_text = !s.query.text.is_empty();
+    // The popout and its rows, for the arrow keys.
+    let scope = st.channel.map(|c| store.channels.get(&c).and_then(|ch| ch.guild_id).unwrap_or(c));
+    let mut picks: Vec<Pick> = Vec::new();
+    let mut values = false;
+    if s.query.focused && !has_text {
+        let history = scope.and_then(|k| st.prefs.search_history.get(&k)).map(Vec::as_slice).unwrap_or_default();
+        picks = OPTIONS.iter().map(|(k, _)| Pick::Filter(k)).chain(history.iter().take(5).map(|q| Pick::Recent(q.clone()))).collect();
+        layer.push(options(st, scope, history, selected(s, false), p, acc));
+    } else if s.query.focused
+        && let Some((title, list)) = suggest(store, st.guild, &s.query.text).filter(|(_, l)| !l.is_empty())
+    {
+        values = true;
+        picks = list.iter().map(|sg| Pick::Value(sg.token.clone())).collect();
+        layer.push(suggestions(store, st, title, list, selected(s, true), p, acc));
+    }
     let field = text_input(&s.query, font(14.0, 400.0).lh(20.0))
         .key("search-field")
         .grow(1.0)
@@ -135,16 +204,31 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).search.query })
         .on_input_key(move |s: &mut S, k, _| {
-            if k.key != Key::Escape {
-                return false;
-            }
             let st = acc(s);
-            st.search.query = TextEdit::new("");
-            st.search.results = None;
-            true
+            match k.key {
+                Key::Escape => {
+                    st.search.query = TextEdit::new("");
+                    (st.search.results, st.search.nav) = (None, None);
+                    true
+                }
+                Key::Down | Key::Up if !picks.is_empty() => {
+                    let next = step(selected(&st.search, values), picks.len(), k.key == Key::Down);
+                    st.search.nav = Some((st.search.query.text.clone(), next));
+                    true
+                }
+                Key::Enter => match selected(&st.search, values).and_then(|i| picks.get(i)) {
+                    Some(pick) => {
+                        apply(st, pick);
+                        true
+                    }
+                    None => false,
+                },
+                _ => false,
+            }
         })
         .on_submit(move |s: &mut S, _| {
             let st = acc(s);
+            st.search.nav = None;
             st.search.page = 1;
             st.search_requested = true;
         });
@@ -178,15 +262,6 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
                 }),
         );
     }
-    let scope = st.channel.map(|c| store.channels.get(&c).and_then(|ch| ch.guild_id).unwrap_or(c));
-    if s.query.focused && !has_text {
-        let history = scope.and_then(|k| st.prefs.search_history.get(&k)).map(Vec::as_slice).unwrap_or_default();
-        layer.push(options(st, scope, history, p, acc));
-    } else if s.query.focused
-        && let Some((title, list)) = suggest(store, st.guild, &s.query.text).filter(|(_, l)| !l.is_empty())
-    {
-        layer.push(suggestions(store, st, title, list, p, acc));
-    }
     b
 }
 
@@ -201,51 +276,41 @@ fn popout(p: &Palette) -> El {
 }
 
 /// The value list for the filter being typed; picking one replaces the token.
-fn suggestions<S: 'static>(store: &Store, st: &ShellState, title: &'static str, list: Vec<Suggestion>, p: &Palette, acc: ShellAccess<S>) -> El {
+fn suggestions<S: 'static>(store: &Store, st: &ShellState, title: &'static str, list: Vec<Suggestion>, sel: Option<usize>, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut c = popout(p).child(section_head(&icons::MAGNIFYING_GLASS, t(title), p));
     for (i, sg) in list.into_iter().enumerate() {
-        let mut r = row().w_full().h(32.0).px(8.0).gap(8.0).center_y().radius(4.0).hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).key(format!("search-suggest-{i}"));
+        let mut r = option_row(sel == Some(i), p).gap(8.0).key(format!("search-suggest-{i}"));
         if let Some(u) = sg.user {
             r = r.child(super::avatar(store, st, u, 16.0, None, p.form_surface_background, p));
         }
-        let token = sg.token.clone();
+        let pick = Pick::Value(sg.token.clone());
         c = c.child(
             r.child(text(sg.label).font(font(14.0, 600.0)).color(p.text_primary).truncate().shrink())
                 .child(text(sg.meta).font(font(14.0, 400.0)).color(p.text_primary_muted).truncate().shrink())
-                .on_press(move |s: &mut S| {
-                    let q = &mut acc(s).search.query;
-                    let keep = q.text.rsplit_once(' ').map_or(String::new(), |(head, _)| format!("{head} "));
-                    *q = TextEdit::new(format!("{keep}{token} "));
-                    q.focused = true;
-                }),
+                .on_press(move |s: &mut S| apply(acc(s), &pick)),
         );
     }
     anchor(c, "search-bar", crate::ui::Placement::BottomEnd, 8.0)
 }
 
+/// A 32px popout row, lit when hovered or arrowed to.
+fn option_row(lit: bool, p: &Palette) -> El {
+    let r = row().w_full().h(32.0).px(8.0).center_y().radius(4.0).cursor(rune::Cursor::Pointer).role("option");
+    if lit { r.fill(p.background_modifier_hover) } else { r.hover(p.background_modifier_hover) }
+}
+
 /// The filter list under the empty, focused bar (picking one types its key), then the scope's
 /// recent searches (`HistorySection`).
-fn options<S: 'static>(st: &ShellState, scope: Option<reflux_model::Snowflake>, history: &[String], p: &Palette, acc: ShellAccess<S>) -> El {
+fn options<S: 'static>(st: &ShellState, scope: Option<reflux_model::Snowflake>, history: &[String], sel: Option<usize>, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut c = popout(p).child(section_head(&icons::FUNNEL, t("Search filters"), p));
-    for (key, hint) in OPTIONS {
+    for (i, (key, hint)) in OPTIONS.into_iter().enumerate() {
         c = c.child(
-            row()
-                .w_full()
-                .h(32.0)
-                .px(8.0)
+            option_row(sel == Some(i), p)
                 .gap(6.0)
-                .center_y()
-                .radius(4.0)
-                .hover(p.background_modifier_hover)
-                .cursor(rune::Cursor::Pointer)
                 .key(format!("search-opt-{key}"))
                 .child(text(key).font(font(14.0, 600.0)).color(p.text_primary))
                 .child(text(hint).font(font(14.0, 400.0)).color(p.text_primary_muted).truncate())
-                .on_press(move |s: &mut S| {
-                    let q = &mut acc(s).search.query;
-                    q.insert(key);
-                    q.focused = true;
-                }),
+                .on_press(move |s: &mut S| apply(acc(s), &Pick::Filter(key))),
         );
     }
     if let (Some(scope), false) = (scope, history.is_empty()) {
@@ -263,24 +328,12 @@ fn options<S: 'static>(st: &ShellState, scope: Option<reflux_model::Snowflake>, 
             .child(text(t("Clear")).font(font(12.0, 500.0)).color(p.text_primary_muted).group_color(p.text_primary));
         c = c.child(row().w_full().mt(8.0).child(section_head(&icons::CLOCK, t("Recent searches"), p).grow(1.0)).child(clear.mr(8.0)));
         for (i, q) in history.iter().take(5).enumerate() {
-            let q2 = q.clone();
+            let pick = Pick::Recent(q.clone());
             c = c.child(
-                row()
-                    .w_full()
-                    .h(32.0)
-                    .px(8.0)
-                    .center_y()
-                    .radius(4.0)
-                    .hover(p.background_modifier_hover)
-                    .cursor(rune::Cursor::Pointer)
+                option_row(sel == Some(OPTIONS.len() + i), p)
                     .key(format!("search-history-{i}"))
                     .child(text(q.clone()).font(font(14.0, 500.0)).color(p.text_primary).truncate())
-                    .on_press(move |s: &mut S| {
-                        let st = acc(s);
-                        st.search.query = TextEdit::new(q2.clone());
-                        st.search.page = 1;
-                        st.search_requested = true;
-                    }),
+                    .on_press(move |s: &mut S| apply(acc(s), &pick)),
             );
         }
     }
@@ -436,6 +489,21 @@ fn result<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, 
 mod tests {
     use super::*;
     use reflux_model::Snowflake;
+
+    #[test]
+    fn arrow_keys_wrap_and_values_start_selected() {
+        assert_eq!(step(None, 3, true), 0);
+        assert_eq!(step(None, 3, false), 2);
+        assert_eq!(step(Some(2), 3, true), 0);
+        assert_eq!(step(Some(0), 3, false), 2);
+        let mut s = Search { query: TextEdit::new("from:"), ..Default::default() };
+        assert_eq!(selected(&s, true), Some(0));
+        assert_eq!(selected(&s, false), None);
+        s.nav = Some(("from:".into(), 2));
+        assert_eq!(selected(&s, true), Some(2));
+        s.query = TextEdit::new("from:a");
+        assert_eq!(selected(&s, true), Some(0), "typing resets the arrowed row");
+    }
 
     #[test]
     fn suggests_values_for_the_last_token() {

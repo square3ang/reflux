@@ -102,6 +102,28 @@ impl Client {
         self.request_with_reason(method, path, body, None).await
     }
 
+    /// A binary GET (stream previews); `None` on 404.
+    pub async fn get_bytes(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        let mut req = self.http.get(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES);
+        if let Some(token) = self.token.read().unwrap().as_deref() {
+            req = req.header(header::AUTHORIZATION, token);
+        }
+        if let Some(id) = &self.installation_id {
+            req = req.header("X-Fluxer-Client-Installation-ID", id);
+        }
+        let res = req.send().await?;
+        let status = res.status();
+        let bytes = res.bytes().await?;
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            let error = serde_json::from_slice::<ApiError>(&bytes).unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
+            return Err(Error::Api { status, error: Box::new(error) });
+        }
+        Ok(Some(bytes.to_vec()))
+    }
+
     /// [`Self::request`] with an `X-Audit-Log-Reason` (moderation actions).
     pub async fn request_with_reason<T: DeserializeOwned, B: Serialize + ?Sized>(
         &self,

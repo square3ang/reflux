@@ -105,6 +105,9 @@ mod imp {
         playbin: gst::Element,
         pub ended: bool,
         pub playing: bool,
+        /// Playback speed; applied by a rate seek once the clip has a position.
+        pub rate: f64,
+        rate_pending: bool,
     }
 
     impl VideoPlayer {
@@ -115,7 +118,11 @@ mod imp {
             let caps = gst::Caps::builder("video/x-raw").field("format", "RGBA").build();
             let sink = rgba_sink(caps, move |w, h, rgba| pixels.set(w, h, rgba));
             let playbin = gst::ElementFactory::make("playbin").property("uri", url).property("video-sink", &sink).build().ok()?;
-            Some(Self { playbin, ended: false, playing: false })
+            // Keeps the pitch when the speed changes (`preservesPitch`).
+            if let Ok(tempo) = gst::ElementFactory::make("scaletempo").build() {
+                playbin.set_property("audio-filter", &tempo);
+            }
+            Some(Self { playbin, ended: false, playing: false, rate: 1.0, rate_pending: false })
         }
 
         pub fn play(&mut self) {
@@ -132,7 +139,28 @@ mod imp {
         }
 
         pub fn seek(&self, secs: f64) {
-            let _ = self.playbin.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, gst::ClockTime::from_mseconds((secs.max(0.0) * 1000.0) as u64));
+            let at = gst::ClockTime::from_mseconds((secs.max(0.0) * 1000.0) as u64);
+            if (self.rate - 1.0).abs() < f64::EPSILON {
+                let _ = self.playbin.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, at);
+            } else {
+                let _ = self.playbin.seek(self.rate, gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, gst::SeekType::Set, at, gst::SeekType::None, gst::ClockTime::NONE);
+            }
+        }
+
+        /// Plays at `rate` (now, or once the clip has a position).
+        pub fn set_rate(&mut self, rate: f64) {
+            (self.rate, self.rate_pending) = (rate, true);
+            self.apply_rate();
+        }
+
+        fn apply_rate(&mut self) {
+            if !self.rate_pending {
+                return;
+            }
+            let Some(at) = self.playbin.query_position::<gst::ClockTime>() else { return };
+            if self.playbin.seek(self.rate, gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, gst::SeekType::Set, at, gst::SeekType::None, gst::ClockTime::NONE).is_ok() {
+                self.rate_pending = false;
+            }
         }
 
         /// `volume` 0..1 (cubic, like the web player's slider), `muted` on top.
@@ -151,6 +179,7 @@ mod imp {
 
         /// Drains the bus; true when something changed (the clip ended or failed).
         pub fn poll(&mut self) -> bool {
+            self.apply_rate();
             let Some(bus) = self.playbin.bus() else { return false };
             let mut changed = false;
             while let Some(msg) = bus.pop() {
@@ -292,12 +321,14 @@ mod stub {
     pub struct VideoPlayer {
         pub ended: bool,
         pub playing: bool,
+        pub rate: f64,
     }
 
     impl VideoPlayer {
         pub fn new(_url: &str, _pixels: rune::Pixels) -> Option<Self> {
             None
         }
+        pub fn set_rate(&mut self, _rate: f64) {}
         pub fn play(&mut self) {}
         pub fn pause(&mut self) {}
         pub fn seek(&self, _secs: f64) {}

@@ -27,6 +27,7 @@ mod expr;
 mod guild;
 pub(crate) mod idle;
 mod invites;
+mod previews;
 mod threads;
 pub(crate) use guild::entered;
 pub mod live;
@@ -693,11 +694,13 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
                 reflux_model::DispatchEvent::VoiceSignal(v) => voice::on_signal(s, v),
                 reflux_model::DispatchEvent::EntranceSoundPlay(e) => voice::on_entrance(s, e),
+                reflux_model::DispatchEvent::ForumUnreads(f) => threads::on_forum_unreads(s, f),
                 _ => {}
             }
             if let reflux_model::DispatchEvent::Ready(r) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
                 s.app.thread_sub = None;
+                s.app.shell.threads.forum.sent_acks.clear(); // `ForumReadState.handleGatewayReady`
                 s.app.route = Route::Main;
                 account::remember_me(s);
                 idle::ready(s);
@@ -835,13 +838,15 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     account::mirror(s);
     let threads_changed = threads::tick(s);
     s.app.shell.prefs = s.app.saved.desktop.clone();
+    let resized = s.app.shell.desktop.width != s.desktop.size[0];
     crate::desktop::tick(s, tx);
     voice::tick(s, tx);
+    previews::tick(s, tx);
     idle::tick(s, tx);
     cache::tick(s);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
-    actions::tick(s) || ran || shell || threads_changed
+    actions::tick(s) || ran || shell || threads_changed || resized
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.

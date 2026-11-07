@@ -87,22 +87,37 @@ pub(super) fn run(s: &mut State, i: Intent) {
                 eprintln!("reflux: pin {message}: {e}");
             }
         }),
-        Intent::OpenDm(user) => {
-            let me = s.app.store.my_id();
-            let existing = s.app.store.private_channels().into_iter().find(|c| c.kind == ChannelType::DM && c.recipients.iter().any(|u| u.id == user) && user != me).map(|c| c.id);
-            match existing {
-                Some(c) => s.app.shell.select_guild(None, Some(c)),
-                None => spawn(async move {
-                    match inst.rest.open_dm(user).await {
-                        Ok(c) => update(move |s| {
-                            let id = c.id;
-                            s.app.store.apply(&DispatchEvent::ChannelCreate(Box::new(c)), now_ms());
-                            s.app.shell.select_guild(None, Some(id));
-                        }),
-                        Err(e) => eprintln!("reflux: open DM with {user}: {e}"),
-                    }
-                }),
-            }
+        Intent::OpenDm(user) => with_dm(s, inst, user, |s, c| s.app.shell.select_guild(None, Some(c))),
+        Intent::DmCall(user) => with_dm(s, inst, user, |s, c| {
+            s.app.shell.select_guild(None, Some(c));
+            crate::shell::call::request_call(&s.app.store, &mut s.app.shell, c, false);
+        }),
+        Intent::InviteToGuild { user, guild, channel } => {
+            let store = &s.app.store;
+            let name = store.guilds.get(&guild).and_then(|g| g.info.as_ref()).map_or_else(String::new, |i| i.name.clone());
+            // `getInviteCapability`: a vanity link when you can't create invites.
+            let vanity = (!store.permissions(channel).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE))
+                .then(|| store.guilds.get(&guild).and_then(|g| g.info.as_ref()?.vanity_url_code.clone()))
+                .flatten();
+            let base = s.app.shell.invite_base.trim_end_matches('/').to_string();
+            spawn(async move {
+                let code = match vanity {
+                    Some(v) => Ok(v),
+                    None => inst
+                        .rest
+                        .request::<serde_json::Value, _>(reqwest::Method::POST, &format!("/channels/{channel}/invites"), Some(&serde_json::json!({ "max_age": 604_800, "max_uses": 0, "temporary": false })))
+                        .await
+                        .map(|v| v["code"].as_str().unwrap_or_default().to_string()),
+                };
+                let Ok(code) = code else { return eprintln!("reflux: invite to {guild}: {code:?}") };
+                update(move |s| {
+                    let Some(inst) = s.app.instance.clone() else { return };
+                    with_dm(s, inst, user, move |s, c| {
+                        super::chat::send(s, c, format!("{base}/{code}"), None, vec![]);
+                        crate::desktop::toast(&mut s.app.shell.desktop, crate::i18n::tf("Invite sent for {guildName}", &[("guildName", &name)]), true);
+                    })
+                });
+            });
         }
         Intent::CloseDm(channel) => call(inst, move |i| async move { i.rest.close_channel(channel).await }, "close DM"),
         Intent::AddFriend(user) => call(inst, move |i| async move { i.rest.add_friend(user).await.map(drop) }, "add friend"),
@@ -290,6 +305,25 @@ pub(super) fn tick(s: &mut State) -> bool {
         });
     }
     changed
+}
+
+/// Runs `then` with the DM channel of `user`, opening one first if there's none.
+fn with_dm(s: &mut State, inst: std::sync::Arc<super::Instance>, user: Snowflake, then: impl FnOnce(&mut State, Snowflake) + Send + 'static) {
+    let me = s.app.store.my_id();
+    let existing = s.app.store.private_channels().into_iter().find(|c| c.kind == ChannelType::DM && c.recipients.iter().any(|u| u.id == user) && user != me).map(|c| c.id);
+    match existing {
+        Some(c) => then(s, c),
+        None => spawn(async move {
+            match inst.rest.open_dm(user).await {
+                Ok(c) => update(move |s| {
+                    let id = c.id;
+                    s.app.store.apply(&DispatchEvent::ChannelCreate(Box::new(c)), now_ms());
+                    then(s, id);
+                }),
+                Err(e) => eprintln!("reflux: open DM with {user}: {e}"),
+            }
+        }),
+    }
 }
 
 #[cfg(test)]

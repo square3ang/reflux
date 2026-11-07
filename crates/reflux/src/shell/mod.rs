@@ -106,6 +106,11 @@ pub enum Intent {
     Voice(voice::Op),
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
+    /// `startCallWithUser`: open the DM with a user and start (or confirm) a voice call there.
+    DmCall(Snowflake),
+    /// `InviteToCommunityMenuItem`: send a user an invite link to `guild` (via `channel`, or
+    /// the vanity link) in their DM.
+    InviteToGuild { user: Snowflake, guild: Snowflake, channel: Snowflake },
     /// Close a DM or leave a group DM.
     CloseDm(Snowflake),
     /// Send a friend request to, or accept one from, a user.

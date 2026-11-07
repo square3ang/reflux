@@ -89,7 +89,11 @@ fn main() {
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
         poll: Some(|s, _, tx| match &mut s.shell_demo {
-            Some(d) => shell::poll_shell(&d.store, &mut d.shell, tx),
+            Some(d) => {
+                let resized = d.shell.desktop.width != s.desktop.size[0];
+                d.shell.desktop.width = s.desktop.size[0];
+                shell::poll_shell(&d.store, &mut d.shell, tx) || resized
+            }
             None => app::poll(s, tx),
         }),
         on_key: Some(keybinds::on_key),

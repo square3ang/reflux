@@ -560,9 +560,10 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     if newer || rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, pre, p, acc));
     }
-    let typing = store.typing_users(c.id, st.now_ms);
+    let me = store.my_id();
+    let typing: Vec<_> = store.typing_users(c.id, st.now_ms).into_iter().filter(|u| *u != me && !store.is_blocked(*u)).collect();
     if !typing.is_empty() {
-        area = area.child(typing_rail(store, c.guild_id, &typing, p));
+        area = area.child(typing_rail(store, st, c.guild_id, &typing, p));
     }
     area
 }
@@ -1300,19 +1301,56 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
     grid
 }
 
-fn typing_rail(store: &Store, guild: Option<Snowflake>, users: &[Snowflake], p: &Palette) -> El {
+/// `getTypingTierText`: past three typists, a count-based line (the playful tiers are
+/// English-only).
+fn typing_tier(count: usize, locale: &str) -> String {
+    match count {
+        _ if count <= 4 || !matches!(locale, "en-US" | "en-GB") => t("Several people are typing...").into(),
+        5..=9 => "A handful of keyboard warriors are assembling...".into(),
+        10..=14 => "A symphony of clacking keys is underway...".into(),
+        15..=19 => "It's a full-blown typing fiesta in here".into(),
+        _ => "Whoa, it's a typing apocalypse".into(),
+    }
+}
+
+/// `TypingUsers` in the composer status row: blinking dots (`Typing`), up to five faces, and
+/// `getRollingTypingText` with the names bold in their role colour.
+fn typing_rail(store: &Store, st: &ShellState, guild: Option<Snowflake>, users: &[Snowflake], p: &Palette) -> El {
     let names: Vec<String> = users.iter().map(|u| store.display_name(guild, *u)).collect();
-    let line = match names.as_slice() {
-        [a] => crate::i18n::tf("{a} is typing...", &[("a", a)]),
-        [a, b] => crate::i18n::tf("{a} and {b} are typing...", &[("a", a), ("b", b)]),
-        [a, b, c] => crate::i18n::tf("{a}, {b} and {c} are typing...", &[("a", a), ("b", b), ("c", c)]),
-        _ => t("Several people are typing...").into(),
+    let (line, spans) = if users.len() > 3 {
+        (typing_tier(users.len(), crate::i18n::locale()), Vec::new())
+    } else {
+        let line = match names.as_slice() {
+            [a] => crate::i18n::tf("{a} is typing...", &[("a", a)]),
+            [a, b] => crate::i18n::tf("{a} and {b} are typing...", &[("a", a), ("b", b)]),
+            [a, b, c] => crate::i18n::tf("{a}, {b} and {c} are typing...", &[("a", a), ("b", b), ("c", c)]),
+            _ => String::new(),
+        };
+        // Bold each name where it lands in the translated line.
+        let mut spans = Vec::new();
+        let mut from = 0;
+        for (u, n) in users.iter().zip(&names) {
+            if let Some(at) = line[from..].find(n.as_str()).map(|i| i + from) {
+                let color = guild.and_then(|g| store.member_color(g, *u)).map_or(p.text_primary_muted, role_color);
+                spans.push(Span::new(at, at + n.len()).weight(600.0).color(color));
+                from = at + n.len();
+            }
+        }
+        (line, spans)
     };
+    let dots = row().gap(2.0).center_y().children((0..3).map(|i| el().size(4.0, 4.0).radius(2.0).fill(p.text_primary_muted).looping(rune::LoopSpec::opacity(1.0, 0.25 * i as f64, 0.0, 1.0))));
+    let mut faces = row().center_y().ml(6.0);
+    for (i, u) in users.iter().take(5).enumerate() {
+        let face = row().padding(1.0).radius(7.0).fill(p.background_secondary_lighter).child(super::avatar(store, st, *u, 12.0, None, p.background_secondary_lighter, p));
+        faces = faces.child(if i == 0 { face } else { face.ml(-4.0) });
+    }
     row()
         .pin(Some(PAD), None, Some(PAD), Some(0.0))
         .h(dim::COMPOSER_STATUS_ROW_HEIGHT)
         .center_y()
-        .child(text(line).font(font(12.0, 500.0).lh(dim::COMPOSER_STATUS_LINE_HEIGHT)).color(p.text_primary_muted).truncate())
+        .child(dots)
+        .child(faces)
+        .child(rich(line, spans).font(font(12.0, 400.0).lh(dim::COMPOSER_STATUS_LINE_HEIGHT)).color(p.text_primary_muted).truncate().ml(8.0).shrink().min_w(0.0))
         .inert()
 }
 
@@ -1679,6 +1717,16 @@ fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palett
 mod tests {
     use super::*;
     use reflux_model::PartialUser;
+
+    #[test]
+    fn typing_tiers_follow_fluxer() {
+        assert_eq!(typing_tier(4, "en-US"), "Several people are typing...");
+        assert_eq!(typing_tier(5, "en-US"), "A handful of keyboard warriors are assembling...");
+        assert_eq!(typing_tier(14, "en-GB"), "A symphony of clacking keys is underway...");
+        assert_eq!(typing_tier(19, "en-US"), "It's a full-blown typing fiesta in here");
+        assert_eq!(typing_tier(20, "en-US"), "Whoa, it's a typing apocalypse");
+        assert_eq!(typing_tier(20, "ko"), t("Several people are typing..."), "tiers are English-only");
+    }
 
     /// Found live: a reply in search results (which leave out `referenced_message`) said its
     /// original was deleted.

@@ -2,6 +2,7 @@
 //! volume, voice processing (profiles, push-to-talk, activity threshold), mic test, voice
 //! channel display, camera and screen share quality, encoder preference.
 
+use reflux_model::Snowflake;
 use rune::{El, col, el, row, text};
 
 use super::tabs::section;
@@ -29,7 +30,7 @@ fn label(s: &str, p: &Palette) -> El {
 }
 
 /// The Voice & video tab body.
-pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let v = &st.voice;
     let set_ = &v.settings;
     let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
@@ -168,7 +169,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         false,
         p,
     ));
-    out = out.child(section(t("Entrance sound"), entrance(st, p, acc, layer), false, p));
+    out = out.child(section(t("Entrance sound"), entrance(store, st, p, acc, layer), false, p));
 
     // ---- Voice channels
     out = out.child(section(
@@ -281,24 +282,126 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     out
 }
 
-/// `EntranceSoundSection`: the clip for every voice channel and call (the `global` scope), the
-/// library with preview / delete, and upload through the trimmer.
-fn entrance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+/// `EntranceSoundSection`: which scope a sound applies to (everywhere, all communities, DMs, the
+/// open community, or another community's override), the sound for it (or the one it
+/// inherits), the library with preview / delete, and upload through the trimmer.
+fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let Some(lib) = &st.voice.entrance else {
         return col().w_full().gap(8.0).child(desc(t("Loading…"), p)).child(
             Button::new(t("Load")).variant(ButtonVariant::Secondary).key("entrance-load").on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::LoadEntrance))).el(p),
         );
     };
+    let here = st.guild;
+    let scope = st.voice.entrance_scope.clone().unwrap_or_else(|| here.map_or("global".into(), |g| format!("guild:{g}")));
+    let guild_name = |g: Snowflake| store.guilds.get(&g).and_then(|x| x.info.as_ref()).map_or_else(|| t("Unknown community").to_string(), |i| i.name.clone());
+    let label = |s: &str| match s {
+        "global" => t("All communities and DMs").to_string(),
+        "guilds" => t("All communities").to_string(),
+        "dms" => t("Direct messages").to_string(),
+        _ => s.strip_prefix("guild:").and_then(|g| g.parse().ok()).map_or_else(|| t("Unknown community").to_string(), |g| guild_name(Snowflake(g))),
+    };
+    let hint = match scope.as_str() {
+        "global" => t("Your fallback entrance sound for all communities and direct messages. More specific settings override it.").to_string(),
+        "guilds" => t("Used in communities that do not have their own sound set.").to_string(),
+        "dms" => t("Used in direct-message calls. If you do not set one, your global sound is used instead.").to_string(),
+        _ => crate::i18n::tf("Used in this community. If you do not set one, {productName} falls back to your community default, then your global default.", &[("productName", "Fluxer")]),
+    };
+    let tile = |value: String, glyph: Option<&'static rune::Icon>, guild: Option<Snowflake>, title: String, about: Option<String>| {
+        let on = value == scope;
+        let art = match (glyph, guild) {
+            (_, Some(g)) => crate::shell::guild_face(store, st, g, if about.is_some() { 32.0 } else { 24.0 }, false, p),
+            (Some(i), _) => row().size(32.0, 32.0).center().radius(8.0).fill(if on { p.brand_primary } else { p.background_modifier_hover }).child(rune::icon(i, 18.0).color(if on { rune::Color::WHITE } else { p.text_primary_muted })),
+            _ => row(),
+        };
+        let v = value.clone();
+        row()
+            .min_w(0.0)
+            .padding(10.0)
+            .gap(10.0)
+            .center_y()
+            .radius(8.0)
+            .fill(if on { p.background_modifier_selected } else { p.background_secondary })
+            .border(1.0, if on { p.brand_primary } else { p.background_modifier_accent })
+            .hover(p.background_modifier_hover)
+            .cursor(rune::Cursor::Pointer)
+            .role("radio")
+            .label(title.clone())
+            .key(format!("entrance-scope-{value}"))
+            .child(art)
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .gap(2.0)
+                    .child(text(title).font(font(14.0, 600.0).lh(18.0)).color(p.text_primary).truncate())
+                    .children(about.map(|a| text(a).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap())),
+            )
+            .on_press(move |s: &mut S| acc(s).voice.entrance_scope = Some(v.clone()))
+    };
+    let mut tiles = vec![
+        tile("global".into(), Some(&crate::icons::GLOBE_HEMISPHERE_WEST), None, label("global"), Some(t("Used by default unless a community or DM sound overrides it.").into())),
+        tile("guilds".into(), Some(&crate::icons::USERS_THREE), None, label("guilds"), Some(t("Used in communities that do not have their own sound.").into())),
+        tile("dms".into(), Some(&crate::icons::CHAT_CIRCLE_TEXT), None, label("dms"), Some(t("Used for all direct-message calls.").into())),
+    ];
+    if let Some(g) = here {
+        tiles.push(tile(format!("guild:{g}"), None, Some(g), guild_name(g), Some(t("Used only in this community.").into())));
+    }
+    let grid = el().w_full().equal_columns(2).gap(8.0).children(tiles);
+    // `orderedGuilds` minus the open one, by name.
+    let mut others: Vec<(Snowflake, String)> = store.guilds.keys().filter(|g| Some(**g) != here && store.guilds[*g].info.is_some()).map(|g| (*g, guild_name(*g))).collect();
+    others.sort_by(|a, b| a.1.cmp(&b.1));
+    let mut c = col()
+        .w_full()
+        .gap(12.0)
+        .child(desc(t("Plays for everyone else in the voice channel when you join."), p))
+        .child(col().w_full().gap(4.0).child(text(t("Applies to").to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted)).child(desc(&hint, p)))
+        .child(grid);
+    if !others.is_empty() {
+        let list = el().w_full().equal_columns(2).gap(6.0).children(others.into_iter().map(|(g, n)| tile(format!("guild:{g}"), None, Some(g), n, None)));
+        c = c.child(text(t("Community overrides").to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted)).child(list);
+    }
     let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
     let ids: Vec<String> = lib.sounds.iter().map(|x| x.id.to_string()).collect();
     let opts: Vec<(&str, &str)> = std::iter::once(("", t("None"))).chain(lib.sounds.iter().zip(&ids).map(|(x, id)| (id.as_str(), x.name.as_str()))).collect();
-    let cur = lib.selections.get("global").map(|x| x.to_string()).unwrap_or_default();
-    let pick = Select::new("entrance-global", &opts, Some(&cur))
-        .label(t("Entrance sound"))
+    let cur = lib.selections.get(&scope).map(|x| x.to_string()).unwrap_or_default();
+    let sc = scope.clone();
+    let pick = Select::new("entrance-scope-sound", &opts, Some(&cur))
+        .label(t("Sound for this scope"))
         .width(340.0)
-        .on_choose(move |s: &mut S, v| acc(s).intents.push(Intent::Voice(Op::SelectEntrance("global".into(), v.parse().ok().map(reflux_model::Snowflake)))))
+        .on_choose(move |s: &mut S, v| acc(s).intents.push(Intent::Voice(Op::SelectEntrance(sc.clone(), v.parse().ok().map(reflux_model::Snowflake)))))
         .el(&st.popups, pops, p, layer);
-    let mut c = col().w_full().gap(12.0).child(desc(t("Plays for everyone else in the voice channel when you join."), p)).child(pick);
+    c = c.child(pick);
+    // The sound this scope plays: set here, or inherited.
+    if let Some((id, from)) = lib.resolve_scope(&scope)
+        && let Some(x) = lib.sounds.iter().find(|x| x.id == id)
+    {
+        let badge = if from == scope { t("Set here").to_string() } else { crate::i18n::tf("Inherited from {inheritedFromLabel}", &[("inheritedFromLabel", &label(&from))]) };
+        c = c.child(
+            row()
+                .w_full()
+                .padding(10.0)
+                .gap(10.0)
+                .center_y()
+                .radius(8.0)
+                .fill(p.background_secondary)
+                .child(
+                    row()
+                        .size(36.0, 36.0)
+                        .center()
+                        .radius(18.0)
+                        .fill(p.background_modifier_hover)
+                        .hover(p.background_modifier_selected)
+                        .cursor(rune::Cursor::Pointer)
+                        .role("button")
+                        .label(t("Preview sound"))
+                        .key("entrance-preview-resolved")
+                        .child(rune::icon(&crate::icons::SPEAKER_HIGH_FILL, 20.0).color(p.text_primary))
+                        .on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::PreviewEntrance(id)))),
+                )
+                .child(col().grow(1.0).min_w(0.0).child(text(x.name.clone()).font(font(14.0, 600.0).lh(18.0)).color(p.text_primary).truncate()).child(text(format!("{:.1} s", x.duration_ms as f32 / 1000.0)).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)))
+                .child(text(badge).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted)),
+        );
+    }
     for x in &lib.sounds {
         let id = x.id;
         c = c.child(

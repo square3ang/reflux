@@ -143,7 +143,7 @@ pub enum Done {
     /// Back to a channel settings tab.
     ChannelTab(Snowflake, &'static str),
     /// Close the dialog and show a success toast.
-    Toast(&'static str),
+    Toast(String),
 }
 
 impl ShellState {
@@ -179,6 +179,14 @@ pub fn run(s: &mut crate::State, r: Req) {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("reflux: {} {}: {e}", r.method, r.path);
+                    // An outdated report flow: fetch it again and restart the walk.
+                    if same && e.code() == Some("REPORT_FLOW_OUTDATED") && let Some(target) = r.path.strip_prefix("/reports/flows/").and_then(|p| p.strip_suffix("/submissions")) {
+                        for k in ["flow", "steps", "screen", "checked"] {
+                            sh.form.data.remove(k);
+                        }
+                        sh.social(reqwest::Method::GET, format!("/reports/flows/{target}?surface=in_app"), None, Done::Form("flow".into()));
+                        return;
+                    }
                     if same {
                         sh.form.error = Some(crate::guild::describe(&e));
                     }

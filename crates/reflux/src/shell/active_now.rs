@@ -1,13 +1,13 @@
 //! `ActiveNowSidebar` beside the friends list: voice channels a friend who shares voice activity
 //! (or you) is in, as `VoiceActivityCard`s, busiest first.
-// shortcut: no stream preview thumbnail or "Watch stream" on streaming cards (the card says
-// STREAMING and joins the channel); the sidebar doesn't hide below a 1100px window.
+//! Streaming cards show the stream's preview (`useStreamPreview`) and "Watch stream"; the
+//! sidebar hides below a 1100px window.
 
 use std::collections::{HashMap, HashSet};
 
 use reflux_model::{ChannelType, Permissions, RelationshipType, Snowflake};
 use reflux_store::Store;
-use rune::{El, col, icon, row, text};
+use rune::{El, col, el, icon, row, text};
 
 use super::{ShellAccess, ShellState};
 use crate::i18n::t;
@@ -23,6 +23,51 @@ pub struct Activity {
     /// Everyone in the channel, the friend (or you) first.
     pub users: Vec<Snowflake>,
     pub streaming: bool,
+    /// The owner's `{guild|dm}:{channel}:{connection}` (`getStreamKey`) when streaming.
+    pub stream_key: Option<String>,
+}
+
+/// `STREAM_PREVIEW_REFRESH_INTERVAL_MS`, `STREAM_PREVIEW_INITIAL_UPLOAD_INTERVAL_MS` and
+/// `STREAM_PREVIEW_INITIAL_UPLOAD_MAX_ATTEMPTS`.
+const REFRESH_MS: u64 = 60_000;
+const RETRY_MS: u64 = 1_000;
+const RETRIES: u8 = 10;
+
+/// One stream's preview JPEG (`GET /streams/{key}/preview`).
+#[derive(Clone, Debug, Default)]
+pub struct Preview {
+    pub bytes: Option<std::sync::Arc<Vec<u8>>>,
+    pub fetched_ms: u64,
+    /// 404s in a row (the streamer hasn't uploaded one yet).
+    pub missing: u8,
+    pub loading: bool,
+}
+
+impl Preview {
+    /// Fetch now: a minute after the last one, or every second while still missing.
+    pub fn due(&self, now: u64) -> bool {
+        let wait = if self.bytes.is_none() && self.missing < RETRIES { RETRY_MS } else { REFRESH_MS };
+        !self.loading && (self.fetched_ms == 0 || now >= self.fetched_ms + wait)
+    }
+}
+
+/// `ActiveNowSidebar` is hidden below this window width.
+pub const MIN_WINDOW_WIDTH: f32 = 1100.0;
+
+/// Stream keys whose previews the visible sidebar shows (`canViewStreamPreview`: CONNECT in guilds).
+pub fn wanted_previews(store: &Store, st: &ShellState) -> Vec<String> {
+    if st.guild.is_some() || st.channel.is_some() || !shown(st) {
+        return Vec::new();
+    }
+    activities(store)
+        .into_iter()
+        .filter(|a| a.guild.is_none() || store.permissions(a.channel).contains(Permissions::CONNECT))
+        .filter_map(|a| a.stream_key)
+        .collect()
+}
+
+fn shown(st: &ShellState) -> bool {
+    crate::look::with(|l| l.active_now) && !(st.desktop.width > 0.0 && st.desktop.width < MIN_WINDOW_WIDTH)
 }
 
 /// (guild, channel) → (user, streaming).
@@ -42,10 +87,19 @@ pub fn activities(store: &Store) -> Vec<Activity> {
         .into_iter()
         .filter_map(|((guild, channel), mut users)| {
             users.sort();
-            let owner = users.iter().position(|(u, _)| *u == me).or_else(|| users.iter().position(|(u, _)| friends.contains(u)))?;
+            // You, else a streaming friend, else any friend.
+            let owner = users
+                .iter()
+                .position(|(u, _)| *u == me)
+                .or_else(|| users.iter().position(|(u, stream)| *stream && friends.contains(u)))
+                .or_else(|| users.iter().position(|(u, _)| friends.contains(u)))?;
             let streaming = users[owner].1;
             users.swap(0, owner);
-            Some(Activity { guild, channel, users: users.into_iter().map(|(u, _)| u).collect(), streaming })
+            let stream_key = streaming
+                .then(|| store.voice_states.get(&(guild, users[0].0))?.connection_id.clone())
+                .flatten()
+                .map(|conn| format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string())));
+            Some(Activity { guild, channel, users: users.into_iter().map(|(u, _)| u).collect(), streaming, stream_key })
         })
         .collect();
     out.sort_by(|a, b| b.users.len().cmp(&a.users.len()).then(a.channel.cmp(&b.channel)));
@@ -53,7 +107,7 @@ pub fn activities(store: &Store) -> Vec<Activity> {
 }
 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if !crate::look::with(|l| l.active_now) {
+    if !shown(st) {
         return None;
     }
     let list = activities(store);
@@ -151,7 +205,50 @@ fn card<S: 'static>(store: &Store, st: &ShellState, a: &Activity, p: &Palette, a
         .border(1.0, crate::ui::rgba(255, 255, 255, 0.04))
         .child(col().w_full().gap(4.0).child(label).child(context))
         .child(stack)
+        .children(a.stream_key.as_ref().map(|k| preview(store, st, a, k, p, acc)))
         .child(button)
+}
+
+/// `StreamPreviewSection`: the 16:9 preview, "Watch stream" on hover.
+fn preview<S: 'static>(store: &Store, st: &ShellState, a: &Activity, key: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let (g, c, user) = (a.guild, a.channel, a.users[0]);
+    let (w, h) = (300.0, 300.0 * 9.0 / 16.0);
+    let joined = st.voice.channel == Some((g, c));
+    let watching = joined && st.voice.watching == Some(user);
+    let pending = st.voice.watch_on_join == Some(user) && !watching;
+    let can_watch = user != store.my_id() && (joined || a.guild.is_none() || store.permissions(c).contains(Permissions::CONNECT));
+    let label = if watching { t("Watching") } else { t("Watch stream") };
+    let entry = st.voice.previews.get(key);
+    let shown = entry.and_then(|e| Some((e.bytes.clone()?, e.fetched_ms))).map(|(bytes, at)| st.media.local(&format!("stream-preview:{key}:{at}"), move || Ok(bytes.to_vec())));
+    let mut body = el().size(w, h).radius(dim::RADIUS_SM).clip_rounded(dim::RADIUS_SM).fill(p.background_tertiary).role("button").label(label.to_string()).key(format!("active-now-preview-{c}"));
+    body = match shown {
+        Some(crate::media::Load::Ready(px)) => body.child(el().size(w, h).pixels_fit(&px, rune::SurfaceFit::Fill).opacity(0.6)),
+        _ if entry.is_none_or(|e| e.loading && e.fetched_ms == 0) => body.child(row().size(w, h).center().child(crate::ui::misc::spinner(crate::ui::SpinnerSize::Small, p))),
+        _ => body.child(row().size(w, h).center().child(text(t("No preview yet")).font(font(12.8, 400.0).lh(16.0)).color(p.text_primary_muted))),
+    };
+    if pending {
+        return body.opacity(0.6);
+    }
+    if !can_watch || watching {
+        return body;
+    }
+    let overlay = row()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .center()
+        .fill(crate::ui::rgba(0, 0, 0, 0.55))
+        .group_opacity(0.0, 1.0)
+        .child(text(label).font(font(12.8, 600.0).lh(16.0)).color(rune::Color::WHITE));
+    body.hover_group().cursor(rune::Cursor::Pointer).child(overlay).on_press(move |s: &mut S| {
+        let sh = acc(s);
+        if sh.voice.channel == Some((g, c)) {
+            sh.voice.watching = Some(user);
+            sh.intents.push(super::Intent::Watch(Some(user)));
+        } else {
+            sh.join_voice(g, c);
+            sh.voice.watch_on_join = Some(user);
+        }
+        sh.select_guild(g, Some(c));
+    })
 }
 
 /// The empty state's zig-zag glyph (24×24, stroke 2).
@@ -181,5 +278,20 @@ mod tests {
         assert_eq!(a[0].channel, Snowflake(10));
         assert_eq!(a[0].users[0], Snowflake(2));
         assert!(a[0].streaming);
+        assert_eq!(a[0].stream_key, None, "no connection id, no preview");
+    }
+
+    #[test]
+    fn preview_schedule() {
+        let mut p = Preview::default();
+        assert!(p.due(5));
+        p.loading = true;
+        assert!(!p.due(5));
+        (p.loading, p.fetched_ms, p.missing) = (false, 1_000, 1);
+        assert!(!p.due(1_500) && p.due(2_000), "missing: retry each second");
+        p.missing = RETRIES;
+        assert!(!p.due(2_000) && p.due(61_000), "gave up: once a minute");
+        (p.missing, p.bytes) = (0, Some(Default::default()));
+        assert!(!p.due(30_000) && p.due(61_000));
     }
 }

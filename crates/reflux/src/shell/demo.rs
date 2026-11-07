@@ -187,7 +187,7 @@ impl Demo {
             json!({
                 "presences": [presence(ME, "online"), presence(1001, "online"), presence(1002, "idle"), presence(1003, "dnd"),
                               presence(1004, "online"), presence(1007, "online")],
-                "voice_states": [{"user_id": "1004", "channel_id": "2301", "self_stream": true},
+                "voice_states": [{"user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true},
                                  {"user_id": "1003", "channel_id": "2301", "self_mute": true, "self_deaf": true}],
             }),
         );
@@ -362,6 +362,12 @@ impl Demo {
                     "add" => super::FriendsTab::Add,
                     _ => super::FriendsTab::Online,
                 };
+                // `--friends=stream`: Active Now with a stream preview (any image will do).
+                if tab == "stream" {
+                    let bytes = Some(std::sync::Arc::new(include_bytes!("../../../../assets/media/images/app-icon.png").to_vec()));
+                    let preview = super::active_now::Preview { bytes, fetched_ms: 1, ..Default::default() };
+                    shell.voice.previews.insert(format!("{HQ}:2301:c1004"), preview);
+                }
             } else if a == "--profile" {
                 let note = store.notes.get(&Snowflake(1001)).cloned().unwrap_or_default();
                 shell.open_profile(Snowflake(1001), Some(Snowflake(HQ)), note, "member-1001".into(), crate::ui::Placement::LeftStart);
@@ -622,9 +628,14 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.modal = Some(Modal::NewDevice(super::voice::NewDevice { name: "E1x2 OTG".into(), input: Some("E1x2 OTG, USB Audio".into()), output: None }));
             return;
         }
+        "voice-message-rec" => {
+            let bars = (0..24).map(|i| (i as f32 * 0.9).sin().abs() * 0.7 + 0.1).collect();
+            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: true, secs: 7.3, bars, ..Default::default() });
+            return;
+        }
         "voice-message" => {
             let bars = (0..40).map(|i| (i as f32 * 0.7).sin().abs() * 0.8 + 0.1).collect();
-            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, bars, ..Default::default() });
+            st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, end: 3.6, start: 0.4, bars, ..Default::default() });
             return;
         }
         "meter" => {
@@ -809,6 +820,11 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.search.ran = "from:ada ship".into();
         }
         "search-options" => st.search.query.focused = true,
+        // The filter list with the arrow keys on its third row.
+        "search-nav" => {
+            st.search.query.focused = true;
+            st.search.nav = Some((String::new(), 2));
+        }
         "switcher" => {
             st.toggle_switcher();
             if let Some(sw) = &mut st.switcher {
@@ -853,14 +869,28 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
                 st.expr.reactions = Some((Snowflake(GENERAL), shot, "👍".into()));
             }
         }
-        "expr-info" | "sticker-info" => {
+        "expr-info" | "sticker-info" | "expr-info-clone" | "expr-info-join" | "expr-join" => {
             use super::expr::Fetched;
-            if scene == "expr-info" {
+            if scene == "expr-info-join" || scene == "expr-join" {
+                // A foreign emoji from a discoverable community.
+                let linus = ids[ids.len() - 2];
+                let kind = reflux_markdown::EmojiKind::Custom { name: "partyparrot".into(), id: "99".into(), animated: false };
+                super::expr::open_emoji_info(st, &kind, format!("m{linus}-t0-e0-img"));
+                st.expr.fetched.insert("meta:emoji:99".into(), Fetched::Done(json!({"guild_id": "4242", "allow_cloning": false})));
+                st.expr.fetched.insert("source:emoji:99".into(), Fetched::Done(json!({"id": "4242", "name": "Parrot Lovers", "icon": null, "features": ["DISCOVERABLE"]})));
+                if scene == "expr-join" {
+                    st.expr.info = None;
+                    st.expr.join = Some((Snowflake(4242), "Parrot Lovers".into(), None, ":partyparrot:".into(), false));
+                }
+            } else if scene != "sticker-info" {
                 // Linus's inline custom emoji (the first in his message body).
                 let linus = ids[ids.len() - 2];
                 let kind = reflux_markdown::EmojiKind::Custom { name: "fluxer".into(), id: "77".into(), animated: false };
                 super::expr::open_emoji_info(st, &kind, format!("m{linus}-t0-e0-img"));
                 st.expr.fetched.insert("meta:emoji:77".into(), Fetched::Done(json!({"guild_id": HQ.to_string(), "allow_cloning": true})));
+                if let Some(i) = st.expr.info.as_mut() {
+                    i.cloning = scene == "expr-info-clone";
+                }
             } else {
                 let m = store.messages(Snowflake(GENERAL)).iter().find(|m| !m.stickers.is_empty()).cloned();
                 if let Some(m) = m {
@@ -983,8 +1013,8 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
 
 /// `--threads[=<scene>]`: threads under #general (one from Alan's screenshot, joined; one
 /// standalone, joined and unread; one to join) and posts in the #help forum. Scenes: `panel`,
-/// `create`, `full`, `browser`, `closed`, `menu`, `settings`, `forum`, `forum-grid`,
-/// `forum-compose`, `forum-post`, `forum-settings`.
+/// `create`, `full`, `browser`, `browser-search`, `panel-wide`, `closed`, `menu`, `settings`,
+/// `forum`, `forum-grid`, `forum-compose`, `forum-post`, `forum-settings`, `forum-search`.
 fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     let now = st.now_ms;
     fn put(store: &mut Store, now: u64, t: &str, d: Value) {
@@ -1063,6 +1093,7 @@ fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         (Snowflake::from_timestamp_ms(at(-1, 16, 0)).0 + 3, "Can I run two accounts side by side?", 1006, 3, vec!["2291", "2292"], 0, false, "Asking for a friend who runs a community and a personal account."),
     ];
     let wayland = Snowflake(posts[1].0);
+    let (first_post, two) = (Snowflake(posts[0].0), Snowflake(posts[2].0));
     for (id, name, owner, count, tags, flags, joined, body) in posts {
         let mut p = thread(id, 2204, 11, name, owner, count, joined, json!({"applied_tags": tags, "flags": flags}));
         p["last_message_id"] = json!(Snowflake::from_timestamp_ms(t(11, 30)).0.to_string());
@@ -1091,6 +1122,15 @@ fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             super::threads::open_full(st, Snowflake(style));
         }
         "browser" => st.popups.toggle(super::threads::BROWSER),
+        "browser-search" => {
+            st.popups.toggle(super::threads::BROWSER);
+            st.threads.query = rune::TextEdit::new("release");
+            st.threads.archived.insert((general, super::threads::Tab::Search), super::threads::Archived { ids: vec![Snowflake(release)], key: "name=release".into(), ..Default::default() });
+        }
+        "panel-wide" => {
+            st.prefs.thread_panel_width = Some(640.0);
+            super::threads::open(st, Some(general), Snowflake(shot));
+        }
         "closed" => {
             st.popups.toggle(super::threads::BROWSER);
             st.threads.tab = super::threads::Tab::Archived;
@@ -1101,8 +1141,17 @@ fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.popups.close();
             st.threads.settings = Some(super::threads::Settings { thread: Snowflake(release), name: rune::TextEdit::new("release-0.4"), auto_archive: 4320, invitable: true, slowmode: 0 });
         }
-        "forum" | "forum-grid" | "forum-compose" | "forum-post" | "forum-settings" | "forum-tag" => {
+        "forum" | "forum-grid" | "forum-compose" | "forum-post" | "forum-settings" | "forum-tag" | "forum-search" => {
             st.select_channel(Snowflake(2204));
+            // The forum was last read before the Wayland post (it gets "New"), and the unjoined
+            // two-accounts post has 3 messages past its ack (FORUM_UNREADS).
+            st.threads.forum.snapshot = Some((Snowflake(2204), first_post));
+            put(store, now, "MESSAGE_ACK", json!({"channel_id": two.to_string(), "message_id": two.to_string()}));
+            st.threads.forum.post_unreads.insert(two, (3, two));
+            if scene == "forum-search" {
+                st.threads.forum.query = rune::TextEdit::new("wayland");
+                st.threads.archived.insert((Snowflake(2204), super::threads::Tab::Search), super::threads::Archived { ids: vec![wayland], key: "name=wayland".into(), ..Default::default() });
+            }
             if scene == "forum-grid" {
                 st.threads.forum.layout.insert(Snowflake(2204), 2);
             }

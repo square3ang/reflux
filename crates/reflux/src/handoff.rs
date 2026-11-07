@@ -17,6 +17,13 @@ use crate::ui::{Button, ButtonVariant};
 
 /// `BROWSER_LOGIN_HANDOFF_POLL_INTERVAL_MS`.
 const POLL_MS: u64 = 2000;
+/// `useCountdown`'s refresh.
+const TICK_MS: u64 = 500;
+
+/// Seconds left on the code (`None`: no expiry given).
+fn remaining(h: &Handoff, now: u64) -> Option<u64> {
+    h.expires_ms.map(|e| e.saturating_sub(now).div_ceil(1000))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Handoff {
@@ -24,6 +31,10 @@ pub struct Handoff {
     pub url: String,
     pub sso: bool,
     pub error: Option<String>,
+    /// `expires_at` (Unix ms), for `HandoffCodeDisplay`'s countdown.
+    pub expires_ms: Option<u64>,
+    /// "Copy code" was pressed at (ms): "Copied" for 2s.
+    pub copied_ms: Option<u64>,
 }
 
 /// `buildBrowserLoginHandoffURL`.
@@ -37,10 +48,10 @@ pub fn url(webapp: &str, api: &str, code: &str, sso: bool) -> String {
     u
 }
 
-/// `XXXX-XXXX` for reading aloud, as `displayCode` shows it.
+/// `formatDesktopHandoffCode`: 12 characters in groups of 6 (`XXXXXX-XXXXXX`).
 pub fn display(code: &str) -> String {
-    let c: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_uppercase();
-    if c.len() == 8 { format!("{}-{}", &c[..4], &c[4..]) } else { c }
+    let c: Vec<char> = code.chars().filter(|c| c.is_ascii_alphanumeric()).flat_map(char::to_uppercase).take(12).collect();
+    c.chunks(6).map(|g| g.iter().collect::<String>()).collect::<Vec<_>>().join("-")
 }
 
 /// Starts a browser sign-in (`sso`: straight into single sign-on).
@@ -55,8 +66,8 @@ pub fn start(s: &mut State, sso: bool) {
     s.login.submitting = true;
     spawn(async move {
         let r = inst.rest.request::<Value, Value>(Method::POST, "/auth/handoff/initiate", Some(&json!({}))).await;
-        let (code, secret) = match r {
-            Ok(v) => (v["code"].as_str().unwrap_or_default().to_string(), v["poll_secret"].as_str().map(str::to_owned)),
+        let (code, secret, expires_ms) = match r {
+            Ok(v) => (v["code"].as_str().unwrap_or_default().to_string(), v["poll_secret"].as_str().map(str::to_owned), v["expires_at"].as_str().and_then(reflux_store::parse_iso_ms)),
             Err(e) => {
                 let msg = crate::guild::describe(&e);
                 return update(move |s| {
@@ -67,20 +78,23 @@ pub fn start(s: &mut State, sso: bool) {
         };
         let link = url(&inst.discovery.endpoints.webapp, &inst.discovery.endpoints.api_client, &code, sso);
         crate::settings::privacy::open_url(&link);
-        let h = Handoff { code: code.clone(), url: link, sso, error: None };
+        let h = Handoff { code: code.clone(), url: link, sso, error: None, expires_ms, copied_ms: None };
         update(move |s| {
             s.login.submitting = false;
             s.login.step = Step::Handoff(h);
         });
-        // Polls while this attempt's screen is up.
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
+        // Polls while this attempt's screen is up, redrawing the countdown each half second.
+        for tick in 1u64.. {
+            tokio::time::sleep(std::time::Duration::from_millis(TICK_MS)).await;
             let (tx, rx) = tokio::sync::oneshot::channel();
             update(move |s| {
-                let _ = tx.send(s.login.attempt == attempt && matches!(s.login.step, Step::Handoff(_)));
+                let _ = tx.send(s.login.attempt == attempt && matches!(&s.login.step, Step::Handoff(h) if h.error.is_none()));
             });
             if !rx.await.unwrap_or(false) {
                 return;
+            }
+            if tick % (POLL_MS / TICK_MS) != 0 {
+                continue;
             }
             let path = format!("/auth/handoff/{code}/status");
             let r = match &secret {
@@ -129,37 +143,64 @@ fn fail(attempt: u64, e: String) {
     });
 }
 
-/// The waiting screen: the code to match in the browser, and a way back.
+/// The waiting screen (`HandoffCodeDisplay`): the code to match in the browser, its countdown,
+/// "Copy code", and a way back.
 pub fn view(h: &Handoff, p: &Palette) -> El {
     let heading = if h.sso { t("Single sign-on") } else { t("Sign in with your browser") };
-    let mut body = col()
-        .w_full()
-        .gap(18.0)
-        .child(crate::login::description(t("Finish signing in in the browser window that opened. Make sure it shows this code:"), p))
-        .child(
-            row()
-                .w_full()
-                .justify_center()
-                .py(12.0)
-                .radius(8.0)
-                .fill(p.background_tertiary)
-                .child(text(display(&h.code)).font(font(28.0, 700.0).lh(34.0).mono().tracking(2.0)).color(p.text_primary).selectable(true)),
-        );
-    body = match &h.error {
-        Some(e) => body.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap()),
-        None => body.child(row().w_full().justify_center().gap(8.0).center_y().child(crate::ui::spinner(p.text_tertiary)).child(text(t("Waiting for your browser…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))),
-    };
-    let url = h.url.clone();
+    let now = crate::app::now_ms();
+    let left = remaining(h, now);
     let sso = h.sso;
-    let again = if h.error.is_some() {
-        Button::<State>::new(t("Start again")).key("handoff-restart").fit_container().on_press(move |s: &mut State| start(s, sso)).el(p)
+    let regenerate = |label: &str| Button::<State>::new(label).key("handoff-restart").fit_container().on_press(move |s: &mut State| start(s, sso)).el(p);
+    let body = if left == Some(0) && h.error.is_none() {
+        col()
+            .w_full()
+            .gap(18.0)
+            .child(text(t("Code expired")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
+            .child(crate::login::description(t("This handoff code has expired. Generate a new one to continue."), p))
+            .child(regenerate(t("Generate new code")))
     } else {
-        Button::<State>::new(t("Open browser again")).key("handoff-open").variant(ButtonVariant::Secondary).fit_container().on_press(move |_: &mut State| crate::settings::privacy::open_url(&url)).el(p)
+        let code = h.code.clone();
+        let copied = h.copied_ms.is_some_and(|at| now < at + 2000);
+        let mut body = col()
+            .w_full()
+            .gap(18.0)
+            .child(crate::login::description(t("Finish signing in in the browser window that opened. Make sure it shows this code:"), p))
+            .child(
+                col()
+                    .w_full()
+                    .items_center()
+                    .gap(8.0)
+                    .py(12.0)
+                    .radius(8.0)
+                    .fill(p.background_tertiary)
+                    .child(text(display(&h.code)).font(font(28.0, 700.0).lh(34.0).mono().tracking(2.0)).color(p.text_primary).selectable(true))
+                    .children(left.map(|n| text(crate::i18n::tf("Expires in {remaining}s", &[("remaining", &n.to_string())])).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary)))
+                    .child(
+                        Button::<State>::new(if copied { t("Copied") } else { t("Copy code") })
+                            .variant(ButtonVariant::Secondary)
+                            .key("handoff-copy")
+                            .on_press_tx(move |s: &mut State, tx: &mut rune::Tx| {
+                                tx.copy(code.clone());
+                                if let Step::Handoff(h) = &mut s.login.step {
+                                    h.copied_ms = Some(crate::app::now_ms());
+                                }
+                                tx.wake_after(std::time::Duration::from_millis(2000));
+                            })
+                            .el(p),
+                    ),
+            );
+        body = match &h.error {
+            Some(e) => body.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap()),
+            None => body.child(row().w_full().justify_center().gap(8.0).center_y().child(crate::ui::spinner(p.text_tertiary)).child(text(t("Waiting for your browser…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))),
+        };
+        let url = h.url.clone();
+        body.child(if h.error.is_some() {
+            regenerate(t("Start again"))
+        } else {
+            Button::<State>::new(t("Open browser again")).key("handoff-open").variant(ButtonVariant::Secondary).fit_container().on_press(move |_: &mut State| crate::settings::privacy::open_url(&url)).el(p)
+        })
     };
-    col()
-        .w_full()
-        .child(crate::login::title(heading, p))
-        .child(body.child(again).child(crate::login::footer(p, false, |s| s.login.step = Step::Method, None)))
+    col().w_full().child(crate::login::title(heading, p)).child(body.child(crate::login::footer(p, false, |s| s.login.step = Step::Method, None)))
 }
 
 #[cfg(test)]
@@ -168,6 +209,10 @@ mod tests {
     fn handoff_urls_and_codes_match_fluxer() {
         let u = super::url("https://web.fluxer.app/", "https://api.fluxer.app/v1", "ab12cd34", true);
         assert_eq!(u, "https://web.fluxer.app/login?handoff=1&code=ab12cd34&api=https%3A%2F%2Fapi.fluxer.app&sso=1");
-        assert_eq!(super::display("ab12cd34"), "AB12-CD34");
+        assert_eq!(super::display("abcdef234567"), "ABCDEF-234567");
+        assert_eq!(super::display("ABCDEF-234567"), "ABCDEF-234567");
+        let h = super::Handoff { code: String::new(), url: String::new(), sso: false, error: None, expires_ms: Some(10_000), copied_ms: None };
+        assert_eq!(super::remaining(&h, 8_500), Some(2));
+        assert_eq!(super::remaining(&h, 12_000), Some(0));
     }
 }

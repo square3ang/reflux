@@ -201,6 +201,8 @@ pub struct Expr {
     /// "Remove all reactions" waiting on its confirmation.
     pub confirm_clear: Option<(Snowflake, Snowflake)>,
     pub info: Option<Info>,
+    /// "Join community" confirmation from an info card: (guild, name, icon, expression name, sticker).
+    pub join: Option<(Snowflake, String, Option<String>, String, bool)>,
     /// Meme filter: 0 all, 1 images, 2 videos.
     pub meme_filter: u8,
 }
@@ -679,15 +681,19 @@ fn search_bar<S: 'static>(st: &ShellState, placeholder: String, p: &Palette, acc
 /// A guild's icon at `size` (its acronym on `background-secondary` without one).
 fn guild_icon(store: &Store, st: &ShellState, g: Snowflake, size: f32, p: &Palette) -> El {
     let info = store.guilds.get(&g).and_then(|x| x.info.as_ref());
-    let name = info.map(|i| i.name.clone()).unwrap_or_default();
-    match info.and_then(|i| i.icon.clone()).map(|h| st.media.asset(|b, sc| crate::media::guild_icon_url(b, g, &h, size, sc))) {
+    guild_face(st, g, &info.map(|i| i.name.clone()).unwrap_or_default(), info.and_then(|i| i.icon.as_deref()), size, p)
+}
+
+/// A guild's icon (or acronym) from its parts, for guilds you may not be in.
+fn guild_face(st: &ShellState, g: Snowflake, name: &str, icon: Option<&str>, size: f32, p: &Palette) -> El {
+    match icon.map(|h| st.media.asset(|b, sc| crate::media::guild_icon_url(b, g, h, size, sc))) {
         Some(Load::Ready(px)) => el().size(size, size).radius(size * 0.3).pixels_fit(&px, rune::SurfaceFit::Fill),
         _ => row()
             .size(size, size)
             .center()
             .radius(size * 0.3)
             .fill(p.background_secondary)
-            .child(text(super::acronym(&name)).font(font((size * 0.4).max(7.0), 600.0)).color(p.text_primary).truncate()),
+            .child(text(super::acronym(name)).font(font((size * 0.4).max(7.0), 600.0)).color(p.text_primary).truncate()),
     }
 }
 

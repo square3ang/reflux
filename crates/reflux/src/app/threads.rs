@@ -182,6 +182,10 @@ pub(super) fn run(s: &mut State, o: Op) {
                 }
             });
         }
+        Op::Search { parent, tab, query, more } => {
+            let offset = if more { s.app.shell.threads.archived.get(&(parent, tab)).map_or(0, |a| a.ids.len()) } else { 0 };
+            spawn(search(inst, generation, parent, tab, query, more, offset));
+        }
         Op::PostData { forum, ids } => {
             call::<Value>(inst, generation, Method::POST, format!("/channels/{forum}/post-data"), Some(json!({ "thread_ids": ids })), move |s, r| {
                 let Ok(v) = r else { return };
@@ -193,6 +197,73 @@ pub(super) fn run(s: &mut State, o: Op) {
                 }
             });
         }
+    }
+}
+
+/// `ForumPosts.fetchList` / `useThreadSearch`: waits out the debounce for a fresh name search,
+/// then asks until the index is ready (202 → `retry_after`, doubled per attempt, at most 6
+/// retries) and fills the `(parent, tab)` list unless its query changed meanwhile.
+async fn search(inst: Arc<Instance>, generation: u64, parent: Snowflake, tab: Tab, query: String, more: bool, offset: usize) {
+    // Still the list's query, in this session?
+    let current = |query: String| async move {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        update(move |s| {
+            let _ = tx.send(s.app.generation == generation && s.app.shell.threads.archived.get(&(parent, tab)).is_some_and(|a| a.key == query));
+        });
+        rx.await.unwrap_or(false)
+    };
+    if tab == Tab::Search && !more {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    let path = format!("/channels/{parent}/threads/search?{query}&limit={}&offset={offset}", threads::SEARCH_LIMIT);
+    for attempt in 0..=6u32 {
+        if !current(query.clone()).await {
+            return;
+        }
+        let r = inst.rest.get::<Value>(&path).await;
+        let ready = !matches!(&r, Ok(v) if v.get("threads").is_none());
+        let q = query.clone();
+        let retry_after = r.as_ref().ok().and_then(|v| v["retry_after"].as_f64());
+        update(move |s| {
+            if s.app.generation != generation || s.app.shell.threads.archived.get(&(parent, tab)).is_none_or(|a| a.key != q) {
+                return;
+            }
+            match r {
+                Ok(v) if ready => {
+                    let l: ThreadList = serde_json::from_value(v.clone()).unwrap_or_default();
+                    s.app.store.add_threads(&l.threads, &l.members);
+                    // A forum list carries the posts' first messages.
+                    for m in v["first_messages"].as_array().into_iter().flatten() {
+                        if let Ok(m) = serde_json::from_value::<Message>(m.clone()) {
+                            s.app.shell.threads.forum.first.insert(m.channel_id, Some(m));
+                        }
+                    }
+                    let a = s.app.shell.threads.archived.entry((parent, tab)).or_default();
+                    for t in l.threads.iter().filter(|t| t.parent_id == Some(parent)) {
+                        if !a.ids.contains(&t.id) {
+                            a.ids.push(t.id);
+                        }
+                    }
+                    (a.has_more, a.loading, a.indexing, a.failed) = (l.has_more, false, false, false);
+                }
+                Ok(_) if attempt < 6 => s.app.shell.threads.archived.entry((parent, tab)).or_default().indexing = true,
+                Err(e) if e.code() == Some("FEATURE_TEMPORARILY_DISABLED") && tab == Tab::Archived => {
+                    // `fetchArchivedFallback`: page `archived/public` instead.
+                    s.app.shell.threads.search_disabled = true;
+                    run(s, Op::LoadArchived { parent, tab, more });
+                }
+                _ => {
+                    let a = s.app.shell.threads.archived.entry((parent, tab)).or_default();
+                    (a.loading, a.indexing, a.failed) = (false, false, true);
+                }
+            }
+        });
+        if ready {
+            return;
+        }
+        // `searchRetryDelayMs`.
+        let ms = (retry_after.unwrap_or(1.0).max(1.0) * 1000.0 * 2f64.powi(attempt as i32)).min(60_000.0);
+        tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
     }
 }
 
@@ -271,9 +342,15 @@ pub(super) fn tick(s: &mut State) -> bool {
     let sh = &s.app.shell;
     let store = &s.app.store;
     let mut ops = Vec::new();
+    // `/threads/search` lists whose query changed (re)load from the start.
+    let mut lists: Vec<(Snowflake, Tab, String)> = threads::browser_search(store, sh).map(|(p, q)| (p, Tab::Search, q)).into_iter().collect();
     if let Some(forum) = sh.channel.and_then(|c| store.channels.get(&c)).filter(|c| reflux_store::threads::is_forum(c.kind)) {
-        if !sh.threads.archived.contains_key(&(forum.id, Tab::Archived)) {
-            ops.push(Op::LoadArchived { parent: forum.id, tab: Tab::Archived, more: false });
+        let (search, archived) = crate::shell::forum::search_keys(store, sh, forum);
+        lists.extend(search.map(|q| (forum.id, Tab::Search, q)));
+        match archived {
+            Some(q) => lists.push((forum.id, Tab::Archived, q)),
+            None if !sh.threads.archived.contains_key(&(forum.id, Tab::Archived)) => ops.push(Op::LoadArchived { parent: forum.id, tab: Tab::Archived, more: false }),
+            None => {}
         }
         let missing: Vec<Snowflake> = store
             .threads(forum.id)
@@ -286,14 +363,25 @@ pub(super) fn tick(s: &mut State) -> bool {
             ops.push(Op::PostData { forum: forum.id, ids: missing });
         }
     }
+    for (parent, tab, query) in lists {
+        if sh.threads.archived.get(&(parent, tab)).is_none_or(|a| a.key != query) {
+            ops.push(Op::Search { parent, tab, query, more: false });
+        }
+    }
+    let forum_unreads = forum_unreads(s);
+    let sh = &s.app.shell;
+    let store = &s.app.store;
     let panel = match sh.threads.panel {
         Some(threads::Panel::Thread(t)) if sh.threads.at_bottom && store.has_unread(t) => Some(t),
         _ => None,
     };
-    let mut changed = false;
+    let mut changed = forum_unreads;
     for o in ops {
         match &o {
             Op::LoadArchived { parent, tab, .. } => s.app.shell.threads.archived.entry((*parent, *tab)).or_default().loading = true,
+            Op::Search { parent, tab, query, .. } => {
+                s.app.shell.threads.archived.insert((*parent, *tab), threads::Archived { key: query.clone(), loading: true, ..Default::default() });
+            }
             Op::PostData { ids, .. } => s.app.shell.threads.forum.requested.extend(ids.iter().copied()),
             _ => {}
         }
@@ -315,6 +403,67 @@ pub(super) fn tick(s: &mut State) -> bool {
         }
     }
     changed
+}
+
+/// `ForumReadState` for the open forum: the snapshot behind "New", and Request Forum Unreads
+/// (op 28) for listed posts the user hasn't joined whose ack moved since it was last asked,
+/// up to 40 a request and 4 requests every 5 s.
+fn forum_unreads(s: &mut State) -> bool {
+    let store = &s.app.store;
+    let sh = &s.app.shell;
+    let forum = sh.channel.and_then(|c| store.channels.get(&c)).filter(|c| reflux_store::threads::is_forum(c.kind));
+    let snapshot = forum.and_then(|f| match sh.threads.forum.snapshot {
+        Some((id, at)) if id == f.id => Some((id, at)),
+        _ => store.read_states.get(&f.id).and_then(|r| r.last_message_id).map(|at| (f.id, at)),
+    });
+    let mut changed = snapshot != sh.threads.forum.snapshot;
+    let (Some(forum), Some(guild)) = (forum, forum.and_then(|f| f.guild_id)) else {
+        s.app.shell.threads.forum.snapshot = snapshot;
+        return changed;
+    };
+    let now = now_ms();
+    let f = &sh.threads.forum;
+    let recent = f.sends.iter().filter(|t| now - **t < 5000).count();
+    let (cur, old) = crate::shell::forum::posts(store, sh, forum);
+    let threads: Vec<_> = cur
+        .into_iter()
+        .chain(old)
+        .filter(|t| t.member.is_none())
+        .filter_map(|t| Some((t.id, store.read_states.get(&t.id)?.last_message_id?)))
+        .filter(|(id, ack)| f.sent_acks.get(id) != Some(ack))
+        .take(40)
+        .collect();
+    let fid = forum.id;
+    let connected = s.app.connection == Some(ConnectionState::Connected);
+    s.app.shell.threads.forum.snapshot = snapshot;
+    if threads.is_empty() || recent >= 4 || !connected {
+        return changed;
+    }
+    let Some(gw) = &s.app.gateway else { return changed };
+    let req = reflux_model::RequestForumUnreads {
+        guild_id: guild,
+        channel_id: fid,
+        threads: threads.iter().map(|(id, ack)| reflux_model::ForumUnreadRequest { thread_id: *id, ack_message_id: Some(*ack) }).collect(),
+    };
+    if gw.send(Command::Send(GatewayPayload::command(OpCode::REQUEST_FORUM_UNREADS, req))).is_ok() {
+        let f = &mut s.app.shell.threads.forum;
+        f.sends.retain(|t| now - *t < 5000);
+        f.sends.push(now);
+        f.sent_acks.extend(threads);
+        changed = true;
+    }
+    changed
+}
+
+/// `handleForumUnreads`: counts for the acks we asked about; anything else clears.
+pub(super) fn on_forum_unreads(s: &mut State, d: &reflux_model::ForumUnreads) {
+    let f = &mut s.app.shell.threads.forum;
+    for e in &d.threads {
+        match (e.count.filter(|n| *n > 0), f.sent_acks.get(&e.thread_id)) {
+            (Some(n), Some(ack)) => f.post_unreads.insert(e.thread_id, (n, *ack)),
+            _ => f.post_unreads.remove(&e.thread_id),
+        };
+    }
 }
 
 /// `threads: true` for the open guild, plus the member list of the open thread

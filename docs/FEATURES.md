@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -72,11 +72,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Passkeys | PARTIAL | USB only | D/Passkeys.ts |
 | Reset pw / verify email / recover pages | DONE | `fluxer://` reset, verify, recover, authorize-ip and wasntme links open the web app (Fluxer desktop doesn't route them in-app either) | F/auth/… |
 | SSO login | DONE | via the browser handoff | AuthSsoPanel.tsx |
-| Browser login handoff | MISSING | | BrowserLoginHandoffModal.tsx |
+| Browser login handoff | DONE | (the code, its 6-6 grouping, expiry countdown, copy and regenerate; approving a code happens on Fluxer's web login page, not in the desktop client) | BrowserLoginHandoffModal.tsx |
 | Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
 | Sudo verification | DONE | | SudoVerificationModal.tsx |
 | Account restriction / age gate / new-device | DONE | no "Why we ask" help link on the birthday gate; its "Sign out" skips the logout confirm; audio devices are polled every 10 s (no devicechange event) and grouped by card name | AccountRestrictionScreen.tsx, DateOfBirthGate.tsx, NewDeviceMonitoring.tsx |
-| OAuth2 authorize | PARTIAL | scopes can't be unticked; bot permissions not listed; no group DM destination | OAuthAuthorizeModal.tsx |
+| OAuth2 authorize | DONE |  | OAuthAuthorizeModal.tsx |
 | Terms acceptance | DONE | | TermsAcceptanceModal.tsx |
 | Token in OS keyring | DONE | falls back to the 0600 file when no keyring | D/DesktopAppStorage.ts |
 
@@ -93,7 +93,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
-| Pop-out windows | PARTIAL | one voice pop-out window (call grid, a camera, or a stream); no chat pop-outs | | PopoutWindow.tsx |
+| Pop-out windows | PARTIAL | one voice pop-out at a time (Fluxer keeps several, keyed by call/tile); no Quick CSS editor pop-out; Fluxer has no chat pop-outs |  | PopoutWindow.tsx |
 | Error / rate-limit modals | PARTIAL | | GenericErrorModal.tsx |
 
 ### channel/
@@ -108,7 +108,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Compact layout | PARTIAL | text wraps under its own start, not 32px under the name (no negative text-indent in Rune) | CompactMessageLayout.tsx |
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
-| Typing indicator tiers | PARTIAL | channel-list dots don't animate | ChannelTyping.tsx |
+| Typing indicator tiers | DONE | (tier strings >4 typers are English-only) | ChannelTyping.tsx |
 | Rich composer (pills, toolbar) | PARTIAL | custom emoji pills show `:name:`; toolbar sits at the composer's left, not over the selection | F/lexical/* |
 | Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
@@ -123,7 +123,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
 | Group DM management | DONE | | EditGroupModal.tsx |
-| Active Now | PARTIAL | no stream thumbnail / Watch stream; doesn't hide on narrow windows | ActiveNowSidebar.tsx |
+| Active Now | DONE |  | ActiveNowSidebar.tsx |
 | Private channel create step | DONE | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
 | Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
@@ -157,7 +157,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
 | TTS | DONE | (speaks through the OS voice tool: spd-say/espeak-ng/say/PowerShell) | TextToSpeech.tsx |
 | Auto-idle | DONE | | LocalPresence.ts |
-| Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
+| Thread/forum notification levels | DONE | (no live test) | F/threads/* |
 
 ### relationship / user
 | Feature | Status | Missing | Official source |
@@ -169,7 +169,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Full profile modal | DONE | | UserProfileModal.tsx |
 | Change own nickname | DONE | | ChangeNicknameModal.tsx |
 | Community member avatars | DONE | in the selected community every avatar uses the member's own; profile banners too | F/user/components/profile/* |
-| User context menu | PARTIAL | call, invite, local mute | UserContextMenu.tsx |
+| User context menu | DONE |  | UserContextMenu.tsx |
 
 ### guild
 | Feature | Status | Missing | Official source |
@@ -188,7 +188,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Kick / Ban | DONE | | KickMemberModal.tsx, BanMemberModal.tsx |
 | Timeout | DONE | | TimeoutMemberModal.tsx |
 | Ban details | DONE | | BanDetailsModal.tsx |
-| Report | PARTIAL | untested against a live server | ReportFlowModal.tsx |
+| Report | DONE | (payloads match reports.mdx; not submitted live) | ReportFlowModal.tsx |
 | Voice moderation | DONE | (community mute/deafen, move, disconnect) | VoiceParticipantMenuItems.tsx |
 
 ### voice
@@ -205,28 +205,28 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Voice details popout | DONE | | VoiceDetailsPopout.tsx |
 | PiP / pop-out | PARTIAL | PiP = small always-on-top pop-out; Wayland ignores always-on-top | | PiPOverlay.tsx |
 | PTT / VAD | PARTIAL | the recorded key works in-window only; the global key comes from the portal (Linux), none on Windows/macOS | HoldSources.ts |
-| Entrance sounds | PARTIAL | upload / trim / select (global scope) / play both ways; no per-guild scope picker; upload untested live (read-only) | | EntranceSoundTrimmerModal.tsx |
+| Entrance sounds | DONE | (upload untested live) |  | EntranceSoundTrimmerModal.tsx |
 | Moderator move / reconnect | DONE | | VoiceReconnectionManager.tsx |
 | E2EE indicator | PARTIAL | key derivation matched to livekit-client (PBKDF2, ratchet window 0); the test server grants no e2ee_key, so untested live | VoiceE2EEIndicator.tsx |
 | Stream audio (Linux) | PARTIAL | PipeWire app capture (pw-dump + pipewiresrc) never exercised in a real call | | AudioSourcePickerLinux.tsx |
 | Join confirm / channel full | DONE | | VoiceConnectionConfirmModal.tsx |
-| Voice messages | PARTIAL | WAV like Fluxer; no hold-to-record, trimming or playback speed | VoiceMessageComposerModal.tsx |
+| Voice messages | PARTIAL | selection preview has no Pause/playhead; no volume control on the player; speed stays 1x without GStreamer (hold-to-record is mobile-only in Fluxer) | VoiceMessageComposerModal.tsx |
 
 ### threads / forum
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Threads | PARTIAL | resizable panel, browser search, hoisted-role groups in thread members, timeouts; untested against a live server (demo fixtures + store tests only) | F/threads/* |
-| Forum channels + tags | PARTIAL | server-side search/tag filter (client-side over loaded posts), media-channel gallery grid; untested against a live server | F/forum/* |
+| Threads | DONE | (demo fixtures + store tests; untested against a live server) | F/threads/* |
+| Forum channels + tags | DONE | (untested against a live server) | F/forum/* |
 
 ### expressions / emoji / gift / invite / discovery / search / input / theme / i18n / a11y / misc
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Animated emoji/avatars/stickers | DONE | | |
-| Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
+| Expression info popout, favorite memes, clone expression | DONE | (favorite/clone sit on the card; Fluxer also has them in the context menu; emoji/sticker slot limits ignore guild-feature rules) | F/expressions/* |
 | Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
 | Invite: friends list, accept preview, pause | DONE | | F/invite/* |
 | Discovery page | DONE | load-more pages via `offset` | DiscoveryPage.tsx |
-| Search UI chips/suggestions, history | PARTIAL | filter + value suggestions and per-scope history done; no chips, scope menu, date pickers or keyboard nav | F/search/* |
+| Search UI chips/suggestions, history | PARTIAL | filter + value suggestions, per-scope history and keyboard nav done; no chips, scope menu or date pickers | F/search/* |
 | Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |

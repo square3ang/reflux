@@ -17,7 +17,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     match (st.target, st.popups.open.as_deref()) {
         (Some(t), Some("ctx-menu")) => {
             let menu = match t {
-                Target::User { user, guild, dm } => user_menu(store, st, user, guild, dm, acc),
+                Target::User { user, guild, dm } => user_menu(store, st, user, guild, dm, p, acc),
                 Target::Guild(g) => guild_menu(store, st, g, acc),
                 Target::Channel(c) => channel_menu(store, st, c, acc),
             };
@@ -45,10 +45,13 @@ fn copy_id<S: 'static>(label: &str, id: Snowflake) -> MenuItem<S> {
     MenuItem::new(format!("copy-{label}"), label).icon(&icons::SNOWFLAKE).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(id.to_string()))
 }
 
-/// `UserContextMenu`: profile, mention, message, note, relationship and block, copy ID.
-// shortcut: calls, invite-to-community and local mute aren't listed yet.
-fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, dm: Option<Snowflake>, acc: ShellAccess<S>) -> Menu<S> {
+/// `UserContextMenu`: profile, mention, message, call, note, the DM call's volume / local mute /
+/// entrance sound, invite to community, relationship and block, copy ID.
+fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, dm: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
     let me = user == store.my_id();
+    let bot = store.users.get(&user).is_some_and(|u| u.bot);
+    // `hasActiveDirectCallWithUser`.
+    let in_call_with = store.private_channels().into_iter().any(|c| c.kind == ChannelType::DM && c.recipients.iter().any(|r| r.id == user) && store.calls.contains_key(&c.id));
     let mut m = Menu::new("ctx-menu");
     if let Some(c) = dm {
         m = m.item(mark_read(unread(store, std::iter::once(c)), acc)).entry(crate::social::mute_entry(store, st, None, Some(c), "conversation", acc)).separator();
@@ -75,12 +78,26 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
     if !me && dm.is_none() {
         m = m.item(MenuItem::new("message", t("Message")).icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user))));
     }
+    if !me && !bot && !in_call_with {
+        m = m.item(MenuItem::new("start-call", t("Start voice call")).icon(&icons::PHONE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(user))));
+    }
     // shortcut: only your own nickname (CHANGE_NICKNAME); MANAGE_NICKNAMES on others isn't offered.
     if let Some(g) = guild.filter(|&g| me && crate::guild::can(store, g, reflux_model::Permissions::CHANGE_NICKNAME)) {
         m = m.item(MenuItem::new("nickname", t("Change nickname")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
     }
     if !me {
-        m = m.separator().item(MenuItem::new("note", t("Add note")).icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true))).separator();
+        m = m.separator().item(MenuItem::new("note", t("Add note")).icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true)));
+        // `isActiveCallParticipant`: in this DM's running call.
+        let in_dm_call = dm.is_some_and(|c| store.calls.contains_key(&c) && store.voice_states.get(&(None, user)).is_some_and(|v| v.channel_id == Some(c)));
+        if in_dm_call {
+            for e in super::call::participant_items(st, user, p, acc) {
+                m = m.entry(e);
+            }
+        }
+        m = m.separator();
+        if !bot {
+            m = invite_submenu(store, st, user, m, acc);
+        }
         let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());
         let kind = store.relationships.get(&user).map(|r| r.kind);
         m = match kind {
@@ -127,6 +144,28 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
         }
     }
     m
+}
+
+/// `InviteToCommunityMenuItem`: your communities the user isn't known to be in that have a
+/// channel to invite to, by name.
+fn invite_submenu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, m: Menu<S>, acc: ShellAccess<S>) -> Menu<S> {
+    let mut guilds: Vec<(String, Snowflake, Snowflake)> = store
+        .guilds
+        .iter()
+        .filter(|(g, gs)| store.member(**g, user).is_none() && !gs.visiting)
+        .filter_map(|(g, gs)| Some((gs.info.as_ref()?.name.clone(), *g, crate::guild::invitable_channel(store, st, *g)?)))
+        .collect();
+    if guilds.is_empty() {
+        return m;
+    }
+    guilds.sort_by_key(|a| a.0.to_lowercase());
+    let items = guilds
+        .into_iter()
+        .map(|(name, guild, channel)| {
+            crate::ui::MenuEntry::Item(MenuItem::new(format!("invite-{guild}"), name).on_select(move |s: &mut S| acc(s).intents.push(Intent::InviteToGuild { user, guild, channel })))
+        })
+        .collect();
+    m.submenu("invite-to-community", t("Invite to community"), items)
 }
 
 fn close_dm(st: &mut ShellState, c: Snowflake) {
@@ -179,6 +218,17 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
     let noun = if ch.kind == ChannelType::GROUP_DM { "conversation" } else if ch.kind == ChannelType::GUILD_CATEGORY { "category" } else { "channel" };
     let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, std::iter::once(c)), acc)).separator().entry(crate::social::mute_entry(store, st, guild, Some(c), noun, acc));
     if let Some(g) = guild {
+        if reflux_store::threads::is_forum(ch.kind) {
+            // `setNewPostsUnreadEnabled`: NEW_FORUM_THREADS_OFF / _ON in the override's flags.
+            let on = store.new_posts_unread(ch);
+            let patch = crate::social::override_patch(store, guild, c, |o| {
+                let flags = o["flags"].as_u64().unwrap_or(0) & !reflux_store::NEW_FORUM_THREADS_MASK as u64;
+                o["flags"] = serde_json::json!(flags | if on { reflux_store::NEW_FORUM_THREADS_OFF } else { reflux_store::NEW_FORUM_THREADS_ON } as u64);
+            });
+            m = m.separator().item(MenuItem::new("new-posts-unread", t("Show new posts as unread")).checkbox(on).on_select(move |s: &mut S| {
+                acc(s).intents.push(Intent::PatchGuildSettings { guild, patch: patch.clone() })
+            }));
+        }
         let invitable = matches!(ch.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
             && store.permissions(c).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
         if invitable {

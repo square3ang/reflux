@@ -224,7 +224,7 @@ pub fn gift_accept<S: 'static>(st: &ShellState, code: &str, p: &Palette, acc: Sh
                 let help = tf("Claim your gift to activate your {premiumProductName} subscription!", &[("premiumProductName", PRODUCT)]);
                 let code = code.to_string();
                 let claim = Button::new(t("Claim gift")).submitting(st.form.busy).key("gift-claim").on_press(move |s: &mut S| {
-                    acc(s).social(Method::POST, format!("/gifts/{code}/redeem"), None, Done::Toast("Gift redeemed!"))
+                    acc(s).social(Method::POST, format!("/gifts/{code}/redeem"), None, Done::Toast("Gift redeemed!".into()))
                 });
                 let later = Button::new(t("Maybe later")).variant(ButtonVariant::Secondary).disabled(st.form.busy).on_press(close).el(p);
                 let mut items = line(gift_glyph(true), duration(g), p.text_primary, from, help);

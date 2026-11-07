@@ -56,6 +56,10 @@ pub fn toggle<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S) {
     with(acc, key, s, |c| if c.player.playing { c.player.pause() } else { c.player.play() });
 }
 
+pub fn set_rate<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, rate: f64) {
+    with(acc, key, s, |c| c.player.set_rate(rate));
+}
+
 pub fn seek<S: 'static>(acc: ShellAccess<S>, key: &str, s: &mut S, secs: f64) {
     with(acc, key, s, |c| c.player.seek(secs));
 }

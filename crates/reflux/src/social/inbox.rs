@@ -390,7 +390,7 @@ pub fn alt_text<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, id: S
             return;
         }
         let atts: Vec<Value> = m.attachments.iter().map(|a| if a.id == att { json!({ "id": a.id, "description": Some(d.trim()).filter(|d| !d.is_empty()) }) } else { json!({ "id": a.id }) }).collect();
-        sh.social(Method::PATCH, format!("/channels/{ch}/messages/{id}"), Some(json!({ "content": m.content, "attachments": atts })), Done::Toast(t("Alt text updated")));
+        sh.social(Method::PATCH, format!("/channels/{ch}/messages/{id}"), Some(json!({ "content": m.content, "attachments": atts })), Done::Toast(t("Alt text updated").into()));
     };
     Dialog::new(t("Edit alt text"), super::close(acc)).body(super::body(items)).footer(super::footer(st, t("Save"), false, "alt-text-save", acc, go, p)).el(p)
 }

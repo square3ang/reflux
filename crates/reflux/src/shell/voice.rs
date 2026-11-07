@@ -38,6 +38,12 @@ pub struct Voice {
     pub pings: Vec<u32>,
     /// The user whose screen share the viewer shows, and its frames.
     pub watching: Option<Snowflake>,
+    /// "Watch stream" on a channel we weren't in: watch once its track arrives.
+    pub watch_on_join: Option<Snowflake>,
+    /// The entrance sound scope the settings show (`None`: the open community's, else `global`).
+    pub entrance_scope: Option<String>,
+    /// Active Now stream previews by stream key.
+    pub previews: HashMap<String, super::active_now::Preview>,
     pub stream: Pixels,
     /// Microphone and speaker names (`None` until listed), and the chosen ones.
     pub devices: Option<(Vec<String>, Vec<String>)>,
@@ -318,7 +324,21 @@ pub struct EntranceLibrary {
     pub selections: HashMap<String, Snowflake>,
 }
 
+/// `getEntranceSoundFallbackScopes`: where a scope's sound comes from when it has none.
+pub fn entrance_fallbacks(scope: &str) -> Vec<String> {
+    match scope {
+        "global" => vec!["global".into()],
+        "guilds" | "dms" => vec![scope.into(), "global".into()],
+        _ => vec![scope.into(), "guilds".into(), "global".into()],
+    }
+}
+
 impl EntranceLibrary {
+    /// The sound `scope` plays and the scope it comes from (itself or one it inherits).
+    pub fn resolve_scope(&self, scope: &str) -> Option<(Snowflake, String)> {
+        entrance_fallbacks(scope).into_iter().find_map(|s| Some((*self.selections.get(&s)?, s)))
+    }
+
     /// `resolveForScope`: `guild:{id}`, then `guilds` or `dms`, then `global`.
     pub fn resolve(&self, guild: Option<Snowflake>) -> Option<Snowflake> {
         let scopes = match guild {
@@ -378,6 +398,31 @@ pub struct VoiceMessage {
     pub bars: Vec<f32>,
     pub sending: bool,
     pub error: Option<String>,
+    /// The kept span in seconds while reviewing (`AudioWaveform` selection).
+    pub start: f32,
+    pub end: f32,
+}
+
+impl VoiceMessage {
+    /// `VOICE_MESSAGE_MIN_SEND_DURATION_MS`.
+    pub const MIN_SECS: f32 = 0.5;
+
+    /// Moves the handle nearest `at`, keeping at least 0.5 s selected (when the clip allows).
+    pub fn drag(&mut self, at: f32) {
+        let at = at.clamp(0.0, self.secs);
+        let min = Self::MIN_SECS.min(self.secs);
+        if (at - self.start).abs() <= (at - self.end).abs() {
+            self.start = at.min(self.end - min).max(0.0);
+        } else {
+            self.end = at.max(self.start + min).min(self.secs);
+        }
+    }
+
+    /// The selected sample range of a `rate` Hz recording of `len` samples.
+    pub fn range(&self, len: usize, rate: u32) -> std::ops::Range<usize> {
+        let at = |s: f32| ((s * rate as f32) as usize).min(len);
+        at(self.start)..at(self.end).max(at(self.start))
+    }
 }
 
 /// What the voice views ask the runtime for.
@@ -412,6 +457,8 @@ pub enum Op {
     RecordCancel,
     /// Upload the recorded message.
     RecordSend,
+    /// Play the selected span of the recording.
+    RecordPlay,
     /// The push-to-talk key went down or up in the window.
     PushToTalk(bool),
     /// "Join" in the already-in-voice confirmation.
@@ -808,6 +855,9 @@ mod tests {
         lib.selections.insert("global".into(), Snowflake(1));
         lib.selections.insert("guilds".into(), Snowflake(2));
         lib.selections.insert("guild:7".into(), Snowflake(3));
+        assert_eq!(lib.resolve_scope("guild:8"), Some((Snowflake(2), "guilds".into())), "inherits the community default");
+        assert_eq!(lib.resolve_scope("dms"), Some((Snowflake(1), "global".into())));
+        assert_eq!(lib.resolve_scope("guild:7"), Some((Snowflake(3), "guild:7".into())));
         assert_eq!(lib.resolve(Some(Snowflake(7))), Some(Snowflake(3)));
         assert_eq!(lib.resolve(Some(Snowflake(8))), Some(Snowflake(2)));
         assert_eq!(lib.resolve(None), Some(Snowflake(1)), "no dms selection: global");

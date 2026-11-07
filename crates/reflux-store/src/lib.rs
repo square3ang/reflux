@@ -81,6 +81,11 @@ pub struct ChannelGroup<'a> {
     pub voice: Vec<&'a Channel>,
 }
 
+/// `ChannelOverrideFlags.NEW_FORUM_THREADS_OFF` / `_ON` and their mask.
+pub const NEW_FORUM_THREADS_OFF: u32 = 1 << 13;
+pub const NEW_FORUM_THREADS_ON: u32 = 1 << 14;
+pub const NEW_FORUM_THREADS_MASK: u32 = NEW_FORUM_THREADS_OFF | NEW_FORUM_THREADS_ON;
+
 #[derive(Clone, Debug, Default)]
 pub struct Store {
     /// Streaming privacy: [`Store::display_name`] shortens names to their first letter.
@@ -559,10 +564,18 @@ impl Store {
         self.relationships.get(&user).is_some_and(|r| r.kind == RelationshipType::BLOCKED)
     }
 
-    /// Fluxer `ReadStateEntry.hasUnread` (with `canBeUnread`).
+    /// `isNewPostsUnreadEnabled`: a forum's new posts make it unread unless its override says
+    /// NEW_FORUM_THREADS_OFF.
+    pub fn new_posts_unread(&self, c: &Channel) -> bool {
+        let flags = self.guild_settings.get(&c.guild_id).and_then(|s| s.channel_overrides.as_ref()?.get(&c.id)).map_or(0, |o| o.flags);
+        flags & NEW_FORUM_THREADS_OFF == 0
+    }
+
+    /// Fluxer `ReadStateEntry.hasUnread` (with `canBeUnread`); a forum goes through
+    /// `hasForumUnread`.
     pub fn has_unread(&self, channel: Snowflake) -> bool {
         let Some(c) = self.channels.get(&channel) else { return false };
-        if !self.tracks_unread(c) {
+        if !self.tracks_unread(c) || (threads::is_forum(c.kind) && !self.new_posts_unread(c)) {
             return false;
         }
         let Some(last) = c.last_message_id else { return false };
@@ -1022,7 +1035,7 @@ fn trim_oldest(w: &mut MessageWindow) {
 }
 
 /// `YYYY-MM-DDTHH:MM:SS[.fff](Z|+00:00)` → Unix ms. Offsets other than UTC are ignored.
-fn parse_iso_ms(s: &str) -> Option<u64> {
+pub fn parse_iso_ms(s: &str) -> Option<u64> {
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
     let (y, mo, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
     let (h, mi, sec) = (n(11..13)?, n(14..16)?, n(17..19)?);

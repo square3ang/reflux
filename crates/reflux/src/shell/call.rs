@@ -374,6 +374,51 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
     })
 }
 
+/// `requestStartCall` without a button: the confirmation (when on) or the call itself.
+pub fn request_call(store: &Store, sh: &mut ShellState, ch: Snowflake, video: bool) {
+    let active = store.calls.contains_key(&ch);
+    if !active && crate::look::with(|l| l.confirm_calls) {
+        sh.voice.modal = Some(Modal::StartCall { channel: ch, video });
+    } else {
+        start_call(sh, ch, active, video);
+    }
+}
+
+/// `ParticipantVolumeSlider`, `LocalMuteParticipantMenuItem` and `EntranceSoundListenerSubmenu`.
+pub fn participant_items<S: 'static>(st: &ShellState, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> Vec<crate::ui::MenuEntry<S>> {
+    let set = &st.voice.settings;
+    // Settings changes save and reach the mixer through `Op::Settings`.
+    let tweak = move |s: &mut S, f: &dyn Fn(&mut super::voice::Settings)| {
+        let sh = acc(s);
+        f(&mut sh.voice.settings);
+        sh.intents.push(Intent::Voice(Op::Settings));
+    };
+    let muted = st.voice.local_mutes.contains(&user);
+    let vol = set.user_volumes.get(&user.0).copied().unwrap_or(100.0);
+    let (emuted, evol) = (set.entrance_mutes.contains(&user.0), set.entrance_volumes.get(&user.0).copied().unwrap_or(100.0));
+    use crate::ui::MenuEntry;
+    vec![
+        MenuEntry::Separator,
+        menu_slider(format!("user-vol-{user}"), t("User volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.user_volumes.insert(user.0, x); })),
+        MenuEntry::Separator,
+        MenuEntry::Item(MenuItem::new("local-mute", t("Mute")).checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted)))),
+        MenuEntry::Submenu(
+            "entrance".into(),
+            t("Entrance sound").into(),
+            vec![
+                MenuEntry::Item(MenuItem::new("entrance-mute", t("Mute entrance sound")).checkbox(emuted).on_select(move |s: &mut S| {
+                    tweak(s, &|st| {
+                        if !st.entrance_mutes.remove(&user.0) {
+                            st.entrance_mutes.insert(user.0);
+                        }
+                    })
+                })),
+                menu_slider(format!("entrance-vol-{user}"), t("Entrance sound volume"), evol, p, move |s: &mut S, x| tweak(s, &|st| { st.entrance_volumes.insert(user.0, x); })),
+            ],
+        ),
+    ]
+}
+
 fn start_call(sh: &mut ShellState, ch: Snowflake, active: bool, video: bool) {
     let o = if active { Op::AcceptCall(ch) } else { Op::StartCall(ch) };
     sh.intents.push(Intent::Voice(o));
@@ -1018,25 +1063,9 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             }));
     }
     if user != me {
-        let muted = st.voice.local_mutes.contains(&user);
-        let vol = set.user_volumes.get(&user.0).copied().unwrap_or(100.0);
-        m = m.separator().entry(menu_slider(format!("user-vol-{user}"), t("User volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.user_volumes.insert(user.0, x); })));
-        m = m.item(MenuItem::new("local-mute", t("Mute")).checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted))));
-        let (emuted, evol) = (set.entrance_mutes.contains(&user.0), set.entrance_volumes.get(&user.0).copied().unwrap_or(100.0));
-        m = m.submenu(
-            "entrance",
-            t("Entrance sound"),
-            vec![
-                crate::ui::MenuEntry::Item(MenuItem::new("entrance-mute", t("Mute entrance sound")).checkbox(emuted).on_select(move |s: &mut S| {
-                    tweak(s, &|st| {
-                        if !st.entrance_mutes.remove(&user.0) {
-                            st.entrance_mutes.insert(user.0);
-                        }
-                    })
-                })),
-                menu_slider(format!("entrance-vol-{user}"), t("Entrance sound volume"), evol, p, move |s: &mut S, x| tweak(s, &|st| { st.entrance_volumes.insert(user.0, x); })),
-            ],
-        );
+        for e in participant_items(st, user, p, acc) {
+            m = m.entry(e);
+        }
         if let Some((None, ch)) = st.voice.channel
             && let Some(call) = store.calls.get(&ch)
             && !store.voice_states.contains_key(&(None, user))

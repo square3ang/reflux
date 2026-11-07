@@ -176,6 +176,7 @@ fn run_op(s: &mut State, op: Op) {
                 let (_, b64) = crate::voice_input::waveform(&samples, rate);
                 vm.bars = crate::voice_input::decode_waveform(&b64);
                 vm.secs = samples.len() as f32 / rate as f32;
+                (vm.start, vm.end) = (0.0, vm.secs);
                 vm.recording = false;
                 s.app.voice.recorded = Some((samples, rate));
             }
@@ -188,6 +189,12 @@ fn run_op(s: &mut State, op: Op) {
             s.app.shell.voice.voice_message = None;
         }
         Op::RecordSend => send_voice_message(s),
+        // shortcut: fire-and-forget, so no Pause or playhead while it plays.
+        Op::RecordPlay => {
+            if let (Some((samples, rate)), Some(vm)) = (&s.app.voice.recorded, &s.app.shell.voice.voice_message) {
+                crate::desktop::sound::play_bytes(crate::voice_input::wav(&samples[vm.range(samples.len(), *rate)], *rate), 1.0);
+            }
+        }
         Op::PushToTalk(held) => s.app.shell.voice.ptt_held = held,
         Op::ConfirmJoin(guild, channel) => confirm_join(s, guild, channel),
         Op::LoadEntrance => load_entrance(s),
@@ -1276,6 +1283,16 @@ fn ensure_mic(s: &mut State) {
 /// refreshes the meter and the recording.
 pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     crate::popout::sync(s);
+    // Active Now's "Watch stream" joined first: watch once the share arrives.
+    if let Some(u) = s.app.shell.voice.watch_on_join {
+        if s.app.shell.voice.channel.is_none() {
+            s.app.shell.voice.watch_on_join = None;
+        } else if s.app.voice.call.as_ref().is_some_and(|c| c.screen_track(u.0).is_some()) {
+            s.app.shell.voice.watch_on_join = None;
+            s.app.shell.voice.watching = Some(u);
+            watch(s, Some(u));
+        }
+    }
     let now = super::now_ms();
     let v = &s.app.shell.voice;
     let in_call = s.app.voice.call.is_some() && !(v.self_mute || v.self_deaf);
@@ -1327,17 +1344,17 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
 /// `sendVoiceMessage`: the recording as `voice-message.wav` with its waveform and duration.
 fn send_voice_message(s: &mut State) {
     let Some(vm) = s.app.shell.voice.voice_message.clone() else { return };
-    let Some((samples, rate)) = s.app.voice.recorded.take() else { return };
-    // `VOICE_MESSAGE_MIN_SEND_DURATION_MS`.
-    if (samples.len() as f32 / rate as f32) < 0.5 {
+    let Some((all, rate)) = s.app.voice.recorded.take() else { return };
+    if vm.end - vm.start < VoiceMessage::MIN_SECS {
         if let Some(m) = &mut s.app.shell.voice.voice_message {
-            m.error = Some("Recording is too short.".into());
+            m.error = Some(t("Selection must be at least {seconds}s.").replace("{seconds}", "0.5"));
         }
-        s.app.voice.recorded = Some((samples, rate));
+        s.app.voice.recorded = Some((all, rate));
         return;
     }
-    let (secs, waveform) = crate::voice_input::waveform(&samples, rate);
-    let bytes = crate::voice_input::wav(&samples, rate);
+    let samples = &all[vm.range(all.len(), rate)];
+    let (secs, waveform) = crate::voice_input::waveform(samples, rate);
+    let bytes = crate::voice_input::wav(samples, rate);
     let sh = &mut s.app.shell;
     sh.upload_seq += 1;
     let upload = crate::shell::upload::Upload {

@@ -213,7 +213,7 @@ pub fn demo(sh: &mut ShellState, store: &Store, scene: &str) {
         }
         "cheatsheet" => sh.nav.cheatsheet = true,
         "keyboard-intro" => sh.nav.keyboard_intro = true,
-        "oauth" => oauth::demo(sh),
+        "oauth" | "oauth-community" | "oauth-perms" => oauth::demo(sh, scene),
         "terms" => (sh.nav.terms_demo, sh.nav.terms) = (true, true),
         "terms-bar" => sh.nav.terms_demo = true,
         "apps" | "apps-create" | "app-detail" | "embed-debugger" => crate::settings::dev::demo(sh, scene),

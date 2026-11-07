@@ -66,11 +66,23 @@ impl Store {
         (t.parent_id.is_some_and(|p| self.can_view(p)) && self.thread_rights(t).view).then_some(t)
     }
 
-    /// Guild owner, administrator, or `MANAGE_THREADS` in the parent (`isThreadModerator`).
-    // shortcut: timeouts aren't checked (a timed-out member with MANAGE_THREADS counts).
+    /// Guild owner, administrator, or `MANAGE_THREADS` in the parent while not timed out
+    /// (`isThreadModerator`).
     pub fn is_thread_moderator(&self, parent: Snowflake) -> bool {
         let perms = self.permissions(parent);
-        self.owns_guild_of(parent) || perms.intersects(P::ADMINISTRATOR | P::MANAGE_THREADS)
+        self.owns_guild_of(parent) || perms.contains(P::ADMINISTRATOR) || (!self.timed_out_in(parent) && perms.contains(P::MANAGE_THREADS))
+    }
+
+    /// The user's own timeout in the parent's guild (`GuildMember.isTimedOut`).
+    fn timed_out_in(&self, channel: Snowflake) -> bool {
+        let Some(g) = self.channels.get(&channel).and_then(|c| c.guild_id) else { return false };
+        let until = self.member(g, self.my_id()).and_then(|m| m.communication_disabled_until.as_deref()).and_then(crate::parse_iso_ms);
+        until.is_some_and(|t| t > crate::now_ms())
+    }
+
+    /// `isCommunicationBlocked`: timed out, and neither the owner nor an administrator.
+    fn communication_blocked(&self, channel: Snowflake) -> bool {
+        self.timed_out_in(channel) && !self.owns_guild_of(channel) && !self.permissions(channel).contains(P::ADMINISTRATOR)
     }
 
     /// `canCreateThread` in a parent.
@@ -83,6 +95,7 @@ impl Store {
         }
         let p = self.permissions(parent.id);
         p.contains(P::VIEW_CHANNEL)
+            && !self.communication_blocked(parent.id)
             && match kind {
                 CreateKind::ForumPost => p.contains(P::SEND_MESSAGES),
                 CreateKind::FromMessage => p.contains(P::CREATE_PUBLIC_THREADS | P::READ_MESSAGE_HISTORY),
@@ -107,21 +120,23 @@ impl Store {
         let member = t.member.is_some();
         let owner = t.owner_id == Some(self.my_id());
         let view = (owner_guild || pp.contains(P::VIEW_CHANNEL)) && (t.kind != ChannelType::PRIVATE_THREAD || member || moderator);
-        let unarchive = moderator || (!locked && (member || owner));
+        // Timed out: no writes but leaving (`COMMUNICATION_DISABLED`).
+        let ok = !self.communication_blocked(parent);
+        let unarchive = ok && (moderator || (!locked && (member || owner)));
         ThreadRights {
             moderator,
             member,
             owner,
             view,
-            send: !locked || moderator,
-            edit: (!locked || moderator) && (moderator || owner) && !archived,
-            archive: !archived && (!locked || moderator) && (moderator || owner),
+            send: ok && (!locked || moderator),
+            edit: ok && (!locked || moderator) && (moderator || owner) && !archived,
+            archive: ok && !archived && (!locked || moderator) && (moderator || owner),
             unarchive: archived && unarchive,
-            lock: moderator,
+            lock: ok && moderator,
             join: view && !archived && (!locked || moderator),
             leave: member && !archived,
-            delete: moderator,
-            remove_members: !archived && (moderator || (t.kind == ChannelType::PRIVATE_THREAD && owner)),
+            delete: ok && moderator,
+            remove_members: ok && !archived && (moderator || (t.kind == ChannelType::PRIVATE_THREAD && owner)),
         }
     }
 
@@ -237,6 +252,13 @@ mod tests {
         assert_eq!(ids(m.threads(Snowflake(10))), [20, 21, 22], "moderators see private threads");
         let r = m.thread_rights(&m.channels[&Snowflake(21)]);
         assert!(r.edit && r.archive && r.lock && r.delete && r.remove_members);
+
+        // A timeout takes moderation and writes away, but not viewing or leaving.
+        let mut t = store(basic() | P::MANAGE_THREADS);
+        t.guilds.get_mut(&Snowflake(G)).unwrap().members.get_mut(&Snowflake(ME)).unwrap().communication_disabled_until = Some("2999-01-01T00:00:00Z".into());
+        let r = t.thread_rights(&t.channels[&Snowflake(20)]);
+        assert!(r.view && r.leave && !r.moderator && !r.send && !r.delete && !r.lock);
+        assert!(!t.can_create_thread(&t.channels[&Snowflake(10)], CreateKind::Public));
     }
 
     #[test]

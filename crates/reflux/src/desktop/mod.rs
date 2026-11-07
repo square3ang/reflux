@@ -76,6 +76,10 @@ pub struct Prefs {
     pub recent: Vec<Snowflake>,
     /// Message searches by scope (guild, or the DM channel), newest first (`SearchHistory`).
     pub search_history: std::collections::HashMap<Snowflake, Vec<String>>,
+    /// `ThreadPanelWidth` (None = the default 450).
+    pub thread_panel_width: Option<f32>,
+    /// Voice message playback speed (`fluxer:media:playbackRates`, voice kind).
+    pub voice_message_rate: f32,
 }
 
 impl Default for Prefs {
@@ -104,6 +108,8 @@ impl Default for Prefs {
             accounts: Default::default(),
             recent: Vec::new(),
             search_history: Default::default(),
+            thread_panel_width: None,
+            voice_message_rate: 1.0,
         }
     }
 }
@@ -120,6 +126,8 @@ pub struct ShellView {
     pub toasts: Vec<nagbar::Toast>,
     /// The misspelling the composer's context menu is about: (byte range, word).
     pub spell_menu: Option<(std::ops::Range<usize>, String)>,
+    /// The window's width (0 before the first layout).
+    pub width: f32,
 }
 
 /// Desktop requests from shell handlers (`Intent::Desktop`).
@@ -374,6 +382,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     let v = &mut s.app.shell.desktop;
     v.offline = s.app.route == Route::Main && matches!(s.app.connection, Some(reflux_net::ConnectionState::Reconnecting(_) | reflux_net::ConnectionState::Connecting));
     v.update = s.desktop.update.clone().filter(|u| s.app.saved.desktop.skipped_update.as_ref() != Some(&u.version));
+    v.width = s.desktop.size[0];
     v.streamer = streamer::enabled(&s.app.saved.desktop.streamer, s.desktop.capture_app);
     v.toasts.retain(|t| t.at.elapsed() < nagbar::TOAST_TIME);
     if !v.toasts.is_empty() {

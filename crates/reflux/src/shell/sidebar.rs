@@ -599,10 +599,9 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .child(inner)
 }
 
-/// `Typing`: three 4px dots, 2 apart (Rune draws them still).
-// shortcut: the dots don't bounce.
+/// `Typing`: three 4px dots, 2 apart, blinking over 1s staggered 250ms (`Typing.module.css`).
 fn typing_dots(c: Color) -> El {
-    row().gap(2.0).center_y().children((0..3).map(|i| el().size(4.0, 4.0).radius(2.0).fill(c).opacity(if i == 1 { 0.7 } else { 0.45 + 0.2 * i as f32 })))
+    row().gap(2.0).center_y().children((0..3).map(|i| el().size(4.0, 4.0).radius(2.0).fill(c).looping(rune::LoopSpec::opacity(1.0, 0.25 * i as f64, 0.0, 1.0))))
 }
 
 /// `DMListItem` `getMessagePreview`, per "DM message previews" (0 all, 1 unread, 2 none):

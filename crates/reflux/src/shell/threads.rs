@@ -2,8 +2,6 @@
 //! under a starter message (`MessageThreadChip`), the side panel with its create pane
 //! (`ThreadSidePanel`, `ThreadCreatePane`, `ThreadComposerArea`), the header's thread browser
 //! (`ThreadBrowser`), the thread menu (`useThreadMenuData`) and settings (`ThreadSettingsModal`).
-// shortcut: the panel isn't resizable (fixed 450, the default width), the browser has no name
-// search, and the member list in the panel is a plain popout list.
 
 use std::collections::HashMap;
 
@@ -13,7 +11,7 @@ use reflux_store::threads::{self as rules, CreateKind};
 use rune::text::Span;
 use rune::{Color, El, ScrollSpec, TextEdit, col, el, icon, rich, row, text};
 
-use super::{Intent, ShellAccess, ShellState, avatar, format_relative, pops};
+use super::{Intent, ShellAccess, ShellState, format_relative, pops};
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::{anchor, popout_shadow};
@@ -36,6 +34,8 @@ pub enum Tab {
     Active,
     Archived,
     ArchivedPrivate,
+    /// A name search's results (the browser's or a forum's), in the same list map.
+    Search,
 }
 
 /// What the side panel shows.
@@ -53,6 +53,10 @@ pub struct Archived {
     pub has_more: bool,
     pub loading: bool,
     pub failed: bool,
+    /// `/threads/search` lists: the query they hold (a change reloads them) and the 202
+    /// "index not ready" state.
+    pub key: String,
+    pub indexing: bool,
 }
 
 /// The confirmation waiting on the user.
@@ -92,6 +96,10 @@ pub struct Threads {
     pub settings: Option<Settings>,
     pub confirm: Option<Confirm>,
     pub forum: super::forum::Forum,
+    /// The browser's search field.
+    pub query: TextEdit,
+    /// The instance answered `FEATURE_TEMPORARILY_DISABLED`: forums page `archived/public`.
+    pub search_disabled: bool,
 }
 
 impl Default for Threads {
@@ -112,6 +120,8 @@ impl Default for Threads {
             settings: None,
             confirm: None,
             forum: Default::default(),
+            query: TextEdit::new(""),
+            search_disabled: false,
         }
     }
 }
@@ -136,6 +146,32 @@ pub enum Op {
     LoadArchived { parent: Snowflake, tab: Tab, more: bool },
     /// The first messages of forum posts (`post-data`).
     PostData { forum: Snowflake, ids: Vec<Snowflake> },
+    /// `GET /channels/{parent}/threads/search?{query}` into the `(parent, tab)` list; a fresh
+    /// name search waits out the 300 ms debounce first.
+    Search { parent: Snowflake, tab: Tab, query: String, more: bool },
+}
+
+/// `THREAD_SEARCH_MAX_LIMIT`.
+pub const SEARCH_LIMIT: usize = 25;
+
+/// The query of a `/threads/search` list (`buildSearchPath` / `searchThreads`), without
+/// `limit`/`offset`.
+pub fn search_query(name: Option<&str>, tags: &[Snowflake], tag_setting: Option<&str>, archived: Option<bool>, sort_by: &str) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    if let Some(n) = name {
+        q.append_pair("name", n);
+    }
+    for t in tags {
+        q.append_pair("tag", &t.to_string());
+    }
+    if tags.len() > 1 {
+        q.append_pair("tag_setting", tag_setting.unwrap_or("match_some"));
+    }
+    if let Some(a) = archived {
+        q.append_pair("archived", if a { "true" } else { "false" });
+    }
+    q.append_pair("sort_by", sort_by).append_pair("sort_order", "desc");
+    q.finish()
 }
 
 fn op(st: &mut ShellState, o: Op) {
@@ -554,17 +590,46 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
         .child(text(title).font(font(16.0, 500.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink())
         .child(actions)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(divider));
+    // `.resizeHandle`: 8px straddling the left edge; dragging left widens the panel.
+    let handle = el()
+        .pin(Some(-4.0), Some(0.0), None, Some(0.0))
+        .w(8.0)
+        .cursor(rune::Cursor::ResizeColumn)
+        .role("separator")
+        .key("thread-panel-resize")
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let st = acc(s);
+            if d.phase == rune::Phase::Down {
+                d.data = panel_width(st);
+            }
+            st.prefs.thread_panel_width = Some(clamp_width(d.data - d.dx));
+            if d.phase == rune::Phase::Up {
+                let prefs = st.prefs.clone();
+                st.intents.push(Intent::Prefs(Box::new(prefs)));
+            }
+        });
     Some(
         col()
-            .w(PANEL_WIDTH)
+            .w(panel_width(st))
             .h_full()
             .min_h(0.0)
             .fill(p.background_secondary_lighter)
             .key("thread-panel")
             .child(header)
             .child(body)
-            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(1.0).fill(divider)),
+            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(1.0).fill(divider))
+            .child(handle),
     )
+}
+
+/// `ThreadPanelWidth.width`.
+pub fn panel_width(st: &ShellState) -> f32 {
+    st.prefs.thread_panel_width.unwrap_or(PANEL_WIDTH)
+}
+
+/// `THREAD_PANEL_MIN_WIDTH`..`THREAD_PANEL_MAX_WIDTH`, rounded.
+fn clamp_width(w: f32) -> f32 {
+    w.clamp(360.0, 900.0).round()
 }
 
 /// The composer of a thread with its notices (`ThreadComposerArea`): locked threads only take
@@ -670,29 +735,12 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
         .child(super::chat::composer(store, st, parent, p, acc, super::chat::Slot::Create))
 }
 
-/// The panel's member list: who joined, with their avatars.
+/// The panel's member list popout (`ThreadMembersButton`): the same grouped roster.
 fn members_popout<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
-    let ids: Vec<Snowflake> = store.thread_members.get(&t.id).map_or_else(Vec::new, |l| l.iter().filter_map(|m| m.user_id).collect());
-    let mut list = col().w_full().px(8.0);
-    for u in ids {
-        list = list.child(
-            row()
-                .w_full()
-                .h(42.0)
-                .px(8.0)
-                .gap(12.0)
-                .center_y()
-                .radius(4.0)
-                .hover(p.background_modifier_hover)
-                .child(avatar(store, st, u, 32.0, Some(super::presence(store, u)), p.background_secondary, p))
-                .child(text(store.display_name(t.guild_id, u)).font(font(16.0, 500.0).lh(20.0)).color(p.text_primary).truncate().shrink()),
-        );
-    }
     let bg = p.background_secondary;
     let surface = col()
         .w(264.0)
         .max_h(480.0)
-        .py(8.0)
         .radius(8.0)
         .fill(bg)
         .border(1.0, over(p.background_modifier_accent, bg))
@@ -700,23 +748,38 @@ fn members_popout<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &P
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
         .label(crate::i18n::t("Thread members"))
-        .child(scroller(col().w_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p))
+        .child(scroller(col().w_full().scroll(ScrollSpec { stick_bottom: false }).child(roster(store, st, t, p, acc)), false, p))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     anchor(surface, MEMBERS, Placement::BottomEnd, 8.0)
 }
 
-/// `ThreadMembersPanel`: a full-view thread's member list, its members split online/offline and
-/// sorted by name.
-// shortcut: hoisted-role groups aren't split out; everyone online lands in "Online".
-pub(super) fn members_column<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+/// `ThreadMembersList`: members sorted by name, the online ones under their highest hoisted
+/// role (`getHoistedRoles`), then Online, then Offline.
+fn roster<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let gid = t.guild_id.unwrap_or_default();
     let owner = store.guilds.get(&gid).and_then(|g| g.info.as_ref()).map(|i| i.owner_id);
     let mut ids: Vec<Snowflake> = store.thread_members.get(&t.id).map_or_else(Vec::new, |l| l.iter().filter_map(|m| m.user_id).collect());
     ids.sort_by_cached_key(|u| store.display_name(Some(gid), *u).to_lowercase());
-    let (offline, online): (Vec<_>, Vec<_>) = ids.into_iter().partition(|u| super::presence(store, *u) == crate::ui::Status::Offline);
+    let mut hoisted: Vec<&reflux_model::Role> = store.guilds.get(&gid).map_or_else(Vec::new, |g| g.roles.iter().filter(|r| r.hoist && r.id != gid).collect());
+    hoisted.sort_by_key(|r| (std::cmp::Reverse(r.hoist_position.unwrap_or(r.position)), r.id));
+    let mut groups: Vec<(String, Option<&reflux_model::Role>, Vec<Snowflake>)> = hoisted.iter().map(|r| (r.name.clone(), Some(*r), vec![])).collect();
+    let (mut online, mut offline) = (vec![], vec![]);
+    for u in ids {
+        if super::presence(store, u) == crate::ui::Status::Offline {
+            offline.push(u);
+            continue;
+        }
+        let roles = store.member(gid, u).map(|m| m.roles.clone()).unwrap_or_default();
+        match hoisted.iter().position(|r| roles.contains(&r.id)) {
+            Some(i) => groups[i].2.push(u),
+            None => online.push(u),
+        }
+    }
+    groups.push((crate::i18n::t("Online").into(), None, online));
+    groups.push((crate::i18n::t("Offline").into(), None, offline));
     let mut body = col().w_full().pt(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_START).px(dim::MEMBER_LIST_SCROLLER_PADDING_INLINE).pb(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_END);
     let mut first = true;
-    for (label, users) in [("Online", online), ("Offline", offline)] {
+    for (label, role, users) in groups {
         if users.is_empty() {
             continue;
         }
@@ -726,6 +789,8 @@ pub(super) fn members_column<S: 'static>(store: &Store, st: &ShellState, t: &Cha
                 .pt(12.0 + if first { 0.0 } else { dim::MEMBER_LIST_GROUP_SPACER_HEIGHT })
                 .pb(4.0)
                 .px(8.0)
+                .center_y()
+                .children(role.and_then(|r| super::role_icon::view(st, r, 16.0)).map(|i| i.mr(4.0)))
                 .child(text(format!("{label} — {}", users.len())).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate()),
         );
         first = false;
@@ -733,7 +798,12 @@ pub(super) fn members_column<S: 'static>(store: &Store, st: &ShellState, t: &Cha
             body = body.child(col().w_full().pb(dim::MEMBER_LIST_ROW_GAP).child(super::members::member(store, st, gid, u, owner == Some(u), p, acc)).key(format!("thread-member-{u}")));
         }
     }
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body.key(format!("thread-members-{}", t.id)));
+    body.key(format!("thread-members-{}", t.id))
+}
+
+/// `ThreadMembersPanel`: a full-view thread's member list.
+pub(super) fn members_column<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(roster(store, st, t, p, acc));
     col().w(dim::LAYOUT_MEMBER_LIST_WIDTH).h_full().min_h(0.0).fill(p.background_secondary_lighter).child(scroller(viewport, false, p))
 }
 
@@ -793,10 +863,12 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
         }
         tab_list = tab_list.child(b);
     }
-    let tabs_el = col().w_full().pt(12.0).child(col().w_full().pt(4.0).px(16.0).pb(8.0).child(tab_list));
+    let tabs_el = col().w_full().pt(4.0).px(16.0).pb(8.0).child(tab_list);
     let mut list = col().w_full().px(8.0).pb(12.0);
     let item = |t: &Channel| browser_item(st, t, p, acc);
+    let searching = !st.threads.query.text.trim().is_empty();
     match tab {
+        _ if searching => list = search_results(store, st, parent, tab, p, acc),
         Tab::Active => {
             let mut active: Vec<&Channel> = store.threads(pid).into_iter().filter(|t| !rules::is_archived(t)).collect();
             active.sort_by_key(|t| std::cmp::Reverse(rules::last_activity(t)));
@@ -852,10 +924,121 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
         .role("dialog")
         .label(t("Threads"))
         .child(header)
+        .child(search_field(st, p, acc))
         .child(tabs_el)
         .child(col().w_full().grow(1.0).min_h(0.0).child(body))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     layer.push(anchor(surface, BROWSER, Placement::BottomEnd, 8.0));
+}
+
+/// `ThreadSearchInput`: a 36px field with a magnifier and a clear button.
+fn search_field<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let q = &st.threads.query;
+    let field = rune::text_input(q, font(14.0, 400.0).lh(20.0))
+        .single_line()
+        .key("thread-search")
+        .grow(1.0)
+        .shrink()
+        .color(p.text_primary)
+        .placeholder(t("Search threads"), p.text_tertiary)
+        .label(t("Search threads"))
+        .caret(p.text_primary, p.background_modifier_selected)
+        .on_edit(move |s: &mut S| -> &mut TextEdit {
+            let e = &mut acc(s).threads.query;
+            // `THREAD_SEARCH_NAME_MAX_LENGTH`.
+            if e.text.chars().count() > NAME_MAX {
+                *e = TextEdit::new(e.text.chars().take(NAME_MAX).collect::<String>());
+            }
+            e
+        });
+    let border = if q.focused { p.background_modifier_accent_focus } else { p.background_modifier_accent };
+    let mut boxed = row()
+        .w_full()
+        .min_h(36.0)
+        .px(12.0)
+        .gap(8.0)
+        .center_y()
+        .radius(8.0)
+        .fill(p.form_surface_background)
+        .border(1.0, over(border, p.form_surface_background))
+        .role("search")
+        .child(icon(&icons::MAGNIFYING_GLASS_BOLD, 16.0).color(p.text_tertiary))
+        .child(field);
+    if !q.text.is_empty() {
+        boxed = boxed.child(
+            row()
+                .size(20.0, 20.0)
+                .center()
+                .radius(4.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Clear search"))
+                .on_press(move |s: &mut S| acc(s).threads.query = TextEdit::new(""))
+                .child(icon(&icons::X_BOLD, 14.0).color(p.text_tertiary)),
+        );
+    }
+    col().w_full().pt(12.0).px(16.0).pb(12.0).child(boxed)
+}
+
+/// `SearchResults`: the server's matches for the browser's tab (`useThreadSearch`).
+fn search_results<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, tab: Tab, p: &Palette, acc: ShellAccess<S>) -> El {
+    let pid = parent.id;
+    let a = st.threads.archived.get(&(pid, Tab::Search)).cloned().unwrap_or_default();
+    let mut list = col().w_full().px(8.0).pb(12.0).role("status");
+    let notice = || col().w_full().py(24.0).px(16.0).gap(8.0).items_center();
+    let muted = |s: &str| text(s.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center);
+    if a.indexing {
+        return list.child(notice().child(spinner(p.text_primary_muted)).child(muted(t("Search is getting ready for this community. Trying again shortly..."))));
+    }
+    if a.failed {
+        let retry = Button::new(t("Retry"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Small)
+            .key("thread-search-retry")
+            .on_press(move |s: &mut S| {
+                // A changed key makes the runtime search again.
+                acc(s).threads.archived.remove(&(pid, Tab::Search));
+            })
+            .el(p);
+        return list.child(notice().role("alert").child(muted(t("Couldn't search threads. Try again later."))).child(retry));
+    }
+    if a.loading {
+        return list.child(row().w_full().padding(12.0).center().child(spinner(p.text_primary_muted)));
+    }
+    let matches = |t: &&Channel| match tab {
+        Tab::Active => !rules::is_archived(t),
+        _ => rules::is_archived(t) && (tab == Tab::ArchivedPrivate) == (t.kind == ChannelType::PRIVATE_THREAD),
+    };
+    let found: Vec<&Channel> = a.ids.iter().filter_map(|id| store.thread(*id)).filter(|t| t.parent_id == Some(pid)).filter(matches).collect();
+    if found.is_empty() {
+        list = list.child(empty_search(p));
+    }
+    for t in found {
+        list = list.child(browser_item(st, t, p, acc));
+    }
+    list
+}
+
+fn empty_search(p: &Palette) -> El {
+    col()
+        .w_full()
+        .min_h(360.0)
+        .padding(32.0)
+        .gap(8.0)
+        .center()
+        .child(icon(&icons::CHATS, 48.0).color(p.text_tertiary))
+        .child(text(t("No threads match")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
+        .child(text(t("Try a different name or check the other tab.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
+}
+
+/// The `/threads/search` list the browser wants, if it's open with a query: (parent, query).
+pub fn browser_search(store: &Store, st: &ShellState) -> Option<(Snowflake, String)> {
+    if !st.popups.is_open(BROWSER) {
+        return None;
+    }
+    let q = st.threads.query.text.trim();
+    let parent = browser_parent(store, store.channels.get(&st.channel?)?)?;
+    (!q.is_empty()).then(|| (parent.id, search_query(Some(q), &[], None, Some(st.threads.tab != Tab::Active), "relevance")))
 }
 
 /// `ThreadBrowserItem`: name, then (lock,) message count and last activity.

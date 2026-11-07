@@ -1027,6 +1027,11 @@ pub mod scenes {
         s.login.errors.form = Some("The security key request failed: no security key was found.".into());
     }
 
+    pub fn handoff(s: &mut State) {
+        let h = crate::handoff::Handoff { code: "ABCDEF234567".into(), url: String::new(), sso: false, error: None, expires_ms: Some(crate::app::now_ms() + 299_500), copied_ms: None };
+        s.login.step = Step::Handoff(h);
+    }
+
     pub fn passkey(s: &mut State) {
         s.login.step = Step::Passkey(Passkey { mfa: None, prompt: Prompt::Touch });
     }

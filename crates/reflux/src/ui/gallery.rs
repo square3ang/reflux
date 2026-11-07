@@ -65,6 +65,7 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     ("forgot-sent", crate::login::scenes::forgot_sent),
     ("mfa-webauthn", crate::login::scenes::mfa_webauthn),
     ("passkey", crate::login::scenes::passkey),
+    ("handoff", crate::login::scenes::handoff),
     ("passkey-failed", crate::login::scenes::passkey_failed),
     ("passkey-pin", crate::login::scenes::passkey_pin),
     ("restricted-notice", crate::login::scenes::restricted_notice),

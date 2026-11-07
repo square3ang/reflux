@@ -1,8 +1,9 @@
 //! Forum and media channels (`features/forum`): the post list with its search card, sort & view
 //! popout and tag filter (`ForumChannelView`, `ForumToolbar`, `ForumPostCard`, `ForumTagPill`),
 //! and the new post composer (`ForumPostComposer`, `ForumTagPicker`).
-// shortcut: search and the tag filter run over the loaded posts (active and the loaded older
-// ones), not the thread search endpoint; the gallery is a wrapping row, not a CSS grid.
+// Search and the older posts go through `/threads/search` (tags filtered by the server); with
+// search off on the instance (`FEATURE_TEMPORARILY_DISABLED`) older posts page `archived/public`
+// and the search filters loaded posts by name, as before.
 
 use std::collections::{HashMap, HashSet};
 
@@ -40,6 +41,30 @@ pub struct Forum {
     /// First messages of posts (`post-data`); `None` = deleted.
     pub first: HashMap<Snowflake, Option<Message>>,
     pub requested: HashSet<Snowflake>,
+    /// The post list's laid-out width, for the gallery's column count.
+    pub width: f32,
+    /// `ForumReadState`: unread counts of unjoined posts from FORUM_UNREADS (count, the ack
+    /// they were counted from), the acks already asked about, the send times of the last 5 s,
+    /// and the forum's ack when it was opened (newer posts get "New").
+    pub post_unreads: HashMap<Snowflake, (u32, Snowflake)>,
+    pub sent_acks: HashMap<Snowflake, Snowflake>,
+    pub sends: Vec<u64>,
+    pub snapshot: Option<(Snowflake, Snowflake)>,
+}
+
+/// `getPostUnreadCount`: an unjoined post's count while its ack hasn't moved.
+pub fn post_unread_count(store: &Store, st: &ShellState, post: &Channel) -> u32 {
+    let ack = store.read_states.get(&post.id).and_then(|r| r.last_message_id);
+    match st.threads.forum.post_unreads.get(&post.id) {
+        Some((n, at)) if post.member.is_none() && ack == Some(*at) => *n,
+        _ => 0,
+    }
+}
+
+/// `isNewPost`: created since the forum was opened, by someone else.
+fn is_new_post(store: &Store, st: &ShellState, post: &Channel) -> bool {
+    let me = store.me.as_ref().map(|m| m.id);
+    matches!(st.threads.forum.snapshot, Some((f, at)) if Some(f) == post.parent_id && post.id > at && post.owner_id.is_none_or(|o| Some(o) != me))
 }
 
 /// The new post being written.
@@ -70,15 +95,37 @@ fn can_post(store: &Store, c: &Channel) -> bool {
     store.can_create_thread(c, rules::CreateKind::ForumPost)
 }
 
+/// The `/threads/search` queries the forum wants: (name search, older posts). `None` while the
+/// instance has search off; older posts wait for "Load older posts" when 25 or more are active.
+pub fn search_keys(store: &Store, st: &ShellState, c: &Channel) -> (Option<String>, Option<String>) {
+    if st.threads.search_disabled {
+        return (None, None);
+    }
+    let tags = st.threads.forum.tag_filter.get(&c.id).cloned().unwrap_or_default();
+    let setting = c.default_tag_setting.as_deref();
+    let q = st.threads.forum.query.text.trim();
+    let search = (!q.is_empty()).then(|| threads::search_query(Some(q), &tags, setting, None, "relevance"));
+    let sort = if sort_of(st, c) == 1 { "creation_time" } else { "last_message_time" };
+    let started = st.threads.archived.contains_key(&(c.id, Tab::Archived));
+    let few = store.threads(c.id).into_iter().filter(|t| !rules::is_archived(t)).count() < threads::SEARCH_LIMIT;
+    (search, (started || few).then(|| threads::search_query(None, &tags, setting, Some(true), sort)))
+}
+
+/// Whether the posts come from a server search (`ForumPosts.isSearching`).
+fn server_search(st: &ShellState) -> bool {
+    !st.threads.search_disabled && !st.threads.forum.query.text.trim().is_empty()
+}
+
 /// The posts to list: (current, older), each filtered and sorted.
 pub fn posts<'a>(store: &'a Store, st: &ShellState, c: &Channel) -> (Vec<&'a Channel>, Vec<&'a Channel>) {
-    let q = st.threads.forum.query.text.trim().to_lowercase();
+    if server_search(st) {
+        let ids = st.threads.archived.get(&(c.id, Tab::Search)).map(|a| a.ids.clone()).unwrap_or_default();
+        return (ids.iter().filter_map(|id| store.thread(*id)).filter(|t| t.parent_id == Some(c.id)).collect(), vec![]);
+    }
     let tags = st.threads.forum.tag_filter.get(&c.id).cloned().unwrap_or_default();
     let all = c.default_tag_setting.as_deref() == Some("match_all");
     let keep = |t: &&Channel| {
-        let name_ok = q.is_empty() || t.name.as_deref().unwrap_or_default().to_lowercase().contains(&q);
-        let tag_ok = tags.is_empty() || if all { tags.iter().all(|x| t.applied_tags.contains(x)) } else { tags.iter().any(|x| t.applied_tags.contains(x)) };
-        name_ok && tag_ok
+        tags.is_empty() || if all { tags.iter().all(|x| t.applied_tags.contains(x)) } else { tags.iter().any(|x| t.applied_tags.contains(x)) }
     };
     let by_creation = sort_of(st, c) == 1;
     let key = |t: &&Channel| std::cmp::Reverse(if by_creation { t.id } else { rules::last_activity(t) });
@@ -95,7 +142,12 @@ pub fn posts<'a>(store: &'a Store, st: &ShellState, c: &Channel) -> (Vec<&'a Cha
 /// `ForumChannelView`: guidelines, the search card (or the composer) and the posts.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let f = &st.threads.forum;
-    let mut content = col().w_full().max_w(960.0).gap(12.0).padding(16.0);
+    let mut content = col().w_full().max_w(960.0).gap(12.0).padding(16.0).on_layout(move |s: &mut S, r| {
+        let f = &mut acc(s).threads.forum;
+        if (f.width - (r[2] - 32.0)).abs() > 0.5 {
+            f.width = r[2] - 32.0;
+        }
+    });
     if let Some(topic) = c.topic.as_ref().filter(|t| !t.is_empty()) {
         content = content.child(guidelines(store, st, c, topic, p, acc));
     }
@@ -109,31 +161,68 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     if !cur.is_empty() {
         content = content.child(cards(store, st, c, &cur, is_grid, p, acc));
     }
-    let a = st.threads.archived.get(&(c.id, Tab::Archived)).cloned().unwrap_or_default();
+    let kind = if server_search(st) { Tab::Search } else { Tab::Archived };
+    let entry = st.threads.archived.get(&(c.id, kind));
+    let a = entry.cloned().unwrap_or_default();
     if !old.is_empty() {
         content = content
             .child(text(t("Older posts")).font(font(12.0, 600.0)).color(p.text_tertiary).pt(8.0))
             .child(cards(store, st, c, &old, is_grid, p, acc));
     }
-    if a.loading {
-        content = content.child(row().w_full().padding(12.0).center().child(spinner(p.text_primary_muted)));
-    } else if cur.is_empty() && old.is_empty() {
+    let notice = || col().w_full().padding(16.0).gap(8.0).items_center();
+    let settled = !a.loading && !a.indexing;
+    if a.indexing {
+        content = content.child(
+            notice()
+                .role("status")
+                .child(spinner(p.text_primary_muted))
+                .child(text(t("Search is getting ready for this community. Trying again shortly...")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap()),
+        );
+    } else if a.loading {
+        content = content.child(notice().child(spinner(p.text_primary_muted)));
+    } else if cur.is_empty() && old.is_empty() && entry.is_some() && !a.failed {
         content = content.child(empty(searching, p));
     }
-    if !a.loading && a.has_more {
-        let fid = c.id;
-        content = content.child(row().w_full().padding(12.0).center().child(
-            Button::new(t("Load older posts"))
-                .variant(ButtonVariant::Secondary)
-                .size(ButtonSize::Small)
-                .key("forum-older")
-                .on_press(move |s: &mut S| {
-                    let st = acc(s);
-                    st.threads.archived.entry((fid, Tab::Archived)).or_default().loading = true;
-                    st.intents.push(Intent::Thread(Op::LoadArchived { parent: fid, tab: Tab::Archived, more: true }));
-                })
-                .el(p),
-        ));
+    let fid = c.id;
+    // Load more (or the first older page when 25+ posts are active), or retry a failed list.
+    let more = |label: &str, key: &str, retry: bool| {
+        Button::new(label)
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Small)
+            .key(key)
+            .on_press(move |s: &mut S| {
+                let store_key = (fid, kind);
+                let st = acc(s);
+                if retry {
+                    // A cleared key reloads the list from the start (`tick`); without search the
+                    // missing list does.
+                    if st.threads.search_disabled {
+                        st.threads.archived.remove(&store_key);
+                    } else {
+                        let e = st.threads.archived.entry(store_key).or_default();
+                        (e.key, e.failed) = (String::new(), false);
+                    }
+                    return;
+                }
+                let e = st.threads.archived.entry(store_key).or_default();
+                e.loading = true;
+                let o = if st.threads.search_disabled { Op::LoadArchived { parent: fid, tab: kind, more: true } } else { Op::Search { parent: fid, tab: kind, query: e.key.clone(), more: true } };
+                st.intents.push(Intent::Thread(o));
+            })
+            .el(p)
+    };
+    if a.failed {
+        content = content.child(
+            notice()
+                .role("alert")
+                .child(text(t("Couldn't load posts. Try again later.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))
+                .child(more(t("Retry"), "forum-retry", true)),
+        );
+    } else if settled && entry.is_some() && a.has_more {
+        content = content.child(notice().child(more(t("Load older posts"), "forum-older", false)));
+    } else if settled && entry.is_none() && kind == Tab::Archived && !st.threads.search_disabled {
+        // The first older page waits for a press while 25+ posts are active (`needsFirstPage`).
+        content = content.child(notice().child(more(t("Load older posts"), "forum-older", true)));
     }
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).items_center().child(content);
     col().grow(1.0).min_w(0.0).h_full().min_h(0.0).fill(p.background_primary).key(format!("forum-{}", c.id)).child(scroller(viewport, true, p))
@@ -188,7 +277,13 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
             new_post(st, fid, title);
             true
         });
-    let mut entry = row().w_full().min_h(48.0).py(6.0).pl(12.0).pr(6.0).gap(8.0).center_y().child(icon(&icons::MAGNIFYING_GLASS_BOLD, 18.0).color(p.text_tertiary)).child(row().grow(1.0).min_w(0.0).h(34.0).center_y().child(field));
+    let mut entry = row().w_full().min_h(48.0).py(6.0).pl(12.0).pr(6.0).gap(8.0).center_y();
+    // Without search on the instance only "New post" shows (`.entrySpacer`).
+    entry = if st.threads.search_disabled {
+        entry.child(el().grow(1.0))
+    } else {
+        entry.child(icon(&icons::MAGNIFYING_GLASS_BOLD, 18.0).color(p.text_tertiary)).child(row().grow(1.0).min_w(0.0).h(34.0).center_y().child(field))
+    };
     let searching = !q.text.trim().is_empty();
     if searching {
         entry = entry.child(
@@ -221,12 +316,13 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
     let border = if q.focused { p.background_modifier_accent_focus } else { p.background_modifier_accent };
     let mut card = col().w_full().radius(8.0).fill(p.form_surface_background).border(1.0, over(border, p.form_surface_background)).child(entry);
     if searching {
-        let n = posts(store, st, c);
-        let n = n.0.len() + n.1.len();
+        let n = posts(store, st, c).0.len();
+        // `SearchStatus`.
+        let pending = st.threads.archived.get(&(c.id, Tab::Search)).is_none_or(|a| a.loading || a.indexing);
         let status = match n {
+            _ if pending => t("Searching...").to_string(),
             0 => t("No matching posts").to_string(),
-            1 => "1 matching post".to_string(),
-            n => format!("{n} matching posts"),
+            n => crate::i18n::tp("{count, plural, one {# matching post} other {# matching posts}}", n as i64, &[]),
         };
         let small = font(13.0, 400.0).lh(16.0);
         let mut footer = row()
@@ -402,8 +498,17 @@ fn empty(searching: bool, p: &Palette) -> El {
 }
 
 fn cards<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, posts: &[&Channel], is_grid: bool, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list = if is_grid { row().w_full().flex_wrap().gaps(12.0, 12.0) } else { col().w_full().gap(8.0) };
+    let columns = grid_columns(st.threads.forum.width).0;
+    let list = if is_grid { el().w_full().equal_columns(columns).gap(12.0) } else { col().w_full().gap(8.0) };
     list.children(posts.iter().map(|t| card(store, st, forum, t, is_grid, p, acc)))
+}
+
+/// `.postGrid`: `repeat(auto-fill, minmax(14rem, 1fr))` with a 12px gap: (columns, cell width).
+fn grid_columns(width: f32) -> (usize, f32) {
+    // Before the first layout: the content's widest (60rem less padding).
+    let width = if width > 0.0 { width } else { 928.0 };
+    let n = (((width + 12.0) / (224.0 + 12.0)).floor() as usize).max(1);
+    (n, ((width - 12.0 * (n - 1) as f32) / n as f32).max(1.0))
 }
 
 /// The first image of a message: (proxy url, video).
@@ -421,7 +526,9 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
         (None, None) => None,
     };
     let joined = post.member.is_some();
-    let unread = joined && store.has_unread(post.id);
+    let post_unreads = if joined { 0 } else { post_unread_count(store, st, post) };
+    let unread = (joined && store.has_unread(post.id)) || post_unreads > 0;
+    let is_new = !unread && is_new_post(store, st, post);
     let open = st.threads.panel == Some(threads::Panel::Thread(post.id));
     let pinned = post.flags.contains(ChannelFlags::PINNED);
     // header: pin, tags
@@ -429,6 +536,10 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     let mut header = row().flex_wrap().gaps(6.0, 6.0).center_y();
     if pinned {
         header = header.child(icon(&icons::PUSH_PIN_SIMPLE_FILL, 16.0).color(p.text_tertiary).label(t("Pinned")));
+    }
+    if is_new {
+        // `.newBadge`.
+        header = header.child(row().px(6.0).radius(4.0).fill(p.status_danger).child(text(t("New").to_uppercase()).font(font(11.0, 700.0).lh(18.0)).color(p.text_on_dark)));
     }
     for t in tags.iter().take(MAX_CARD_TAGS) {
         header = header.child(tag_pill(st, t, None, false, p));
@@ -439,7 +550,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
         );
     }
     let mut body = col().grow(1.0).min_w(0.0).gap(6.0);
-    if pinned || !tags.is_empty() {
+    if pinned || is_new || !tags.is_empty() {
         body = body.child(header);
     }
     body = body.child(text(post.name.clone().unwrap_or_default()).font(font(16.0, 600.0).lh(20.0)).color(if unread { p.text_primary } else { p.text_secondary }).truncate());
@@ -467,7 +578,8 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     }
     footer = footer.child(row().gap(4.0).center_y().child(icon(&icons::CHAT_CIRCLE_FILL, 14.0).color(p.text_primary_muted)).child(text(threads::message_count(post.message_count)).font(small).color(p.text_primary_muted)));
     if unread {
-        footer = footer.child(text(t("New messages")).font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light));
+        let label = if post_unreads > 0 { crate::i18n::tp("{count, plural, one {# new message} other {# new messages}}", post_unreads as i64, &[]) } else { t("New messages").to_string() };
+        footer = footer.child(text(label).font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light));
     }
     footer = footer.child(text(format_relative(rules::last_activity(post).timestamp_ms(), st.now_ms)).font(small).color(p.text_primary_muted));
     body = body.child(footer);
@@ -478,7 +590,9 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     };
     let (thread, id, parent) = (post.clone(), post.id, post.parent_id);
     let mut c = if is_grid {
-        col().w(280.0).grow(1.0).min_w(224.0).clip_rounded(8.0).child(thumb(280.0, 210.0, 0.0)).child(col().w_full().padding(12.0).child(body))
+        // `.cardMedia`: full width, 4:3.
+        let w = grid_columns(st.threads.forum.width).1;
+        col().w_full().min_w(0.0).clip_rounded(8.0).child(thumb(w, w * 0.75, 0.0)).child(col().w_full().padding(12.0).child(body))
     } else {
         let mut r = row().w_full().padding(12.0).gap(12.0).items_start().child(body);
         if media.is_some() {
