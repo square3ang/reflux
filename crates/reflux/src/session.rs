@@ -40,6 +40,9 @@ pub struct Saved {
     /// `fluxer.age_block_until.{instance}`: unix ms until which sign-up is refused there, after
     /// a date of birth below the minimum age.
     pub age_blocked_until: std::collections::BTreeMap<String, u64>,
+    /// `screenShareAudioDefaultOnMigratedV1`: Windows/macOS turned system audio on once, so an
+    /// empty `voice_settings.stream_audio` now means the user picked "No audio".
+    pub screen_audio_defaulted: bool,
     /// `NewDeviceMonitoring`: audio devices (by card) already seen, and ones not to suggest again.
     pub known_devices: Vec<String>,
     pub ignored_devices: Vec<String>,
@@ -178,6 +181,17 @@ pub fn load() -> Saved {
     }
     if s.installation_id.len() != 32 || !s.installation_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         s.installation_id = format!("{:016x}{:016x}", fastrand::u64(..), fastrand::u64(..));
+        save(&s);
+    }
+    // `screenShareAudioDefaultOnMigratedV1`: Fluxer defaults `screenShareAudioSourceMode` to
+    // `system`; old saves (and new ones) have no value, so turn it on once. After this flag,
+    // `None` is the user's explicit "No audio" pick.
+    #[cfg(any(windows, target_os = "macos"))]
+    if !s.screen_audio_defaulted {
+        s.screen_audio_defaulted = true;
+        if s.voice_settings.stream_audio.is_none() {
+            s.voice_settings.stream_audio = Some(crate::audio_share::SYSTEM_ID.into());
+        }
         save(&s);
     }
     s

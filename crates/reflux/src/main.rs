@@ -1,4 +1,5 @@
 mod app;
+mod audio_share;
 mod compose;
 mod crash;
 mod desktop;

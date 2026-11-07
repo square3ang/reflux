@@ -77,6 +77,7 @@ Rules:
 | Screen-share "content hint" maps to libwebrtc's degradation preference | the Rust SDK has no content-hint setter | `reflux-voice`, `settings/advanced.rs` | SDK exposes `contentHint` |
 | Choosing an SVC mode publishes VP9 with the software encoder; Automatic uses H.264 + NVENC/VA-API | libwebrtc only offers scalability for AV1/VP9, and the hardware factories here encode H.264 only | `reflux-voice` `ScreenQuality::publish_options`, `settings/advanced.rs` | hardware AV1/VP9 encoders are exposed |
 | A live quality change and "Change stream" stop the share, then publish a new track from the saved source | the Rust SDK doesn't expose a published sender's encoding parameters, and native capture has no in-place source switch | `app/voice.rs` `toggle_screen`, `Op::Settings`/`Op::ChangeScreen` | the SDK exposes `RtpSender` parameters and source switching |
+| System audio for a screen share is our own capture: WASAPI loopback of the default render device on Windows (shared-mode mix format, polling `IAudioCaptureClient`, converted and linearly resampled to 48 kHz stereo) and a `ScreenCaptureKit` `SCStream` audio output over the main display on macOS (`capturesAudio`, self excluded); both push into the same `NativeAudioSource` as the Linux PipeWire path and appear as the synthetic `system` picker entry | the LiveKit Rust SDK/libwebrtc expose no desktop/system-audio capture, so Fluxer's Electron native modules have no SDK equivalent | `audio_share/`, `app/voice.rs` | the SDK exposes a system loopback / SCK audio source |
 | "No hardware encoder was found" never shows on the encoder setting | webrtc-sys doesn't expose its encoder factory probe | `settings/advanced.rs` | the SDK exposes the probe |
 | P2P mesh is our own implementation of `VoiceMeshEngine` (op 13, STUN only) | no JS engine to reuse | `reflux-voice/src/mesh.rs`, `app/voice.rs` | — |
 | Screen-share source-ended detection is a flag the capturer thread sets when it stops; only display/window shares report it | libwebrtc's `DesktopCapturer` has no track-ended callback, and `Devices` shares capture through the camera pipeline, which has no end signal | `reflux-voice/src/real.rs` `spawn_capture`, `app/voice.rs` `tick` | the SDK exposes a track `ended` event or a capture-ended callback |
@@ -148,9 +149,10 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:16` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
-- `crates/reflux/src/app/voice.rs:1061` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1532` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1541` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1069` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1562` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1571` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -172,7 +174,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/popout.rs:6` on Wayland the compositor ignores always-on-top and placement (winit can't ask for
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
-- `crates/reflux/src/session.rs:217` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
+- `crates/reflux/src/session.rs:231` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:382` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden

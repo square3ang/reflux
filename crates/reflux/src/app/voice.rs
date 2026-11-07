@@ -68,8 +68,9 @@ pub struct VoiceRt {
     confirmed: Option<Snowflake>,
     /// Remote audio tracks playing into the mixer, by track SID.
     audio: HashMap<String, tokio::task::AbortHandle>,
-    /// Screen share audio (Linux: a PipeWire application stream) and its capture.
-    stream_audio: Option<(Arc<StreamAudio>, crate::gst::AudioCapture)>,
+    /// Screen share audio (Linux: a PipeWire application stream; Windows/macOS: the system mix)
+    /// and its capture.
+    stream_audio: Option<(Arc<StreamAudio>, crate::audio_share::Capture)>,
     /// `VoiceP2pConsent`: the channel whose peer-to-peer call the user agreed to.
     p2p_agreed: Option<Snowflake>,
     /// The `/experiments` poll loop of this session.
@@ -255,11 +256,18 @@ fn run_op(s: &mut State, op: Op) {
         Op::UploadTrim => upload_trim(s),
         Op::PopOut { user, screen, pip } => crate::popout::open(s, user, screen, pip),
         Op::LoadAudioSources => {
-            if cfg!(target_os = "linux") && crate::gst::available() {
-                spawn(async move {
-                    let apps = tokio::task::spawn_blocking(crate::gst::audio_apps).await.unwrap_or_default();
-                    update(move |s| s.app.shell.voice.audio_sources = Some(apps));
-                });
+            #[cfg(target_os = "linux")]
+            {
+                if crate::gst::available() {
+                    spawn(async move {
+                        let apps = tokio::task::spawn_blocking(crate::gst::audio_apps).await.unwrap_or_default();
+                        update(move |s| s.app.shell.voice.audio_sources = Some(apps));
+                    });
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                s.app.shell.voice.audio_sources = Some(crate::audio_share::sources());
             }
         }
         Op::LoadScreenSources => {
@@ -1280,7 +1288,7 @@ fn toggle_screen(s: &mut State) {
     // `hasHigherVideoQuality`: P2P calls get it for free.
     let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
     let quality = s.app.shell.voice.settings.screen_quality(&s.app.shell.limits, higher);
-    let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::gst::available());
+    let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::audio_share::available());
     // `Devices` in the picker: a camera / capture device published as the screen share.
     if let Some(device) = s.app.shell.voice.screen_device.clone() {
         let (w, h) = quality.fit(3840, 2160);
@@ -1328,18 +1336,30 @@ fn toggle_screen(s: &mut State) {
                 },
                 None => None,
             };
+            // Start the capture on this worker thread (module startup can block on a device or
+            // permission prompt); a failed start unpublishes the silent track again.
+            let audio = match audio {
+                Some((a, node)) => {
+                    let sink = a.clone();
+                    match crate::audio_share::start(&node, move |pcm| sink.push(pcm)) {
+                        Some(capture) => Some((a, capture)),
+                        None => {
+                            eprintln!("reflux: couldn't start stream audio ({node})");
+                            let _ = call.unpublish_stream_audio(&a).await;
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
             update(move |s| {
                 if s.app.voice.generation != generation || !s.app.shell.voice.screen {
                     return;
                 }
                 s.app.voice.device_share = Some(cam);
                 s.app.voice.device_capture = Some(capture);
-                if let Some((a, node)) = audio {
-                    let sink = a.clone();
-                    match crate::gst::AudioCapture::start(&node, move |pcm| sink.push(pcm)) {
-                        Some(capture) => s.app.voice.stream_audio = Some((a, capture)),
-                        None => eprintln!("reflux: couldn't capture audio from PipeWire node {node}"),
-                    }
+                if let Some((a, capture)) = audio {
+                    s.app.voice.stream_audio = Some((a, capture));
                 }
                 crate::desktop::play(s, crate::desktop::Sound::ScreenShareStart);
                 send_state(s);
@@ -1363,15 +1383,25 @@ fn toggle_screen(s: &mut State) {
             },
             _ => None,
         };
+        let audio = match audio {
+            Some((a, node)) => {
+                let sink = a.clone();
+                match crate::audio_share::start(&node, move |pcm| sink.push(pcm)) {
+                    Some(capture) => Some((a, capture)),
+                    None => {
+                        eprintln!("reflux: couldn't start stream audio ({node})");
+                        let _ = call.unpublish_stream_audio(&a).await;
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         update(move |s| match r {
             Ok(share) if s.app.voice.generation == generation && s.app.shell.voice.screen => {
                 s.app.voice.share = Some(share);
-                if let Some((a, node)) = audio {
-                    let sink = a.clone();
-                    match crate::gst::AudioCapture::start(&node, move |pcm| sink.push(pcm)) {
-                        Some(capture) => s.app.voice.stream_audio = Some((a, capture)),
-                        None => eprintln!("reflux: couldn't capture audio from PipeWire node {node}"),
-                    }
+                if let Some((a, capture)) = audio {
+                    s.app.voice.stream_audio = Some((a, capture));
                 }
                 crate::desktop::play(s, crate::desktop::Sound::ScreenShareStart);
                 send_state(s);

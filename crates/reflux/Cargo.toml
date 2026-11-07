@@ -67,7 +67,7 @@ windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse",
 winapi = { version = "0.3", features = ["std"] }
 # The taskbar overlay badge (ITaskbarList3) and passkeys (webauthn.dll); already in the tree.
 # Media Foundation (`mf.rs`): inline video / audio attachments and gifv.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Networking_WindowsWebServices", "Win32_Media_MediaFoundation", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Networking_WindowsWebServices", "Win32_Media_MediaFoundation", "Win32_Media_Audio", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Dock badge label; the versions Rune already uses.
@@ -75,10 +75,15 @@ objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSDockTile", 
 objc2-foundation = { version = "0.2.2", features = ["NSString", "NSThread"] }
 # Camera capture (`camera/av.rs`): AVFoundation through the objc2 0.6 crates Rune's video uses.
 objc2 = "0.6"
-objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSString", "NSValue"] }
+objc2-foundation-03 = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSError", "NSString", "NSValue"] }
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "AVCaptureDevice", "AVCaptureInput", "AVCaptureOutputBase", "AVCaptureSession", "AVCaptureSessionPreset", "AVCaptureVideoDataOutput", "AVMediaFormat", "dispatch2", "objc2-core-media", "objc2-core-video"] }
-objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "objc2-core-video"] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMBlockBuffer", "CMSampleBuffer", "objc2-core-audio-types", "objc2-core-video"] }
 objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase"] }
+# ScreenCaptureKit audio (`audio_share/macos.rs`): system mix for a display share.
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["std", "SCStream", "SCShareableContent", "objc2-core-media", "objc2-core-foundation", "objc2-core-graphics", "block2", "dispatch2", "libc"] }
+block2 = { version = "0.6", default-features = false, features = ["std"] }
 dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
 
 [features]

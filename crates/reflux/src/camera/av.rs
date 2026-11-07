@@ -92,6 +92,10 @@ pub struct CameraCapture {
     _queue: DispatchRetained<DispatchQueue>,
 }
 
+// AVFoundation sessions, delegates and dispatch queues are thread-safe; the handles are moved
+// to the UI thread while frames flow on the capture queue.
+unsafe impl Send for CameraCapture {}
+
 impl CameraCapture {
     /// `device`: a name from [`cameras`] (`None` = the default camera).
     pub fn start(device: Option<&str>, _width: u32, height: u32, fps: u32, sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {

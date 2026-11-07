@@ -455,12 +455,12 @@ pub struct CameraQuality {
     pub bitrate: u64,
 }
 
-/// Screen share quality (`StreamSettings`). Kept so the picker's settings compile.
-#[derive(Clone, Copy, Debug, PartialEq)]
 /// Mirrors `livekit::options::VideoCodec` for the no-WebRTC build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VideoCodec { VP8, H264, VP9, AV1, H265 }
 
+/// Screen share quality (`StreamSettings`). Kept so the picker's settings compile.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenQuality {
     pub fps: u32,
     pub max_height: Option<u32>,
