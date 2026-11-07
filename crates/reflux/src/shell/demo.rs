@@ -628,9 +628,16 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             }
             data(st, "emoji-failed", json!([{"name": "huge.png", "error": "Image is too large to process (9000x9000)"}]));
             let mut role = e(2, ME, 31, "2011");
-            role["changes"] = json!([{"key": "name", "old_value": "Mods", "new_value": "Moderators"}, {"key": "hoist", "new_value": true}, {"key": "icon_hash", "old_value": "a1b2"}]);
+            role["changes"] = json!([{"key": "name", "old_value": "Mods", "new_value": "Moderators"}, {"key": "hoist", "old_value": false, "new_value": true}, {"key": "icon_hash", "old_value": "a1b2", "new_value": null}, {"key": "permissions", "old_value": "0", "new_value": "8194"}, {"key": "color", "old_value": 0, "new_value": 5793266}]);
+            let mut ban = e(1, 1001, 22, "1009");
+            ban["reason"] = json!("Spam%20links");
+            ban["options"] = json!({"delete_message_seconds": 86400});
+            let mut channel = e(3, 1002, 10, "2204");
+            channel["changes"] = json!([{"key": "name", "new_value": "announcements"}, {"key": "type", "new_value": 5}, {"key": "topic", "new_value": "News and updates"}]);
+            let mut member = e(4, 1001, 24, "1002");
+            member["changes"] = json!([{"key": "nick", "old_value": "grace", "new_value": "Admiral"}]);
             data(st, "audit-open", json!(role["id"].clone()));
-            data(st, "audit", json!({"audit_log_entries": [e(1, 1001, 22, "1009"), role, e(3, 1002, 10, "2204")],
+            data(st, "audit", json!({"audit_log_entries": [ban, role, channel, member, e(5, 0, 999, "")],
                                      "users": [{"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, {"id": "1009", "username": "spammer"}]}));
         }
     }

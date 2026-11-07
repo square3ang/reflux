@@ -2,7 +2,7 @@
 //! user settings frame: permission-gated tabs, the community name over the nav, and Delete
 //! community at its foot for the owner.
 
-use reflux_model::{AuditLogEntry, Ban, ChannelType, Emoji, Invite, PartialUser, Permissions as P, Role, Snowflake};
+use reflux_model::{Ban, ChannelType, Emoji, Invite, PartialUser, Permissions as P, Role, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, Icon, Tx, col, el, icon, row, text};
@@ -111,6 +111,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
     };
     super::overview_extra::threshold_modal(st, guild, info, p, acc, &mut popups);
     let mut modal = frame(t("Community settings"), label, vec![head], nav, body, close, p);
+    if tab == "audit_log" {
+        // The window's height, for the activity log's scroll paging.
+        modal = modal.on_layout(move |s: &mut S, [_, _, _, h]: [f32; 4]| {
+            acc(s).form.data.insert("audit-win-h".into(), json!(h));
+        });
+    }
     if let Some(cf) = st.form.confirm {
         modal = modal.child(confirm(store, st, cf, p, acc));
     }
@@ -705,53 +711,33 @@ fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, a
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
 struct AuditLog {
-    audit_log_entries: Vec<AuditLogEntry>,
+    audit_log_entries: Vec<Value>,
     users: Vec<PartialUser>,
+    webhooks: Vec<Value>,
 }
 
-/// What an audit action did, as a phrase after the actor (`audit-logs.mdx` "Audit actions").
-pub fn action_phrase(t: u32) -> &'static str {
-    match t {
-        1 => "updated the community",
-        10 => "created a channel",
-        11 => "updated a channel",
-        12 => "deleted a channel",
-        13 => "added a permission overwrite",
-        14 => "updated a permission overwrite",
-        15 => "removed a permission overwrite",
-        20 => "kicked a member",
-        21 => "pruned members",
-        22 => "banned a member",
-        23 => "unbanned a member",
-        24 => "updated a member",
-        25 => "updated a member's roles",
-        26 => "moved a member",
-        27 => "disconnected a member",
-        28 => "added a bot",
-        30 => "created a role",
-        31 => "updated a role",
-        32 => "deleted a role",
-        40 => "created an invite",
-        41 => "updated an invite",
-        42 => "deleted an invite",
-        50 => "created a webhook",
-        51 => "updated a webhook",
-        52 => "deleted a webhook",
-        60 => "created an emoji",
-        61 => "updated an emoji",
-        62 => "deleted an emoji",
-        72 => "deleted a message",
-        73 => "deleted messages",
-        74 => "pinned a message",
-        75 => "unpinned a message",
-        90 => "created a sticker",
-        91 => "updated a sticker",
-        92 => "deleted a sticker",
-        110 => "created a thread",
-        111 => "updated a thread",
-        112 => "deleted a thread",
-        _ => "made a change",
-    }
+/// `getActionIcon` and `getActionKind` (0 create, 1 update, 2 delete).
+fn action_look(t: u64) -> (&'static Icon, u8) {
+    let icon = match t {
+        1 => &icons::GEAR_BOLD,
+        10..=15 => &icons::HASH_BOLD,
+        20..=28 => &icons::USER_GEAR_BOLD,
+        30..=32 => &icons::TAG_BOLD,
+        40..=42 => &icons::LINK_BOLD,
+        50..=52 => &icons::PLUG_BOLD,
+        60..=62 => &icons::SMILEY_BOLD,
+        90..=92 => &icons::STAMP_BOLD,
+        72 | 73 => &icons::TRASH_BOLD,
+        74 | 75 => &icons::PENCIL_SIMPLE_BOLD,
+        110..=112 => &icons::CHATS_BOLD,
+        _ => &icons::BUILDINGS_BOLD,
+    };
+    let kind = match t {
+        10 | 13 | 30 | 40 | 50 | 60 | 90 | 28 | 74 | 110 => 0,
+        1 | 11 | 14 | 24 | 25 | 31 | 41 | 51 | 61 | 91 | 26 | 27 | 111 => 1,
+        _ => 2,
+    };
+    (icon, kind)
 }
 
 /// The "Filter by action" options (`AuditLogConstants.ts`); threads only when threads are on.
@@ -809,45 +795,13 @@ fn audit_path(g: Snowflake, f: &Form, before: Option<Snowflake>) -> String {
     q
 }
 
-/// A changed value as text, the way Fluxer's change details read: strings bare, booleans as
-/// Yes/No, arrays joined, the rest as JSON.
-fn change_value(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Bool(true) => t("Yes").to_string(),
-        Value::Bool(false) => t("No").to_string(),
-        Value::Array(a) => a.iter().map(change_value).collect::<Vec<_>>().join(", "),
-        v => v.to_string(),
-    }
-}
-
-/// A changed field's label (`ChangeDetails`): `mention_everyone` → "Mention everyone".
-fn change_label(key: &str) -> String {
-    let mut s = key.replace('_', " ");
-    if let Some(c) = s.get_mut(0..1) {
-        c.make_ascii_uppercase();
-    }
-    t(&s).to_string()
-}
-
-/// One `changes` row: (tone glyph, line). `+` added, `−` removed, `•` changed.
-fn change_line(c: &Value) -> (&'static str, String) {
-    let key = change_label(c.get("key").and_then(Value::as_str).unwrap_or("?"));
-    match (c.get("old_value").filter(|v| !v.is_null()), c.get("new_value").filter(|v| !v.is_null())) {
-        (None, Some(n)) => ("+", format!("{key}: {}", change_value(n))),
-        (Some(o), None) => ("−", format!("{key}: {}", change_value(o))),
-        (Some(o), Some(n)) => ("•", format!("{key}: {} → {}", change_value(o), change_value(n))),
-        (None, None) => ("•", key),
-    }
-}
-
 fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
     let refilter = move |key: &'static str| {
         move |s: &mut S, v: &str| {
             let sh = acc(s);
             sh.form.data.insert(key.into(), json!(v));
-            for k in ["audit", "audit-end", "audit-open"] {
+            for k in ["audit", "audit-end", "audit-open", "audit-paging"] {
                 sh.form.data.remove(k);
             }
             let path = audit_path(g, &sh.form, None);
@@ -872,65 +826,112 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
         Ok(l) => l,
         Err(e) => return section(t("Activity log"), head.child(e), true, p),
     };
-    let known = |id: Snowflake| {
+    let user = |id: &str| {
+        let id: Snowflake = id.parse().ok()?;
         let me = store.me.as_ref().filter(|m| m.id == id).map(|m| &m.base);
         log.users.iter().find(|u| u.id == id).or(store.users.get(&id)).or(me).map(user_name)
     };
-    let who = |id: Snowflake| known(id).unwrap_or_else(|| if id.0 == 0 { "System".into() } else { id.to_string() });
-    let target = |e: &AuditLogEntry| -> Option<String> {
-        let t = e.target_id.as_deref()?;
-        let id: Option<Snowflake> = t.parse().ok();
-        id.and_then(|id| store.channels.get(&id).and_then(|c| c.name.clone()).map(|n| format!("#{n}")))
-            .or_else(|| id.and_then(|id| store.guilds.values().flat_map(|g| g.roles.iter()).find(|r| r.id == id).map(|r| format!("@{}", r.name))))
-            .or_else(|| id.and_then(known))
-            .or_else(|| Some(t.to_string()))
+    let chan = |id: &str| {
+        let c = store.channels.get(&id.parse().ok()?)?;
+        Some((c.name.clone()?, matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_LINK)))
     };
+    let role = |id: &str| store.guilds.get(&g)?.roles.iter().find(|r| r.id.to_string() == id).map(|r| r.name.clone());
+    let names = super::audit::Names { user: &user, channel: &chan, role: &role, guild: g };
+    let known = |kind: &str, id: &str| match kind {
+        "webhook" => log.webhooks.iter().find(|w| w["id"] == id).and_then(|w| w["name"].as_str()).map(str::to_string),
+        "emoji" => store.guilds.get(&g)?.emojis.iter().find(|e| e.id.to_string() == id).map(|e| e.name.clone()),
+        "sticker" => store.guilds.get(&g)?.stickers.iter().find(|e| e.id.to_string() == id).map(|e| e.name.clone()),
+        _ => None,
+    };
+    let c = colors(p);
     let rows: Vec<El> = log
         .audit_log_entries
         .iter()
-        .map(|e| {
-            let mut line = format!("{} {}", who(e.user_id), action_phrase(e.action_type));
-            if let Some(t) = target(e).filter(|_| e.action_type != 1) {
-                line.push_str(&format!(" — {t}"));
-            }
-            let when = crate::shell::format_relative(e.id.timestamp_ms(), st.now_ms);
-            let mut c = col().grow(1.0).min_w(0.0).child(text(line).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).wrap()).child(small(when, p));
-            if let Some(r) = e.reason.as_ref().filter(|r| !r.is_empty()) {
-                c = c.child(small(format!("Reason: {r}"), p));
-            }
-            let id = e.id.to_string();
+        .map(|v| {
+            let e = super::audit::E { v, guild: g, known: &known };
+            let pres = super::audit::present(&e);
+            let id = v["id"].as_str().unwrap_or_default().to_string();
             let open = cur("audit-open") == id;
+            let expandable = !pres.rows.is_empty() || !pres.blocks.is_empty();
+            let (glyph, kind) = action_look(v["action_type"].as_u64().unwrap_or(0));
+            let tint = [p.status_online, p.status_warning, p.status_danger][kind as usize];
+            let badge = row()
+                .size(32.0, 32.0)
+                .center()
+                .radius(16.0)
+                .fill(crate::ui::mix(tint, c.hover, 8.0))
+                .child(icon(glyph, 20.0).color(crate::ui::mix(tint, p.text_primary_muted, 70.0)));
+            let actor: Option<Snowflake> = v["user_id"].as_str().and_then(|u| u.parse().ok());
+            let face = match actor {
+                Some(a) => crate::shell::avatar(store, st, a, 32.0, None, p.background_secondary, p),
+                None => row().size(32.0, 32.0).radius(16.0).fill(c.hover),
+            };
+            let when = id.parse().map(|i| crate::shell::format_relative(Snowflake(i).timestamp_ms(), st.now_ms)).unwrap_or_default();
+            let words = col().grow(1.0).min_w(0.0).gap(2.0).child(super::audit::sentence(&pres.summary, &names, 14.0, p.text_primary_muted, p)).child(small(when, p));
+            let mut header = row().w_full().min_h(56.0).px(16.0).py(8.0).gap(12.0).center_y().child(badge).child(face).child(words);
+            if expandable {
+                let id = id.clone();
+                header = header
+                    .child(icon(if open { &icons::CARET_UP_BOLD } else { &icons::CARET_DOWN_BOLD }, 20.0).color(p.text_tertiary))
+                    .hover(c.hover)
+                    .cursor(rune::Cursor::Pointer)
+                    .role("button")
+                    .expanded(open)
+                    .on_press(move |s: &mut S| {
+                        let f = &mut acc(s).form.data;
+                        if open { f.remove("audit-open") } else { f.insert("audit-open".into(), json!(id)) };
+                    });
+                if open {
+                    header = header.fill(c.hover);
+                }
+            }
+            let mut entry = col().w_full().radius(12.0).clip_rounded(12.0).border(1.0, p.background_modifier_accent).fill(p.background_textarea).child(header);
             if open {
-                // Fluxer words some actions as a sentence; here every change is a labelled line.
-                c = c.child(col().w_full().gap(4.0).pt(8.0).children(e.changes.iter().map(|ch| {
-                    let (glyph, line) = change_line(ch);
-                    let tone = match glyph {
-                        "+" => p.status_online,
-                        "−" => p.status_danger,
-                        _ => p.text_tertiary,
-                    };
-                    row().w_full().gap(8.0).child(text(glyph).font(font(13.0, 700.0).lh(18.0)).color(tone).w(10.0)).child(small(line, p).wrap().grow(1.0).min_w(0.0))
-                })));
+                let mut details = col().w_full().px(16.0).py(12.0).gap(12.0).child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
+                for (ban, text_) in &pres.blocks {
+                    let label = if *ban { t("Ban reason") } else { t("Reason") };
+                    details = details.child(
+                        col().w_full().gap(4.0).child(text(label).font(font(11.0, 600.0).lh(14.0)).text_case(rune::TextCase::Uppercase).color(p.text_primary_muted)).child(text(text_.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).wrap()),
+                    );
+                }
+                if !pres.rows.is_empty() {
+                    details = details.child(col().w_full().gap(8.0).children(pres.rows.iter().map(|r| {
+                        use super::audit::Tone;
+                        let (glyph, tint) = match r.tone {
+                            Tone::Add => (&icons::PLUS_BOLD, Some(p.status_online)),
+                            Tone::Remove => (&icons::MINUS_BOLD, Some(p.status_danger)),
+                            Tone::Neutral => (&icons::DOT_BOLD, None),
+                        };
+                        let (bg, border, fg) = match tint {
+                            Some(k) => (crate::ui::mix(k, c.hover, 18.0), crate::ui::mix(k, p.background_modifier_accent, 55.0), k),
+                            None => (c.hover, p.background_modifier_accent, p.text_primary),
+                        };
+                        let bullet = row().size(20.0, 20.0).center().radius(10.0).fill(bg).border(1.0, over(border, bg)).child(icon(glyph, 12.0).color(fg));
+                        row().w_full().min_h(28.0).gap(8.0).center_y().child(bullet).child(super::audit::sentence(&r.s, &names, 14.0, p.text_primary_muted, p).grow(1.0).min_w(0.0))
+                    })));
+                }
+                entry = entry.child(details);
             }
-            let mut r = row().w_full().gap(12.0).center_y().child(crate::shell::avatar(store, st, e.user_id, 32.0, None, p.background_secondary, p)).child(c);
-            if !e.changes.is_empty() {
-                r = r.child(icon(if open { &icons::CARET_UP } else { &icons::CARET_DOWN }, 16.0).color(p.text_tertiary)).on_press(move |s: &mut S| {
-                    let f = &mut acc(s).form.data;
-                    if open { f.remove("audit-open") } else { f.insert("audit-open".into(), json!(id)) };
-                });
-            }
-            r
+            entry
         })
         .collect();
-    let mut body = head.child(if rows.is_empty() { empty(t("No logs yet"), p) } else { card(rows, p) });
-    let last = log.audit_log_entries.last().map(|e| e.id);
+    let mut body = head.child(if rows.is_empty() { empty(t("No logs yet"), p) } else { col().w_full().gap(8.0).children(rows) });
+    let last = log.audit_log_entries.last().and_then(|e| e["id"].as_str()).map(str::to_string);
     if let Some(last) = last.filter(|_| !st.form.data.contains_key("audit-end") && log.audit_log_entries.len() >= AUDIT_PAGE) {
-        // shortcut: a "Load more" button where Fluxer loads on scroll.
-        body = body.child(Button::new(t("Load more")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).submitting(st.form.busy).on_press(move |s: &mut S| {
+        // `INFINITE_SCROLL_OVERSCAN_PX`: the next page loads once this sentinel comes within
+        // 1200px of the bottom of the window (the modal's height, recorded as it lays out).
+        let loading = st.form.data.get("audit-paging").and_then(Value::as_str) == Some(last.as_str());
+        let sentinel = col().w_full().key("audit-sentinel").on_layout(move |s: &mut S, [_, y, _, _]: [f32; 4]| {
             let sh = acc(s);
-            let path = audit_path(g, &sh.form, Some(last));
+            let win = sh.form.data.get("audit-win-h").and_then(Value::as_f64).unwrap_or(800.0) as f32;
+            if y > win + 1200.0 || sh.form.data.get("audit-paging").and_then(Value::as_str) == Some(last.as_str()) {
+                return;
+            }
+            sh.form.data.insert("audit-paging".into(), json!(last));
+            let path = audit_path(g, &sh.form, last.parse().ok().map(Snowflake));
             sh.api(Method::GET, path, None, Then::Append("audit".into(), AUDIT_PAGE));
-        }).el(p));
+        });
+        body = body.child(if loading { sentinel.h(48.0).center().child(crate::ui::button::spinner(p.text_primary_muted)) } else { sentinel.h(1.0) });
     }
     section(t("Activity log"), body, true, p)
 }
@@ -947,21 +948,11 @@ mod tests {
     }
 
     #[test]
-    fn audit_phrases() {
-        assert_eq!(action_phrase(22), "banned a member");
-        assert_eq!(action_phrase(999), "made a change");
-    }
-
-    #[test]
-    fn audit_query_and_changes() {
+    fn audit_query() {
         let mut f = Form::default();
         assert_eq!(audit_path(Snowflake(1), &f, None), "/guilds/1/audit-logs?limit=50");
         f.data.insert("audit-user".into(), json!("7"));
         f.data.insert("audit-action".into(), json!(""));
         assert_eq!(audit_path(Snowflake(1), &f, Some(Snowflake(9))), "/guilds/1/audit-logs?limit=50&user_id=7&before=9");
-        assert_eq!(change_line(&json!({ "key": "name", "old_value": "a", "new_value": "b" })), ("•", t("Name: a → b").into()));
-        assert_eq!(change_line(&json!({ "key": "nsfw", "new_value": true })), ("+", t("Nsfw: Yes").into()));
-        assert_eq!(change_line(&json!({ "key": "mention_everyone", "old_value": false, "new_value": true })), ("•", t("Mention everyone: No → Yes").into()));
-        assert_eq!(change_line(&json!({ "key": "topic", "old_value": "x" })), ("−", t("Topic: x").into()));
     }
 }

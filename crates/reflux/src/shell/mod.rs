@@ -48,7 +48,7 @@ pub mod queue;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
-pub(crate) use chat::{channel_title, format_relative};
+pub(crate) use chat::{channel_title, format_full_date_time, format_relative};
 pub(crate) use guilds::{acronym, folder_glyph, guild_face};
 
 use std::collections::HashSet;

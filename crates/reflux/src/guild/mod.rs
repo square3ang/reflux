@@ -5,6 +5,7 @@
 //! the [`Then`] when they answer. Most effects arrive over the gateway (GUILD_UPDATE,
 //! GUILD_ROLE_*, CHANNEL_*), so the store stays the source of truth.
 
+mod audit;
 mod channel;
 pub use channel::poll as poll_overwrite_search;
 mod expr_upload;
