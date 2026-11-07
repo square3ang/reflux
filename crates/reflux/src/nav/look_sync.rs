@@ -179,7 +179,7 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
     if store.me.is_none() {
         return false;
     }
-    let b64 = &store.settings.synced_preferences;
+    let b64 = &st.synced.view(&store.settings.synced_preferences);
     let me = st.account.me;
     if st.nav.synced_look.as_ref().is_none_or(|s| s.b64 != *b64 || s.account != me) {
         let first = st.nav.synced_look.as_ref().is_none_or(|s| s.account != me);
@@ -208,15 +208,15 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
     if local == seen.sent {
         return false;
     }
-    let mut next = seen.b64.clone();
+    let old = seen.b64.clone();
     for (i, &t) in TOPS.iter().enumerate() {
         if seen.sent.get(i) != Some(&local[i]) {
-            let remote = synced::get(&seen.b64, t).unwrap_or_default();
-            next = synced::set(&next, t, Some(&encode(t, &st.prefs.look, &remote)));
+            let remote = synced::get(&old, t).unwrap_or_default();
+            st.synced.put(me, t, Some(&encode(t, &st.prefs.look, &remote)));
         }
     }
-    st.nav.synced_look = Some(Seen { account: me, b64: next.clone(), sent: local });
-    st.intents.push(Intent::PatchSettings(serde_json::json!({ "synced_preferences": next })));
+    let b64 = st.synced.view(&store.settings.synced_preferences);
+    st.nav.synced_look = Some(Seen { account: me, b64, sent: local });
     false
 }
 

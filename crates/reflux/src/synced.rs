@@ -1,8 +1,11 @@
 //! `synced_preferences` (`fluxer.user.preferences.v1.SyncedPreferences`, base64 protobuf in the
 //! user settings) at the wire level: read one top-level field, or replace it and send the whole
 //! snapshot back with every other field's bytes untouched (`settings-protobuf.md`).
-// shortcut: no `synced_preferences_base_hash` / 409 retry like `UserSettings.flushSyncedPreferences`;
-// the splice always starts from the latest snapshot the gateway delivered.
+//!
+//! Every module hands its changed top-level fields to one [`Queue`] (Fluxer's dirty fields) and
+//! reads the snapshot through [`Queue::view`], so its own unsent edits read back as current.
+//! [`flush`] sends them with `synced_preferences_base_hash`; a 409 refetches the settings and sends
+//! again, the dirty fields winning over the refetched remote (`UserSettings.flushSyncedPreferences`).
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
@@ -112,6 +115,114 @@ pub fn uint_of(f: &Field) -> u64 {
     varint(f.value, &mut 0).unwrap_or(0)
 }
 
+use std::collections::BTreeMap;
+
+use reflux_model::Snowflake;
+
+/// `MAX_SYNCED_PREFERENCES_CONFLICT_RETRIES`.
+const MAX_CONFLICT_RETRIES: u32 = 3;
+
+type Fields = BTreeMap<u32, Option<Vec<u8>>>;
+
+/// Dirty top-level fields (payload, `None` = removed) and the request in flight.
+#[derive(Debug, Default)]
+pub struct Queue {
+    account: Snowflake,
+    pending: Fields,
+    in_flight: Option<Fields>,
+    conflicts: u32,
+    /// The last send failed for another reason; waits for the next edit (Fluxer rejects the save).
+    stalled: bool,
+}
+
+fn splice(b64: &str, fields: &Fields) -> String {
+    fields.iter().fold(b64.to_string(), |b, (&n, p)| set(&b, n, p.as_deref()))
+}
+
+impl Queue {
+    /// The gateway's snapshot with this device's unacknowledged fields over it.
+    pub fn view(&self, b64: &str) -> String {
+        let mut all = self.in_flight.clone().unwrap_or_default();
+        all.extend(self.pending.clone());
+        splice(b64, &all)
+    }
+
+    /// Marks field `num` dirty with `payload` (`None` removes it).
+    pub fn put(&mut self, account: Snowflake, num: u32, payload: Option<&[u8]>) {
+        if self.account != account {
+            *self = Self { account, ..Self::default() };
+        }
+        self.pending.insert(num, payload.map(<[u8]>::to_vec));
+        self.stalled = false;
+    }
+
+    /// The fields to send and the request body, or `None` when there's nothing to send.
+    fn take(&mut self, account: Snowflake, base: &str) -> Option<serde_json::Value> {
+        if self.account != account {
+            *self = Self { account, ..Self::default() };
+        }
+        if self.in_flight.is_some() || self.stalled || self.pending.is_empty() {
+            return None;
+        }
+        let sent = std::mem::take(&mut self.pending);
+        let next = splice(base, &sent);
+        self.in_flight = Some(sent);
+        use sha2::Digest;
+        let hash: String = sha2::Sha256::digest(decode(base)).iter().map(|b| format!("{b:02x}")).collect();
+        let value = if next.is_empty() { serde_json::Value::Null } else { next.into() };
+        Some(serde_json::json!({ "synced_preferences": value, "synced_preferences_base_hash": hash }))
+    }
+
+    /// The request ended: acknowledged fields drop out unless edited again since; a failed one's
+    /// fields go back to pending.
+    fn done(&mut self, account: Snowflake, ok: bool) {
+        if self.account != account {
+            return;
+        }
+        let sent = self.in_flight.take().unwrap_or_default();
+        if !ok {
+            for (n, p) in sent {
+                self.pending.entry(n).or_insert(p);
+            }
+        }
+    }
+}
+
+/// Once a frame: sends the queued fields over the latest snapshot.
+pub fn flush(s: &mut crate::State) {
+    let Some(me) = s.app.store.me.as_ref().map(|u| u.id) else { return };
+    let base = s.app.store.settings.synced_preferences.clone();
+    let Some(body) = s.app.shell.synced.take(me, &base) else { return };
+    let Some(inst) = s.app.instance.clone() else { return };
+    crate::app::spawn(async move {
+        let r = inst.rest.update_settings(&body).await;
+        let conflict = matches!(&r, Err(e @ reflux_net::Error::Api { status, .. }) if status.as_u16() == 409 && e.code() == Some("SYNCED_PREFERENCES_CONFLICT"));
+        let refetched = if conflict { Some(inst.rest.settings().await) } else { None };
+        crate::app::update(move |s| {
+            let q = &mut s.app.shell.synced;
+            match (r, refetched) {
+                (Ok(new), _) => {
+                    q.done(me, true);
+                    q.conflicts = 0;
+                    s.app.store.settings = new;
+                }
+                (Err(_), Some(Ok(fresh))) if q.conflicts < MAX_CONFLICT_RETRIES => {
+                    q.conflicts += 1;
+                    q.done(me, false);
+                    // Only the snapshot: the other settings may have moved on through the gateway.
+                    s.app.store.settings.synced_preferences = fresh.synced_preferences;
+                }
+                (Err(e), _) => {
+                    eprintln!("reflux: synced preferences: {e}");
+                    q.done(me, false);
+                    q.conflicts = 0;
+                    q.stalled = true;
+                }
+            }
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +241,33 @@ mod tests {
         assert_eq!(f[2].value, b"\x28\x01");
         assert_eq!(set("", 40, None), "");
         assert!(fields(b"\x0a\x05ab").is_none(), "truncated");
+    }
+
+    #[test]
+    fn queue_keeps_local_fields_over_the_refetched_remote() {
+        let me = Snowflake(1);
+        let remote = |v: &[u8]| {
+            let mut m = Vec::new();
+            bytes(&mut m, 40, v);
+            bytes(&mut m, 41, b"remote");
+            STANDARD.encode(m)
+        };
+        let mut q = Queue::default();
+        q.put(me, 40, Some(b"local"));
+        assert_eq!(get(&q.view(&remote(b"old")), 40).as_deref(), Some(&b"local"[..]));
+        let body = q.take(me, &remote(b"old")).unwrap();
+        assert!(q.take(me, &remote(b"old")).is_none(), "one request at a time");
+        assert_eq!(body["synced_preferences_base_hash"].as_str().unwrap().len(), 64);
+        // 409: the refetched snapshot changed both fields; ours still wins, theirs is kept.
+        q.done(me, false);
+        let fresh = remote(b"theirs");
+        let body = q.take(me, &fresh).unwrap();
+        let sent = body["synced_preferences"].as_str().unwrap();
+        assert_eq!(get(sent, 40).as_deref(), Some(&b"local"[..]));
+        assert_eq!(get(sent, 41).as_deref(), Some(&b"remote"[..]));
+        // An edit while in flight survives the acknowledgement.
+        q.put(me, 40, Some(b"newer"));
+        q.done(me, true);
+        assert_eq!(get(&q.view(&fresh), 40).as_deref(), Some(&b"newer"[..]));
     }
 }

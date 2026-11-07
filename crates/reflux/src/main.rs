@@ -17,6 +17,7 @@ mod nav;
 mod passkey;
 mod popout;
 mod quick_css;
+mod quick_css_syntax;
 mod restrict;
 mod session;
 mod settings;
@@ -65,6 +66,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     let sh = s.shell_demo.as_ref().map_or(&s.app.shell, |d| &d.shell);
     let (a, b) = sh.composer.range();
     compose::CARET.set(if sh.composer.focused && a != b { cx.caret("composer") } else { None });
+    quick_css_syntax::CARET.set(if sh.form.text.get("quick-css").is_some_and(|e| e.focused) { cx.caret("quick-css") } else { None });
     let content = match (&s.gallery, &s.shell_demo) {
         (Some(g), _) => ui::gallery::view(g, cx),
         (_, Some(d)) => shell::demo::view(d),

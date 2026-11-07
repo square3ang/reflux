@@ -215,6 +215,10 @@ fn message_window_and_nonce() {
     apply(&mut s, "MESSAGE_UPDATE", upd);
     let last = s.messages(S(101)).last().unwrap();
     assert_eq!((last.content.as_str(), last.reactions.len()), ("edited", 1));
+    let mut cleared = msg(2000, 101, ME);
+    cleared["reactions"] = json!(null);
+    apply(&mut s, "MESSAGE_UPDATE", cleared);
+    assert!(s.messages(S(101)).last().unwrap().reactions.is_empty(), "a present `reactions` (even null) replaces the list");
     apply(&mut s, "MESSAGE_DELETE_BULK", json!({"ids": ["2000", "1001"], "channel_id": "101"}));
     assert_eq!(s.messages(S(101)).len(), PAGE_SIZE - 1);
 

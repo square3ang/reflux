@@ -2,12 +2,10 @@
 //! index, grouped by category (`AdvancedSettingsCategories.ts`), each with its direct control
 //! (`AdvancedSettingDirectControls.tsx`) or an "Open" button to the tab it lives in.
 //! Items added in the last 30 days lead in a "New settings" section (`isSettingsItemNew`).
-// shortcut: no in-tab search field (the settings search filters this tab), and the action bar's
-// options sit inline instead of in a configure dialog. Items whose feature Reflux doesn't have are
-// left out.
+//! Items whose feature Reflux doesn't have are left out.
 
 use reflux_store::Store;
-use rune::{El, col, el, row, text};
+use rune::{El, TextEdit, col, el, row, text};
 use serde_json::json;
 
 use super::search_index::{ADDED, ITEMS};
@@ -155,25 +153,17 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
             |p| p.look.convert_emoticons,
             |p, v| p.look.convert_emoticons = v,
         ),
-        // The `message-action-bar` switch group.
-        "chat-settings-message-action-bar" => {
-            let off = !st.prefs.look.action_bar;
-            col()
-                .w_full()
-                .gap(12.0)
-                .child(look_switch(st, p, acc, Some("Show message action bar"), false, |p| p.look.action_bar, |p, v| p.look.action_bar = v))
-                .child(look_switch(st, p, acc, Some("Show only the more button"), off, |p| p.look.action_bar_more_only, |p, v| p.look.action_bar_more_only = v))
-                .child(look_switch(st, p, acc, Some("Show quick reactions"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_quick_reactions, |p, v| p.look.action_bar_quick_reactions = v))
-                .child(look_switch(st, p, acc, Some("Enable Shift to expand"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_shift_expand, |p, v| p.look.action_bar_shift_expand = v))
+        // `SwitchGroupSettingsButton`: the group opens in a dialog.
+        "chat-settings-message-action-bar" | "chat-settings-input-buttons" => {
+            let id: &'static str = if id == "chat-settings-input-buttons" { "chat-settings-input-buttons" } else { "chat-settings-message-action-bar" };
+            crate::ui::Button::new(t("Configure"))
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Compact)
+                .icon(&icons::GEAR_BOLD)
+                .key(format!("advanced-configure-{id}"))
+                .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::SwitchGroup(id)))
+                .el(p)
         }
-        "chat-settings-input-buttons" => col()
-            .w_full()
-            .gap(12.0)
-            .child(look_switch(st, p, acc, Some("Show GIFs button"), false, |p| p.look.show_gif_button, |p, v| p.look.show_gif_button = v))
-            .child(look_switch(st, p, acc, Some("Show media button"), false, |p| p.look.show_memes_button, |p, v| p.look.show_memes_button = v))
-            .child(look_switch(st, p, acc, Some("Show stickers button"), false, |p| p.look.show_stickers_button, |p, v| p.look.show_stickers_button = v))
-            .child(look_switch(st, p, acc, Some("Show emoji button"), false, |p| p.look.show_emoji_button, |p, v| p.look.show_emoji_button = v))
-            .child(look_switch(st, p, acc, Some("Show send button"), false, |p| p.look.show_send_button, |p, v| p.look.show_send_button = v)),
         "client-developer-mode" => {
             let on = store.settings.developer_mode;
             Switch::new(on).on_toggle(move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(json!({ "developer_mode": !on })))).el(p)
@@ -193,8 +183,94 @@ fn is_new(id: &str, now: &str, month_ago: &str, created: &str) -> bool {
     ADDED.iter().find(|a| a.0 == id).is_some_and(|&(_, at)| at <= now && at >= month_ago && at > created)
 }
 
-/// The tab; `query` (the settings search) filters it like `filterAdvancedSettingItems`.
+/// `SwitchGroupSettingsModal`: the item's switches (`MessageActionBarContent`, `InputButtonsContent`).
+pub fn switch_group_modal<S: 'static>(st: &ShellState, id: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let title = ITEMS.iter().find(|i| i.0 == id).map_or("", |i| i.3);
+    let body = if id == "chat-settings-input-buttons" {
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Show GIFs button"), false, |p| p.look.show_gif_button, |p, v| p.look.show_gif_button = v))
+            .child(look_switch(st, p, acc, Some("Show media button"), false, |p| p.look.show_memes_button, |p, v| p.look.show_memes_button = v))
+            .child(look_switch(st, p, acc, Some("Show stickers button"), false, |p| p.look.show_stickers_button, |p, v| p.look.show_stickers_button = v))
+            .child(look_switch(st, p, acc, Some("Show emoji button"), false, |p| p.look.show_emoji_button, |p, v| p.look.show_emoji_button = v))
+            .child(look_switch(st, p, acc, Some("Show send button"), false, |p| p.look.show_send_button, |p, v| p.look.show_send_button = v))
+    } else {
+        let off = !st.prefs.look.action_bar;
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Show message action bar"), false, |p| p.look.action_bar, |p, v| p.look.action_bar = v))
+            .child(look_switch(st, p, acc, Some("Show only the more button"), off, |p| p.look.action_bar_more_only, |p, v| p.look.action_bar_more_only = v))
+            .child(look_switch(st, p, acc, Some("Show quick reactions"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_quick_reactions, |p, v| p.look.action_bar_quick_reactions = v))
+            .child(look_switch(st, p, acc, Some("Enable Shift to expand"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_shift_expand, |p, v| p.look.action_bar_shift_expand = v))
+    };
+    Modal::new(t(title), move |s: &mut S| acc(s).close_account_modals()).size(ModalSize::Medium).body(body).el(p)
+}
+
+/// `SettingsSearch` over the tab (`AdvancedSettingsTab`'s toolbar): 34 tall, a 16 bold magnifier,
+/// 13/18 text, a clear button once there's a query.
+fn search_field<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    const KEY: &str = "advanced-search";
+    let empty = TextEdit::new("");
+    let edit = st.form.text.get(KEY).unwrap_or(&empty);
+    let c = super::colors(p);
+    let border = if edit.focused { p.background_modifier_accent_focus } else { c.border };
+    row()
+        .w_full()
+        .h(34.0)
+        .pl(36.0)
+        .pr(4.0)
+        .center_y()
+        .radius(8.0)
+        .fill(c.surface)
+        .border(1.0, crate::ui::over(border, c.surface))
+        .cursor(rune::Cursor::Text)
+        .child(rune::icon(&icons::MAGNIFYING_GLASS_BOLD, 16.0).color(p.text_tertiary).pin(Some(12.0), Some(8.0), None, None))
+        .child(
+            rune::text_input(edit, font(13.0, 400.0).lh(18.0))
+                .single_line()
+                .key(KEY)
+                .label(t("Search advanced settings"))
+                .grow(1.0)
+                .shrink()
+                .color(p.text_primary)
+                .placeholder(t("Search advanced settings"), p.text_tertiary)
+                .caret(p.text_primary, p.background_modifier_selected)
+                .on_input_key(move |s: &mut S, k, _| {
+                    let blur = k.key == rune::Key::Escape;
+                    if blur && let Some(e) = acc(s).form.text.get_mut(KEY) {
+                        e.focused = false;
+                    }
+                    blur
+                })
+                .on_edit(move |s: &mut S| -> &mut TextEdit { acc(s).form.text.entry(KEY.into()).or_insert_with(|| TextEdit::new("")) }),
+        )
+        .children((!edit.text.is_empty()).then(|| {
+            row()
+                .size(28.0, 28.0)
+                .center()
+                .radius(6.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Clear search"))
+                .hover(c.hover)
+                .on_press(move |s: &mut S| {
+                    let mut e = TextEdit::new("");
+                    e.focused = true;
+                    acc(s).form.text.insert(KEY.into(), e);
+                })
+                .child(rune::icon(&icons::X_BOLD, 14.0).color(p.text_tertiary))
+        }))
+}
+
+/// The tab; `query` (the settings search) filters it like `filterAdvancedSettingItems`. As its own
+/// tab (no settings search), its search field filters it instead.
 pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let inline = !query.is_empty();
+    let own = st.form.text.get("advanced-search").map_or("", |e| e.text.as_str());
+    let query = if inline { query } else { own };
+    let toolbar = (!inline).then(|| col().w_full().mb(20.0).child(search_field(st, p, acc)));
     let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_string).collect();
     let iso = crate::social::iso;
     let (now, month_ago, created) = (iso(st.now_ms), iso(st.now_ms.saturating_sub(30 * 86_400_000)), iso(store.my_id().timestamp_ms()));
@@ -214,12 +290,11 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
                     .el(p),
                 None => return None,
             };
-            let full = id == "chat-settings-message-action-bar";
             let mut main = col().grow(1.0).shrink().min_w(0.0).gap(8.0).child(text(t(label).to_string()).font(font(14.0, 600.0).lh(18.9)).color(p.text_primary));
             if !desc.is_empty() {
                 main = main.child(text(t(desc).to_string()).font(font(13.0, 400.0).lh(18.2)).color(p.text_secondary).wrap());
             }
-            let body = if full { col().w_full().gap(12.0).child(main).child(action) } else { row().w_full().gap(12.0).center_y().child(main).child(action) };
+            let body = row().w_full().gap(12.0).center_y().child(main).child(action);
             let r = col()
                 .w_full()
                 .py(16.0)
@@ -229,9 +304,9 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
         })
         .collect();
     if rows.is_empty() {
-        return col().w_full().py(32.0).items_center().child(text(t("No advanced settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary));
+        return col().w_full().children(toolbar).child(col().w_full().py(32.0).items_center().child(text(t("No advanced settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary)));
     }
-    let mut out = col().w_full();
+    let mut out = col().w_full().children(toolbar);
     let mut first = true;
     let mut rows = rows;
     for (key, label) in [("new", "New settings")].iter().chain(CATEGORIES) {

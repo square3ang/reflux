@@ -816,6 +816,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         sh.voice.cameras = Some(Vec::new());
         sh.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::LoadCameras));
     }
+    crate::synced::flush(s);
     let intents = std::mem::take(&mut s.app.shell.intents);
     let ran = !intents.is_empty();
     use crate::shell::Intent;
@@ -835,6 +836,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             i @ (Intent::LoadNewer { .. } | Intent::JumpTo { .. } | Intent::JumpToPresent(_) | Intent::LoadPins { .. } | Intent::Search(_)) => chat::run(s, i),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),
+            Intent::OpenLink(url) => crate::desktop::open_link(s, &url),
             Intent::Api(c) => guild::run(s, c),
             Intent::FetchInvite(code) => invites::fetch(s, code),
             Intent::Account(op) => account::run(s, op),

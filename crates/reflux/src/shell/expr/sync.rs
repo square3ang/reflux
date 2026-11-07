@@ -12,7 +12,7 @@ use reflux_store::Store;
 use serde_json::{Map, Value, json};
 
 use super::{Saved, Usage};
-use crate::shell::{Intent, ShellState};
+use crate::shell::ShellState;
 use crate::synced::{self, Field};
 
 /// `SyncedPreferences.emoji_picker`, `.sticker_picker`, `.emoji`, `.favorite_gifs`.
@@ -331,7 +331,7 @@ pub fn poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     if store.me.is_none() {
         return false;
     }
-    let b64 = &store.settings.synced_preferences;
+    let b64 = &st.synced.view(&store.settings.synced_preferences);
     let me = st.account.me;
     let mut changed = false;
     if st
@@ -372,21 +372,23 @@ pub fn poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
         tx.wake_after(std::time::Duration::from_millis(since + DEBOUNCE_MS - now));
         return changed;
     }
-    let mut next = match ris {
-        Some(d) => super::image_search::with_default(&seen.b64, d.as_deref()),
-        None => seen.b64.clone(),
-    };
-    for (num, payload) in [EMOJI, STICKER, EMOJI_STATE, GIFS].into_iter().zip(&local) {
-        next = synced::set(&next, num, (!payload.is_empty()).then_some(&payload[..]));
+    let old = seen.b64.clone();
+    let changed_wire: Vec<bool> = local.iter().zip(&seen.wire).map(|(a, b)| a != b).collect();
+    if let Some(d) = ris {
+        let with = super::image_search::with_default(&old, d.as_deref());
+        st.synced.put(me, super::image_search::SEARCH_ENGINES, synced::get(&with, super::image_search::SEARCH_ENGINES).as_deref());
     }
-    *seen = Seen {
+    for ((num, payload), dirty) in [EMOJI, STICKER, EMOJI_STATE, GIFS].into_iter().zip(&local).zip(changed_wire) {
+        if dirty {
+            st.synced.put(me, num, (!payload.is_empty()).then_some(&payload[..]));
+        }
+    }
+    st.expr.synced = Some(Seen {
         account: me,
-        b64: next.clone(),
+        b64: st.synced.view(&store.settings.synced_preferences),
         wire: local,
         dirty_since: None,
-    };
-    st.intents
-        .push(Intent::PatchSettings(json!({ "synced_preferences": next })));
+    });
     changed
 }
 

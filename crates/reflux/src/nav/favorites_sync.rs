@@ -8,7 +8,7 @@ use reflux_store::Store;
 
 use super::favorites::{Category, Favorite};
 use super::{AccountPrefs, mine, update_mine};
-use crate::shell::{Intent, ShellState};
+use crate::shell::ShellState;
 use crate::synced::{self, Field};
 
 /// `SyncedPreferences.favorites`.
@@ -114,7 +114,7 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
     if store.me.is_none() {
         return false;
     }
-    let b64 = &store.settings.synced_preferences;
+    let b64 = &st.synced.view(&store.settings.synced_preferences);
     let me = st.account.me;
     if st.nav.synced_favorites.as_ref().is_none_or(|s| s.b64 != *b64 || s.account != me) {
         let payload = synced::get(b64, FIELD).unwrap_or_default();
@@ -135,9 +135,9 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
         return false;
     }
     let payload = build(&local, &seen.payload);
-    let next = synced::set(&seen.b64, FIELD, (!payload.is_empty()).then_some(&payload[..]));
-    st.nav.synced_favorites = Some(Seen { account: me, b64: next.clone(), payload, state: local });
-    st.intents.push(Intent::PatchSettings(serde_json::json!({ "synced_preferences": next })));
+    st.synced.put(me, FIELD, (!payload.is_empty()).then_some(&payload[..]));
+    let b64 = st.synced.view(&store.settings.synced_preferences);
+    st.nav.synced_favorites = Some(Seen { account: me, b64, payload, state: local });
     false
 }
 

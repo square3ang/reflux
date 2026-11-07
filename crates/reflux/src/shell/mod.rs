@@ -38,6 +38,7 @@ mod search_query;
 mod sidebar;
 pub mod status;
 pub mod switcher;
+mod switcher_extra;
 pub mod forum;
 pub mod threads;
 pub mod upload;
@@ -125,6 +126,8 @@ pub enum Intent {
     Voice(voice::Op),
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
+    /// A `fluxer:` link, as if the OS had opened it.
+    OpenLink(String),
     /// `startCallWithUser`: open the DM with a user and start (or confirm) a call there; video
     /// when true.
     DmCall(Snowflake, bool),
@@ -370,6 +373,8 @@ pub struct ShellState {
     pub nav: crate::nav::Nav,
     /// Developer-mode debug modal.
     pub debug: Option<debug::Debug>,
+    /// Local `synced_preferences` fields waiting to be sent ([`crate::synced::flush`]).
+    pub synced: crate::synced::Queue,
 }
 
 impl Default for ShellState {
@@ -454,6 +459,7 @@ impl Default for ShellState {
             social: crate::social::Social::new(),
             nav: Default::default(),
             debug: None,
+            synced: Default::default(),
         }
     }
 }
@@ -715,6 +721,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     crate::nav::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
+        // The in-tab Quick CSS editor's completions, under its caret.
+        if let (Some(e), Some(c)) = (st.form.text.get("quick-css"), crate::quick_css_syntax::CARET.get())
+            && let Some(l) = crate::quick_css_syntax::list(e, 0)
+        {
+            let [x, y] = crate::desktop::window::unzoom([c[0], c[1] + c[3]]);
+            layer.push(el().key("quick-css-caret").absolute(x, y).size(1.0, 1.0));
+            let edit = move |s: &mut S, f: &mut dyn FnMut(&mut TextEdit)| acc(s).form.text.get_mut("quick-css").into_iter().for_each(f);
+            layer.push(crate::quick_css_syntax::popup(&l, 0, p, edit).anchored("quick-css-caret", rune::Side::Bottom, rune::Align::Start, 2.0));
+        }
     }
     crate::settings::view_shell_modals(store, st, p, acc, &mut layer);
     layer.extend(crate::settings::sudo::view(st, p, acc));

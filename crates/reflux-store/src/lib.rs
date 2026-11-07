@@ -965,9 +965,8 @@ impl Store {
         self.message_side_effects(m);
         let Some(old) = self.message_mut(m.channel_id, m.id) else { return };
         let mut m = m.clone();
-        // shortcut: typed payloads can't tell an omitted `reactions` from an empty one; keep the
-        // old list (reaction changes arrive as their own events).
-        if m.reactions.is_empty() {
+        // An update without `reactions` keeps the list (`MessagingMessage.withUpdates`).
+        if !m.has_reactions {
             m.reactions = std::mem::take(&mut old.reactions);
         }
         *old = m;

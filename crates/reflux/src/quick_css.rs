@@ -1,8 +1,7 @@
 //! The Quick CSS editor in its own window (`QuickCssEditorHost` placed in `'window'`, opened
 //! with "Open in a new window"): the CSS, Save, and "Move back into Fluxer". Saving goes to
 //! the main window's look preferences like the in-tab editor's Save.
-// shortcut: no CSS completions or syntax colours (Fluxer's CodeMirror workspace); a plain mono
-// text area, as the in-tab editor is.
+//! Syntax colours and variable completions come from [`crate::quick_css_syntax`].
 
 use std::cell::RefCell;
 
@@ -91,7 +90,7 @@ fn save(css: String, theme: Option<String>) {
     });
 }
 
-fn view(e: &Editor, _cx: &mut Cx<Editor>) -> El {
+fn view(e: &Editor, cx: &mut Cx<Editor>) -> El {
     let p = e.palette.as_ref().unwrap_or_else(|| crate::theme::palette(crate::theme::Kind::Dark));
     let line = || rune::el().w_full().h(1.0).fill(p.background_modifier_accent);
     let header = row()
@@ -122,14 +121,22 @@ fn view(e: &Editor, _cx: &mut Cx<Editor>) -> El {
         .h_full()
         .color(p.text_primary)
         .caret(p.text_primary, p.background_modifier_selected)
-        .placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary);
+        .placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary)
+        .decorations(crate::quick_css_syntax::spans(&e.edit.text, p))
+        .on_input_key(|e: &mut Editor, k, _| !e.theme.as_ref().is_some_and(|th| th.2) && crate::quick_css_syntax::key(&mut e.edit, 1, k));
+    let read_only = e.theme.as_ref().is_some_and(|th| th.2);
+    let completions = crate::quick_css_syntax::list(&e.edit, 1).filter(|_| !read_only).zip(cx.caret("quick-css-window")).map(|(l, c)| {
+        let at = rune::el().key("quick-css-window-caret").absolute(c[0], c[1] + c[3]).size(1.0, 1.0);
+        let list = crate::quick_css_syntax::popup(&l, 1, p, |e: &mut Editor, f: &mut dyn FnMut(&mut TextEdit)| f(&mut e.edit)).anchored("quick-css-window-caret", rune::Side::Bottom, rune::Align::Start, 2.0);
+        [at, list]
+    });
     let editor = if e.theme.as_ref().is_some_and(|th| th.2) { editor } else { editor.on_edit(|e: &mut Editor| -> &mut TextEdit { &mut e.edit }) };
     let (applied, ignored) = crate::theme::custom::overrides(&e.edit.text);
     let note = crate::i18n::tf(
         "Reflux applies only theme variable overrides inside :root {…} ({applied} applied, {ignored} ignored).",
         &[("applied", &applied.len().to_string()), ("ignored", &ignored.to_string())],
     );
-    col()
+    let page = col()
         .w_full()
         .h_full()
         .fill(p.background_primary)
@@ -137,5 +144,6 @@ fn view(e: &Editor, _cx: &mut Cx<Editor>) -> El {
         .child(line())
         .child(col().w_full().grow(1.0).min_h(0.0).padding(16.0).child(editor))
         .child(line())
-        .child(row().w_full().px(16.0).py(8.0).child(text(note).font(font(12.0, 400.0).lh(16.0)).color(if ignored > 0 { p.status_warning } else { p.text_tertiary }).wrap()))
+        .child(row().w_full().px(16.0).py(8.0).child(text(note).font(font(12.0, 400.0).lh(16.0)).color(if ignored > 0 { p.status_warning } else { p.text_tertiary }).wrap()));
+    rune::el().w_full().h_full().child(page).children(completions.into_iter().flatten())
 }

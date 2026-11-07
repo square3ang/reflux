@@ -1,6 +1,7 @@
 //! The Ctrl+K quick switcher (`QuickSwitcherModal`, `search/state/QuickSwitcher.tsx`): fuzzy over
 //! communities, channels, DMs and people, with `@` `#` `!` `*` prefixes to narrow it.
-// shortcut: no message links, other accounts or member search over the network.
+// shortcut: no member search over the network (`@@` all users, members of the open community
+// not cached yet); people come from friends and DMs.
 
 use reflux_model::{ChannelType, NotificationLevel, RelationshipType, Snowflake};
 use reflux_store::Store;
@@ -25,12 +26,18 @@ impl Switcher {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Target {
     Guild(Snowflake),
     /// (guild, channel); voice channels join.
     Channel(Option<Snowflake>, Snowflake, bool),
     User(Snowflake),
+    /// A pasted channel or message link: (guild, channel, message).
+    Jump(Option<Snowflake>, Option<Snowflake>, Option<Snowflake>),
+    /// A pasted `fluxer:` link.
+    DeepLink(String),
+    /// Another signed-in account (its index in the account list).
+    Account(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,8 +120,9 @@ fn default_results(store: &Store, recent: &[Snowflake], current: Option<Snowflak
 }
 
 /// Results for a query, best first. `recent`: channels visited, newest first; `current`: the open one.
-pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>) -> Vec<Hit> {
+pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>, web: &str, accounts: &[crate::session::Account]) -> Vec<Hit> {
     let q = query.trim();
+    let link = super::switcher_extra::link_hit(web, q);
     let (mode, q) = match q.chars().next() {
         Some(c @ ('@' | '#' | '!' | '*')) => (Some(c), q[1..].trim()),
         _ => (None, q),
@@ -123,12 +131,6 @@ pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option
     let want = |m: char| mode.is_none_or(|x| x == m);
     let guild_name = |g: Snowflake| store.guilds.get(&g).and_then(|g| g.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
     let mut hits = Vec::new();
-    let mut push = |target, title: String, meta: String, also: &str| {
-        let s = if q.is_empty() { 1 } else { score(&title, q).max(score(also, q)) };
-        if s > 0 {
-            hits.push(Hit { target, title, meta, score: s, section: None });
-        }
-    };
     if q.is_empty() && mode.is_none() {
         return default_results(store, recent, current, guild);
     }
@@ -139,36 +141,55 @@ pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option
         for u in friends.chain(dm_users).filter(|&u| u != me) {
             if seen.insert(u) {
                 let name = store.users.get(&u).map(|x| x.username.clone()).unwrap_or_default();
-                push(Target::User(u), store.display_name(None, u), name.clone(), &name);
+                let title = store.display_name(None, u);
+                let s = if q.is_empty() { 1 } else if u.to_string() == q { 10 } else { super::switcher_extra::user_field(&title, q).max(super::switcher_extra::user_field(&name, q)) };
+                if s > 0 {
+                    hits.push(Hit { target: Target::User(u), title, meta: name, score: s, section: None });
+                }
             }
         }
     }
     if mode.is_none() {
         for c in store.private_channels().into_iter().filter(|c| c.kind == ChannelType::GROUP_DM) {
+            let members: Vec<String> = c.recipients.iter().flat_map(|u| [store.display_name(None, u.id), u.username.clone()]).collect();
             let name = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| c.recipients.iter().map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", "));
-            push(Target::Channel(None, c.id, false), name, String::new(), "");
+            let s = super::switcher_extra::group_dm(&name, &members, q);
+            if s > 0 {
+                hits.push(Hit { target: Target::Channel(None, c.id, false), title: name, meta: String::new(), score: s, section: None });
+            }
         }
     }
+    let mut push = |target, title: String, meta: String| {
+        let s = if q.is_empty() { 1 } else { score(&title, q) };
+        if s > 0 {
+            hits.push(Hit { target, title, meta, score: s, section: None });
+        }
+    };
     for g in store.guilds.keys() {
         if want('*') {
-            push(Target::Guild(*g), guild_name(*g), String::new(), "");
+            push(Target::Guild(*g), guild_name(*g), String::new());
         }
         for grp in store.channel_groups(*g) {
             if want('#') {
                 for c in grp.text.iter().filter(|c| c.kind != ChannelType::GUILD_LINK) {
-                    push(Target::Channel(Some(*g), c.id, false), c.name.clone().unwrap_or_default(), guild_name(*g), "");
+                    push(Target::Channel(Some(*g), c.id, false), c.name.clone().unwrap_or_default(), guild_name(*g));
                 }
             }
             if want('!') {
                 for c in &grp.voice {
-                    push(Target::Channel(Some(*g), c.id, true), c.name.clone().unwrap_or_default(), guild_name(*g), "");
+                    push(Target::Channel(Some(*g), c.id, true), c.name.clone().unwrap_or_default(), guild_name(*g));
                 }
             }
         }
     }
     hits.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())));
     hits.truncate(50);
-    hits
+    if mode.is_some() {
+        return hits;
+    }
+    // `[...linkResults, ...leading accounts, ...these, ...trailing accounts]`.
+    let (lead, trail) = super::switcher_extra::accounts(accounts, q);
+    link.into_iter().chain(lead).chain(hits).chain(trail).collect()
 }
 
 /// Goes to a result and closes the switcher.
@@ -179,12 +200,16 @@ fn choose(store_first: impl Fn(Snowflake) -> Option<Snowflake>, st: &mut ShellSt
         Target::Channel(g, c, false) => st.select_guild(g, Some(c)),
         Target::Channel(g, c, true) => st.intents.push(Intent::JoinVoice { guild: g, channel: c }),
         Target::User(u) => st.intents.push(Intent::OpenDm(u)),
+        Target::Jump(g, Some(c), Some(m)) => super::jump(st, g, c, m),
+        Target::Jump(g, c, _) => st.select_guild(g, c),
+        Target::DeepLink(url) => st.intents.push(Intent::OpenLink(url)),
+        Target::Account(i) => st.intents.push(Intent::Account(crate::settings::Op::SwitchAccount(i))),
     }
 }
 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let sw = st.switcher.as_ref()?;
-    let hits = results(store, &sw.query.text, &st.prefs.recent, st.channel, st.guild);
+    let hits = results(store, &sw.query.text, &st.prefs.recent, st.channel, st.guild, &st.web_base, &st.account.accounts);
     let selected = sw.selected.min(hits.len().saturating_sub(1));
     let firsts: std::collections::HashMap<Snowflake, Option<Snowflake>> = store.guilds.keys().map(|g| (*g, super::first_channel(store, *g))).collect();
     let pick = {
@@ -192,7 +217,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         move |s: &mut S, i: usize| {
             if let Some(h) = hits.get(i) {
                 let f = firsts.clone();
-                choose(move |g| f.get(&g).copied().flatten(), acc(s), h.target);
+                choose(move |g| f.get(&g).copied().flatten(), acc(s), h.target.clone());
             }
         }
     };
@@ -248,7 +273,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     }
     for (i, h) in hits.iter().enumerate() {
         let active = i == selected;
-        let glyph = match h.target {
+        let glyph = match h.target.clone() {
+            Target::Jump(..) | Target::DeepLink(_) => el().padding(2.0).child(icon(&crate::icons::ARROW_RIGHT_BOLD, 20.0).color(if active { p.text_primary } else { p.text_primary_muted })),
+            Target::Account(_) => row().size(24.0, 24.0).center().radius(12.0).fill(p.brand_primary).child(text(h.title.chars().next().unwrap_or('?').to_uppercase().to_string()).font(font(11.0, 600.0)).color(p.brand_primary_fill)),
             Target::User(u) => avatar(store, st, u, 24.0, None, p.background_secondary, p),
             Target::Guild(g) => {
                 let name = store.guilds.get(&g).and_then(|x| x.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
@@ -353,15 +380,15 @@ mod tests {
     #[test]
     fn prefixes_narrow_the_demo() {
         let d = crate::shell::demo::Demo::new();
-        let all = results(&d.store, "gen", &[], None, Some(Snowflake(2000)));
+        let all = results(&d.store, "gen", &[], None, Some(Snowflake(2000)), "", &[]);
         assert!(matches!(all[0].target, Target::Channel(Some(_), _, false)), "{all:?}");
-        assert!(results(&d.store, "#lou", &[], None, Some(Snowflake(2000))).is_empty(), "Lounge is a voice channel");
-        assert!(matches!(results(&d.store, "!lou", &[], None, Some(Snowflake(2000)))[0].target, Target::Channel(_, _, true)));
-        assert!(matches!(results(&d.store, "*rust", &[], None, Some(Snowflake(2000)))[0].target, Target::Guild(_)));
-        assert!(results(&d.store, "@ada", &[], None, Some(Snowflake(2000))).iter().all(|h| matches!(h.target, Target::User(_))));
-        assert!(!results(&d.store, "", &[], None, Some(Snowflake(2000))).is_empty(), "unread channels by default");
+        assert!(results(&d.store, "#lou", &[], None, Some(Snowflake(2000)), "", &[]).is_empty(), "Lounge is a voice channel");
+        assert!(matches!(results(&d.store, "!lou", &[], None, Some(Snowflake(2000)), "", &[])[0].target, Target::Channel(_, _, true)));
+        assert!(matches!(results(&d.store, "*rust", &[], None, Some(Snowflake(2000)), "", &[])[0].target, Target::Guild(_)));
+        assert!(results(&d.store, "@ada", &[], None, Some(Snowflake(2000)), "", &[]).iter().all(|h| matches!(h.target, Target::User(_))));
+        assert!(!results(&d.store, "", &[], None, Some(Snowflake(2000)), "", &[]).is_empty(), "unread channels by default");
         let general = Snowflake(2201);
-        let r = results(&d.store, "", &[general, Snowflake(2202)], Some(general), Some(Snowflake(2000)));
+        let r = results(&d.store, "", &[general, Snowflake(2202)], Some(general), Some(Snowflake(2000)), "", &[]);
         assert_eq!(r[0].target, Target::Channel(Some(Snowflake(2000)), Snowflake(2202), false), "the open channel isn't a previous one");
         assert_eq!(r[0].section, Some("Previous channels"));
         assert!(r.iter().filter(|h| h.section == Some("Unread channels")).all(|h| h.target != r[0].target), "no repeats");

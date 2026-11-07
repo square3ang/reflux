@@ -38,7 +38,7 @@ const BUILT_INS: [(&str, &str, &str); 6] = [
 ];
 
 /// `SyncedPreferences.search_engines` and its `reverse_image_search_engine_id`.
-const SEARCH_ENGINES: u32 = 102;
+pub(super) const SEARCH_ENGINES: u32 = 102;
 const DEFAULT_FIELD: u32 = 2;
 
 /// `UrlTemplateProvider`.
@@ -71,9 +71,9 @@ pub fn engines(prefs: &Prefs) -> Vec<Engine> {
     built.chain(custom).collect()
 }
 
-/// The synced default id, if any.
-pub fn default_id(store: &Store) -> Option<String> {
-    let p = synced::get(&store.settings.synced_preferences, SEARCH_ENGINES)?;
+/// The synced default id, if any (the queued one before it's sent).
+pub fn default_id(store: &Store, st: &ShellState) -> Option<String> {
+    let p = synced::get(&st.synced.view(&store.settings.synced_preferences), SEARCH_ENGINES)?;
     synced::fields(&p)?
         .iter()
         .rev()
@@ -83,9 +83,9 @@ pub fn default_id(store: &Store) -> Option<String> {
 }
 
 /// `defaultEngine`: the default, when it's enabled.
-pub fn default_engine(store: &Store, prefs: &Prefs) -> Option<Engine> {
-    let id = default_id(store)?;
-    engines(prefs).into_iter().find(|e| e.id == id && e.enabled)
+pub fn default_engine(store: &Store, st: &ShellState) -> Option<Engine> {
+    let id = default_id(store, st)?;
+    engines(&st.prefs).into_iter().find(|e| e.id == id && e.enabled)
 }
 
 /// `b64` with the default replaced (`persistDefault`), the other search engine fields kept.
@@ -166,7 +166,7 @@ pub fn entries<S: 'static>(
     if enabled.is_empty() {
         return Vec::new();
     }
-    let default = default_engine(store, &st.prefs);
+    let default = default_engine(store, st);
     let label = t("Reverse image search");
     let alternates: Vec<Engine> = match &default {
         Some(d) => enabled.iter().filter(|e| e.id != d.id).cloned().collect(),

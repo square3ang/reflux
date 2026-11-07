@@ -282,6 +282,11 @@ impl Client {
         self.get("/users/@me").await
     }
 
+    /// `GET /users/@me/settings`.
+    pub async fn settings(&self) -> Result<UserSettings> {
+        self.get("/users/@me/settings").await
+    }
+
     /// `PATCH /users/@me/settings` with a partial settings object; returns the full settings.
     pub async fn update_settings(&self, patch: &serde_json::Value) -> Result<UserSettings> {
         self.request(Method::PATCH, "/users/@me/settings", Some(patch)).await

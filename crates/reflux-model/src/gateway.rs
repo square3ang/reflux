@@ -648,10 +648,14 @@ macro_rules! dispatch_events {
             /// Parses one Dispatch. An unknown `t` gives `Ok(Unknown)`; a malformed payload gives
             /// `Err`, which the caller logs and skips so the connection survives.
             pub fn parse(t: &str, d: &Value) -> Result<Self, serde_json::Error> {
-                Ok(match t {
+                let mut ev = match t {
                     $($name => Self::$variant(crate::from_value(d)?),)*
                     _ => Self::Unknown { t: t.to_owned(), d: d.clone() },
-                })
+                };
+                if let Self::MessageUpdate(m) = &mut ev {
+                    m.has_reactions = d.get("reactions").is_some();
+                }
+                Ok(ev)
             }
 
             /// The event name as sent in `t`.

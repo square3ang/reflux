@@ -796,7 +796,13 @@ fn token_row<S: 'static>(st: &ShellState, name: &'static str, overrides: &[(Stri
 fn quick_css<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let css = &st.prefs.look.css;
     let (applied, ignored) = custom::overrides(css);
-    let editor = field(st, "quick-css", css, p, acc).font(font(13.0, 400.0).mono().lh(18.0)).min_h(160.0).placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary);
+    let shown = st.form.text.get("quick-css").map_or(css.as_str(), |e| &e.text);
+    let editor = field(st, "quick-css", css, p, acc)
+        .font(font(13.0, 400.0).mono().lh(18.0))
+        .min_h(160.0)
+        .placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary)
+        .decorations(crate::quick_css_syntax::spans(shown, p))
+        .on_input_key(move |s: &mut S, k, _| acc(s).form.text.get_mut("quick-css").is_some_and(|e| crate::quick_css_syntax::key(e, 0, k)));
     let lines = css.lines().count() as i64;
     let summary = if css.trim().is_empty() { t("You haven't written any quick CSS yet.").to_string() } else { tp("{lines, plural, one {# line} other {# lines}} of quick CSS.", lines, &[("lines", &lines.to_string())]) };
     let mut c = col()

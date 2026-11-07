@@ -73,7 +73,7 @@ fn configure<S: 'static>(
 ) -> El {
     let all = image_search::engines(&st.prefs);
     let enabled: Vec<&Engine> = all.iter().filter(|e| e.enabled).collect();
-    let default = image_search::default_engine(store, &st.prefs).map(|e| e.id);
+    let default = image_search::default_engine(store, st).map(|e| e.id);
     let default_ui = if enabled.is_empty() {
         text(t(
             "Enable at least one reverse image search provider below.",
@@ -337,7 +337,7 @@ fn remove<S: 'static>(
     .font(font(14.0, 400.0).lh(20.0))
     .color(p.text_primary_muted)
     .wrap();
-    let was_default = image_search::default_id(store).as_deref() == Some(id);
+    let was_default = image_search::default_id(store, st).as_deref() == Some(id);
     let id = id.to_string();
     let go = move |s: &mut S| {
         let st = acc(s);

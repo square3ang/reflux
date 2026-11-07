@@ -217,7 +217,7 @@ fn webhook_url(st: &ShellState, w: &Value) -> Option<String> {
 }
 
 fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list: Vec<Value> = match loaded(st, "webhooks", p) {
+    let list: std::rc::Rc<Vec<Value>> = match loaded(st, "webhooks", p) {
         Ok(l) => l,
         Err(e) => return section(t("Webhooks"), e, true, p),
     };
@@ -402,7 +402,7 @@ fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAcc
 // ---- Invites --------------------------------------------------------------------------------
 
 fn channel_invites<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list: Vec<Invite> = match loaded(st, "invites", p) {
+    let list: std::rc::Rc<Vec<Invite>> = match loaded(st, "invites", p) {
         Ok(l) => l,
         Err(e) => return section(t("Invites"), e, true, p),
     };

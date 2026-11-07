@@ -70,6 +70,8 @@ fn scopes(dm: bool) -> Vec<(&'static str, &'static str, &'static rune::Icon)> {
 /// `SearchTokenNode`: each recognised `key:value` reads as a chip (a bold key and its value on
 /// `background-modifier-selected`; excluded ones on the danger fill). A value the filter can't
 /// use is warning-coloured with an underline instead (`.tokenUnapplied`).
+// shortcut: Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+// value halves round all four corners and the padding doesn't widen the text; needs span boxes.
 pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
     let now = chrono::Local::now();
     let mut out = Vec::new();

@@ -94,6 +94,15 @@ where
     serde::Deserialize::deserialize(d).map(Some)
 }
 
+/// A present `null` as the default (`updates.reactions ?? []`).
+pub(crate) fn null_default<'de, T, D>(d: D) -> Result<T, D::Error>
+where
+    T: serde::Deserialize<'de> + Default,
+    D: serde::Deserializer<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(d).map(Option::unwrap_or_default)
+}
+
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }

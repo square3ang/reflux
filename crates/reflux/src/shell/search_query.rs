@@ -1,7 +1,6 @@
 //! Fluxer's message search syntax (`search/utils/SearchQueryParser.ts`): `from:`, `mentions:`,
 //! `in:`, `has:`, `before:`/`after:`/`during:`/`on:`, `pinned:` and friends, `-key:` to exclude,
 //! and "quoted phrases", turned into a `POST /search/messages` body.
-// shortcut: no search chips or confusable-skeleton matching.
 
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone};
 use reflux_model::{ChannelType, Snowflake};

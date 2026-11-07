@@ -9,7 +9,7 @@ use reflux_store::Store;
 use super::keys::Custom;
 use super::{mine, update_mine};
 use crate::keybinds::{Action, Combo, K};
-use crate::shell::{Intent, ShellState};
+use crate::shell::ShellState;
 use crate::synced::{self, Field};
 
 /// `SyncedPreferences.keybinds`.
@@ -197,7 +197,7 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
         return false;
     }
     let local = Local { keybinds: a.keybinds.clone(), disabled: a.disabled_builtins.clone() };
-    let b64 = store.settings.synced_preferences.clone();
+    let b64 = st.synced.view(&store.settings.synced_preferences);
     let push = std::mem::take(&mut st.nav.push_keys);
     let fresh = st.nav.synced_keys.as_ref().is_none_or(|s| s.account != me);
     if !push && st.nav.synced_keys.as_ref().is_none_or(|s| s.b64 != b64 || s.account != me) {
@@ -211,16 +211,16 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
         }
     }
     let seen = st.nav.synced_keys.clone().unwrap_or_else(|| {
-        let b64 = store.settings.synced_preferences.clone();
+        let b64 = st.synced.view(&store.settings.synced_preferences);
         Seen { account: me, payload: synced::get(&b64, FIELD).unwrap_or_default(), b64, local: Local::default() }
     });
     if !push && local == seen.local {
         return false;
     }
     let payload = build(&local, &seen.payload);
-    let next = synced::set(&seen.b64, FIELD, Some(&payload));
-    st.nav.synced_keys = Some(Seen { account: me, b64: next.clone(), payload, local });
-    st.intents.push(Intent::PatchSettings(serde_json::json!({ "synced_preferences": next })));
+    st.synced.put(me, FIELD, Some(&payload));
+    let b64 = st.synced.view(&store.settings.synced_preferences);
+    st.nav.synced_keys = Some(Seen { account: me, b64, payload, local });
     false
 }
 

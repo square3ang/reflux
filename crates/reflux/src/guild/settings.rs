@@ -166,15 +166,30 @@ pub(crate) fn empty(t: &str, p: &Palette) -> El {
     text(t.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).py(24.0).w_full().align(rune::Align::Center)
 }
 
+type Typed = std::collections::HashMap<(String, std::any::TypeId), (Value, std::rc::Rc<dyn std::any::Any>)>;
+
+thread_local! {
+    /// The typed list last read from each `form.data` entry, with the JSON it came from; it's
+    /// parsed again only once that JSON changes (the many writers all go through `form.data`).
+    static TYPED: std::cell::RefCell<Typed> = Default::default();
+}
+
 /// A list loaded into `form.data[key]`, or a loading / failed line.
 #[allow(clippy::result_large_err)] // the Err is the El shown instead, built once a frame
-pub(crate) fn loaded<T: serde::de::DeserializeOwned>(st: &ShellState, key: &str, p: &Palette) -> Result<T, El> {
-    // shortcut: parses the kept JSON every frame; keep typed lists if they get large.
-    match st.form.data.get(key) {
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| empty(&format!("Couldn't read the list: {e}"), p)),
-        None if st.form.error.is_some() => Err(error(st, p).unwrap_or_else(el)),
-        None => Err(empty(t("Loading…"), p)),
+pub(crate) fn loaded<T: serde::de::DeserializeOwned + 'static>(st: &ShellState, key: &str, p: &Palette) -> Result<std::rc::Rc<T>, El> {
+    let v = match st.form.data.get(key) {
+        Some(v) => v,
+        None if st.form.error.is_some() => return Err(error(st, p).unwrap_or_else(el)),
+        None => return Err(empty(t("Loading…"), p)),
+    };
+    let slot = (key.to_string(), std::any::TypeId::of::<T>());
+    let hit = TYPED.with_borrow(|m| m.get(&slot).filter(|(src, _)| src == v).and_then(|(_, t)| t.clone().downcast::<T>().ok()));
+    if let Some(t) = hit {
+        return Ok(t);
     }
+    let typed = std::rc::Rc::new(serde_json::from_value::<T>(v.clone()).map_err(|e| empty(&format!("Couldn't read the list: {e}"), p))?);
+    TYPED.with_borrow_mut(|m| m.insert(slot, (v.clone(), typed.clone())));
+    Ok(typed)
 }
 
 fn user_name(u: &PartialUser) -> String {
@@ -640,7 +655,7 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
 // ---- Invites and bans -----------------------------------------------------------------------
 
 fn invites<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list: Vec<Invite> = match loaded(st, "invites", p) {
+    let list: std::rc::Rc<Vec<Invite>> = match loaded(st, "invites", p) {
         Ok(l) => l,
         Err(e) => return section(t("Invites"), e, true, p),
     };
@@ -670,7 +685,7 @@ fn invites<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette
 }
 
 fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list: Vec<Ban> = match loaded(st, "bans", p) {
+    let list: std::rc::Rc<Vec<Ban>> = match loaded(st, "bans", p) {
         Ok(l) => l,
         Err(e) => return section(t("Bans"), e, true, p),
     };
@@ -844,7 +859,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
         .child(Select::new("audit-user", &user_refs, Some(&cur("audit-user"))).label(t("Filter by user")).width(300.0).on_choose(refilter("audit-user")).el(&st.popups, pops, p, layer))
         .child(Select::new("audit-action", &actions, Some(&cur("audit-action"))).label(t("Filter by action")).width(300.0).on_choose(refilter("audit-action")).el(&st.popups, pops, p, layer));
     let head = col().w_full().gap(16.0).child(small(t("Track moderator actions across the community."), p)).child(filters);
-    let log: AuditLog = match loaded(st, "audit", p) {
+    let log: std::rc::Rc<AuditLog> = match loaded(st, "audit", p) {
         Ok(l) => l,
         Err(e) => return section(t("Activity log"), head.child(e), true, p),
     };

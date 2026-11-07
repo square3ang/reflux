@@ -56,6 +56,8 @@ pub enum AccountModal {
     ThemeDetails(String),
     ThemeDelete(String),
     ThemeStopWatching(String),
+    /// Advanced's `SwitchGroupSettingsModal` for this item ([`super::advanced::switch_group_modal`]).
+    SwitchGroup(&'static str),
 }
 
 pub(super) fn txt(s: impl Into<String>, size: f32, weight: f32, c: rune::Color) -> El {

@@ -26,6 +26,7 @@ authenticator = { version = "0.5", default-features = false, features = ["crypto
 serde_cbor = "0.11"
 base64 = "0.22"
 sha2 = "0.10"
+icu_normalizer = "2"
 url.workspace = true
 # WebP and GIF from the media proxy (Rune decodes PNG and JPEG itself); png for the emoji spritesheet.
 image = { version = "0.25", default-features = false, features = ["webp", "gif", "png", "jpeg"] }

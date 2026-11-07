@@ -30,6 +30,7 @@ model! {
         pub embeds: Vec<Embed>,
         pub attachments: Vec<Attachment>,
         pub stickers: Vec<StickerItem>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub reactions: Vec<Reaction>,
         pub message_reference: Option<MessageReference>,
         pub message_snapshots: Vec<MessageSnapshot>,
@@ -46,6 +47,10 @@ model! {
         pub guild_id: Option<Snowflake>,
         /// Author's member object without `user`.
         pub member: Option<GuildMember>,
+        /// A `MESSAGE_UPDATE` carried `reactions` (even `null`): it replaces the list, as
+        /// `'reactions' in updates` does; set by `DispatchEvent::parse`.
+        #[serde(skip)]
+        pub has_reactions: bool,
     }
 
     pub struct Attachment {

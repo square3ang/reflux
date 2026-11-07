@@ -1,6 +1,5 @@
 //! Developer tabs: `ApplicationsTab` (list, create, detail with secrets, bot profile and the
 //! OAuth2 URL builder) and `EmbedDebuggerTab` (`POST /unfurl`, its preview and raw JSON).
-// shortcut: the bot banner preview is the profile card's (Fluxer shows an `ImagePreviewField`).
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -338,9 +337,28 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
             (None, Some(b), Some(h)) => crate::shell::profile::banner_px(st, b, h),
             _ => None,
         };
+        // `ImagePreviewField` (`objectFit="contain"`, natural height): the image in a 1px framed
+        // box, else a dashed placeholder at least 80 tall.
         fields = fields.child(match banner {
-            Some(px) => el().w_full().aspect_fit(17.0 / 6.0).radius(8.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-            None => row().w_full().h(96.0).center().radius(8.0).border(1.0, p.background_modifier_accent).child(muted(t("No bot banner").to_string(), p)),
+            Some(px) => {
+                let (w, h) = px.size();
+                el().w_full()
+                    .radius(8.0)
+                    .clip_rounded(8.0)
+                    .fill(p.background_secondary)
+                    .border(1.0, p.background_modifier_accent)
+                    .child(el().w_full().aspect_fit(w.max(1) as f32 / h.max(1) as f32).pixels_fit(&px, rune::SurfaceFit::Fit).label(t("Bot banner preview")))
+            }
+            None => row()
+                .w_full()
+                .min_h(80.0)
+                .padding(16.0)
+                .center()
+                .radius(8.0)
+                .fill(p.background_tertiary)
+                .border(1.0, p.background_modifier_accent)
+                .border_dash(4.0, 4.0)
+                .child(text(t("No bot banner")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center)),
         });
         // `shouldShowFriendSettings`.
         fields = fields
