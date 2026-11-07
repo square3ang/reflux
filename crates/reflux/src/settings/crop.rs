@@ -1,9 +1,10 @@
 //! `AssetCropModal` / `ImageCropModal`: the picked image fitted in a 350-point stage under a
 //! crop frame (round for avatars, 17:6 for profile banners); drag to move, wheel or the slider
 //! to zoom (1–3×), rotate a quarter turn, then save the framed part, scaled down to the asset's
-//! maximum, into the form as a data URL.
-// shortcut: animated GIFs skip the modal and upload as picked (Fluxer crops them frame by frame);
-// no community banner height slider (no community asset uses this modal yet).
+//! maximum, into the form as a data URL. An animated GIF is cropped frame by frame and stays an
+//! animated GIF (Fluxer's `AnimatedImageCropWorker`).
+// shortcut: animated WebP crops to its first frame (no WebP animation encoder in `image`); no "Skip"
+// button or community banner height slider (Fluxer's minHeightRatio), upgrade if asked.
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -23,26 +24,82 @@ use crate::ui::{Button, ButtonVariant, Modal, ModalSize, Slider};
 pub enum Asset {
     Avatar,
     ProfileBanner,
+    GuildIcon,
+    GuildBanner,
+    Splash,
+    EmbedSplash,
+    RoleIcon,
 }
 
 impl Asset {
+    /// The community asset a settings form key holds.
+    pub fn for_key(key: &str) -> Asset {
+        match key {
+            "banner" => Asset::GuildBanner,
+            "splash" => Asset::Splash,
+            "embed_splash" => Asset::EmbedSplash,
+            "role-icon" => Asset::RoleIcon,
+            _ => Asset::GuildIcon,
+        }
+    }
+    fn round(self) -> bool {
+        matches!(self, Asset::Avatar | Asset::GuildIcon | Asset::RoleIcon)
+    }
     fn aspect(self) -> f32 {
         match self {
-            Asset::Avatar => 1.0,
             Asset::ProfileBanner => 17.0 / 6.0,
+            Asset::GuildBanner | Asset::Splash | Asset::EmbedSplash => 16.0 / 9.0,
+            _ => 1.0,
         }
     }
     fn max(self) -> (u32, u32) {
         match self {
-            Asset::Avatar => (1024, 1024),
+            Asset::Avatar | Asset::GuildIcon => (1024, 1024),
             Asset::ProfileBanner => (2048, 723),
+            Asset::GuildBanner | Asset::Splash | Asset::EmbedSplash => (2048, 1152),
+            Asset::RoleIcon => (256, 256),
         }
     }
     fn min(self) -> (u32, u32) {
         match self {
-            Asset::Avatar => (256, 256),
+            Asset::Avatar | Asset::GuildIcon => (256, 256),
             Asset::ProfileBanner => (680, 240),
+            Asset::GuildBanner | Asset::Splash | Asset::EmbedSplash => (960, 540),
+            Asset::RoleIcon => (64, 64),
         }
+    }
+    /// `getTitle`, `getDescription`, `getSaveButtonLabel`.
+    fn texts(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Asset::Avatar => ("Crop avatar", "Drag to reposition your avatar and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels.", "Save avatar"),
+            Asset::ProfileBanner => ("Crop profile banner", "Drag to reposition your banner and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels (17:6).", "Save banner"),
+            Asset::GuildIcon => ("Crop community icon", "Drag to reposition your community icon and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels.", "Save icon"),
+            Asset::GuildBanner => ("Crop banner", "Drag to reposition your banner and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels (16:9).", "Save banner"),
+            Asset::Splash => ("Crop invite background", "Drag to reposition your invite background and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels (16:9).", "Save background"),
+            Asset::EmbedSplash => ("Crop chat embed background", "Drag to reposition your chat embed background and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels (16:9).", "Save background"),
+            Asset::RoleIcon => ("Crop role icon", "Drag to reposition your role icon and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels.", "Save icon"),
+        }
+    }
+}
+
+/// A press handler that asks for an image for `form.data[key]` and opens the crop modal.
+pub(crate) fn pick<S: 'static>(acc: ShellAccess<S>, key: &'static str, asset: Asset) -> impl Fn(&mut S, &mut rune::Tx) + 'static {
+    move |_: &mut S, tx: &mut rune::Tx| {
+        let exts: &[&str] = if asset == Asset::RoleIcon { &["png", "jpg", "jpeg", "webp", "avif"] } else { &["png", "jpg", "jpeg", "gif", "webp", "avif"] };
+        let options = rune::FileDialogOptions { title: t("Choose an image").into(), ..Default::default() }.filter(t("Images"), exts);
+        tx.open_file(options, move |s: &mut S, r, _| {
+            let sh = acc(s);
+            let read = r.map_err(|e| e.to_string()).and_then(|p| p.map(|p| std::fs::read(&p).map_err(|e| e.to_string())).transpose());
+            match read {
+                Ok(Some(b)) if asset == Asset::RoleIcon && b.starts_with(b"GIF8") => sh.form.error = Some(t("Animated icons are not supported. Use a static image.").into()),
+                Ok(Some(bytes)) => match Crop::new(key, asset, bytes) {
+                    Some(c) => sh.nav.crop = Some(c),
+                    None => sh.form.error = Some(t("This image couldn't be read. It may be damaged.").into()),
+                },
+                Ok(None) => {}
+                Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
+            }
+        });
     }
 }
 
@@ -97,10 +154,8 @@ impl Crop {
 
     /// A quarter turn clockwise (the image itself turns; the frame stays).
     fn rotate(&mut self) {
-        let Ok(img) = image::load_from_memory(&self.src) else { return };
-        let mut png = Vec::new();
-        if img.rotate90().write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok()
-            && let Some(c) = Crop::new(self.key, self.asset, png)
+        if let Ok(out) = map_frames(&self.src, |i| i.rotate90())
+            && let Some(c) = Crop::new(self.key, self.asset, out)
         {
             *self = Crop { zoom: self.zoom, ..c };
             self.off = self.clamp(0.0, 0.0);
@@ -119,19 +174,45 @@ impl Crop {
         (cl(x, self.nat.0 - 1.0), cl(y, self.nat.1 - 1.0), cl(w, self.nat.0).max(1), cl(h, self.nat.1).max(1))
     }
 
-    /// The cropped PNG, scaled to fit the asset's maximum.
+    /// The cropped PNG (GIF for a GIF), scaled to fit the asset's maximum.
     pub fn export(&self) -> Result<Vec<u8>, String> {
-        let img = image::load_from_memory(&self.src).map_err(|e| e.to_string())?;
         let (x, y, w, h) = self.source_rect();
-        let mut out = img.crop_imm(x, y, w.min(img.width() - x), h.min(img.height() - y));
         let (mw, mh) = self.asset.max();
-        if out.width() > mw || out.height() > mh {
-            out = out.resize(mw, mh, image::imageops::FilterType::Lanczos3);
-        }
-        let mut png = Vec::new();
-        out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
-        Ok(png)
+        let role = self.asset == Asset::RoleIcon;
+        map_frames(&self.src, |img| {
+            let out = img.crop_imm(x, y, w.min(img.width() - x), h.min(img.height() - y));
+            if out.width() > mw || out.height() > mh {
+                out.resize(mw, mh, image::imageops::FilterType::Lanczos3)
+            } else if role && out.width() < 32 {
+                // `role_icon` policy: at least 32px.
+                out.resize_exact(64, 64, image::imageops::FilterType::Lanczos3)
+            } else {
+                out
+            }
+        })
     }
+}
+
+/// Applies `f` to every frame of a GIF (delays and looping kept), else to the still image (PNG out).
+fn map_frames(bytes: &[u8], f: impl Fn(image::DynamicImage) -> image::DynamicImage) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    if bytes.starts_with(b"GIF8") {
+        use image::AnimationDecoder;
+        use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
+        let frames = GifDecoder::new(std::io::Cursor::new(bytes)).and_then(|d| d.into_frames().collect_frames()).map_err(|e| e.to_string())?;
+        let mut enc = GifEncoder::new_with_speed(&mut out, 10);
+        enc.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
+        for fr in frames {
+            let delay = fr.delay();
+            let img = f(image::DynamicImage::ImageRgba8(fr.into_buffer())).to_rgba8();
+            enc.encode_frame(image::Frame::from_parts(img, 0, 0, delay)).map_err(|e| e.to_string())?;
+        }
+        drop(enc);
+        return Ok(out);
+    }
+    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+    f(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok(out)
 }
 
 fn crop_of<S: 'static>(acc: ShellAccess<S>, s: &mut S) -> Option<&mut Crop> {
@@ -140,7 +221,7 @@ fn crop_of<S: 'static>(acc: ShellAccess<S>, s: &mut S) -> Option<&mut Crop> {
 
 /// The modal over the settings.
 pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAccess<S>) -> El {
-    let round = c.asset == Asset::Avatar;
+    let round = c.asset.round();
     let (fit, frame) = c.layout();
     let src = c.src.clone();
     let shown = (fit.0 * c.zoom, fit.1 * c.zoom);
@@ -186,18 +267,8 @@ pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAcces
     let (mw, mh) = c.asset.min();
     let dims = [("minimumWidth", mw.to_string()), ("minimumHeight", mh.to_string())];
     let dims: Vec<(&str, &str)> = dims.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let (title, desc, save) = match c.asset {
-        Asset::Avatar => (
-            t("Crop avatar"),
-            tf("Drag to reposition your avatar and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels.", &dims),
-            t("Save avatar"),
-        ),
-        Asset::ProfileBanner => (
-            t("Crop profile banner"),
-            tf("Drag to reposition your banner and use the scroll wheel or pinch to zoom. The recommended minimum size is {minimumWidth}×{minimumHeight} pixels (17:6).", &dims),
-            t("Save banner"),
-        ),
-    };
+    let (title, desc, save) = c.asset.texts();
+    let (title, desc, save) = (t(title), tf(desc, &dims), t(save));
     let zoom = row()
         .grow(1.0)
         .gap(12.0)
@@ -246,8 +317,12 @@ pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAcces
         let sh = acc(s);
         let Some(c) = sh.nav.crop.take() else { return };
         match c.export() {
-            Ok(png) => {
-                sh.form.data.insert(c.key.into(), Value::String(crate::guild::data_url(std::path::Path::new("a.png"), &png)));
+            Ok(out) => {
+                let name = if out.starts_with(b"GIF8") { "a.gif" } else { "a.png" };
+                if c.asset == Asset::RoleIcon {
+                    sh.form.data.remove("role-emoji");
+                }
+                sh.form.data.insert(c.key.into(), Value::String(crate::guild::data_url(std::path::Path::new(name), &out)));
             }
             Err(e) => sh.form.error = Some(format!("{}: {e}", t("Couldn't crop image"))),
         }
@@ -297,6 +372,22 @@ mod tests {
         assert_eq!((out.width(), out.height()), (100, 100));
         c.rotate();
         assert_eq!(c.nat, (200.0, 400.0));
+        // A GIF stays animated through rotate and crop.
+        let mut gif = Vec::new();
+        {
+            use image::codecs::gif::GifEncoder;
+            let mut e = GifEncoder::new(&mut gif);
+            for _ in 0..2 {
+                e.encode_frame(image::Frame::new(image::RgbaImage::new(40, 20))).unwrap();
+            }
+        }
+        let mut g = Crop::new("k", Asset::Avatar, gif).unwrap();
+        g.rotate();
+        assert_eq!(g.nat, (20.0, 40.0));
+        let out = g.export().unwrap();
+        use image::AnimationDecoder;
+        let frames = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(&out)).unwrap().into_frames().collect_frames().unwrap();
+        assert_eq!((frames.len(), frames[0].buffer().width(), frames[0].buffer().height()), (2, 20, 20));
         let b = Crop::new("k", Asset::ProfileBanner, png(4000, 1000)).unwrap();
         let out = image::load_from_memory(&b.export().unwrap()).unwrap();
         assert!(out.width() <= 2048 && out.height() <= 723);

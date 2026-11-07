@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use reflux_model::{Permissions, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, FileDialogOptions, TextEdit, Tx, col, el, row, text, text_input};
+use rune::{El, TextEdit, col, el, row, text, text_input};
 use serde_json::{Map, Value};
 
 use super::account::{AccountModal, muted, open, small_button, txt};
@@ -28,9 +28,12 @@ const BIO_MAX: usize = 320;
 
 /// Loads the community profile being edited.
 pub(super) fn load(sh: &mut ShellState) {
-    if let Some(g) = sh.settings.as_ref().and_then(|u| u.profile_guild) {
-        let me = sh.account.me;
-        sh.load("guild_profile", format!("/users/{me}/profile?guild_id={g}"));
+    match sh.settings.as_ref().and_then(|u| u.profile_guild) {
+        Some(g) => {
+            let me = sh.account.me;
+            sh.load("guild_profile", format!("/users/{me}/profile?guild_id={g}"));
+        }
+        None => super::badges::load(sh),
     }
 }
 
@@ -45,6 +48,8 @@ struct Initial {
     /// The global profile's time zone and who sees it.
     timezone: Option<String>,
     tz_flags: u64,
+    /// The global profile's badge settings.
+    badges: Option<super::badges::Draft>,
 }
 
 fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<Initial> {
@@ -59,6 +64,7 @@ fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<I
             banner: me.banner.clone(),
             timezone: me.timezone.clone(),
             tz_flags: me.timezone_privacy_flags.bits(),
+            badges: Some(super::badges::Draft::saved(me)),
         },
         Some(_) => {
             let v = st.form.data.get("guild_profile")?;
@@ -73,6 +79,7 @@ fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<I
                 banner: m["banner"].as_str().or(gp["banner"].as_str()).map(str::to_string),
                 timezone: None,
                 tz_flags: 0,
+                badges: None,
             }
         }
     })
@@ -114,35 +121,16 @@ fn changes(st: &ShellState, init: &Initial, guild: bool) -> Map<String, Value> {
             m.insert(k.into(), v.clone());
         }
     }
+    if let Some(saved) = &init.badges {
+        super::badges::Draft::current(st, saved).changes(saved, &mut m);
+    }
     m
 }
 
 // ---- Picking and cropping ---------------------------------------------------------------------
 
-/// Picks an image for `key`: a still opens the crop modal ([`super::crop`]), a GIF goes in as is.
-pub(super) fn pick<S: 'static>(acc: ShellAccess<S>, key: &'static str, asset: super::crop::Asset) -> impl Fn(&mut S, &mut Tx) + 'static {
-    move |_: &mut S, tx: &mut Tx| {
-        let options = FileDialogOptions { title: t("Choose an image").into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp"]);
-        tx.open_file(options, move |s: &mut S, r, _| {
-            let sh = acc(s);
-            let read = r.map_err(|e| e.to_string()).and_then(|p| p.map(|p| std::fs::read(&p).map_err(|e| e.to_string())).transpose());
-            match read {
-                Ok(Some(bytes)) if bytes.starts_with(b"GIF8") => {
-                    sh.form.data.insert(key.into(), Value::String(crate::guild::data_url(std::path::Path::new("a.gif"), &bytes)));
-                }
-                Ok(Some(bytes)) => match super::crop::Crop::new(key, asset, bytes) {
-                    Some(c) => sh.nav.crop = Some(c),
-                    None => sh.form.error = Some(t("This image couldn't be read. It may be damaged.").into()),
-                },
-                Ok(None) => {}
-                Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
-            }
-        });
-    }
-}
-
 /// A picked data URL decoded for the preview.
-pub(super) fn picked_px(st: &ShellState, url: &str) -> Option<rune::Pixels> {
+pub(crate) fn picked_px(st: &ShellState, url: &str) -> Option<rune::Pixels> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     url.hash(&mut h);
     let b64 = url.split_once(',').map_or(url, |(_, b)| b).to_string();
@@ -248,7 +236,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
             Button::<S>::new(if title == "avatar" { t("Change avatar") } else { t("Change banner") })
                 .size(ButtonSize::Small)
                 .el(p)
-                .on_press_tx(pick(acc, key, asset)),
+                .on_press_tx(super::crop::pick(acc, key, asset)),
         );
         if shown {
             buttons = buttons.child(
@@ -354,8 +342,9 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         avatar_size: 80.0,
         custom_status: None,
         status_emoji: None,
-        badges: vec![],
+        badges: if guild.is_none() { super::badges::shown(st) } else { vec![] },
         guild,
+        local_time: if guild.is_none() { super::timezone::preview_offset(store, st) } else { None },
     };
     let preview = col().child(crate::shell::profile::preview(store, st, card, p));
 
@@ -369,6 +358,9 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         .child(muted(t("Edit your profile appearance and see a live preview"), p))
         .child(row().w_full().gap(40.0).items_start().child(form).child(preview));
     let mut page = col().w_full().child(selector).child(section(&title, content, true, p));
+    if let Some(saved) = &init.badges {
+        page = page.child(section("Badges", super::badges::section(st, saved, busy, p, acc), false, p));
+    }
 
     let body = changes(st, &init, guild.is_some());
     if !body.is_empty() || st.form.error.is_some() {
@@ -424,7 +416,7 @@ mod tests {
     #[test]
     fn changes_only_lists_edited_fields() {
         let mut st = ShellState::default();
-        let init = Initial { name: "Ada".into(), pronouns: String::new(), bio: "hi".into(), accent: Some(0x112233), avatar: None, banner: None, timezone: None, tz_flags: 1 };
+        let init = Initial { name: "Ada".into(), pronouns: String::new(), bio: "hi".into(), accent: Some(0x112233), avatar: None, banner: None, timezone: None, tz_flags: 1, badges: None };
         assert!(changes(&st, &init, false).is_empty());
         st.form.text.insert("p.name".into(), TextEdit::new("Ada "));
         st.form.text.insert("p.bio".into(), TextEdit::new(""));

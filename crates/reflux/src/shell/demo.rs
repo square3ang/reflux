@@ -492,6 +492,15 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
             sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));
             sh.nav.timezone = true;
         }
+        "badges" => {
+            sh.open_settings(Some("my_profile"));
+            sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));
+            sh.form.data.insert("p.timezone_privacy_flags".into(), json!(reflux_model::ProfileFieldPrivacyFlags::EVERYONE.bits()));
+            let b = |key: &str, label: &str, caption: Option<&str>| json!({"key": key, "kind": key, "label": label, "asset": null, "asset_url": null, "aspect_ratio": null, "caption": caption, "href": null, "hidden": false});
+            let own = [b("staff", "Fluxer Staff", Some("S")), b("visionary", "Visionary since March 2025", Some("V")), b("visionary_number", "Visionary #42", Some("#42")), b("operator_pass", "Operator Pass since November 2026", Some("OP"))];
+            sh.form.data.insert(crate::settings::badges::PREVIEW.into(), json!({"profile_badges": [own[0], own[1]], "own_badges": own}));
+            sh.form.data.insert("p.badges".into(), json!((["visionary_number"], [false, true, false, false])));
+        }
         "status-emoji" => {
             super::status::open(sh, ShellModal::CustomStatus);
             sh.form.text.insert("m.status".into(), rune::TextEdit::new("Shipping the status picker"));
@@ -548,6 +557,21 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
         "role-emoji" => {
             st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) });
             data(st, "role-emoji", json!({"id": "9100", "name": "fluxer"}));
+        }
+        "invite-page" | "invite-modal" => {
+            st.open_dialog(Dialog::Guild { guild: g, tab: "overview", role: None });
+            st.form.text.insert("name".into(), rune::TextEdit::new("Fluxer HQ (draft)"));
+            data(st, "splash_align", json!(1));
+            data(st, "invite-preview", json!(scene.trim_start_matches("invite-")));
+        }
+        "crop-banner" | "crop-role" => {
+            let role = scene == "crop-role";
+            st.open_dialog(Dialog::Guild { guild: g, tab: if role { "roles" } else { "overview" }, role: role.then_some(Snowflake(2011)) });
+            let img = image::RgbaImage::from_fn(1200, 700, |x, y| image::Rgba([(x / 5) as u8, (y / 3) as u8, 160, 255]));
+            let mut png = Vec::new();
+            let _ = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
+            let (key, asset) = if role { ("role-icon", crate::settings::crop::Asset::RoleIcon) } else { ("banner", crate::settings::crop::Asset::GuildBanner) };
+            st.nav.crop = crate::settings::crop::Crop::new(key, asset, png);
         }
         "delete" => {
             st.open_dialog(Dialog::Guild { guild: g, tab: "overview", role: None });

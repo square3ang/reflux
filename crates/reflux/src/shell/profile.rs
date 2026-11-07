@@ -38,6 +38,8 @@ pub struct Card {
     pub status_emoji: Option<El>,
     pub badges: Vec<String>,
     pub guild: Option<Snowflake>,
+    /// The shared UTC offset in minutes (`timezone_offset`), shown as "Local time".
+    pub local_time: Option<i32>,
 }
 
 /// The fetched profile, if it loaded.
@@ -77,7 +79,7 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         _ => None,
     };
     let cs = store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref());
-    let badges = prof.and_then(|v| v["profile_badges"].as_array()).map(|a| a.iter().filter_map(|b| b["description"].as_str().or(b["kind"].as_str()).map(str::to_string)).collect()).unwrap_or_default();
+    let badges = prof.and_then(|v| v["profile_badges"].as_array()).map(|a| a.iter().filter_map(|b| b["label"].as_str().or(b["description"].as_str()).or(b["kind"].as_str()).map(str::to_string)).collect()).unwrap_or_default();
     Card {
         user,
         name: store.display_name(guild, user),
@@ -92,6 +94,7 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         status_emoji: cs.and_then(|c| super::forum::forum_emoji(st, c.emoji_id, c.emoji_name.as_deref(), 16.0)),
         badges,
         guild,
+        local_time: prof.and_then(|v| v["timezone_offset"].as_i64()).map(|m| m as i32),
     }
 }
 
@@ -137,6 +140,9 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
     if let Some(bio) = c.bio {
         let md = super::markdown::Md::new(store, &st.media, c.guild, p, format!("bio-{}", c.user));
         content = content.child(col().w_full().gap(4.0).child(section_title(t("About me"), p)).child(super::markdown::inline_text(&bio, &md, font(14.0, 400.0).lh(18.0), p.text_chat)));
+    }
+    if let Some(m) = c.local_time {
+        content = content.child(super::local_time::info(m, p));
     }
     col().w_full().child(head).child(content.children(extra))
 }

@@ -28,6 +28,7 @@ mod members;
 pub mod members_page;
 mod menus;
 pub mod pins;
+pub(crate) mod local_time;
 pub(crate) mod profile;
 pub mod search;
 mod search_query;
@@ -290,6 +291,8 @@ pub struct ShellState {
     pub invite_base: String,
     /// Gift links (`endpoints.gift`).
     pub gift_base: String,
+    /// `endpoints.static_cdn` (badge art).
+    pub static_base: String,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
     /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
@@ -393,6 +396,7 @@ impl Default for ShellState {
             form: Default::default(),
             invite_base: String::new(),
             gift_base: String::new(),
+            static_base: String::new(),
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),

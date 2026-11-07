@@ -3,7 +3,7 @@
 
 use reflux_model::{Role, Snowflake};
 use reflux_store::Store;
-use rune::{El, Tx, col, icon, row};
+use rune::{El, col, icon, row};
 use serde_json::{Map, Value, json};
 
 use super::settings::{small, title};
@@ -163,20 +163,7 @@ pub fn field<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, r: &Role,
         .fill(if picked_image { p.brand_primary } else { p.background_tertiary })
         .border(1.0, p.background_modifier_accent)
         .children(glyph.or_else(|| (!has).then(|| icon(&icons::IMAGE, 24.0).color(p.text_tertiary))));
-    let upload = Button::<S>::new(t("Upload image")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
-        let options = rune::FileDialogOptions { title: t("Upload role icon").into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "webp", "avif"]);
-        tx.open_file(options, move |s: &mut S, res, _| {
-            let f = &mut acc(s).form;
-            let Ok(Some(path)) = res else { return };
-            match std::fs::read(&path).map_err(|_| "The image couldn't be loaded.").and_then(|b| prepare(&b)) {
-                Ok(png) => {
-                    f.data.remove("role-emoji");
-                    f.data.insert("role-icon".into(), json!(super::data_url(std::path::Path::new("x.png"), &png)));
-                }
-                Err(e) => f.error = Some(t(e).into()),
-            }
-        });
-    });
+    let upload = Button::<S>::new(t("Upload image")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::settings::crop::pick(acc, "role-icon", crate::settings::crop::Asset::RoleIcon));
     let channel = store.channels.values().find(|c| c.guild_id == Some(g)).map_or(g, |c| c.id);
     let choose = Button::new(t("Choose emoji")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("pick-role-emoji").on_press(move |s: &mut S| crate::shell::expr::open_for_form(acc(s), channel, "role-emoji")).el(p);
     let mut buttons = row().gap(8.0).child(upload).child(choose);

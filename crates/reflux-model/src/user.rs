@@ -57,6 +57,8 @@ model! {
         pub premium_badge_hidden: bool,
         pub premium_badge_timestamp_hidden: bool,
         pub premium_badge_sequence_hidden: bool,
+        pub operator_pass_badge_timestamp_hidden: bool,
+        pub operator_pass_badge_count_hidden: bool,
         pub has_verified_phone: bool,
         pub required_actions: Vec<String>,
         pub premium_purchase_disabled: bool,

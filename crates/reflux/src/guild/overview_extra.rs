@@ -75,7 +75,22 @@ pub fn splashes<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, p: &Pal
     }
     let load = |kind: &'static str, hash: &Option<String>| hash.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_wide_url(b, kind, g, h, s)));
     let align = st.form.data.get("splash_align").and_then(Value::as_u64).unwrap_or(u64::from(info.splash_card_alignment));
-    // `CardAlignmentControls`: left / centre / right.
+    // `GuildInviteSplashSettingsField`: the previews beside the card alignment.
+    let alignment = col().gap(8.0).items_start().child(title(t("Card alignment"), p)).child(alignment_controls(align, p, acc)).child(small(t("Only applies on wide screens."), p));
+    let alignment = row().w_full().gap(24.0).items_start().child(super::invite_preview::buttons(p, acc).grow(1.0)).child(alignment.grow(1.0));
+    Some(
+        col()
+            .w_full()
+            .gap(20.0)
+            .child(image_field(st, t("Splash"), "splash", load("splashes", &info.splash), 240.0, 135.0, 8.0, p, acc))
+            .child(alignment)
+            .child(image_field(st, t("Embed splash"), "embed_splash", load("embed-splashes", &info.embed_splash), 240.0, 135.0, 8.0, p, acc))
+            .child(small(t("Shown in invite embeds in chat."), p)),
+    )
+}
+
+/// `CardAlignmentControls`: left / centre / right (`splash_card_alignment` 1 / 0 / 2).
+pub fn alignment_controls<S: 'static>(align: u64, p: &Palette, acc: ShellAccess<S>) -> El {
     let seg = |v: u64, glyph: &'static rune::Icon, label: &'static str| {
         let on = align == v;
         row()
@@ -93,21 +108,7 @@ pub fn splashes<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, p: &Pal
             })
             .child(icon(glyph, 18.0).color(if on { p.text_primary } else { p.text_primary_muted }))
     };
-    let alignment = col()
-        .gap(8.0)
-        .items_start()
-        .child(title(t("Card alignment"), p))
-        .child(row().gap(4.0).px(4.0).py(4.0).radius(8.0).fill(p.background_tertiary).child(seg(1, &icons::TEXT_ALIGN_LEFT, "Left")).child(seg(0, &icons::TEXT_ALIGN_CENTER, "Center")).child(seg(2, &icons::TEXT_ALIGN_RIGHT, "Right")))
-        .child(small(t("Only applies on wide screens."), p));
-    Some(
-        col()
-            .w_full()
-            .gap(20.0)
-            .child(image_field(st, t("Splash"), "splash", load("splashes", &info.splash), 240.0, 135.0, 8.0, p, acc))
-            .child(alignment)
-            .child(image_field(st, t("Embed splash"), "embed_splash", load("embed-splashes", &info.embed_splash), 240.0, 135.0, 8.0, p, acc))
-            .child(small(t("Shown in invite embeds in chat."), p)),
-    )
+    row().gap(4.0).px(4.0).py(4.0).radius(8.0).fill(p.background_tertiary).child(seg(1, &icons::TEXT_ALIGN_LEFT, "Left")).child(seg(0, &icons::TEXT_ALIGN_CENTER, "Center")).child(seg(2, &icons::TEXT_ALIGN_RIGHT, "Right"))
 }
 
 /// `GuildVisitsSection`: saved at once, like Fluxer's `toggleFeature`.

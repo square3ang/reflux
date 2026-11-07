@@ -10,6 +10,7 @@ pub use channel::poll as poll_overwrite_search;
 mod expr_upload;
 pub(crate) mod channel_opts;
 mod create_access;
+mod invite_preview;
 mod overview_extra;
 pub(crate) mod role_extra;
 mod invite_friends;

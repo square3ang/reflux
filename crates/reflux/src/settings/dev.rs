@@ -302,7 +302,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
                 Some(_) => true,
                 None => has,
             };
-            let mut r = row().gap(8.0).child(Button::<S>::new(change).size(crate::ui::ButtonSize::Small).el(p).on_press_tx(super::profile::pick(acc, key, kind)));
+            let mut r = row().gap(8.0).child(Button::<S>::new(change).size(crate::ui::ButtonSize::Small).el(p).on_press_tx(super::crop::pick(acc, key, kind)));
             if shown {
                 r = r.child(
                     Button::new(remove)

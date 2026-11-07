@@ -2,7 +2,6 @@
 //! its modal, a searchable time zone list (`getTimeZoneDisplayOptions`, the @vvo/tzdb records in
 //! [`super::timezones`]) and who may see the offset. Choices go into the profile draft
 //! (`form.data["p.timezone"]`, `["p.timezone_privacy_flags"]`) and save with it.
-// shortcut: the profile preview doesn't show the local time.
 
 use reflux_model::ProfileFieldPrivacyFlags as F;
 use reflux_store::Store;
@@ -25,6 +24,13 @@ pub(super) fn draft(store: &Store, st: &ShellState) -> (Option<String>, u64) {
     };
     let flags = st.form.data.get("p.timezone_privacy_flags").and_then(Value::as_u64).unwrap_or_else(|| me.map_or(F::EVERYONE.bits(), |m| m.timezone_privacy_flags.bits()));
     (tz, flags)
+}
+
+/// `previewTimezoneOffset`: the draft zone's offset now, unless nobody may see it.
+pub(super) fn preview_offset(store: &Store, st: &ShellState) -> Option<i32> {
+    let (tz, flags) = draft(store, st);
+    let raw = ZONES.iter().find(|z| Some(z.0) == tz.as_deref()).map_or(0, |z| z.4);
+    tz.filter(|_| flags != 0).map(|name| offset(&name, raw))
 }
 
 /// `formatUtcOffset`.

@@ -9,7 +9,7 @@ use rune::{El, Icon, Tx, col, el, icon, row, text};
 use serde_json::{Value, json};
 
 use super::modals::confirm;
-use super::{Confirm, Dialog, Form, Then, error, field, hex, parse_hex, pick_image};
+use super::{Confirm, Dialog, Form, Then, error, field, hex, parse_hex};
 use crate::icons;
 use crate::media::{self, Load};
 use crate::settings::tabs::{not_available, section};
@@ -116,6 +116,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
     }
     layer.push(modal);
     layer.extend(popups);
+    layer.extend(super::invite_preview::view(store, st, guild, info, p, acc));
+    if let Some(c) = &st.nav.crop {
+        layer.push(crate::settings::crop::modal(st, c, p, acc));
+    }
 }
 
 fn select_tab(st: &mut ShellState, guild: Snowflake, tab: &'static str) {
@@ -229,7 +233,7 @@ pub(super) fn image_field<S: 'static>(st: &ShellState, label: &str, key: &'stati
         (None, Load::Ready(px)) => el().size(w, h).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill),
         _ => row().size(w, h).center().radius(radius).fill(p.background_tertiary).border(1.0, over(p.background_modifier_accent, p.background_tertiary)).child(icon(&icons::IMAGE, 28.0).color(p.text_tertiary)),
     };
-    let mut buttons = row().gap(8.0).child(Button::<S>::new(format!("Change {}", label.to_lowercase())).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(pick_image(acc, key)));
+    let mut buttons = row().gap(8.0).child(Button::<S>::new(format!("Change {}", label.to_lowercase())).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::settings::crop::pick(acc, key, crate::settings::crop::Asset::for_key(key))));
     if has {
         buttons = buttons.child(
             Button::new(format!("Remove {}", label.to_lowercase()))
