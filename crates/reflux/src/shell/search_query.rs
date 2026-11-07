@@ -1,8 +1,7 @@
 //! Fluxer's message search syntax (`search/utils/SearchQueryParser.ts`): `from:`, `mentions:`,
 //! `in:`, `has:`, `before:`/`after:`/`during:`/`on:`, `pinned:` and friends, `-key:` to exclude,
 //! and "quoted phrases", turned into a `POST /search/messages` body.
-// shortcut: no search chips or confusable-skeleton matching; unresolvable values are dropped as in
-// Fluxer, but not underlined.
+// shortcut: no search chips or confusable-skeleton matching.
 
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone};
 use reflux_model::{ChannelType, Snowflake};
@@ -90,6 +89,38 @@ pub fn tokenize(q: &str) -> (Vec<(String, bool, String)>, String, Vec<String>) {
 /// `splitCSV`: comma-separated, quotes allowed.
 fn csv(v: &str) -> Vec<String> {
     v.split(',').map(|s| s.trim().trim_matches(is_quote).trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+/// `isSearchFilterValueChippable`: a value the filter can use. Keys with a fixed vocabulary or a
+/// date / duration check it; names (users, channels) and free text always pass. Values that fail
+/// show as unapplied (`SearchChipRole.UNAPPLIED_VALUE`).
+pub fn applies(key: &str, value: &str, now: DateTime<Local>) -> bool {
+    let v = value.trim();
+    if v.is_empty() {
+        return false;
+    }
+    let lower = v.to_lowercase();
+    let every = |ok: &dyn Fn(&str) -> bool| {
+        let items = csv(&lower);
+        !items.is_empty() && items.iter().all(|i| ok(i))
+    };
+    let date = |d: &str| match d.split_once("..") {
+        Some((a, b)) => period(a, now).is_some() && period(b, now).is_some(),
+        None => period(d, now).is_some(),
+    };
+    match key.trim_start_matches('-') {
+        "has" => every(&|i| ["image", "sound", "video", "file", "sticker", "embed", "link", "poll", "snapshot", "forward"].contains(&i)),
+        "author-type" => every(&|i| ["user", "bot", "webhook"].contains(&i)),
+        "embed-type" => every(&|i| ["image", "video", "sound", "article"].contains(&i)),
+        "pinned" => ["true", "false", "yes", "no", "1", "0"].contains(&lower.as_str()),
+        "mature" => ["true", "false"].contains(&lower.as_str()),
+        "sort" => ["timestamp", "relevance"].contains(&lower.as_str()),
+        "order" => ["asc", "desc"].contains(&lower.as_str()),
+        "scope" => csv(&lower).iter().any(|s| ["current", "open_dms", "all_dms", "all_guilds", "all", "open_dms_and_all_guilds"].contains(&s.as_str())),
+        "last" => duration_ms(v).is_some(),
+        "before" | "after" | "during" | "on" => date(v),
+        _ => true,
+    }
 }
 
 /// What a parse resolves names against.
@@ -334,6 +365,17 @@ mod tests {
         assert_eq!(week_start(sat, first_day("de")), NaiveDate::from_ymd_opt(2026, 11, 2).unwrap());
         assert_eq!(week_start(sat, first_day("en-US")), NaiveDate::from_ymd_opt(2026, 11, 1).unwrap());
         assert_eq!(week_start(sat, first_day("ar")), sat);
+    }
+
+    #[test]
+    fn values_apply_like_fluxer() {
+        let now = Local::now();
+        assert!(applies("has", "image,Link", now) && !applies("has", "image,pdf", now));
+        assert!(applies("-pinned", "yes", now) && !applies("pinned", "maybe", now));
+        assert!(applies("before", "2026-01-02", now) && applies("during", "yesterday..today", now));
+        assert!(!applies("after", "soon", now) && !applies("last", "x", now));
+        assert!(applies("from", "anyone", now), "names always chip");
+        assert!(!applies("from", " ", now));
     }
 
     fn store() -> Store {

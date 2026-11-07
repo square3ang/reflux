@@ -3,7 +3,6 @@
 //! Arrow keys move through the open popout's rows and Enter picks one
 //! (`useMessageSearchAutocomplete`): value lists start on their first row, the filter and
 //! history list only once an arrow was pressed.
-// shortcut: tokens whose value doesn't resolve aren't marked "unapplied" (wavy warning).
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -69,8 +68,10 @@ fn scopes(dm: bool) -> Vec<(&'static str, &'static str, &'static rune::Icon)> {
 }
 
 /// `SearchTokenNode`: each recognised `key:value` reads as a chip (a bold key and its value on
-/// `background-modifier-selected`; excluded ones on the danger fill).
+/// `background-modifier-selected`; excluded ones on the danger fill). A value the filter can't
+/// use is warning-coloured with an underline instead (`.tokenUnapplied`).
 pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
+    let now = chrono::Local::now();
     let mut out = Vec::new();
     let mut at = 0;
     for word in q.split(' ') {
@@ -85,7 +86,9 @@ pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
         let colon = start + key.len() + 1;
         out.push(rune::Span::new(start, colon).bold().bg(bg, 2.0).color(fg));
         if colon < start + word.len() {
-            out.push(rune::Span::new(colon, start + word.len()).bg(bg, 2.0).color(fg));
+            let value = &word[key.len() + 1..];
+            let span = rune::Span::new(colon, start + word.len());
+            out.push(if search_query::applies(key, value, now) { span.bg(bg, 2.0).color(fg) } else { span.color(p.text_warning).underline(p.status_warning) });
         }
     }
     out
