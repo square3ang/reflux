@@ -492,6 +492,17 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
             sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));
             sh.nav.timezone = true;
         }
+        "recovery" | "recovery-kit" => {
+            sh.username_sign_in = true;
+            sh.web_base = "https://web.fluxer.app".into();
+            sh.open_settings(Some("account_security"));
+            sh.form.data.insert("recovery_kit".into(), json!({"has_recovery_kit": false, "created_at": null}));
+            if scene == "recovery-kit" {
+                sh.open_account_modal(crate::settings::AccountModal::RecoveryKit);
+                sh.form.data.insert("m.kit".into(), json!({"recovery_key": "7QX2-M4KD-P9RA-W3TB-H6NC-Z8JE", "created_at": "2026-11-07T09:30:00Z"}));
+                sh.form.data.insert("m.rk_ack".into(), json!(true));
+            }
+        }
         "badges" => {
             sh.open_settings(Some("my_profile"));
             sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));

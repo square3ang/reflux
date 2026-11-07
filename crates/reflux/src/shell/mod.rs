@@ -293,6 +293,8 @@ pub struct ShellState {
     pub gift_base: String,
     /// `endpoints.static_cdn` (badge art).
     pub static_base: String,
+    /// The instance signs in with usernames (`features.account_identity`).
+    pub username_sign_in: bool,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
     /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
@@ -397,6 +399,7 @@ impl Default for ShellState {
             invite_base: String::new(),
             gift_base: String::new(),
             static_base: String::new(),
+            username_sign_in: false,
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),

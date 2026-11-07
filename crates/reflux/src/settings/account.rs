@@ -42,6 +42,8 @@ pub enum AccountModal {
     AddConnection,
     RemoveConnection { kind: String, id: String },
     Deauthorize(String),
+    RecoveryKitReplace,
+    RecoveryKit,
 }
 
 pub(super) fn txt(s: impl Into<String>, size: f32, weight: f32, c: rune::Color) -> El {
@@ -135,6 +137,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
         None,
         vec![
             card_row(t("Username"), Some(muted(crate::shell::friends::tag(store, me.base.id), p)), vec![small_button(t("Change username"), true, "acct-username", open(acc, AccountModal::Username), p)], p),
+            // `usesUsernameSignIn`: accounts have no email address.
             card_row(t("Email address"), Some(email_desc), vec![small_button(email_label, true, "acct-email", open(acc, AccountModal::Email), p)], p),
             card_row(
                 t("Password"),
@@ -142,9 +145,19 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
                 vec![small_button(if has_password { t("Change password") } else { t("Set password") }, true, "acct-password", open(acc, AccountModal::Password), p)],
                 p,
             ),
-        ],
+        ]
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !(st.username_sign_in && *i == 1))
+        .map(|(_, r)| r)
+        .chain(super::recovery_kit::shown(store, st).then(|| super::recovery_kit::row_el(st, p, acc)))
+        .collect(),
         p,
     );
+    let sign_in = match super::recovery_kit::shown(store, st).then(|| super::recovery_kit::reminder(st, p, acc)).flatten() {
+        Some(alert) => col().w_full().child(alert).child(sign_in),
+        None => sign_in,
+    };
 
     // Security.
     let totp = me.authenticator_types.contains(&AuthenticatorType::TOTP);
@@ -527,12 +540,23 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
                     sh.intents.push(Intent::Account(Op::AddPasskey));
                 }
             });
-            let mut body = vec![
-                input(st, acc, "m.name", "", t("Passkey name"), t("e.g., YubiKey, iPhone, work computer"), false, p),
-                // shortcut: a security key's PIN is asked up front, not when the key wants it.
-                input(st, acc, "m.pin", "", t("Security key PIN (if it has one)"), "", true, p),
-            ];
-            if st.form.busy && ready {
+            let mut body = vec![input(st, acc, "m.name", "", t("Passkey name"), t("e.g., YubiKey, iPhone, work computer"), false, p)];
+            if let Some((_, wrong)) = &st.account.passkey_pin {
+                let send = move |s: &mut S| {
+                    let sh = acc(s);
+                    let pin = sh.form.text.remove("m.pin").map(|e| e.text.clone()).unwrap_or_default();
+                    if let Some((reply, _)) = sh.account.passkey_pin.take() {
+                        let _ = reply.send(authenticator::Pin::new(&pin));
+                    }
+                };
+                let edit = st.form.text.get("m.pin").cloned().unwrap_or_default();
+                let mut pin = crate::ui::Input::new("form-m.pin", &edit, move |s: &mut S| acc(s).form.text.entry("m.pin".into()).or_default()).label(t("Security key PIN")).secure();
+                if *wrong {
+                    pin = pin.error(Some(t("Wrong PIN. Try again.")));
+                }
+                body.push(pin.el(p));
+                body.push(Button::new(t("Continue")).key("passkey-pin-submit").on_press(send).el(p));
+            } else if st.form.busy && ready {
                 body.push(desc(t("Touch your security key to continue."), p));
             }
             dialog(st, t("Name passkey"), body, Some((t("Save"), false, save)), p, acc)
@@ -544,6 +568,7 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
             });
             dialog(st, t("Delete passkey"), vec![desc(t("Are you sure you want to delete this passkey?"), p)], Some((t("Delete passkey"), true, go)), p, acc)
         }
+        AccountModal::RecoveryKitReplace | AccountModal::RecoveryKit => return super::recovery_kit::modal(store, st, m, p, acc),
         other => return super::privacy::modal(store, st, other, p, acc),
     })
 }

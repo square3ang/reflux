@@ -27,16 +27,19 @@ pub struct Modal<S: 'static> {
     body: Option<El>,
     footer: Option<El>,
     on_close: Rc<dyn Fn(&mut S)>,
+    hide_close: bool,
 }
 
 impl<S: 'static> Modal<S> {
     pub fn new(title: impl Into<String>, on_close: impl Fn(&mut S) + 'static) -> Self {
-        Self { title: title.into(), size: ModalSize::Small, body: None, footer: None, on_close: Rc::new(on_close) }
+        Self { title: title.into(), size: ModalSize::Small, body: None, footer: None, on_close: Rc::new(on_close), hide_close: false }
     }
     pub fn size(mut self, s: ModalSize) -> Self { self.size = s; self }
     pub fn body(mut self, b: El) -> Self { self.body = Some(b); self }
     /// Right-aligned buttons, gap 8.
     pub fn footer(mut self, f: El) -> Self { self.footer = Some(f); self }
+    /// `hideCloseButton`.
+    pub fn hide_close(mut self) -> Self { self.hide_close = true; self }
 
     /// The whole layer (backdrop + centred card); push it last into the screen's overlay layer.
     /// Escape, the close button and a press on the backdrop call `on_close`.
@@ -65,7 +68,7 @@ impl<S: 'static> Modal<S> {
             .justify_between()
             .center_y()
             .child(text(self.title.clone()).font(font(18.0, 600.0).lh(20.0)).color(p.text_primary))
-            .child(x);
+            .children((!self.hide_close).then_some(x));
         let mut card = col()
             .w(w)
             .min_h(min_h)

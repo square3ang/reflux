@@ -17,6 +17,8 @@ pub(crate) use privacy::open_url;
 pub(crate) mod profile;
 mod advanced;
 pub(crate) mod badges;
+mod recovery_kit;
+mod recovery_pdf;
 pub(crate) mod crop;
 mod timezone;
 mod timezones;
@@ -79,6 +81,10 @@ pub struct AccountUi {
     pub accounts: Vec<crate::session::Account>,
     /// The signed-in user's ID.
     pub me: Snowflake,
+    /// "Not now" on the recovery kit reminder.
+    pub recovery_reminder_dismissed: bool,
+    /// Adding a passkey: the key asked for its PIN (reply, the last one was wrong).
+    pub passkey_pin: Option<(std::sync::mpsc::Sender<authenticator::Pin>, bool)>,
 }
 
 /// A modal the user area or a menu opens outside settings.
@@ -416,6 +422,8 @@ impl ShellState {
             u.modal = None;
         }
         self.account.modal = None;
+        // Dropping a pending PIN reply ends that key request.
+        self.account.passkey_pin = None;
         self.form.text.retain(|k, _| !k.starts_with("m."));
         self.form.data.retain(|k, _| !k.starts_with("m."));
         self.form.error = None;
@@ -448,7 +456,10 @@ pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
 /// Loads what tab `id` lists into the form.
 pub(crate) fn load_tab(sh: &mut ShellState, id: &str) {
     match id {
-        "account_security" => sh.load("passkeys", "/users/@me/mfa/webauthn/credentials"),
+        "account_security" => {
+            sh.load("passkeys", "/users/@me/mfa/webauthn/credentials");
+            recovery_kit::load(sh);
+        }
         "devices" => sh.load("sessions", "/auth/sessions"),
         "authorized_apps" => sh.load("apps", "/oauth2/@me/authorizations"),
         "linked_accounts" => sh.load("connections", "/users/@me/connections"),

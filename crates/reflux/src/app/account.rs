@@ -93,7 +93,7 @@ pub(super) fn run(s: &mut State, op: Op) {
             let sh = &mut s.app.shell;
             let Some(opts) = sh.form.data.get("m.passkey_options").cloned() else { return };
             let text = |k: &str| sh.form.text.get(k).map(|t| t.text.trim().to_string()).unwrap_or_default();
-            let (name, pin) = (text("m.name"), text("m.pin"));
+            let name = text("m.name");
             let name = if name.is_empty() { "Passkey".to_string() } else { name };
             (sh.form.busy, sh.form.error) = (true, None);
             spawn(async move {
@@ -103,12 +103,16 @@ pub(super) fn run(s: &mut State, op: Op) {
                     crate::passkey::create(
                         &opts,
                         &origin,
+                        // The PIN is asked only when the key wants one.
                         move |st| {
                             if let crate::passkey::Status::Pin { reply, wrong, .. } = st {
-                                // A wrong PIN drops the reply, which ends the request.
-                                if !wrong && !pin.is_empty() {
-                                    let _ = reply.send(authenticator::Pin::new(&pin));
-                                }
+                                update(move |s| {
+                                    let sh = &mut s.app.shell;
+                                    sh.account.passkey_pin = Some((reply, wrong));
+                                    let mut e = rune::TextEdit::default();
+                                    e.focused = true;
+                                    sh.form.text.insert("m.pin".into(), e);
+                                });
                             }
                         },
                         |_| {},
@@ -126,6 +130,7 @@ pub(super) fn run(s: &mut State, op: Op) {
                 update(move |s| {
                     let sh = &mut s.app.shell;
                     sh.form.busy = false;
+                    sh.account.passkey_pin = None;
                     match r {
                         Ok(()) => {
                             sh.close_account_modals();
