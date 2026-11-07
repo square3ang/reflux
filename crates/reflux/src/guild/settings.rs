@@ -573,6 +573,7 @@ fn emoji_search_matches(name: &str, query: &str) -> bool {
     query.is_empty() || name.to_lowercase().contains(&query)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emoji_row<S: 'static>(st: &ShellState, e: &Emoji, g: Snowflake, manage: bool, me: Snowflake, editing: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> El {
     let id = e.id;
     let img = crate::shell::picture(st.media.asset(|b, _| media::emoji_url(b, &id.to_string())), 32.0, 32.0, 4.0, p);

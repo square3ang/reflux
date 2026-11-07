@@ -608,7 +608,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
                 ),
         );
     let settings_label = if review { t("User settings, privacy review needed") } else { t("User Settings") };
-    let mut gear = control(&icons::GEAR, &settings_label, false, false).on_press(move |s: &mut S| acc(s).open_settings(review.then_some("privacy_safety")));
+    let mut gear = control(&icons::GEAR, settings_label, false, false).on_press(move |s: &mut S| acc(s).open_settings(review.then_some("privacy_safety")));
     if review {
         gear = gear.child(el().pin(Some(21.0), Some(5.0), None, None).size(8.0, 8.0).radius(4.0).fill(p.status_danger).border(2.0, surface));
     }

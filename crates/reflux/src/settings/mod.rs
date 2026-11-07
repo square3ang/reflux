@@ -615,12 +615,21 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
             text(t("No settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
         );
     }
+    let privacy_review = privacy::review_pending(store, st);
     for cat in [Cat::Account, Cat::Billing, Cat::App, Cat::Developer] {
         let items: Vec<&&TabDef> = shown.iter().filter(|t| t.cat == cat).collect();
         if items.is_empty() {
             continue;
         }
-        let items = items.into_iter().map(|tab| nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).on_press(select(acc, tab.id)));
+        let items = items.into_iter().map(|tab| {
+            let item = nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).on_press(select(acc, tab.id));
+            // `attentionLabel` on the Privacy item while the setup is unreviewed.
+            if tab.id == "privacy_safety" && privacy_review {
+                item.child(el().size(8.0, 8.0).radius(4.0).fill(p.status_danger).ml(6.0))
+            } else {
+                item
+            }
+        });
         nav = nav.child(nav_group(Some(cat.label()), items, p));
     }
     // What's new, Submit feedback and Donate open the official site's pages in the browser;

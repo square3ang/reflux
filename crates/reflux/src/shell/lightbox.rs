@@ -170,8 +170,14 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     // `data-rotation-swapped` on `.mediaContainer`: a sideways picture lays out with the fit
     // box's sides exchanged so it still fits once turned.
     let swapped = sideways(v.rotation);
-    let fit_ratio = if swapped { 1.0 / ratio } else { ratio };
-    let (max_w, max_h) = if swapped { (it.h.max(1) as f32, it.w.max(1) as f32) } else { (it.w.max(1) as f32, it.h.max(1) as f32) };
+    let [win_w, win_h] = rune::memo::layout_size("viewer-area").unwrap_or([1280.0, 800.0]);
+    let (area_w, area_h) = ((win_w - 32.0).max(1.0), (win_h - 156.0).max(1.0));
+    let (max_w, max_h) = if swapped {
+        ((it.w.max(1) as f32).min(area_h), (it.h.max(1) as f32).min(area_w))
+    } else {
+        (it.w.max(1) as f32, it.h.max(1) as f32)
+    };
+    let fit_ratio = ratio;
     let fill = || el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
     let key = format!("viewer-{}", v.index);
     let clip = st.media_ui.playing.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
@@ -234,6 +240,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
         });
     // `--media-fit-safe-inset-block` (1rem + 3rem bars + 0.75rem gap) and 1rem at the sides.
     let area = col()
+        .key("viewer-area")
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .py(78.0)
         .px(16.0)

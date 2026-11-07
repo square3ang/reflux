@@ -126,6 +126,7 @@ pub fn poll(sh: &mut ShellState) -> bool {
                 u.code = TextEdit::default();
                 u.code.focused = true;
             }
+            (_, Fetched::Loading) => {}
         }
     }
     changed
@@ -138,6 +139,8 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
     let desc = |s: &str| text(s.to_string()).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap();
     let err = |f: &str| u.error.as_ref().filter(|(k, _)| *k == f).map(|(_, m)| m.as_str());
     let go = move |s: &mut S| submit(acc(s));
+    let left = u.resend_at.saturating_sub(st.now_ms).div_ceil(1000);
+    let resend_label = if left > 0 { tf("Resend ({secondsRemaining}s)", &[("secondsRemaining", &left.to_string())]) } else { t("Resend").to_string() };
     let body = match &u.ticket {
         None => col()
             .w_full()
@@ -152,34 +155,19 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
                 .error(err("email"))
                 .el(p),
             ),
-        Some(_) => {
-            let left = u.resend_at.saturating_sub(st.now_ms).div_ceil(1000);
-            let label = if left > 0 { tf("Resend ({secondsRemaining}s)", &[("secondsRemaining", &left.to_string())]) } else { t("Resend").to_string() };
-            col()
-                .w_full()
-                .gap(16.0)
-                .child(desc(t("Enter the code we emailed to your new address.")))
-                .child(
-                    Input::new("bounced-email-code", &u.code, move |s: &mut S| -> &mut TextEdit {
-                        &mut acc(s).account_gate.bounced.get_or_insert_with(Ui::default).code
-                    })
-                    .label(t("Verification code"))
-                    .placeholder("XXXX-XXXX")
-                    .error(err("code"))
-                    .el(p),
-                )
-                .child(
-                    row().w_full().child(
-                        Button::new(label)
-                            .variant(ButtonVariant::Secondary)
-                            .size(crate::ui::ButtonSize::Small)
-                            .disabled(left > 0 || u.sending || u.busy)
-                            .key("bounced-resend")
-                            .on_press(move |s: &mut S| resend(acc(s)))
-                            .el(p),
-                    ),
-                )
-        }
+        Some(_) => col()
+            .w_full()
+            .gap(16.0)
+            .child(desc(t("Enter the code we emailed to your new address.")))
+            .child(
+                Input::new("bounced-email-code", &u.code, move |s: &mut S| -> &mut TextEdit {
+                    &mut acc(s).account_gate.bounced.get_or_insert_with(Ui::default).code
+                })
+                .label(t("Verification code"))
+                .placeholder("XXXX-XXXX")
+                .error(err("code"))
+                .el(p),
+            ),
     };
     let footer = match &u.ticket {
         None => row()
@@ -189,6 +177,13 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
         Some(_) => row()
             .gap(8.0)
             .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
+            .child(
+                Button::new(resend_label)
+                    .disabled(left > 0 || u.sending || u.busy)
+                    .key("bounced-resend")
+                    .on_press(move |s: &mut S| resend(acc(s)))
+                    .el(p),
+            )
             .child(Button::new(t("Confirm")).submitting(u.busy).key("bounced-confirm").on_press(go).el(p)),
     };
     Some(Modal::new(t("Add a working email"), close).body(body).footer(footer).el(p))

@@ -4,7 +4,7 @@
 use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, el, icon, row};
+use rune::{El, ScrollSpec, col, el, icon, row};
 use crate::ui::mark::marked as text;
 use serde_json::{Value, json};
 
@@ -12,6 +12,7 @@ use super::account::{AccountModal, card, card_row, day, muted, open, small_butto
 use super::tabs::section;
 use super::input;
 use crate::guild::Then;
+use crate::icons;
 use crate::i18n::{t, tf};
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
@@ -141,12 +142,16 @@ fn differing(guilds: &[Snowflake], restricted: &[Snowflake], default: bool) -> V
     guilds.iter().copied().filter(|g| restricted.contains(g) != default).collect()
 }
 
-/// `UserSettingsCommands.update` body. `applying` also replaces every current community's
-/// setting; otherwise only the default for communities joined later changes.
-fn review_patch(friends: bool, applying: bool, guilds: &[Snowflake]) -> Value {
-    let mut v = json!({ "default_guilds_restricted": friends, "privacy_setup_version": REVIEW_VERSION });
-    if applying {
-        v["restricted_guilds"] = json!(if friends { guilds } else { &[] });
+/// `UserSettingsCommands.update` body. An unchanged choice records only the version;
+/// `applying` also replaces every current community's setting, while otherwise only the
+/// default for communities joined later changes.
+fn review_patch(friends: bool, changed: bool, applying: bool, guilds: &[Snowflake]) -> Value {
+    let mut v = json!({ "privacy_setup_version": REVIEW_VERSION });
+    if changed {
+        v["default_guilds_restricted"] = json!(friends);
+        if applying {
+            v["restricted_guilds"] = json!(if friends { guilds } else { &[] });
+        }
     }
     v
 }
@@ -188,7 +193,7 @@ fn review_alert<S: 'static>(default_friends: bool, p: &Palette, acc: ShellAccess
 }
 
 /// A `GuildIcon` at 20 px beside the community's name and its state (`renderGuildRow`).
-fn review_guild<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, restricted: bool, p: &Palette) -> El {
+fn review_guild(store: &Store, st: &ShellState, g: Snowflake, restricted: bool, p: &Palette) -> El {
     let name = store.guilds.get(&g).and_then(|x| x.info.as_ref()).map_or(String::new(), |i| i.name.clone());
     row()
         .w_full()
@@ -204,9 +209,9 @@ fn review_guild<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, restri
 }
 
 /// The `RadioGroup` option with the "Current" tag (`currentTag`).
-fn review_option<S: 'static>(on: bool, friends: bool, label: &str, desc: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+fn review_option<S: 'static>(on: bool, current: bool, friends: bool, label: &str, desc: &str, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut name = row().gap(8.0).center_y().child(text(label.to_string()).font(font(15.0, 500.0).lh(21.0)).color(p.text_primary));
-    if on {
+    if current {
         name = name.child(
             row()
                 .px(6.0)
@@ -261,22 +266,25 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
     let mut now = col()
         .w_full()
         .gap(8.0)
-        .p(12.0)
+        .padding(12.0)
         .radius(8.0)
         .border(1.0, p.background_header_secondary)
         .fill(p.background_tertiary)
         .child(heading(&t("Right now").to_uppercase()))
         .child(
-            text(if current {
-                t("People in your communities need to be your friend before they can message you.").to_string()
-            } else {
-                t("People in your communities can message you without being friends.").to_string()
-            })
+            text(format!(
+                "{} {}",
+                if current {
+                    t("People in your communities need to be your friend before they can message you.")
+                } else {
+                    t("People in your communities can message you without being friends.")
+                },
+                t("Friends can always message you.")
+            ))
             .font(font(14.0, 400.0).lh(18.9))
             .color(p.text_primary)
             .wrap(),
-        )
-        .child(text(t("Friends can always message you.")).font(font(14.0, 400.0).lh(18.9)).color(p.text_primary).wrap());
+        );
     if !overrides.is_empty() {
         now = now.child(
             col()
@@ -302,15 +310,15 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
                 .gap(6.0)
                 .role("radiogroup")
                 .label(t("Who can message you"))
-                .child(review_option(!review.friends, false, t("Anyone in my communities"), t("People who share a community with you can message you directly."), p, acc))
-                .child(review_option(review.friends, true, t("Friends only"), t("People need to be your friend before they can message you. They can still send you a friend request."), p, acc)),
+                .child(review_option(!review.friends, !current, false, t("Anyone in my communities"), t("People who share a community with you can message you directly."), p, acc))
+                .child(review_option(review.friends, current, true, t("Friends only"), t("People need to be your friend before they can message you. They can still send you a friend request."), p, acc)),
         );
     if changed && !affected.is_empty() {
         body = body.child(
             col()
                 .w_full()
                 .gap(8.0)
-                .p(12.0)
+                .padding(12.0)
                 .radius(8.0)
                 .border(1.0, p.background_header_secondary)
                 .fill(p.background_tertiary)
@@ -341,7 +349,7 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
         .child(text(summary).font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).wrap())
         .child(desc(t("You can change this anytime in your privacy settings, including for each community.")));
 
-    let patch = review_patch(review.friends, applying, &all);
+    let patch = review_patch(review.friends, changed, applying, &all);
     let save = move |s: &mut S| {
         let sh = acc(s);
         sh.intents.push(Intent::PatchSettings(patch.clone()));
@@ -353,6 +361,9 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
         .gap(8.0)
         .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
         .child(Button::new(if changed { t("Save changes") } else { t("Keep my current settings") }).key("privacy-review-save").on_press(save).el(p));
+    // `Modal.Content` scrolls: the card stays inside the window (`max-height: 100svh - 3rem`).
+    let [_, vh] = rune::memo::layout_size(crate::shell::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let body = crate::ui::scroller(col().w_full().max_h((vh - 200.0).max(220.0)).scroll(ScrollSpec { stick_bottom: false }).child(body), false, p);
     Modal::new(t("Who can message you?"), close).body(body).footer(footer).el(p)
 }
 
@@ -790,19 +801,24 @@ mod tests {
         assert_eq!(differing(&guilds, &restricted, false), vec![Snowflake(2)], "only the restricted one differs from open");
         assert_eq!(differing(&guilds, &restricted, true), vec![Snowflake(1), Snowflake(3)], "only the open ones differ from friends only");
         assert_eq!(
-            review_patch(true, false, &guilds),
+            review_patch(true, true, false, &guilds),
             json!({"default_guilds_restricted": true, "privacy_setup_version": REVIEW_VERSION}),
             "future communities only"
         );
         assert_eq!(
-            review_patch(true, true, &guilds),
+            review_patch(true, true, true, &guilds),
             json!({"default_guilds_restricted": true, "restricted_guilds": ["1", "2", "3"], "privacy_setup_version": REVIEW_VERSION})
         );
         assert_eq!(
-            review_patch(false, true, &guilds),
+            review_patch(false, true, true, &guilds),
             json!({"default_guilds_restricted": false, "restricted_guilds": [], "privacy_setup_version": REVIEW_VERSION})
         );
-        assert!(review_patch(false, false, &guilds).get("restricted_guilds").is_none(), "the untouched communities keep their settings");
+        assert_eq!(
+            review_patch(false, false, false, &guilds),
+            json!({"privacy_setup_version": REVIEW_VERSION}),
+            "keeping the current setting only records the review"
+        );
+        assert!(review_patch(false, true, false, &guilds).get("restricted_guilds").is_none(), "the untouched communities keep their settings");
     }
 
     #[test]

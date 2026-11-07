@@ -4,7 +4,7 @@
 use reflux_model::{Permissions as P, Snowflake, Sticker};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, Tx, col, icon, row};
+use rune::{El, Tx, col, el, icon, row};
 use serde_json::{Value, json};
 
 use super::settings::{card, empty, small, title};

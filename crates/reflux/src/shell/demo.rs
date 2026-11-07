@@ -193,7 +193,7 @@ impl Demo {
         );
         hq["properties"]["icon"] = json!("demo");
         hq["emojis"] = json!([{"id": "77", "name": "fluxer", "animated": false}, {"id": "78", "name": "flux_love", "animated": false},
-                              {"id": "79", "name": "shipit", "animated": false}]);
+                              {"id": "79", "name": "shipit", "animated": false}, {"id": "80", "name": "party_parrot", "animated": true}]);
         hq["stickers"] = json!([{"id": "88", "name": "wave", "description": "Hello there", "tags": ["hi"], "animated": false},
                                 {"id": "89", "name": "ship it", "description": "", "tags": ["release"], "animated": false}]);
         hq["properties"]["banner"] = json!("demo");
@@ -504,15 +504,23 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
 fn account_scene(sh: &mut ShellState, store: &mut Store, scene: &str) {
     use crate::settings::ShellModal;
     match scene {
-        "privacy-review" | "privacy-review-alert" => {
+        "privacy-review" | "privacy-review-alert" | "privacy-review-changed" => {
             sh.open_settings(Some("privacy_safety"));
-            if scene == "privacy-review"
+            if scene != "privacy-review-alert"
                 && let Some(u) = sh.settings.as_mut()
             {
                 u.privacy_review = Some(crate::settings::privacy::Review::new(store));
             }
+            if scene == "privacy-review-changed" {
+                store.settings.restricted_guilds = vec![Snowflake(3000)];
+                if let Some(r) = sh.settings.as_mut().and_then(|u| u.privacy_review.as_mut()) {
+                    r.friends = true;
+                }
+            }
         }
         "bounced-email" | "bounced-email-code" => {
+            sh.tiers.emails_enabled = true;
+            sh.tiers.delivery_on = true;
             if let Some(me) = store.me.as_mut() {
                 me.email_bounced = true;
                 me.verified = false;
@@ -755,8 +763,18 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.open_dialog(Dialog::Channel { channel: Snowflake(2202), tab, target: (scene == "cs-overwrite").then_some(Snowflake(2011)) });
         }
         s => {
-            let tab = crate::guild::tab_ids().find(|t| s.strip_prefix("gs-") == Some(*t)).unwrap_or("overview");
+            let mut tab = crate::guild::tab_ids().find(|t| s.strip_prefix("gs-") == Some(*t)).unwrap_or("overview");
+            if s == "gs-emoji-search" {
+                tab = "emoji";
+            } else if s == "gs-stickers-search" {
+                tab = "stickers";
+            }
             st.open_dialog(Dialog::Guild { guild: g, tab, role: None });
+            if s == "gs-emoji-search" {
+                st.form.text.insert("emoji-search".into(), rune::TextEdit::new("flux"));
+            } else if s == "gs-stickers-search" {
+                st.form.text.insert("sticker-search".into(), rune::TextEdit::new("ship"));
+            }
             let m = |u: u64, r: &[u64]| json!({"user": {"id": u.to_string(), "username": format!("user{u}"), "global_name": null}, "roles": r.iter().map(|x| x.to_string()).collect::<Vec<_>>(), "joined_at": "2025-01-01T00:00:00Z"});
             data(st, "members", json!([m(ME, &[2010]), m(1001, &[2010, 2012]), m(1002, &[2011]), m(1003, &[2012]), m(1004, &[])]));
             data(st, "invites", json!([{"code": "AbCd12", "uses": 3, "max_uses": 0, "max_age": 0, "inviter": {"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, "channel": {"id": GENERAL.to_string(), "name": "general", "type": 0}},
@@ -1350,7 +1368,7 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 ));
             }
         }
-        "mosaic" | "viewer" => {
+        "mosaic" | "viewer" | "viewer-rotate" => {
             msgs.push(message(t(1), 0, 1001, "Three from the offsite:", json!({"attachments": [
                 att(9101, "a.png", "image/png", 1200, 800, json!({})), att(9102, "b.png", "image/png", 800, 800, json!({})),
                 att(9103, "c.png", "image/png", 800, 1200, json!({"description": "The team on the stairs"}))]})));
