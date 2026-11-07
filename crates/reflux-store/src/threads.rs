@@ -132,7 +132,8 @@ impl Store {
             edit: ok && (!locked || moderator) && (moderator || owner) && !archived,
             archive: ok && !archived && (!locked || moderator) && (moderator || owner),
             unarchive: archived && unarchive,
-            lock: ok && moderator,
+            // The owner may lock their own unlocked thread; only a moderator may unlock it.
+            lock: ok && (moderator || (!locked && owner)),
             join: view && !archived && (!locked || moderator),
             leave: member && !archived,
             delete: ok && moderator,
@@ -155,9 +156,12 @@ impl Store {
         }
     }
 
-    /// Muted itself, or its parent at any level (`isThreadMuted`).
+    /// Muted itself (until its `mute_config.end_time`), or its parent at any level
+    /// (`isThreadMuted`).
     pub fn is_thread_muted(&self, t: &Channel) -> bool {
-        t.member.as_ref().is_some_and(|m| m.muted) || t.parent_id.and_then(|p| self.channels.get(&p)).is_some_and(|p| self.is_muted(p))
+        let now = crate::now_ms();
+        let own = t.member.as_ref().is_some_and(|m| crate::mute_active(m.muted, m.mute_config.as_ref(), now));
+        own || t.parent_id.and_then(|p| self.channels.get(&p)).is_some_and(|p| self.is_muted(p))
     }
 
     /// Adds threads a REST call returned (archived lists, search, a created thread) with the
@@ -244,6 +248,13 @@ mod tests {
         let r = s.thread_rights(&s.channels[&Snowflake(21)]);
         assert!(r.view && r.join && r.send && !r.leave && !r.edit && !r.delete && !r.lock);
         assert!(s.thread_rights(&s.channels[&Snowflake(20)]).leave);
+        // A thread owner may lock their own unlocked thread, but not unlock it again.
+        let mut o = store(basic());
+        o.channels.get_mut(&Snowflake(20)).unwrap().owner_id = Some(Snowflake(ME));
+        let r = o.thread_rights(&o.channels[&Snowflake(20)]);
+        assert!(r.lock && r.edit && r.archive);
+        o.channels.get_mut(&Snowflake(20)).unwrap().thread_metadata.as_mut().unwrap().locked = true;
+        assert!(!o.thread_rights(&o.channels[&Snowflake(20)]).lock);
         assert!(s.can_create_thread(&s.channels[&Snowflake(10)], CreateKind::FromMessage));
         assert!(!s.can_create_thread(&s.channels[&Snowflake(10)], CreateKind::Private));
         assert!(!s.can_create_thread(&s.channels[&Snowflake(11)], CreateKind::Private), "private threads only in text channels");
@@ -280,6 +291,7 @@ mod tests {
         s.add_threads(&[serde_json::from_value(thread(23, 10, 11, true, false)).unwrap()], &[]);
         apply(&mut s, "THREAD_LIST_SYNC", json!({"guild_id": G.to_string(), "threads": [thread(20, 10, 11, false, true)], "members": []}));
         assert!(s.channels.contains_key(&Snowflake(23)) && !s.channels.contains_key(&Snowflake(21)));
+        assert!(s.channels[&Snowflake(20)].member.is_none(), "a thread listed without a membership is not joined");
 
         apply(&mut s, "CHANNEL_DELETE", json!({"id": "10", "type": 0, "guild_id": G.to_string()}));
         assert!(!s.channels.contains_key(&Snowflake(20)) && !s.channels.contains_key(&Snowflake(23)), "threads go with their parent");
@@ -296,6 +308,11 @@ mod tests {
         let t = &s.channels[&Snowflake(20)];
         assert_eq!(s.thread_notify_setting(t), NotificationLevel::NO_MESSAGES);
         assert!(s.is_muted(t));
+
+        // Thread mutes expire like channel mutes.
+        apply(&mut s, "THREAD_MEMBER_UPDATE", json!({"id": "20", "guild_id": G.to_string(), "join_timestamp": "2026-01-01T00:00:00Z", "flags": 0, "muted": true,
+            "mute_config": {"end_time": "1970-01-01T00:15:00.000Z", "selected_time_window": 900000}}));
+        assert!(!s.is_muted(&s.channels[&Snowflake(20)]), "an ended thread mute is over");
 
         // A message carrying its thread (the starter's MESSAGE_UPDATE) adds the thread.
         apply(&mut s, "MESSAGE_CREATE", json!({"id": "30", "channel_id": "10", "guild_id": G.to_string(), "author": {"id": "9", "username": "x"},

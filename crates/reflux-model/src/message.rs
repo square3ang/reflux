@@ -22,17 +22,26 @@ model! {
         pub pinned: bool,
         pub mention_everyone: bool,
         pub tts: bool,
+        #[serde(deserialize_with = "crate::null_default")]
         pub mentions: Vec<PartialUser>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub mention_roles: Vec<Snowflake>,
+        // The response schema allows `null` for these arrays; a null must not fail the message.
+        #[serde(deserialize_with = "crate::null_default")]
         pub mention_channels: Vec<ChannelMention>,
         /// Referred-to users that weren't mentioned (resolve snapshot mentions here).
+        #[serde(deserialize_with = "crate::null_default")]
         pub users: Vec<PartialUser>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub embeds: Vec<Embed>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub attachments: Vec<Attachment>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub stickers: Vec<StickerItem>,
         #[serde(deserialize_with = "crate::null_default")]
         pub reactions: Vec<Reaction>,
         pub message_reference: Option<MessageReference>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub message_snapshots: Vec<MessageSnapshot>,
         pub nonce: Option<String>,
         pub call: Option<MessageCall>,
@@ -58,6 +67,7 @@ model! {
         pub filename: String,
         pub title: Option<String>,
         pub description: Option<String>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub content_type: String,
         pub content_hash: Option<String>,
         pub size: u64,
@@ -68,11 +78,13 @@ model! {
         pub height: Option<u32>,
         pub placeholder: Option<String>,
         pub flags: AttachmentFlags,
+        #[serde(deserialize_with = "crate::null_default")]
         pub nsfw: bool,
         pub duration: Option<f64>,
         /// Base64 voice waveform.
         pub waveform: Option<String>,
         pub expires_at: Option<Timestamp>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub expired: bool,
     }
 
@@ -87,6 +99,7 @@ model! {
     pub struct Reaction {
         pub emoji: ReactionEmoji,
         pub count: u32,
+        #[serde(deserialize_with = "crate::null_default")]
         pub me: bool,
     }
 
@@ -100,14 +113,21 @@ model! {
     }
 
     pub struct MessageSnapshot {
+        #[serde(deserialize_with = "crate::null_default")]
         pub content: String,
         pub timestamp: Timestamp,
         pub edited_timestamp: Option<Timestamp>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub mentions: Vec<Snowflake>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub mention_roles: Vec<Snowflake>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub mention_channels: Vec<ChannelMention>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub embeds: Vec<Embed>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub attachments: Vec<Attachment>,
+        #[serde(deserialize_with = "crate::null_default")]
         pub stickers: Vec<StickerItem>,
         #[serde(rename = "type")]
         pub kind: MessageType,
@@ -161,9 +181,9 @@ model! {
         pub audio: Option<EmbedMedia>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub footer: Option<EmbedFooter>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(deserialize_with = "crate::null_default", skip_serializing_if = "Vec::is_empty")]
         pub fields: Vec<EmbedField>,
-        #[serde(skip_serializing_if = "crate::is_false")]
+        #[serde(deserialize_with = "crate::null_default", skip_serializing_if = "crate::is_false")]
         pub nsfw: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub html: Option<String>,
@@ -171,7 +191,7 @@ model! {
         pub html_width: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub html_height: Option<u32>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
+        #[serde(deserialize_with = "crate::null_default", skip_serializing_if = "Vec::is_empty")]
         pub children: Vec<Embed>,
     }
 
@@ -331,6 +351,24 @@ mod tests {
         assert_eq!(m.referenced_message, Some(None));
         assert_eq!(m.kind, MessageType::REPLY);
         assert!(m.embeds[0].fields[0].inline);
+    }
+
+    #[test]
+    fn null_arrays_and_fields_are_tolerated() {
+        let m: Message = serde_json::from_str(
+            r#"{"id":"1","channel_id":"2","embeds":null,"attachments":[{"id":"3","filename":"x","size":1,
+            "content_type":null,"nsfw":null,"expired":null}],"stickers":null,"mention_channels":null,
+            "message_snapshots":[{"content":null,"mentions":null,"mention_roles":null,"embeds":null,
+            "attachments":null,"stickers":null}],"users":null,"reactions":[{"emoji":{"name":"🔥"},
+            "count":1,"me":null}],"mentions":[],"mention_roles":[]}"#,
+        )
+        .unwrap();
+        assert!(m.embeds.is_empty() && m.stickers.is_empty() && m.users.is_empty());
+        assert_eq!(m.attachments[0].content_type, "");
+        assert!(!m.reactions[0].me);
+        assert_eq!(m.message_snapshots[0].content, "");
+        let e: Embed = serde_json::from_str(r#"{"type":"rich","fields":null,"children":null,"nsfw":null}"#).unwrap();
+        assert!(e.fields.is_empty() && e.children.is_empty() && !e.nsfw);
     }
 
     #[test]

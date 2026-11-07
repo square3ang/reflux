@@ -69,13 +69,15 @@ fn ids(v: &[&Channel]) -> Vec<u64> {
 fn channel_groups_sorted_and_filtered() {
     let s = store();
     let groups = s.channel_groups(S(G));
-    assert_eq!(groups.len(), 2, "hidden category 110 is dropped with its child");
+    assert_eq!(groups.len(), 3, "category 110 stays visible through its viewable child");
     assert_eq!(groups[0].category, None);
     assert_eq!(ids(&groups[0].text), [101, 130], "forum counts as text");
     assert_eq!(ids(&groups[0].voice), [102]);
-    assert_eq!(groups[1].category.unwrap().id, S(120));
-    assert_eq!(ids(&groups[1].text), [106, 103], "104 is hidden by an overwrite");
-    assert_eq!(ids(&groups[1].voice), [105]);
+    assert_eq!(groups[1].category.unwrap().id, S(110));
+    assert_eq!(ids(&groups[1].text), [111], "a child is not gated by its category's overwrites");
+    assert_eq!(groups[2].category.unwrap().id, S(120));
+    assert_eq!(ids(&groups[2].text), [106, 103], "104 is hidden by an overwrite");
+    assert_eq!(ids(&groups[2].voice), [105]);
     assert!(!s.can_view(S(104)) && s.can_view(S(101)));
 }
 
@@ -111,6 +113,12 @@ fn member_name_colour_and_partial_update() {
     assert_eq!(s.member_color(S(G), S(ME)), Some(0x00ff00), "highest coloured role");
     assert_eq!(s.display_name(Some(S(G)), S(ME)), "Nick");
     assert_eq!(s.display_name(None, S(ME)), "me");
+    apply(&mut s, "RELATIONSHIP_ADD", json!({"id": "6", "type": 1, "nickname": "Bobby"}));
+    assert_eq!(s.display_name(None, S(6)), "Bobby", "a friend nickname names them in DMs");
+    apply(&mut s, "GUILD_MEMBER_UPDATE", json!({"guild_id": G.to_string(), "user": {"id": "6"}, "roles": [], "nick": "Bob"}));
+    assert_eq!(s.display_name(Some(S(G)), S(6)), "Bob", "the guild nick wins in a guild");
+    apply(&mut s, "GUILD_MEMBER_UPDATE", json!({"guild_id": G.to_string(), "user": {"id": "6"}, "roles": [], "nick": ""}));
+    assert_eq!(s.display_name(Some(S(G)), S(6)), "Bobby", "an empty guild nick falls back");
     s.mask_names = true;
     assert_eq!(s.display_name(Some(S(G)), S(ME)), "N…", "streaming privacy");
     s.mask_names = false;
@@ -250,6 +258,15 @@ fn live_message_in_an_unloaded_channel_keeps_it_unloaded() {
 }
 
 #[test]
+fn message_caches_mentioned_users() {
+    let mut s = store();
+    let mut m = msg(2000, 101, 6);
+    m["mentions"] = json!([{"id": "8", "username": "eve", "global_name": "Eve"}]);
+    apply(&mut s, "MESSAGE_CREATE", m);
+    assert_eq!(s.display_name(None, S(8)), "Eve", "a mention carries its user");
+}
+
+#[test]
 fn reactions() {
     let mut s = store();
     s.set_latest_messages(S(101), vec![serde_json::from_value(msg(1, 101, 6)).unwrap()], PAGE_SIZE);
@@ -308,6 +325,7 @@ fn guild_lifecycle_and_member_list() {
     assert_eq!(l.rows.len(), 4);
     assert_eq!(l.rows[1], Some(MemberRow::Member(S(6))));
     assert_eq!(s.presences[&S(6)].status, reflux_model::Status::Online);
+    assert_eq!((s.guilds[&S(G)].member_count, s.guilds[&S(G)].online_count), (2, 1), "the list carries guild counts");
     // A later window only replaces its own range; a shrunk list drops rows past the new total.
     apply(&mut s, "GUILD_MEMBER_LIST_UPDATE", json!({"guild_id": G.to_string(), "id": "101",
         "member_count": 2, "online_count": 2, "groups": [{"id": "online", "count": 2}],
@@ -416,6 +434,194 @@ fn mention_order_follows_arrival_and_reads() {
     apply(&mut s, "MESSAGE_ACK", json!({"channel_id": "102", "message_id": "2002", "mention_count": 0}));
     apply(&mut s, "MESSAGE_CREATE", mention(2003, 102));
     assert_eq!(s.mention_order, [S(101), S(102)], "read, then mentioned again: it moves to the end");
+}
+
+#[test]
+fn thread_counters_follow_live_messages_and_deletes() {
+    let mut s = store();
+    let t = Snowflake::from_timestamp_ms(1_700_000_000_000).0;
+    apply(&mut s, "THREAD_CREATE", json!({"id": t.to_string(), "type": 11, "guild_id": G.to_string(),
+        "parent_id": "101", "name": "t", "last_message_id": (t - 1).to_string(),
+        "message_count": 2, "total_message_sent": 2}));
+    apply(&mut s, "MESSAGE_CREATE", msg(t + 1, t, 6));
+    let c = &s.channels[&S(t)];
+    assert_eq!((c.message_count, c.total_message_sent), (3, 3), "a live reply bumps the counters");
+    // A forum post's opening message has the post's ID and does not count.
+    let p = Snowflake::from_timestamp_ms(1_700_000_100_000).0;
+    apply(&mut s, "THREAD_CREATE", json!({"id": p.to_string(), "type": 11, "guild_id": G.to_string(),
+        "parent_id": "101", "name": "p", "message_count": 0, "total_message_sent": 0}));
+    apply(&mut s, "MESSAGE_CREATE", json!({"id": p.to_string(), "channel_id": p.to_string(),
+        "author": {"id": "9", "username": "x"}, "type": 21, "timestamp": "2023-11-14T22:13:20Z"}));
+    assert_eq!(s.channels[&S(p)].message_count, 0);
+    apply(&mut s, "MESSAGE_DELETE", json!({"id": (t + 1).to_string(), "channel_id": t.to_string()}));
+    assert_eq!(s.channels[&S(t)].message_count, 2);
+    apply(&mut s, "MESSAGE_DELETE_BULK", json!({"ids": [(t - 1).to_string()], "channel_id": t.to_string()}));
+    assert_eq!(s.channels[&S(t)].message_count, 1);
+}
+
+#[test]
+fn group_dm_recipient_remove_of_me_drops_the_channel() {
+    let mut s = store();
+    apply(&mut s, "CHANNEL_CREATE", json!({"id": "400", "type": 3, "name": "g",
+        "recipients": [{"id": ME.to_string(), "username": "me"}, {"id": "6", "username": "bob"}]}));
+    apply(&mut s, "CHANNEL_RECIPIENT_REMOVE", json!({"channel_id": "400", "user": {"id": ME.to_string()}}));
+    assert!(!s.channels.contains_key(&S(400)), "leaving the group removes it from the DM list");
+}
+
+#[test]
+fn role_delete_strips_channel_overwrites() {
+    let mut s = store();
+    s.channels.get_mut(&S(101)).unwrap().permission_overwrites.push(reflux_model::PermissionOverwrite {
+        id: S(7),
+        kind: reflux_model::OverwriteType::ROLE,
+        allow: Permissions::VIEW_CHANNEL,
+        deny: Permissions::empty(),
+    });
+    apply(&mut s, "GUILD_ROLE_DELETE", json!({"guild_id": G.to_string(), "role_id": "7"}));
+    assert!(s.channels[&S(101)].permission_overwrites.is_empty(), "a deleted role leaves no overwrite behind");
+}
+
+#[test]
+fn member_add_counts_each_member_once() {
+    let mut s = store();
+    let add = |id: u64| json!({"guild_id": G.to_string(), "user": {"id": id.to_string(), "username": "u"}, "roles": []});
+    apply(&mut s, "GUILD_MEMBER_ADD", add(6));
+    apply(&mut s, "GUILD_MEMBER_ADD", add(6));
+    apply(&mut s, "GUILD_MEMBER_ADD", add(7));
+    assert_eq!(s.guilds[&S(G)].member_count, 2);
+}
+
+#[test]
+fn guild_create_keeps_loaded_threads_and_clears_omitted_memberships() {
+    let mut s = store();
+    let thread = |id: u64, archived: bool, member: bool| {
+        let mut t = json!({"id": id.to_string(), "type": 11, "guild_id": G.to_string(), "parent_id": "101",
+            "name": format!("t{id}"), "thread_metadata": {"archived": archived, "auto_archive_duration": 4320,
+            "archive_timestamp": "2026-01-01T00:00:00Z", "locked": false, "create_timestamp": "2026-01-01T00:00:00Z"}});
+        if member {
+            t["member"] = json!({"flags": 0, "join_timestamp": "2026-01-01T00:00:00Z"});
+        }
+        t
+    };
+    apply(&mut s, "THREAD_CREATE", thread(140, false, true));
+    apply(&mut s, "THREAD_CREATE", thread(141, true, true));
+    apply(&mut s, "GUILD_CREATE", json!({"id": G.to_string(), "properties": {"id": G.to_string(), "name": "G", "owner_id": "1"},
+        "roles": [role(G, Permissions::VIEW_CHANNEL.bits(), 0, 0)],
+        "channels": [chan(101, 0, 1, None)], "threads": [], "members": [], "member_count": 1, "online_count": 0,
+        "joined_at": "2020-01-01T00:00:00.000Z"}));
+    assert!(s.channels.contains_key(&S(140)) && s.channels.contains_key(&S(141)), "loaded threads stay");
+    assert!(s.channels[&S(140)].member.is_none(), "the sync omitted its membership");
+    assert!(s.channels[&S(141)].member.is_some(), "archived threads keep their membership");
+}
+
+#[test]
+fn never_loaded_unavailable_guilds_stay_out_of_folders() {
+    let mut s = Store::default();
+    apply(&mut s, "READY", json!({"session_id": "s", "user": {"id": ME.to_string(), "username": "me"},
+        "guilds": [{"id": "200", "unavailable": true}],
+        "user_settings": {"guild_folders": [{"id": 3, "guild_ids": ["200"]}]}}));
+    assert!(s.guild_list().is_empty(), "no blank rail entry for a guild that never loaded");
+}
+
+#[test]
+fn guild_settings_ignore_a_stale_version() {
+    let mut s = store();
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "message_notifications": 2, "version": 9}));
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "message_notifications": 0, "version": 4}));
+    assert_eq!(s.guild_settings[&Some(S(G))].message_notifications, NotificationLevel::NO_MESSAGES);
+}
+
+#[test]
+fn message_ack_ignores_a_stale_version() {
+    let mut s = store();
+    apply(&mut s, "MESSAGE_ACK", json!({"channel_id": "101", "message_id": "2000", "mention_count": 0, "version": "9"}));
+    apply(&mut s, "MESSAGE_ACK", json!({"channel_id": "101", "message_id": "3000", "mention_count": 0, "version": "4"}));
+    assert_eq!(s.read_states[&S(101)].last_message_id, Some(S(2000)), "an ack from an older read-state version is ignored");
+}
+
+#[test]
+fn large_guilds_default_to_mentions_only() {
+    let mut s = store();
+    if let Some(g) = s.guilds.get_mut(&S(G)) {
+        g.member_count = 500;
+    }
+    let plain = |channel: u64| -> Message { serde_json::from_value(msg(1, channel, 6)).unwrap() };
+    assert!(!s.should_notify(&plain(101)), "a large guild defaults to mentions only");
+    let mut mention = msg(2, 101, 6);
+    mention["mentions"] = json!([{"id": ME.to_string()}]);
+    let mention: Message = serde_json::from_value(mention).unwrap();
+    assert!(s.should_notify(&mention));
+}
+
+#[test]
+fn media_new_posts_notify_like_their_channel() {
+    let mut s = store();
+    let media: Channel = serde_json::from_value(json!({"id": "150", "type": 16, "guild_id": G.to_string(), "name": "media"})).unwrap();
+    s.channels.insert(S(150), media);
+    let post: Channel = serde_json::from_value(json!({"id": "151", "type": 11, "guild_id": G.to_string(), "parent_id": "150", "name": "p"})).unwrap();
+    s.channels.insert(S(151), post);
+    let m = |id: u64| -> Message { serde_json::from_value(msg(id, 151, 6)).unwrap() };
+    assert!(s.should_notify(&m(151)), "a new media post follows the media channel level");
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "channel_overrides": {"150": {"message_notifications": 2}}}));
+    assert!(!s.should_notify(&m(151)));
+}
+
+#[test]
+fn page_merges_keep_the_live_copy_of_a_message() {
+    let mut s = store();
+    let t = Snowflake::from_timestamp_ms(1_700_000_000_000).0;
+    s.set_latest_messages(S(101), vec![serde_json::from_value(msg(t, 101, 6)).unwrap()], PAGE_SIZE);
+    let mut edited = msg(t, 101, 6);
+    edited["content"] = json!("edited");
+    apply(&mut s, "MESSAGE_UPDATE", edited);
+    s.prepend_messages(S(101), vec![serde_json::from_value(msg(t, 101, 6)).unwrap()], PAGE_SIZE);
+    assert_eq!(s.messages(S(101))[0].content, "edited", "an older page must not revert the edit");
+}
+
+#[test]
+fn member_list_skips_empty_group_items() {
+    let mut s = store();
+    apply(&mut s, "GUILD_MEMBER_LIST_UPDATE", json!({"guild_id": G.to_string(), "id": "101",
+        "member_count": 1, "online_count": 1,
+        "groups": [{"id": "online", "count": 1}, {"id": "offline", "count": 0}],
+        "ops": [{"op": "SYNC", "range": [0, 99], "items": [
+            {"group": {"id": "online", "count": 1}},
+            {"member": {"user": {"id": "6"}, "roles": []}},
+            {"group": {"id": "offline", "count": 0}},
+            {},
+        ]}]}));
+    let l = &s.member_lists[&(S(G), "101".to_string())];
+    assert_eq!(l.rows.len(), 2);
+    assert_eq!(l.rows[1], Some(MemberRow::Member(S(6))));
+}
+
+#[test]
+fn member_list_without_groups_keeps_the_member_count_flat() {
+    let mut s = store();
+    apply(&mut s, "GUILD_MEMBER_LIST_UPDATE", json!({"guild_id": G.to_string(), "id": "101",
+        "member_count": 120, "online_count": 0, "groups": [],
+        "ops": [{"op": "SYNC", "range": [0, 99], "items": [{"member": {"user": {"id": "6"}, "roles": []}}]}]}));
+    let l = &s.member_lists[&(S(G), "101".to_string())];
+    assert_eq!(l.rows.len(), 120, "unsynced rows stay as skeleton slots");
+    assert_eq!(l.rows[0], Some(MemberRow::Member(S(6))));
+    assert!(l.rows[1..].iter().all(Option::is_none));
+}
+
+#[test]
+fn private_channels_sort_friends_by_friendship_time() {
+    let mut s = store();
+    apply(&mut s, "RELATIONSHIP_ADD", json!({"id": "6", "type": 1, "since": "2026-11-01T00:00:00.000Z"}));
+    assert_eq!(ids(&s.private_channels()), [300, 301], "a newly added friend's DM sorts by friendship");
+}
+
+#[test]
+fn deleting_a_channel_clears_its_read_state() {
+    let mut s = store();
+    apply(&mut s, "MESSAGE_CREATE", json!({"id": "2000", "channel_id": "106", "author": {"id": "6", "username": "u"},
+        "mentions": [{"id": ME.to_string()}], "guild_id": G.to_string()}));
+    assert!(s.read_states.contains_key(&S(106)) && s.mention_order.contains(&S(106)));
+    apply(&mut s, "CHANNEL_DELETE", json!({"id": "106", "type": 0, "guild_id": G.to_string()}));
+    assert!(!s.read_states.contains_key(&S(106)) && !s.mention_order.contains(&S(106)));
 }
 
 #[test]

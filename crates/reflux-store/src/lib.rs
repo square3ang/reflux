@@ -23,6 +23,8 @@ pub const MAX_WINDOW: usize = 200;
 pub const PAGE_SIZE: usize = 50;
 /// A typing indicator lasts this long after the last `TYPING_START` (fluxer rolling expiry).
 pub const TYPING_EXPIRY_MS: u64 = 10_000;
+/// A guild larger than this defaults to mentions only (`LARGE_GUILD_THRESHOLD`).
+const LARGE_GUILD_THRESHOLD: u32 = 250;
 
 #[derive(Clone, Debug, Default)]
 pub struct GuildState {
@@ -159,7 +161,10 @@ impl Store {
             }
             E::UserSettingsUpdate(s) => self.settings = (**s).clone(),
             E::UserGuildSettingsUpdate(s) => {
-                self.guild_settings.insert(s.guild_id, s.clone());
+                // Older versions of the same record may arrive after a newer one (`version`).
+                if self.guild_settings.get(&s.guild_id).is_none_or(|old| s.version >= old.version) {
+                    self.guild_settings.insert(s.guild_id, s.clone());
+                }
             }
             E::UserNoteUpdate(n) => {
                 self.notes.insert(n.id, n.note.clone());
@@ -192,6 +197,10 @@ impl Store {
                     g.roles.retain(|x| x.id != r.role_id);
                     g.members.values_mut().for_each(|m| m.roles.retain(|&x| x != r.role_id));
                 }
+                // Fluxer strips the deleted role from every channel overwrite (`handleGuildRoleDelete`).
+                for c in self.channels.values_mut().filter(|c| c.guild_id == Some(r.guild_id)) {
+                    c.permission_overwrites.retain(|o| o.id != r.role_id);
+                }
             }
             E::GuildEmojisUpdate(e) => {
                 if let Some(g) = self.guilds.get_mut(&e.guild_id) {
@@ -223,7 +232,10 @@ impl Store {
                 }
             }
             E::ChannelRecipientRemove(r) => {
-                if let Some(c) = self.channels.get_mut(&r.channel_id) {
+                if r.user.id == self.my_id() {
+                    // Removed from (or left) the group: drop it entirely (`handleChannelRecipientRemove`).
+                    self.remove_channel(r.channel_id);
+                } else if let Some(c) = self.channels.get_mut(&r.channel_id) {
                     c.recipients.retain(|u| u.id != r.user.id);
                 }
             }
@@ -246,9 +258,12 @@ impl Store {
                     .collect();
                 gone.into_iter().for_each(|id| self.remove_channel(id));
                 s.threads.iter().for_each(|t| self.upsert_channel(Some(s.guild_id), t));
-                for m in &s.members {
-                    if let Some(t) = m.id.and_then(|id| self.channels.get_mut(&id)) {
-                        t.member = Some(m.clone());
+                // The payload's members are the full memberships; a listed thread without one is
+                // no longer joined (`handleListSync`).
+                let members: HashMap<_, _> = s.members.iter().filter_map(|m| m.id.map(|id| (id, m))).collect();
+                for t in &s.threads {
+                    if let Some(c) = self.channels.get_mut(&t.id) {
+                        c.member = members.get(&t.id).map(|m| (*m).clone());
                     }
                 }
             }
@@ -286,12 +301,16 @@ impl Store {
             }
 
             E::GuildMemberAdd(m) => {
-                self.upsert_member(m.guild_id, &m.inner);
-                if let Some(g) = self.guilds.get_mut(&m.guild_id) {
+                // A replayed Add for a cached member must not count twice.
+                if self.upsert_member(m.guild_id, &m.inner)
+                    && let Some(g) = self.guilds.get_mut(&m.guild_id)
+                {
                     g.member_count += 1;
                 }
             }
-            E::GuildMemberUpdate(m) => self.upsert_member(m.guild_id, &m.inner),
+            E::GuildMemberUpdate(m) => {
+                self.upsert_member(m.guild_id, &m.inner);
+            }
             E::GuildMemberRemove(r) => {
                 if let Some(g) = self.guilds.get_mut(&r.guild_id) {
                     g.members.remove(&r.user.id);
@@ -299,7 +318,9 @@ impl Store {
                 }
             }
             E::GuildMembersChunk(c) => {
-                c.members.iter().for_each(|m| self.upsert_member(c.guild_id, m));
+                c.members.iter().for_each(|m| {
+                    self.upsert_member(c.guild_id, m);
+                });
                 c.presences.iter().for_each(|p| self.presence(p));
             }
             E::GuildMemberListUpdate(u) => self.member_list_update(u),
@@ -324,11 +345,21 @@ impl Store {
             E::MessageDelete(d) => self.remove_messages(d.channel_id, &[d.id]),
             E::MessageDeleteBulk(d) => self.remove_messages(d.channel_id, &d.ids),
             E::MessageAck(a) => {
-                let rs = self.read_state(a.channel_id);
-                // Ignore stale acks for an older message (fluxer `ignoreOlderMessage`) unless manual.
-                if a.manual || rs.last_message_id.is_none_or(|ack| a.message_id >= ack) {
-                    rs.last_message_id = Some(a.message_id);
-                    rs.mention_count = a.mention_count;
+                // Ignore an ack from an older read-state version (`ignoreStaleVersion`).
+                let stale = match (a.version.as_deref(), self.read_states.get(&a.channel_id).and_then(|r| r.version.as_deref())) {
+                    (Some(v), Some(have)) => version_cmp(v, have).is_some_and(|o| o.is_lt()),
+                    _ => false,
+                };
+                if !stale {
+                    let rs = self.read_state(a.channel_id);
+                    // Ignore stale acks for an older message (fluxer `ignoreOlderMessage`) unless manual.
+                    if a.manual || rs.last_message_id.is_none_or(|ack| a.message_id >= ack) {
+                        rs.last_message_id = Some(a.message_id);
+                        rs.mention_count = a.mention_count;
+                    }
+                    if a.version.is_some() {
+                        rs.version = a.version.clone();
+                    }
                 }
                 self.track_mentions(a.channel_id);
             }
@@ -452,7 +483,9 @@ impl Store {
 
     /// Guild sidebar order (fluxer `GuildList.computeOrganizedGuildList`).
     pub fn guild_list(&self) -> Vec<GuildListItem<'_>> {
-        let usable = |id: &Snowflake| self.guilds.get(id).is_some_and(|g| !g.visiting);
+        // A guild that has never loaded (unavailable in Ready) is not in Fluxer's GuildList at
+        // all; it only joins once a Guild Create arrives.
+        let usable = |id: &Snowflake| self.guilds.get(id).is_some_and(|g| !g.visiting && g.info.is_some());
         let mut placed = std::collections::HashSet::new();
         let mut emitted = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -487,8 +520,21 @@ impl Store {
             .filter(|c| matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM))
             .collect();
         let pin = |c: &Channel| self.pinned_dms.iter().position(|p| *p == c.id).unwrap_or(usize::MAX);
-        v.sort_by_key(|c| (pin(c), std::cmp::Reverse((c.last_message_id.unwrap_or(c.id), c.id))));
+        v.sort_by_key(|c| (pin(c), std::cmp::Reverse((self.dm_sort_id(c), c.id))));
         v
+    }
+
+    /// A DM also sorts by when its recipient became a friend (`getChannelSortSnowflake`).
+    fn dm_sort_id(&self, c: &Channel) -> Snowflake {
+        let base = c.last_message_id.unwrap_or(c.id);
+        if c.kind != ChannelType::DM {
+            return base;
+        }
+        let me = self.my_id();
+        let Some(recipient) = c.recipients.iter().find(|u| u.id != me) else { return base };
+        let Some(rel) = self.relationships.get(&recipient.id).filter(|r| r.kind == RelationshipType::FRIEND) else { return base };
+        let since = rel.since.as_deref().and_then(parse_iso_ms).map(Snowflake::from_timestamp_ms);
+        since.map_or(base, |s| base.max(s))
     }
 
     /// The current user's permissions in a channel (guild, thread or private).
@@ -509,12 +555,14 @@ impl Store {
         self.permissions(channel).contains(Permissions::VIEW_CHANNEL)
     }
 
-    /// Visible guild channels grouped for the sidebar (fluxer `organizeChannels`).
+    /// Visible guild channels grouped for the sidebar (fluxer `organizeChannels`). A category is
+    /// visible when its own overwrites allow it or one of its channels does; its overwrites never
+    /// gate the children, which have their own.
     pub fn channel_groups(&self, guild: Snowflake) -> Vec<ChannelGroup<'_>> {
         let mut chans: Vec<_> = self
             .channels
             .values()
-            .filter(|c| c.guild_id == Some(guild) && !c.kind.is_thread() && self.can_view(c.id))
+            .filter(|c| c.guild_id == Some(guild) && !c.kind.is_thread())
             .collect();
         chans.sort_by_key(|c| (c.position, c.id));
         let mut groups = vec![ChannelGroup { category: None, text: vec![], voice: vec![] }];
@@ -524,7 +572,10 @@ impl Store {
             groups.push(ChannelGroup { category: Some(c), text: vec![], voice: vec![] });
         }
         for c in chans {
-            // Parent category missing or hidden: fluxer never emits that bucket, so drop it.
+            if !self.can_view(c.id) {
+                continue;
+            }
+            // Parent category missing: fluxer never emits that bucket, so drop it.
             let Some(&gi) = c.parent_id.map_or(Some(&0), |p| index.get(&p)) else { continue };
             match c.kind {
                 ChannelType::GUILD_TEXT
@@ -536,6 +587,10 @@ impl Store {
                 _ => {}
             }
         }
+        groups.retain(|g| match g.category {
+            None => true,
+            Some(c) => !g.text.is_empty() || !g.voice.is_empty() || self.can_view(c.id),
+        });
         groups
     }
 
@@ -543,13 +598,16 @@ impl Store {
         self.guilds.get(&guild)?.members.get(&user)
     }
 
-    /// Nick, then global name, then username.
+    /// The guild nick, a friend nickname, the global name, then the username (`getNickname`).
     pub fn display_name(&self, guild: Option<Snowflake>, user: Snowflake) -> String {
-        let nick = guild.and_then(|g| self.member(g, user)?.nick.clone());
+        let non_empty = |s: String| (!s.trim().is_empty()).then_some(s);
+        let nick = guild.and_then(|g| self.member(g, user)?.nick.clone()).and_then(non_empty);
+        let friend = self.relationships.get(&user).and_then(|r| r.nickname.clone()).and_then(non_empty);
         let u = self.users.get(&user);
-        let name = nick.or_else(|| u.and_then(|u| u.global_name.clone())).or_else(|| u.map(|u| u.username.clone())).unwrap_or_default();
-        match name.trim().chars().next() {
-            Some(c) if self.mask_names => format!("{c}…"),
+        let name = nick.or(friend).or_else(|| u.and_then(|u| u.global_name.clone())).or_else(|| u.map(|u| u.username.clone())).unwrap_or_default();
+        match (self.mask_names, name.trim().chars().next()) {
+            (true, Some(c)) => format!("{c}…"),
+            (true, None) => "…".into(),
             _ => name,
         }
     }
@@ -660,8 +718,15 @@ impl Store {
         let ov = |id: Option<Snowflake>| explicit(id.and_then(|id| s?.channel_overrides.as_ref()?.get(&id))?.message_notifications);
         let parent = c.parent_id.filter(|_| c.guild_id.is_some());
         let guild_default = || {
-            let d = c.guild_id.and_then(|g| self.guilds.get(&g)?.info.as_ref()).map(|g| g.default_message_notifications);
-            NotificationLevel(d.unwrap_or(0))
+            let Some(g) = c.guild_id.and_then(|id| self.guilds.get(&id)) else { return NotificationLevel::ALL_MESSAGES };
+            // `Guild.effectiveMessageNotifications`: large guilds default to mentions only.
+            let large = g.member_count > LARGE_GUILD_THRESHOLD
+                || g.info.as_ref().is_some_and(|i| i.features.iter().any(|f| f == "LARGE_GUILD_OVERRIDE" || f == "VERY_LARGE_GUILD"));
+            if large {
+                NotificationLevel::ONLY_MENTIONS
+            } else {
+                NotificationLevel(g.info.as_ref().map_or(0, |i| i.default_message_notifications))
+            }
         };
         ov(Some(c.id)).or_else(|| ov(parent)).or_else(|| explicit(s?.message_notifications)).unwrap_or_else(guild_default)
     }
@@ -691,12 +756,13 @@ impl Store {
         }
     }
 
-    /// The forum `post` was opened in when `message` is its opening message (`getPostForum`).
+    /// The forum or media `post` was opened in when `message` is its opening message
+    /// (`getPostForum`).
     pub fn new_post_forum(&self, post: &Channel, message: Snowflake) -> Option<&Channel> {
         if message != post.id || !post.kind.is_thread() {
             return None;
         }
-        self.channels.get(&post.parent_id?).filter(|f| f.kind == ChannelType::GUILD_FORUM)
+        self.channels.get(&post.parent_id?).filter(|f| threads::is_forum(f.kind))
     }
 
     // ---- Internals ---------------------------------------------------------------------------
@@ -737,14 +803,15 @@ impl Store {
         }
     }
 
-    fn upsert_member(&mut self, guild: Snowflake, m: &GuildMember) {
+    /// Stores the member; true when the guild did not know them yet.
+    fn upsert_member(&mut self, guild: Snowflake, m: &GuildMember) -> bool {
         self.upsert_user(&m.user);
         if let Some(p) = &m.presence {
             let mut p = (**p).clone();
             p.user.id = m.user.id;
             self.presence(&p);
         }
-        let Some(g) = self.guilds.get_mut(&guild) else { return };
+        let Some(g) = self.guilds.get_mut(&guild) else { return false };
         let mut m = m.clone();
         m.presence = None;
         if m.user.username.is_empty()
@@ -752,7 +819,7 @@ impl Store {
         {
             m.user = u.clone();
         }
-        g.members.insert(m.user.id, m);
+        g.members.insert(m.user.id, m).is_none()
     }
 
     fn presence(&mut self, p: &Presence) {
@@ -804,14 +871,39 @@ impl Store {
                 online_count: r.online_count,
             },
         );
-        r.members.iter().for_each(|m| self.upsert_member(r.id, m));
+        r.members.iter().for_each(|m| {
+            self.upsert_member(r.id, m);
+        });
         r.presences.iter().for_each(|p| self.presence(p));
         self.voice_states.retain(|(g, _), _| *g != Some(r.id));
         r.voice_states.iter().for_each(|v| self.voice_state(&VoiceState { guild_id: Some(r.id), ..v.clone() }));
-        let gone: Vec<_> = self.channels.values().filter(|c| c.guild_id == Some(r.id)).map(|c| c.id).collect();
-        let keep: std::collections::HashSet<_> = r.channels.iter().chain(&r.threads).map(|c| c.id).collect();
-        for id in gone.into_iter().filter(|id| !keep.contains(id)) {
+        // Replace the guild's channels. Guild Ready lists only the threads the user joined, so
+        // keep threads loaded another way (archived lists, the forum browser) and only drop the
+        // memberships the sync leaves out (`ChannelThreads.ingestGuildThreads`).
+        let keep: std::collections::HashSet<_> = r.channels.iter().map(|c| c.id).collect();
+        let gone: Vec<_> = self
+            .channels
+            .values()
+            .filter(|c| c.guild_id == Some(r.id) && !c.kind.is_thread() && !keep.contains(&c.id))
+            .map(|c| c.id)
+            .collect();
+        for id in gone {
+            let threads: Vec<_> = self.channels.values().filter(|t| t.kind.is_thread() && t.parent_id == Some(id)).map(|t| t.id).collect();
+            threads.into_iter().for_each(|t| self.remove_channel(t));
             self.remove_channel(id);
+        }
+        let incoming: std::collections::HashSet<_> = r.threads.iter().map(|c| c.id).collect();
+        let unjoined: Vec<_> = self
+            .channels
+            .values()
+            .filter(|c| c.guild_id == Some(r.id) && c.kind.is_thread() && (!incoming.contains(&c.id) || c.member.is_none()) && !threads::is_archived(c))
+            .map(|c| c.id)
+            .collect();
+        for id in unjoined {
+            if let Some(t) = self.channels.get_mut(&id) {
+                t.member = None;
+            }
+            self.thread_members.remove(&id);
         }
         r.channels.iter().chain(&r.threads).for_each(|c| self.upsert_channel(Some(r.id), c));
     }
@@ -848,10 +940,20 @@ impl Store {
     }
 
     fn remove_channel(&mut self, id: Snowflake) {
-        self.channels.remove(&id);
+        // Fluxer clears a deleted guild channel's read state; a DM keeps its state so reopening
+        // it remembers the ack.
+        if self.channels.remove(&id).is_some_and(|c| c.guild_id.is_some()) {
+            self.read_states.remove(&id);
+        }
+        if let Some(i) = self.mention_order.iter().position(|c| *c == id) {
+            self.mention_order.remove(i);
+        }
         self.thread_members.remove(&id);
         self.messages.remove(&id);
         self.typing.remove(&id);
+        // No roster or call may point at a channel that no longer exists.
+        self.calls.remove(&id);
+        self.voice_states.retain(|_, v| v.channel_id != Some(id));
     }
 
     fn bump_last_message(&mut self, channel: Snowflake, id: Snowflake) {
@@ -878,6 +980,13 @@ impl Store {
     fn message_side_effects(&mut self, m: &Message) {
         self.ingest_message_threads(std::slice::from_ref(m));
         self.upsert_user(&m.author);
+        // Mentioned and resolve-snapshot users ride on the message; cache them so renderers have
+        // a name (`GuildMembers.hydrateIfMissing` + `Users.cacheUsers`).
+        m.mentions.iter().chain(&m.users).for_each(|u| self.upsert_user(u));
+        if let Some(Some(r)) = &m.referenced_message {
+            self.upsert_user(&r.author);
+            r.mentions.iter().chain(&r.users).for_each(|u| self.upsert_user(u));
+        }
         if let (Some(g), Some(member)) = (m.guild_id, &m.member) {
             self.upsert_member(g, &GuildMember { user: m.author.clone(), ..member.clone() });
         }
@@ -889,6 +998,16 @@ impl Store {
             t.retain(|&(u, _)| u != m.author.id);
         }
         let covered = self.channels.get(&m.channel_id).and_then(|c| c.last_message_id).is_some_and(|l| l >= m.id);
+        // Thread reply counters are client-side (`bumpThreadCounters`); the starter doesn't count.
+        if !covered
+            && let Some(c) = self.channels.get_mut(&m.channel_id)
+            && c.kind.is_thread()
+            && m.id != c.id
+            && m.kind != reflux_model::MessageType::THREAD_STARTER_MESSAGE
+        {
+            c.message_count = c.message_count.saturating_add(1);
+            c.total_message_sent = c.total_message_sent.saturating_add(1);
+        }
         self.bump_last_message(m.channel_id, m.id);
 
         // A channel never loaded keeps no window, so opening it fetches its history (fluxer
@@ -973,6 +1092,11 @@ impl Store {
     }
 
     fn remove_messages(&mut self, channel: Snowflake, ids: &[Snowflake]) {
+        // `handleThreadMessageDeleteBulk`: replies leave the thread's count, the starter doesn't.
+        if let Some(c) = self.channels.get_mut(&channel).filter(|c| c.kind.is_thread()) {
+            let counted = ids.iter().filter(|&&id| id != channel).count() as u32;
+            c.message_count = c.message_count.saturating_sub(counted);
+        }
         if let Some(w) = self.messages.get_mut(&channel) {
             w.messages.retain(|m| !ids.contains(&m.id));
             // Replies to them now show the original as deleted (fluxer `markReferenceDeleted`).
@@ -1016,6 +1140,11 @@ impl Store {
     }
 
     fn member_list_update(&mut self, u: &reflux_model::GuildMemberListUpdate) {
+        // The list's counts are the guild's (`GUILD_MEMBER_LIST_UPDATE`); keep the rail's, invite
+        // and @here counts in step without a Request Guild Counts round trip.
+        if let Some(g) = self.guilds.get_mut(&u.guild_id) {
+            (g.member_count, g.online_count) = (u.member_count, u.online_count);
+        }
         let mut rows_out = Vec::new();
         for op in &u.ops {
             let [start, end] = op.range.map(|x| x as usize);
@@ -1024,16 +1153,20 @@ impl Store {
                 if let Some(m) = &item.member {
                     self.upsert_member(u.guild_id, m);
                     rows.push(Some(MemberRow::Member(m.user.id)));
-                } else {
-                    rows.push(item.group.clone().map(MemberRow::Group));
+                } else if let Some(g) = &item.group {
+                    // Empty groups are left out of the list and consume no row (`isEmptyGroupItem`).
+                    if g.count > 0 {
+                        rows.push(Some(MemberRow::Group(g.clone())));
+                    }
                 }
+                // An item with neither field is a placeholder and consumes no row.
             }
             rows_out.push((start, end, rows));
         }
         let l = self.member_lists.entry((u.guild_id, u.id.clone())).or_default();
         l.member_count = u.member_count;
         l.online_count = u.online_count;
-        l.groups = u.groups.clone();
+        l.groups = u.groups.iter().filter(|g| g.count > 0).cloned().collect();
         for (start, end, rows) in rows_out {
             if l.rows.len() <= end {
                 l.rows.resize(end + 1, None);
@@ -1043,8 +1176,9 @@ impl Store {
                 l.rows[start + i] = row;
             }
         }
-        let total = l.groups.len() + l.groups.iter().map(|g| g.count as usize).sum::<usize>();
-        l.rows.truncate(total);
+        // No groups: the list is one flat run of `member_count` rows.
+        let total = if l.groups.is_empty() { l.member_count as usize } else { l.groups.len() + l.groups.iter().map(|g| g.count as usize).sum::<usize>() };
+        l.rows.resize(total, None);
     }
 }
 
@@ -1060,14 +1194,27 @@ fn same_emoji(a: &ReactionEmoji, b: &ReactionEmoji) -> bool {
     }
 }
 
-/// Merges `incoming` into an ID-ascending list, replacing duplicates.
+/// Merges `incoming` into an ID-ascending list. An ID already loaded keeps its copy: page loads
+/// must not revert a live edit (`mergeAscendingById`).
 fn merge(list: &mut Vec<Message>, incoming: Vec<Message>) {
     for m in incoming {
-        match list.binary_search_by_key(&m.id, |x| x.id) {
-            Ok(i) => list[i] = m,
-            Err(i) => list.insert(i, m),
+        if let Err(i) = list.binary_search_by_key(&m.id, |x| x.id) {
+            list.insert(i, m);
         }
     }
+}
+
+/// Compares decimal read-state versions (`compareReadStateVersions`); `None` when either isn't a
+/// plain non-negative integer.
+fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let norm = |s: &str| -> Option<String> {
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        Some(s.trim_start_matches('0').to_string())
+    };
+    let (a, b) = (norm(a)?, norm(b)?);
+    Some(a.len().cmp(&b.len()).then_with(|| a.cmp(&b)))
 }
 
 fn trim_oldest(w: &mut MessageWindow) {
