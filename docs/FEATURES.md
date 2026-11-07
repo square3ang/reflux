@@ -4,7 +4,7 @@ Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + flu
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
 How each gap or limit is worked around: [WORKAROUNDS.md](WORKAROUNDS.md).
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0; after set4 (profile badges, recovery kit, Bluesky, bot username rules, settings search highlight, overview/role crop, invite previews, activity log sentences): 164 · 22 · 0; after live5 (camera / stream audio live-verified, e2ee_capable identify, gifv on macOS): 165 · 21 · 0; after adv5 (screen-share encoder options, cloning switch, reverse image search settings, synced picker prefs, attachment delete, Windows passkeys): 167 · 19 · 0. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0; after set4 (profile badges, recovery kit, Bluesky, bot username rules, settings search highlight, overview/role crop, invite previews, activity log sentences): 164 · 22 · 0; after live5 (camera / stream audio live-verified, e2ee_capable identify, gifv on macOS): 165 · 21 · 0; after adv5 (screen-share encoder options, cloning switch, reverse image search settings, synced picker prefs, attachment delete, Windows passkeys): 167 · 19 · 0; after sweep7 (message-menu media items and pins/search media sizing moved to PARTIAL, both waiting on `shell/attachments.rs`): 165 · 21 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -12,7 +12,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
 | Profile | DONE | badges section (hide badges, Operator Pass timestamp/count, live preview), local time in the preview card, GIFs cropped frame by frame (no animated WebP, no Skip button) | F/user/components/modals/tabs/MyProfileTab.tsx |
-| Account | DONE | recovery kit (generate/replace, copy, PDF download, print via the system viewer; reminder dismissal is per session); security-key PIN asked only when the key wants one | tabs/account_security_tab/* |
+| Account | DONE | recovery kit (generate/replace, copy, PDF download, print via the system viewer; "Not now" kept per user on this device); security-key PIN asked only when the key wants one | tabs/account_security_tab/* |
 | Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
 | Connections | DONE | Bluesky connects through browser OAuth; the dialog closes on USER_CONNECTIONS_UPDATE | tabs/LinkedAccountsTab.tsx, F/connection/* |
 | Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
@@ -76,7 +76,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Browser login handoff | DONE | (the code, its 6-6 grouping, expiry countdown, copy and regenerate; approving a code happens on Fluxer's web login page, not in the desktop client) | BrowserLoginHandoffModal.tsx |
 | Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
 | Sudo verification | DONE | | SudoVerificationModal.tsx |
-| Account restriction / age gate / new-device | DONE | no "Why we ask" help link on the birthday gate; its "Sign out" skips the logout confirm; audio devices are polled every 10 s (no devicechange event) and grouped by card name | AccountRestrictionScreen.tsx, DateOfBirthGate.tsx, NewDeviceMonitoring.tsx |
+| Account restriction / age gate / new-device | DONE | audio devices are polled every 10 s (no devicechange event) and grouped by card name | AccountRestrictionScreen.tsx, DateOfBirthGate.tsx, NewDeviceMonitoring.tsx |
 | OAuth2 authorize | DONE |  | OAuthAuthorizeModal.tsx |
 | Terms acceptance | DONE | | TermsAcceptanceModal.tsx |
 | Token in OS keyring | DONE | falls back to the 0600 file when no keyring | D/DesktopAppStorage.ts |
@@ -100,7 +100,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### channel/
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Channel list, header, message list, composer, member list, friends, notes, pins, uploads | DONE | | |
+| Channel list, header, message list, composer, member list, friends, notes, pins, uploads | PARTIAL | media wider than a pins/search result card is cropped, not scaled down (sizing lives in `shell/attachments.rs`) | |
 | Channel-list typing / unread on muted | DONE | | InterfaceTab.tsx |
 | Header bell dropdown | DONE | | ChannelNotificationSettingsDropdown.tsx |
 | Topic modal | DONE | | ChannelTopicModal.tsx |
@@ -135,7 +135,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
 | Offline queue | DONE | failed text sends stay (Retry/Delete), file sends go back to the composer; Fluxer has no queue-while-disconnected either | MessageQueue.tsx |
-| Action bar / context menu | DONE | | MessageContextMenu.tsx |
+| Action bar / context menu | PARTIAL | no media items (copy/save image, open link) when right-clicking an attachment or embed: needs hooks in `shell/attachments.rs` | MessageContextMenu.tsx |
 | Forward | DONE | | ForwardModal.tsx |
 | Saved messages | DONE | (the inbox's Bookmarks tab, bookmark/unbookmark in the message menu) | SavedMessagesPage.tsx |
 | Inbox / recent mentions | DONE | | InboxPopout.tsx |
@@ -228,7 +228,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Invite: friends list, accept preview, pause | DONE | | F/invite/* |
 | Discovery page | DONE | load-more pages via `offset` | DiscoveryPage.tsx |
 | Search UI chips/suggestions, history | DONE | desktop has token styling (chips are mobile-only in Fluxer); unapplied-token wavy warning not drawn | F/search/* |
-| Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
+| Quick switcher recents | DONE | previous, mentions (ordered by newest message, not mention arrival) and unread channels | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | DONE | (impossible: RTL layout mirroring — Rune has no layout direction, bidi text only; text only Reflux has, e.g. gateway/passkey errors, has no translation in Fluxer's catalogs and stays English) | F/i18n/* |

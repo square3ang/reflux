@@ -30,6 +30,7 @@ Rules:
 | RTL: bidi text runs only, layout isn't mirrored | Rune has no layout direction | `i18n.rs` | layout direction in Rune |
 | No minimize-to-tray, window size only (no position/maximized) — **WONTFIX** (user decision) | no minimize event; position impossible on Wayland | `desktop/window.rs` | — |
 | Icons can't be mirrored (missed-call phone) | no icon transform | `shell/system_msg.rs` | icon flip/transform |
+| Pinned-messages popout resizes from the left and bottom edges only | Rune's `Cursor` has no diagonal resize; the anchored edges would need re-placement | `shell/pins.rs` | diagonal cursors |
 
 ## Platform
 
@@ -65,9 +66,10 @@ Rules:
 |---|---|---|---|
 | REST base from `api_transport`, then `api_public`… instead of `web.fluxer.app/api` | the web origin returns 403 `INVALID_API_ORIGIN` to other clients | `reflux-net/src/rest.rs` | — |
 | Media proxy bodies are capped (images 64 MiB, text 4 MiB, downloads 512 MiB) | remote input; don't buffer unbounded responses | `media.rs` `get_capped` | — |
-| P2P rollout read once per session | Fluxer polls `poll_interval_seconds` | `app/voice.rs` | add polling |
 | YouTube embeds open the browser | the embed carries only an iframe URL, no stream | `shell/embeds.rs` | (optional) a stream resolver like `yt-dlp` |
-| Synced preferences have no base-hash / 409 retry | not ported yet | `synced.rs` | port `flushSyncedPreferences` |
+| Synced preferences have no base-hash / 409 retry | the favorites splice has no per-field dirty tracking, so a refetch after a 409 would drop the local edit instead of merging it | `synced.rs` | port `flushSyncedPreferences` |
+| P2P rollout polls every `poll_interval_seconds` without ETag / 304 and doesn't slow down ×4 while hidden | Rune reports no window visibility; the REST client has no conditional requests | `app/voice.rs` | visibility events + `If-None-Match` |
+| Quick switcher orders mentions by newest message, not by when the mention arrived | the store keeps no mention arrival time | `shell/switcher.rs` | record arrival times in the store |
 
 ## Session / tokens
 
@@ -91,13 +93,10 @@ Rules:
 ## Appendix: every `shortcut:` comment in the code
 
 - `crates/reflux-markdown/src/lib.rs:68` clones the emoji table per call (upstream API takes it by value); share an Arc if it gets large.
-- `crates/reflux-store/src/lib.rs:617` ignores `mute_config.end_time` expiry; pass `now` in if timed mutes matter.
 - `crates/reflux-store/src/lib.rs:656` forum "new post" levels aren't modelled (unjoined posts notify on mentions).
 - `crates/reflux-store/src/lib.rs:926` typed payloads can't tell an omitted `reactions` from an empty one; keep the
 - `crates/reflux-voice/src/audio.rs:132` linear interpolation aliases a little; use a windowed-sinc resampler if music
-- `crates/reflux/src/app/actions.rs:200` no unsubscribe when the list closes, and no one-time `sync: true` per guild.
-- `crates/reflux/src/app/invites.rs:10` any failure reads as "Unknown invite"; Fluxer retries transient errors.
-- `crates/reflux/src/app/voice.rs:982` read once per session; Fluxer polls every `poll_interval_seconds`.
+- `crates/reflux/src/app/voice.rs:994` no ETag / 304 and no ×4 slower polling while the window is hidden.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -105,13 +104,10 @@ Rules:
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
 - `crates/reflux/src/desktop/hooks.rs:44` the first keysym per keycode, read once; a layout switched later isn't seen.
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
-- `crates/reflux/src/desktop/notices.rs:23` a flat 60 s poll, without Fluxer's jitter, start-time wakeups and failure backoff.
-- `crates/reflux/src/desktop/notices.rs:187` "Manage subscription" / "Reactivate" open the web Plutonium page instead of
-- `crates/reflux/src/desktop/notify.rs:35` system messages show their raw content (Fluxer's `SystemMessageUtils.stringify`
+- `crates/reflux/src/desktop/notices.rs:229` "Manage subscription" / "Reactivate" open the web Plutonium page instead of
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
 - `crates/reflux/src/desktop/tts.rs:6` speech goes through the platform's command-line voice (speech-dispatcher's `spd-say`,
-- `crates/reflux/src/desktop/tts.rs:43` system messages read their raw content (`SystemMessageUtils.stringify` isn't ported).
 - `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
@@ -141,70 +137,55 @@ Rules:
 - `crates/reflux/src/settings/dev.rs:3` the bot banner preview is the profile card's (Fluxer shows an `ImagePreviewField`).
 - `crates/reflux/src/settings/look_tabs.rs:599` "Sync theme across devices" is always on (the theme is saved to the account).
 - `crates/reflux/src/settings/look_tabs.rs:684` sizes, spacing and other non-colour, non-font variables can't be overridden
-- `crates/reflux/src/settings/mod.rs:261` restores the snapshot from before this patch, dropping any later
-- `crates/reflux/src/settings/mod.rs:593` Fluxer also lists What's new, Submit feedback and Donate here; they open the
+- `crates/reflux/src/settings/mod.rs:259` restores the snapshot from before this patch, dropping any later
+- `crates/reflux/src/settings/mod.rs:591` Fluxer also lists What's new, Submit feedback and Donate here; they open the
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
-- `crates/reflux/src/settings/recovery_kit.rs:6` "Not now" on the reminder lasts for this session (Fluxer keeps it in local storage);
+- `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
 - `crates/reflux/src/settings/theme_folder.rs:5` "Stop watching" confirms inline (like "Reset data") instead of a ConfirmModal.
 - `crates/reflux/src/settings/theme_library.rs:4` each row has a delete button instead of Fluxer's options menu (edit details/CSS, move
 - `crates/reflux/src/shell/attachments.rs:136` the region shows as its ISO code, and the age-check texts have no "Learn more" link.
-- `crates/reflux/src/shell/autocomplete.rs:3` no role mentions or command option hints; custom emoji come from the open guild only.
-- `crates/reflux/src/shell/birthday.rs:29` no "Why we ask" help-centre link after the text.
-- `crates/reflux/src/shell/birthday.rs:44` "Sign out" signs out at once instead of opening the logout confirmation.
+- `crates/reflux/src/shell/autocomplete.rs:3` no command option hints; custom emoji come from the open guild only.
 - `crates/reflux/src/shell/call.rs:347` the explanation is the accessible label, not a hover tooltip (no overlay layer here).
 - `crates/reflux/src/shell/call.rs:369` Shift-click doesn't skip the confirmation.
-- `crates/reflux/src/shell/call.rs:624` names are joined with ", ", not `Intl.ListFormat`'s localized "a, b and c".
-- `crates/reflux/src/shell/chat.rs:631` DM replies also default to mentioning (Fluxer leaves the toggle off there).
-- `crates/reflux/src/shell/chat.rs:669` the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
-- `crates/reflux/src/shell/chat.rs:776` no speak or media items (copy/save image).
-- `crates/reflux/src/shell/chat.rs:1013` the whole name line is the click target, not just the name.
-- `crates/reflux/src/shell/chat.rs:1041` "(edited)" sits on its own line under the body instead of inline after it.
-- `crates/reflux/src/shell/chat.rs:1427` the context menu edits the main composer only.
-- `crates/reflux/src/shell/chat.rs:1471` the thread panels have no upload tray; files go through the full view.
-- `crates/reflux/src/shell/chat.rs:1485` a fixed 15-line cap before the field scrolls; Fluxer caps at half the window.
-- `crates/reflux/src/shell/chat.rs:1529` in the thread panels the list is keyboard-only (its clicks edit the main draft).
-- `crates/reflux/src/shell/chat.rs:1607` no 1.5 s send delay or stop-typing on clear; the notice goes out at once.
+- `crates/reflux/src/shell/chat.rs:774` no media items (copy/save image, open link) when the right-click lands on an
+- `crates/reflux/src/shell/chat.rs:1024` the whole name line is the click target, not just the name.
+- `crates/reflux/src/shell/chat.rs:1434` the context menu edits the main composer only.
+- `crates/reflux/src/shell/chat.rs:1478` the thread panels have no upload tray; files go through the full view.
+- `crates/reflux/src/shell/chat.rs:1536` in the thread panels the list is keyboard-only (its clicks edit the main draft).
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/compact.rs:105` lives here (not in chat.rs) to keep the shared file's diff small.
 - `crates/reflux/src/shell/debug.rs:5` the JSON is plain monospace text (Fluxer runs it through its code-block highlighter).
 - `crates/reflux/src/shell/embeds.rs:190` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
-- `crates/reflux/src/shell/friends.rs:169` the empty state's illustration isn't drawn, only its title and subtitle.
-- `crates/reflux/src/shell/friends.rs:294` the voice and video call items aren't listed until calls exist.
 - `crates/reflux/src/shell/guilds.rs:242` skips the canvas width fit that shrinks wide acronyms further.
 - `crates/reflux/src/shell/invite_embed.rs:252` the instance's custom guild badges (`badge_ids`) and built-in replacement images
 - `crates/reflux/src/shell/links.rs:116` the title "External link warning" is for screen readers only in Fluxer; ours shows.
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
-- `crates/reflux/src/shell/markdown.rs:305` skin-tone variants and emoji missing from the base sheet fall back to the font
-- `crates/reflux/src/shell/markdown.rs:328` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
-- `crates/reflux/src/shell/markdown.rs:359` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/menus.rs:84` only your own nickname (CHANGE_NICKNAME); MANAGE_NICKNAMES on others isn't offered.
+- `crates/reflux/src/shell/markdown.rs:331` skin-tone variants and emoji missing from the base sheet fall back to the font
+- `crates/reflux/src/shell/markdown.rs:354` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
+- `crates/reflux/src/shell/markdown.rs:385` emoji in one-line previews stay text (Fluxer draws 1.25em images).
 - `crates/reflux/src/shell/menus.rs:179` privacy, the community profile, hide muted channels and delete-my-messages are only
-- `crates/reflux/src/shell/mod.rs:789` group DM icons aren't loaded; the recipient cluster always shows.
-- `crates/reflux/src/shell/pins.rs:3` fixed 480×640, not resizable; pins are refetched each time the popout opens.
-- `crates/reflux/src/shell/pins.rs:176` media wider than the card is cropped, not scaled down to fit.
+- `crates/reflux/src/shell/mod.rs:800` group DM icons aren't loaded; the recipient cluster always shows.
+- `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
+- `crates/reflux/src/shell/pins.rs:245` media wider than the card is cropped, not scaled down to fit.
 - `crates/reflux/src/shell/queue.rs:87` Fluxer posts these as a local "Only you can see this" system message; here
 - `crates/reflux/src/shell/search.rs:6` tokens whose value doesn't resolve aren't marked "unapplied" (wavy warning).
 - `crates/reflux/src/shell/search.rs:594` media wider than the card is cropped, not scaled down to fit.
 - `crates/reflux/src/shell/search_query.rs:4` no search chips or confusable-skeleton matching; unresolvable values are dropped as in
-- `crates/reflux/src/shell/search_query.rs:147` weeks start on Monday rather than following the locale.
 - `crates/reflux/src/shell/sidebar.rs:30` the banner doesn't collapse or frost as the channel list scrolls.
-- `crates/reflux/src/shell/switcher.rs:3` the empty query lists previous channels and unread ones, without Fluxer's
-- `crates/reflux/src/shell/system_msg.rs:141` English list joining (`Intl.ListFormat` conjunction) for every locale.
-- `crates/reflux/src/shell/system_msg.rs:199` Fluxer mirrors the missed-call phone (`scaleX(-1)`); Rune icons can't flip.
+- `crates/reflux/src/shell/switcher.rs:3` no message links, other accounts or member search over the network.
+- `crates/reflux/src/shell/switcher.rs:69` mentions are ordered by newest message, not by when the mention arrived.
+- `crates/reflux/src/shell/system_msg.rs:191` Fluxer mirrors the missed-call phone (`scaleX(-1)`); Rune icons can't flip.
 - `crates/reflux/src/shell/threads.rs:392` content as typed (no markdown stripping); attachment-only messages say so.
 - `crates/reflux/src/shell/threads.rs:405` the punctuation around the links is approximated.
 - `crates/reflux/src/shell/threads.rs:429` the whole line opens the thread (or the browser when it isn't loaded), rather
 - `crates/reflux/src/shell/threads.rs:690` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:102` rules filtered by guild features aren't applied (user-scope rules only).
 - `crates/reflux/src/shell/upload.rs:196` no "upload as file" or gift items.
-- `crates/reflux/src/shell/voice.rs:69` no per-user volume slider; the Rust SDK has no remote track volume (WebRTC's
-- `crates/reflux/src/shell/voice.rs:782` no stream volume; the Rust SDK has no per-track volume and stream audio isn't
 - `crates/reflux/src/social/inbox.rs:493` a single-line field with a counter (Fluxer's is a 3–8 row textarea).
 - `crates/reflux/src/synced.rs:4` no `synced_preferences_base_hash` / 409 retry like `UserSettings.flushSyncedPreferences`;
 - `crates/reflux/src/ui/button.rs:182` hover/press replace the fill only; CSS also shifts the border colour, which
 - `crates/reflux/src/ui/controls.rs:251` the grabber's hover border (brand 62%) is skipped; Rune's hover paints an overlay, not a border.
-- `crates/reflux/src/ui/datepicker.rs:7` the shown value uses English month names ("Nov 7, 2026"), not `Intl`'s medium date.
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so only text built by the shared helpers
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
