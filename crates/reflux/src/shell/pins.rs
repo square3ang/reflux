@@ -1,10 +1,13 @@
 //! The header's pinned messages popout (`ChannelPinsPopout`, `ChannelPinsContent`,
 //! `MessagePreview.module.css`): newest pin first, Jump and Unpin on hover, more on scroll.
-// shortcut: fixed 480×640, not resizable; pins are refetched each time the popout opens.
+//! Pins load once per channel and follow the gateway like `ChannelPins.ts`. The popout resizes
+//! like `useResizablePane` (default 480×640, min 320×200, 16px from the window, size kept).
+// shortcut: only the left and bottom edges resize (the ones facing away from the anchor; Rune
+// has no diagonal resize cursor for corners and the anchored edges would need re-placement).
 
 use reflux_model::{Channel, ChannelType, Message, Permissions, Snowflake};
 use reflux_store::Store;
-use rune::{El, ScrollSpec, col, icon, row, text};
+use rune::{El, ScrollSpec, col, el, icon, row, text};
 
 use super::markdown::Md;
 use super::{Intent, ShellAccess, ShellState};
@@ -27,13 +30,76 @@ pub struct Pins {
     pub failed: bool,
 }
 
-/// The pin button: opens the popout and (re)loads the pins.
+/// The pin button: opens the popout and loads the pins unless they're loaded.
 pub fn open(st: &mut ShellState, channel: Snowflake) {
     st.popups.toggle(POPOUT);
-    if st.popups.is_open(POPOUT) {
+    if st.popups.is_open(POPOUT) && !st.pins.contains_key(&channel) {
         st.pins.entry(channel).or_default().loading = true;
         st.intents.push(Intent::LoadPins { channel, more: false });
     }
+}
+
+/// `ChannelPins` gateway handlers: READY forgets every list, CHANNEL_PINS_UPDATE one (an open
+/// popout loads it again), edits and deletes follow the messages.
+pub fn on_dispatch(st: &mut ShellState, d: &reflux_model::DispatchEvent, now_iso: impl FnOnce() -> String) {
+    use reflux_model::DispatchEvent as D;
+    match d {
+        D::Ready(_) => st.pins.clear(),
+        D::ChannelPinsUpdate(u) => {
+            st.pins.remove(&u.channel_id);
+            if st.popups.is_open(POPOUT) && st.channel == Some(u.channel_id) {
+                st.pins.entry(u.channel_id).or_default().loading = true;
+                st.intents.push(Intent::LoadPins { channel: u.channel_id, more: false });
+            }
+        }
+        D::MessageUpdate(m) => {
+            let Some(p) = st.pins.get_mut(&m.channel_id) else { return };
+            match p.items.iter().position(|(x, _)| x.id == m.id) {
+                Some(i) if !m.pinned => drop(p.items.remove(i)),
+                Some(i) => p.items[i].0 = (**m).clone(),
+                None if m.pinned => p.items.insert(0, ((**m).clone(), now_iso())),
+                None => {}
+            }
+        }
+        D::MessageDelete(m) => {
+            if let Some(p) = st.pins.get_mut(&m.channel_id) {
+                p.items.retain(|(x, _)| x.id != m.id);
+            }
+        }
+        _ => {}
+    }
+}
+
+const DEFAULT_SIZE: (f32, f32) = (480.0, 640.0);
+const MIN_SIZE: (f32, f32) = (320.0, 200.0);
+const VIEWPORT_PADDING: f32 = 16.0;
+
+/// The kept size, fitted to the window.
+fn size(st: &ShellState) -> (f32, f32) {
+    let (w, h) = st.prefs.pins_popout_size.unwrap_or(DEFAULT_SIZE);
+    let [vw, vh] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let top = rune::memo::layout(POPOUT).map_or(56.0, |r| r[1] + r[3] + 8.0);
+    (w.clamp(MIN_SIZE.0, (vw - 2.0 * VIEWPORT_PADDING).max(MIN_SIZE.0)), h.clamp(MIN_SIZE.1, (vh - top - VIEWPORT_PADDING).max(MIN_SIZE.1)))
+}
+
+/// A resize strip: `horizontal` drags the left edge, else the bottom one.
+fn handle<S: 'static>(horizontal: bool, acc: ShellAccess<S>) -> El {
+    let strip = if horizontal { el().pin(Some(0.0), Some(-4.0), None, Some(0.0)).w(8.0).cursor(rune::Cursor::ResizeColumn) } else { el().pin(None, Some(0.0), Some(-4.0), Some(0.0)).h(8.0).cursor(rune::Cursor::ResizeRow) };
+    let label = if horizontal { "Resize pinned messages from the left edge" } else { "Resize pinned messages from the bottom edge" };
+    strip.role("separator").label(t(label)).key(format!("pins-resize-{}", if horizontal { "left" } else { "bottom" })).on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+        let st = acc(s);
+        let (w, h) = size(st);
+        if d.phase == rune::Phase::Down {
+            d.data = if horizontal { w } else { h };
+        }
+        st.prefs.pins_popout_size = Some(if horizontal { ((d.data - d.dx).round(), h) } else { (w, (d.data + d.dy).round()) });
+        let fitted = size(st);
+        st.prefs.pins_popout_size = Some(fitted);
+        if d.phase == rune::Phase::Up {
+            let prefs = st.prefs.clone();
+            st.intents.push(Intent::Prefs(Box::new(prefs)));
+        }
+    })
 }
 
 /// Unpins and drops it from the list at once (the gateway confirms).
@@ -97,8 +163,9 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         }
     }
     let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p);
+    let (w, h) = size(st);
     let surface = col()
-        .size(480.0, 640.0)
+        .size(w, h)
         .radius(8.0)
         .fill(bg)
         .border(1.0, over(p.background_modifier_accent, bg))
@@ -108,6 +175,8 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         .label(t("Pinned messages"))
         .child(header)
         .child(col().w_full().grow(1.0).min_h(0.0).child(body))
+        .child(handle(true, acc))
+        .child(handle(false, acc))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     layer.push(anchor(surface, POPOUT, Placement::BottomEnd, 8.0));
 }
@@ -221,4 +290,30 @@ fn confirm<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette,
                 ),
         )
         .el(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use reflux_model::DispatchEvent as D;
+
+    use super::*;
+
+    #[test]
+    fn follows_the_gateway_like_channel_pins() {
+        let ch = Snowflake(7);
+        let m = |id: u64, pinned: bool| Message { id: Snowflake(id), channel_id: ch, pinned, ..Default::default() };
+        let mut st = ShellState { channel: Some(ch), ..Default::default() };
+        st.pins.insert(ch, Pins { items: vec![(m(1, true), "a".into())], ..Default::default() });
+        on_dispatch(&mut st, &D::MessageUpdate(Box::new(m(2, true))), || "now".into());
+        assert_eq!(st.pins[&ch].items.iter().map(|x| (x.0.id.0, x.1.as_str())).collect::<Vec<_>>(), [(2, "now"), (1, "a")], "a new pin goes first");
+        on_dispatch(&mut st, &D::MessageUpdate(Box::new(m(1, false))), String::new);
+        assert_eq!(st.pins[&ch].items.len(), 1, "unpinned");
+        on_dispatch(&mut st, &D::MessageDelete(Box::new(reflux_model::MessageDelete { id: Snowflake(2), channel_id: ch, ..Default::default() })), String::new);
+        assert!(st.pins[&ch].items.is_empty());
+        open(&mut st, ch);
+        assert!(st.intents.is_empty(), "loaded once");
+        let update = reflux_model::ChannelPinsUpdate { channel_id: ch, ..Default::default() };
+        on_dispatch(&mut st, &D::ChannelPinsUpdate(update), String::new);
+        assert_eq!(st.intents, [Intent::LoadPins { channel: ch, more: false }], "the open popout reloads");
+    }
 }

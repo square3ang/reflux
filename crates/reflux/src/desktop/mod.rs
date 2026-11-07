@@ -83,6 +83,8 @@ pub struct Prefs {
     pub search_history: std::collections::HashMap<Snowflake, Vec<String>>,
     /// `ThreadPanelWidth` (None = the default 450).
     pub thread_panel_width: Option<f32>,
+    /// `UI_CHANNEL_PINS_POPOUT_SIZE` (None = the default 480×640).
+    pub pins_popout_size: Option<(f32, f32)>,
     /// Voice message playback speed (`fluxer:media:playbackRates`, voice kind).
     pub voice_message_rate: f32,
     /// Media player volume (0..1) and mute (`fluxer:media:volume` / `:muted`), shared by players.
@@ -123,6 +125,7 @@ impl Default for Prefs {
             recent: Vec::new(),
             search_history: Default::default(),
             thread_panel_width: None,
+            pins_popout_size: None,
             voice_message_rate: 1.0,
             media_volume: 1.0,
             media_muted: false,

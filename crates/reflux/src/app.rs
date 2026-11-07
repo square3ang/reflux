@@ -699,6 +699,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
         }
         GatewayEvent::Dispatch(d) => {
             s.app.store.apply(&d, now_ms());
+            crate::shell::pins::on_dispatch(&mut s.app.shell, &d, || chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
             match &d {
                 reflux_model::DispatchEvent::VoiceServerUpdate(v) => voice::on_server_update(s, v),
                 reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
