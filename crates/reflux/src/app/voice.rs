@@ -346,6 +346,17 @@ fn upload_trim(s: &mut State) {
 }
 
 /// After connecting: `POST /voice/channels/{id}/entrance-sound` with the clip that fits.
+/// `restoreLocalMedia`: the camera, then the screen share (its picker; nothing to reuse after a restart).
+fn restore_media(s: &mut State) {
+    let (video, stream) = std::mem::take(&mut s.app.shell.voice.restore_media);
+    if video && !s.app.shell.voice.camera {
+        toggle_camera(s);
+    }
+    if stream && s.app.voice.share.is_none() {
+        crate::shell::call::open_screen_picker(&mut s.app.shell);
+    }
+}
+
 fn play_own_entrance(s: &State) {
     let (Some(inst), Some((guild, channel))) = (s.app.instance.clone(), s.app.shell.voice.channel) else { return };
     spawn(async move {
@@ -598,6 +609,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             apply_self(s);
             apply_devices(s);
             play_own_entrance(s);
+            restore_media(s);
             if let Some((channel, users)) = s.app.voice.pending_ring.take().filter(|(ch, _)| s.app.shell.voice.channel.is_some_and(|(_, c)| c == *ch)) {
                 api(s, Method::POST, format!("/channels/{channel}/call/ring"), json!({ "recipients": users }));
                 s.app.voice.rang = Some((channel, users));
@@ -715,6 +727,7 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
             apply_devices(s);
             sync_roster(s);
             play_own_entrance(s);
+            restore_media(s);
             if let Some((channel, users)) = s.app.voice.pending_ring.take().filter(|(ch, _)| s.app.shell.voice.channel.is_some_and(|(_, c)| c == *ch)) {
                 api(s, Method::POST, format!("/channels/{channel}/call/ring"), json!({ "recipients": users }));
                 s.app.voice.rang = Some((channel, users));

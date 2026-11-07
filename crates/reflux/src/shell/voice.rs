@@ -99,6 +99,8 @@ pub struct Voice {
     pub audio_sources: Option<Vec<(String, String)>>,
     /// `VoiceP2pRollout` (`GET /experiments`): peer-to-peer calls offered, and their cap.
     pub p2p_rollout: (bool, usize),
+    /// `restoreVoiceSession`'s (camera, screen share), started once the call connects.
+    pub restore_media: (bool, bool),
     /// Users in our peer-to-peer call whose direct connection failed.
     pub p2p_failed: Vec<Snowflake>,
 }

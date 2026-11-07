@@ -485,6 +485,7 @@ const NAGBARS: &[(&str, &str, &str, Option<&str>)] = &[
     ("forceGiftInventory", "Gift inventory nagbar", "Using actual gift inventory state", None),
     ("forceVisionaryMfa", "Visionary 2FA nagbar", "Using actual state", Some("visionary-mfa")),
     ("forceTermsAcceptance", "Terms acceptance nagbar", "Using actual state", None),
+    ("forceGuildMembershipCta", "Community membership CTA nagbar", "Using actual state", Some("guild-membership-cta")),
     ("forceScheduledMaintenance", "Scheduled maintenance nagbar", "Using actual state", None),
     ("forceIncident", "Service incident nagbar", "Using actual state", None),
     ("forceVoiceSessionRestore", "Voice session restore nagbar", "Using actual state", None),
@@ -875,6 +876,7 @@ fn tools<S: 'static>(store: &Store, st: &ShellState, acc: ShellAccess<S>) -> Men
         MenuEntry::Item(MenuItem::new("forget-ips", t("Forget authorized IPs")).danger().on_select(confirm(Danger::ForgetAuthorizedIps))),
         MenuEntry::Item(MenuItem::new("clear-trusted", trusted_label).danger().disabled(trusted.is_empty()).on_select(confirm(Danger::ClearTrustedDomains))),
         MenuEntry::Item(MenuItem::new("reset-premium", t("Reset premium state")).danger().on_select(confirm(Danger::ResetPremiumState))),
+        MenuEntry::Item(MenuItem::new("trigger-crash", t("Trigger React crash")).icon(&icons::BUG_FILL).danger().on_select(|_: &mut S| crate::crash::show("Error: Triggered React crash from Developer Tools menu".into()))),
     ])
 }
 

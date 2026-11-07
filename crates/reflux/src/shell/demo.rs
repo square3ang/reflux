@@ -981,6 +981,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
         "hover" => st.hover_msg = Some(ada),
         "debug-channel" => st.open_debug(super::debug::Subject::Channel(Snowflake(GENERAL))),
         "debug-ast" => st.debug = Some(super::debug::Debug { subject: super::debug::Subject::Message(Snowflake(GENERAL), ada), tab: 1 }),
+        "crash" => crate::crash::show("panicked at crates/reflux/src/shell/mod.rs:1:1:\nTriggered React crash from Developer Tools menu".into()),
         "nagbars" => {
             st.desktop.notice = Some(reflux_model::InstanceNotice { id: "n1".into(), message: "Voice is moving to the new region tonight.".into(), url: Some("https://example.com".into()), ..Default::default() });
             st.desktop.maintenance = Some(crate::desktop::notices::Maintenance { id: "m1".into(), status: crate::desktop::notices::Status::Scheduled, start: "2026-11-08T03:00:00Z".into(), minutes: 120, url: "https://status.example.com".into() });

@@ -1,5 +1,6 @@
 mod app;
 mod compose;
+mod crash;
 mod desktop;
 mod file_picker;
 mod guild;
@@ -68,10 +69,20 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     let (a, b) = sh.composer.range();
     compose::CARET.set(if sh.composer.focused && a != b { cx.caret("composer") } else { None });
     quick_css_syntax::CARET.set(if sh.form.text.get("quick-css").is_some_and(|e| e.focused) { cx.caret("quick-css") } else { None });
-    let content = match (&s.gallery, &s.shell_demo) {
-        (Some(g), _) => ui::gallery::view(g, cx),
-        (_, Some(d)) => shell::demo::view(d),
-        _ => app::view(s, cx),
+    let content = crash::shown().is_none().then(|| {
+        crash::guard(|| match (&s.gallery, &s.shell_demo) {
+            (Some(g), _) => ui::gallery::view(g, cx),
+            (_, Some(d)) => shell::demo::view(d),
+            _ => app::view(s, cx),
+        })
+    });
+    let content = match content.flatten() {
+        Some(c) => c,
+        None => {
+            let look = &s.app.saved.desktop.look;
+            let p = theme::custom::effective(look.theme(&s.app.store.settings.theme), cx.system_dark(), look.saturation, &look.theme_css());
+            crash::view::<State>(&crash::shown().unwrap_or_default(), &p)
+        }
     };
     desktop::window::root(content, s.desktop.size)
 }
@@ -92,19 +103,28 @@ fn main() {
         }
         return;
     }
+    if !rune::is_headless() {
+        crash::install();
+    }
     // The remembered size, and a launch at login with "Start minimized" stays in the tray.
     let prefs = if rune::is_headless() { desktop::Prefs::default() } else { session::load().desktop };
     let app = rune::App::new(AppSpec {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
-        poll: Some(|s, _, tx| match &mut s.shell_demo {
-            Some(d) => {
-                let resized = d.shell.desktop.width != s.desktop.size[0];
-                d.shell.desktop.width = s.desktop.size[0];
-                shell::poll_shell(&d.store, &mut d.shell, tx) || resized
+        poll: Some(|s: &mut State, _, tx| {
+            if crash::shown().is_some() {
+                return false;
             }
-            None => app::poll(s, tx),
+            crash::guard(|| match &mut s.shell_demo {
+                Some(d) => {
+                    let resized = d.shell.desktop.width != s.desktop.size[0];
+                    d.shell.desktop.width = s.desktop.size[0];
+                    shell::poll_shell(&d.store, &mut d.shell, tx) || resized
+                }
+                None => app::poll(s, tx),
+            })
+            .unwrap_or(true)
         }),
         on_key: Some(keybinds::on_key),
         setup: Some(|s, waker| {

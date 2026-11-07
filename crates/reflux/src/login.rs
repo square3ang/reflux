@@ -264,12 +264,13 @@ fn card(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
         )
 }
 
+/// `FluxerIconMark`: the blue disc and its white waves.
+pub fn logo(size: f32) -> El {
+    el().size(size, size).radius(size / 2.0).fill(rgb(0x46, 0x41, 0xD9)).child(icon(&LOGO_WAVES, size).color(Color::WHITE).absolute(0.0, 0.0))
+}
+
 fn brand(p: &Palette) -> El {
-    let logo = el()
-        .size(128.0, 128.0)
-        .radius(64.0)
-        .fill(rgb(0x46, 0x41, 0xD9))
-        .child(icon(&LOGO_WAVES, 128.0).color(Color::WHITE).absolute(0.0, 0.0));
+    let logo = logo(128.0);
     let wordmark = el().size(120.1, 32.0).child(icon(&WORDMARK, 120.1).color(p.text_primary).absolute(0.0, 0.0));
     row().w(288.0).child(
         col().grow(1.0).py(40.0).px(24.0).center().child(col().gap(24.0).items_center().child(logo).child(wordmark)),

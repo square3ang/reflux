@@ -21,7 +21,7 @@ use crate::{State, session};
 
 mod account;
 mod actions;
-mod cache;
+pub(crate) mod cache;
 mod chat;
 mod commands;
 mod expr;

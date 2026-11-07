@@ -1,8 +1,9 @@
 //! The bars above the layout, picked like Fluxer's `selectVisibleNagbars` (`AppLayoutHooks.ts`):
 //! at most one non-dismissible and one dismissible bar, by priority. Also the account bars
 //! (`UnclaimedAccountNagbar`, `AccountLimitedNagbar`, `DesktopNotificationNagbar`,
-//! `VisionaryMfaNagbar`, `VoiceSessionRestoreNagbar`) and the community bars under them
-//! (`GuildLayout.tsx`'s `GuildMfaRequirementNagbar` and `InvitesDisabledNagbar`).
+//! `VisionaryMfaNagbar`, `GuildMembershipCtaNagbar`, `VoiceSessionRestoreNagbar`) and the
+//! community bars under them (`GuildLayout.tsx`'s `StaffOnlyGuildNagbar`,
+//! `GuildMfaRequirementNagbar` and `InvitesDisabledNagbar`).
 
 use reflux_model::{ChannelType, Permissions, PremiumType, Snowflake};
 use reflux_store::Store;
@@ -126,8 +127,20 @@ fn account<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         let msg = tf("Protect your Visionary account by enabling two-factor authentication. Thanks for supporting {productName}!", &[("productName", PRODUCT)]);
         out.push(Bar::new(7.0, true, bar("nagbar-visionary-mfa", p.brand_primary, msg, vec![open], Some(Box::new(close)))));
     }
+    // `GuildMembershipCtaNagbar`: hidden once in Fluxer HQ (found by its vanity code).
+    let in_hq = store.guilds.values().any(|g| !g.visiting && g.info.as_ref().is_some_and(|i| i.vanity_url_code.as_deref() == Some(HQ_INVITE)));
+    if !cfg.self_hosted && shown(st, "forceGuildMembershipCta", || me.is_some_and(|m| account_gate::tier(m, cfg) == account_gate::Tier::Verified) && !in_hq && !dismissed(st, "guild-membership-cta")) {
+        let community = format!("{PRODUCT} HQ");
+        let join = button("nagbar-hq-join", &tf("Join {communityName}", &[("communityName", &community)]), p, move |s: &mut S| acc(s).open_social(crate::social::Modal::InviteAccept(HQ_INVITE.into())));
+        let close = move |s: &mut S| dismiss_key(acc(s), "guild-membership-cta");
+        let msg = tf("Join {communityName} to chat with the team and stay up to date.", &[("communityName", &community)]);
+        out.push(Bar::new(6.0, true, bar("nagbar-hq", p.brand_primary, msg, vec![join], Some(Box::new(close)))));
+    }
     out
 }
+
+/// `FLUXER_HQ_INVITE_CODE`.
+const HQ_INVITE: &str = "fluxer-hq";
 
 /// `applyGrantedPermission` (the desktop app always has permission), then the dismissal.
 fn enable_notifications(sh: &mut ShellState) {
@@ -232,11 +245,12 @@ fn voice_restore<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         p.voice_restore = None;
         sh.intents.push(Intent::Prefs(Box::new(p)));
     };
-    let (guild, channel) = (snap.guild, snap.channel);
-    // shortcut: Reconnect rejoins the channel; the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`).
+    let (guild, channel, media) = (snap.guild, snap.channel, (snap.video, snap.stream));
     let reconnect = move |s: &mut S| {
         clear(s);
-        acc(s).intents.push(Intent::JoinVoice { guild, channel });
+        let sh = acc(s);
+        sh.voice.restore_media = media;
+        sh.intents.push(Intent::JoinVoice { guild, channel });
     };
     let actions = vec![button("nagbar-voice-not-now", t("Not now"), p, clear), button("nagbar-voice-reconnect", t("Reconnect"), p, reconnect)];
     Some(Bar::new(-3.5, true, bar::<S>("nagbar-voice-restore", rgb(0x15, 0x80, 0x3d), message, actions, None)))
@@ -254,6 +268,14 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, top: usize, p: &Palette
     let mut out = Vec::new();
     let me = crate::shell::devtools::me(store, st);
     let name = info.name.clone();
+    // `StaffOnlyGuildNagbar`.
+    if slots > 0 && me.as_ref().is_some_and(|m| m.is_staff) && info.features.iter().any(|f| f == "UNAVAILABLE_FOR_EVERYONE_BUT_STAFF") {
+        let url = format!("{}/guilds/{g}?tab=features", st.admin_base);
+        let manage = button("nagbar-staff-manage", t("Manage community features"), p, move |s: &mut S| acc(s).intents.push(Intent::OpenLink(url.clone())));
+        let msg = tf("{communityName} is currently only accessible to {productName} staff members", &[("communityName", &name), ("productName", PRODUCT)]);
+        out.push(bar::<S>("nagbar-staff-only", p.status_danger, msg, vec![manage], None));
+        slots -= 1;
+    }
     if slots > 0 && shown(st, "forceGuildMfaRequirement", || info.mfa_level == 1 && me.as_ref().is_some_and(|m| !m.mfa_enabled) && mfa_gated(store, g) && !dismissed(st, &format!("guild-mfa:{g}"))) {
         let open = button("nagbar-guild-mfa", t("Enable two-factor auth"), p, move |s: &mut S| acc(s).open_settings(Some("account_security")));
         let close = move |s: &mut S| dismiss_key(acc(s), &format!("guild-mfa:{g}"));

@@ -301,6 +301,8 @@ pub struct ShellState {
     pub web_base: String,
     /// The instance's marketing site (help articles), `None` when self-hosted.
     pub marketing_base: Option<String>,
+    /// The instance's admin panel (`RuntimeConfig.adminEndpoint`).
+    pub admin_base: String,
     /// The user settings modal, when open.
     pub settings: Option<crate::settings::SettingsUi>,
     /// The instance shows Billing tabs (`shouldShowPremiumFeatures`).
@@ -398,6 +400,7 @@ pub struct ShellState {
     /// The instance's account tier rules, and the claim / messaging paused dialogs.
     pub tiers: account_gate::Cfg,
     pub account_gate: account_gate::Ui,
+    pub nagbar_sync: Option<crate::desktop::nagbar_sync::Seen>,
 }
 
 impl Default for ShellState {
@@ -448,6 +451,7 @@ impl Default for ShellState {
             dialog: None,
             form: Default::default(),
             invite_base: String::new(),
+            admin_base: String::new(),
             gift_base: String::new(),
             static_base: String::new(),
             username_sign_in: false,
@@ -486,6 +490,7 @@ impl Default for ShellState {
             synced: Default::default(),
             tiers: Default::default(),
             account_gate: Default::default(),
+            nagbar_sync: None,
         }
     }
 }
@@ -587,6 +592,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= account_gate::poll_kit(st);
     changed |= barrier::poll(store, st, tx);
     changed |= crate::desktop::top_bars::poll(store, st);
+    changed |= crate::desktop::nagbar_sync::poll(store, st);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;

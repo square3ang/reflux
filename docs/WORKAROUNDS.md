@@ -104,12 +104,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 | Clear attachment mocks | no attachment mock items exist to clear | — |
 | Titlebar platform override | Reflux uses the system titlebar (see Rune) | a custom titlebar |
 | Nagbars: desktop download, corrupted installation, domain moved | web-only bars | never |
-| Trigger React crash | there is no crash screen | a crash screen |
 | Loading skeletons from fixed sizes | the app skeleton doesn't remember the last layout (`SkeletonLayoutMemory`) | layout memory is ported |
-| Voice session restore: Reconnect rejoins the channel only | the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`) | voice restores media |
 | Desktop notification nagbar: forced only | Fluxer never shows it in its desktop app (`isDesktop()`); Enable turns on the `notifications` pref | — |
-| Nagbar dismissals are local (`dismissed_nagbars`, `unclaimed_snoozed_until`) | Fluxer syncs some of them; Reflux keeps them on this device | they're synced |
-| Staff-only community bar, guild membership CTA bar | not ported | they're ported |
 | Staff tools button in the voice call header | not ported; the header menu covers the same items | — |
 | Nested submenus open to the left | Rune doesn't report which way the parent flipped; only this menu nests, and it sits at the right edge | Rune exposes flip state |
 
@@ -135,7 +131,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 
 ## Appendix: every `shortcut:` comment in the code
 
-- `crates/reflux/src/app/voice.rs:994` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1007` no ETag / 304 and no ×4 slower polling while the window is hidden.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -143,7 +139,6 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
-- `crates/reflux/src/desktop/top_bars.rs:236` Reconnect rejoins the channel; the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`).
 - `crates/reflux/src/desktop/tts.rs:6` speech goes through the platform's command-line voice (speech-dispatcher's `spd-say`,
 - `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
@@ -166,8 +161,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
-- `crates/reflux/src/shell/devtools.rs:633` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
-- `crates/reflux/src/shell/devtools.rs:940` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
+- `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
+- `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:364` jumbo emoji can't be selected or copied (no text); "Copy text" has them.

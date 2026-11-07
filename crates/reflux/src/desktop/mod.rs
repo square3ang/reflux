@@ -9,6 +9,7 @@ pub mod autostart;
 pub mod link;
 pub mod menu;
 pub mod nagbar;
+pub mod nagbar_sync;
 pub mod notices;
 pub mod notify;
 pub mod os_idle;
