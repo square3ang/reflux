@@ -3,7 +3,6 @@
 //! `GuildAuditLogSentence` with the placeholders in bold (free text as inline code).
 //! Known users open their profile (`ClickableUser`) and channels / roles copy their ID
 //! (`CopyIdInline`): the sentence's links are `user:<id>` and `copy:<id>`.
-// shortcut: custom emojis show as `:name:` without the image.
 
 mod channel;
 mod expr;
@@ -292,7 +291,12 @@ pub struct Names<'a> {
     pub channel: &'a dyn Fn(&str) -> Option<(String, bool)>,
     pub role: &'a dyn Fn(&str) -> Option<String>,
     pub guild: Snowflake,
+    /// A custom emoji this client knows (`Emoji.getEmojiById`): its image once loaded.
+    pub emoji: &'a dyn Fn(&str) -> Option<Option<rune::Pixels>>,
 }
+
+/// Stands in for an emoji image (`.inlineEmojiImage`, 20 square, then the 4 gap) in the text.
+const EMOJI_SLOT: &str = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
 
 const TEXT_MAX: usize = 200;
 
@@ -381,6 +385,7 @@ pub type Styled = (std::ops::Range<usize>, bool, Option<Color>, Option<String>);
 /// What pressing a placeholder does: open a known user's profile, copy a channel's or role's ID.
 fn link_of(p: &Ph, n: &Names) -> Option<String> {
     match p {
+        Ph::Emoji(Some(id), _) if (n.emoji)(id).is_some() => Some(format!("emoji:{id}")),
         Ph::User(id) if (n.user)(id).is_some() => Some(format!("user:{id}")),
         Ph::Channel(id, ..) | Ph::Role(id, _) => Some(format!("copy:{id}")),
         _ => None,
@@ -406,9 +411,15 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
         match st.vals.iter().find(|(k, _)| *k == key) {
             Some((_, p)) => {
                 let (txt, code, dot) = placeholder(p, n);
+                // `renderEmoji`: a known custom emoji's image before its `:name:`.
+                if let Some(link) = link_of(p, n).filter(|l| l.starts_with("emoji:")) {
+                    let start = out.len();
+                    out.push_str(EMOJI_SLOT);
+                    spans.push((start..out.len(), false, None, Some(link)));
+                }
                 let start = out.len();
                 out.push_str(&txt);
-                spans.push((start..out.len(), code, None, link_of(p, n)));
+                spans.push((start..out.len(), code, None, link_of(p, n).filter(|l| !l.starts_with("emoji:"))));
                 if let Some(c) = dot {
                     out.push_str(" ●");
                     spans.push((out.len() - "●".len()..out.len(), false, Some(c), None));
@@ -422,24 +433,45 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
     (out, spans)
 }
 
-/// The sentence as a wrapping text element.
-pub fn sentence(st: &Sentence, n: &Names, size: f32, color: Color, p: &Palette) -> El {
+/// The sentence as a wrapping text element; `key` names it (its emoji images find their slots
+/// through it). `links` wires the text's links.
+pub fn sentence(st: &Sentence, n: &Names, size: f32, color: Color, p: &Palette, key: &str, links: impl FnOnce(El) -> El) -> El {
     let (txt, ranges) = compose(st, n);
+    let lh = size * 1.45;
+    let emoji_id = |l: &Option<String>| l.as_deref().and_then(|l| l.strip_prefix("emoji:")).map(str::to_string);
     let spans = ranges
         .iter()
-        .map(|(r, code, dot, _)| match (code, dot) {
-            (_, Some(c)) => Span::new(r.start, r.end).color(*c),
-            (true, _) => Span::new(r.start, r.end).mono().size(size - 1.0).bg(p.bg_code_block, 2.0),
-            _ => Span::new(r.start, r.end).bold().color(p.text_primary),
+        .flat_map(|(r, code, dot, link)| match (code, dot) {
+            _ if emoji_id(link).is_some() => crate::shell::markdown::sized_placeholder(&Span::new(r.start, r.end).color(Color::TRANSPARENT), size, lh, 24.0, 20.0).to_vec(),
+            (_, Some(c)) => vec![Span::new(r.start, r.end).color(*c)],
+            (true, _) => vec![Span::new(r.start, r.end).mono().size(size - 1.0).bg(p.bg_code_block, 2.0)],
+            _ => vec![Span::new(r.start, r.end).bold().color(p.text_primary)],
         })
-        .collect();
-    let mut e = rich(txt, spans).font(font(size, 400.0).lh(size * 1.45)).color(color).wrap();
-    for (r, _, _, link) in ranges {
-        if let Some(id) = link {
-            e = e.link(rune::Link::new(r, id).hover(rune::LinkPaint::new().underline(p.text_primary)));
+        .collect::<Vec<_>>();
+    let mut e = rich(txt, spans).font(font(size, 400.0).lh(lh)).color(color).wrap().key(key);
+    let mut slots = Vec::new();
+    for (i, (r, _, _, link)) in ranges.into_iter().enumerate() {
+        match (emoji_id(&link), link) {
+            (Some(id), _) => slots.push((format!("{key}-e{i}"), r, id)),
+            (None, Some(id)) => e = e.link(rune::Link::new(r, id).hover(rune::LinkPaint::new().underline(p.text_primary))),
+            _ => {}
         }
     }
-    e
+    if slots.is_empty() {
+        return links(e);
+    }
+    e = e.text_highlights(slots.iter().map(|(k, r, _)| rune::TextHighlight::new(r.clone(), Color::TRANSPARENT).key(k.clone())));
+    // Slots are found where the text was laid out last frame; `vertical-align: bottom`.
+    let at = rune::memo::layout(key);
+    let imgs: Vec<El> = slots
+        .iter()
+        .filter_map(|(k, _, id)| {
+            let (t, s) = (at?, rune::memo::layout(k)?);
+            let px = (n.emoji)(id)??;
+            Some(rune::el().absolute(s[0] - t[0], s[1] - t[1] + s[3] - 20.0).size(20.0, 20.0).pixels_fit(&px, rune::SurfaceFit::Fit))
+        })
+        .collect();
+    rune::col().w_full().child(links(e.w_full())).children(imgs)
 }
 
 #[cfg(test)]
@@ -451,7 +483,7 @@ mod tests {
         let u = |id: &str| (id == "7").then(|| "Ana".to_string());
         let c = |id: &str| (id == "9").then(|| ("general".to_string(), true));
         let r = |_: &str| None;
-        let n = Names { user: &u, channel: &c, role: &r, guild: Snowflake(1) };
+        let n = Names { user: &u, channel: &c, role: &r, guild: Snowflake(1), emoji: &|_| None };
         let p = present(&E { v: &v, guild: Snowflake(1), known: &|_, _| None });
         (compose(&p.summary, &n).0, p.rows.iter().map(|r| compose(&r.s, &n).0).collect())
     }

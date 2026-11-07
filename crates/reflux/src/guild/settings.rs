@@ -873,7 +873,17 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
         Some((c.name.clone()?, matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_LINK)))
     };
     let role = |id: &str| store.guilds.get(&g)?.roles.iter().find(|r| r.id.to_string() == id).map(|r| r.name.clone());
-    let names = super::audit::Names { user: &user, channel: &chan, role: &role, guild: g };
+    // `Emoji.getEmojiById`: any community's emoji this client has.
+    let emoji = |id: &str| {
+        let e = store.guilds.values().flat_map(|gd| gd.emojis.iter()).find(|e| e.id.to_string() == id)?;
+        let animate = e.animated && store.settings.animate_emoji && !crate::look::reduced_motion();
+        let load = st.media.asset(|b, _| if animate { crate::media::emoji_url_animated(b, id) } else { crate::media::emoji_url(b, id) });
+        Some(match load {
+            crate::media::Load::Ready(px) => Some(px),
+            _ => None,
+        })
+    };
+    let names = super::audit::Names { user: &user, channel: &chan, role: &role, guild: g, emoji: &emoji };
     let known = |kind: &str, id: &str| match kind {
         "webhook" => log.webhooks.iter().find(|w| w["id"] == id).and_then(|w| w["name"].as_str()).map(str::to_string),
         "emoji" => store.guilds.get(&g)?.emojis.iter().find(|e| e.id.to_string() == id).map(|e| e.name.clone()),
@@ -904,7 +914,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                 None => row().size(32.0, 32.0).radius(16.0).fill(c.hover),
             };
             let when = id.parse().map(|i| crate::shell::format_relative(Snowflake(i).timestamp_ms(), st.now_ms)).unwrap_or_default();
-            let words = col().grow(1.0).min_w(0.0).gap(2.0).child(audit_links(super::audit::sentence(&pres.summary, &names, 14.0, p.text_primary_muted, p), g, acc)).child(small(when, p));
+            let words = col().grow(1.0).min_w(0.0).gap(2.0).child(super::audit::sentence(&pres.summary, &names, 14.0, p.text_primary_muted, p, &format!("audit-{id}"), |e| audit_links(e, g, acc))).child(small(when, p));
             let mut header = row().w_full().min_h(56.0).px(16.0).py(8.0).gap(12.0).center_y().child(badge).child(face).child(words);
             if expandable {
                 let id = id.clone();
@@ -932,7 +942,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                     );
                 }
                 if !pres.rows.is_empty() {
-                    details = details.child(col().w_full().gap(8.0).children(pres.rows.iter().map(|r| {
+                    details = details.child(col().w_full().gap(8.0).children(pres.rows.iter().enumerate().map(|(ri, r)| {
                         use super::audit::Tone;
                         let (glyph, tint) = match r.tone {
                             Tone::Add => (&icons::PLUS_BOLD, Some(p.status_online)),
@@ -944,7 +954,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                             None => (c.hover, p.background_modifier_accent, p.text_primary),
                         };
                         let bullet = row().size(20.0, 20.0).center().radius(10.0).fill(bg).border(1.0, over(border, bg)).child(icon(glyph, 12.0).color(fg));
-                        row().w_full().min_h(28.0).gap(8.0).center_y().child(bullet).child(audit_links(super::audit::sentence(&r.s, &names, 14.0, p.text_primary_muted, p), g, acc).grow(1.0).min_w(0.0))
+                        row().w_full().min_h(28.0).gap(8.0).center_y().child(bullet).child(super::audit::sentence(&r.s, &names, 14.0, p.text_primary_muted, p, &format!("audit-{id}-r{ri}"), |e| audit_links(e, g, acc)).grow(1.0).min_w(0.0))
                     })));
                 }
                 entry = entry.child(details);

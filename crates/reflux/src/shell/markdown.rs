@@ -91,9 +91,14 @@ fn nbsp_em() -> f32 {
 // shortcut: a scaled span keeps its half-leading even, so the line's baseline lands where that
 // gives (17.6 → 18 in message text, but 24.2 → 26.6 in an h1); the image follows the baseline.
 fn placeholder_spans(span: &Span, size: f32, lh: f32) -> [Span; 3] {
-    let (width, em) = (1.5 * size, nbsp_em().max(0.01));
-    let tall = size * lh.max(width) / lh;
-    let n = ((width / (em * tall)).floor() as usize).min(PLACEHOLDER.len() / NBSP - 1);
+    sized_placeholder(span, size, lh, 1.5 * size, 1.5 * size)
+}
+
+/// [`placeholder_spans`] for a `width` × `height` box: `span` covers no-break spaces only.
+pub(crate) fn sized_placeholder(span: &Span, size: f32, lh: f32, width: f32, height: f32) -> [Span; 3] {
+    let em = nbsp_em().max(0.01);
+    let tall = size * lh.max(height) / lh;
+    let n = ((width / (em * tall)).floor() as usize).min((span.end - span.start) as usize / NBSP - 1);
     let rest = (width - n as f32 * em * tall) / em;
     let at = |i: usize| span.start + (i * NBSP) as u32;
     let part = |a: u32, b: u32, size: f32| Span { start: a, end: b, size: Some(size.max(0.01)), ..span.clone() };

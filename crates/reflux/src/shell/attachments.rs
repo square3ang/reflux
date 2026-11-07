@@ -41,6 +41,10 @@ pub struct MediaUi {
     pub age_geos: Vec<(String, Option<String>)>,
     /// Discovery's `hidden_built_in_guild_badges`.
     pub hidden_badges: Vec<String>,
+    /// Discovery's custom guild badges, built-in badge replacement images and badge version.
+    pub guild_badges: Vec<reflux_model::GuildBadge>,
+    pub badge_images: reflux_model::BuiltInGuildBadgeImages,
+    pub badges_version: Option<String>,
     /// The (guild, channel) of the invite card whose message menu is open.
     pub invite_menu: (Option<Snowflake>, Option<Snowflake>),
     /// The attachment a message menu was opened on (`MediaMenuData`'s items).

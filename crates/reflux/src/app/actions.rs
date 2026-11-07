@@ -253,6 +253,9 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.media_ui.age_geos = inst.discovery.age_policy.geos.iter().map(|g| (g.country_code.clone(), g.region_code.clone())).collect();
         crate::shell::expr::fetch(&mut s.app.shell, crate::shell::attachments::GEO, "/ip");
         s.app.shell.media_ui.hidden_badges = inst.discovery.hidden_built_in_guild_badges.clone();
+        s.app.shell.media_ui.guild_badges = inst.discovery.guild_badges.clone();
+        s.app.shell.media_ui.badge_images = inst.discovery.built_in_guild_badge_images.clone().unwrap_or_default();
+        s.app.shell.media_ui.badges_version = inst.discovery.custom_badges_version.clone();
         let gif = &inst.discovery.gif;
         // Picker frecency, favorites and skin tone, once per sign-in.
         if !s.app.shell.expr.persist {

@@ -334,6 +334,16 @@ impl Demo {
                 let mut lib = super::voice::EntranceLibrary { sounds: vec![sound(1, "airhorn"), sound(2, "door chime")], ..Default::default() };
                 lib.selections.insert("global".into(), Snowflake(1));
                 shell.voice.entrance = Some(lib);
+            } else if a == "--dev-app" {
+                // Applications: a bot app's detail (bot profile with no banner yet).
+                shell.form.data.insert("dev.apps".into(), json!([{"id": "4242", "name": "Helper", "bot": {"id": "4243", "username": "helper", "discriminator": "0000", "flags": 0}}]));
+                shell.nav.dev.app = Some("4242".into());
+            } else if let Some(css) = a.strip_prefix("--quick-css=") {
+                // The in-tab Quick CSS editor focused with its caret at the end.
+                let mut e = rune::TextEdit::new(css.replace("\\n", "\n"));
+                e.focused = true;
+                e.set_caret(e.text.len());
+                shell.form.text.insert("quick-css".into(), e);
             } else if let Some(id) = a.strip_prefix("--popup=") {
                 // Opens a popout menu by its ID (snapshots of row menus).
                 shell.popups.toggle(id);
@@ -672,7 +682,9 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             let mut member = e(4, 1001, 24, "1002");
             member["changes"] = json!([{"key": "nick", "old_value": "grace", "new_value": "Admiral"}]);
             data(st, "audit-open", json!(role["id"].clone()));
-            data(st, "audit", json!({"audit_log_entries": [ban, role, channel, member, e(5, 0, 999, "")],
+            let mut emoji = e(6, ME, 60, "77");
+            emoji["changes"] = json!([{"key": "name", "new_value": "fluxer"}]);
+            data(st, "audit", json!({"audit_log_entries": [emoji, ban, role, channel, member, e(5, 0, 999, "")],
                                      "users": [{"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, {"id": "1009", "username": "spammer"}]}));
         }
     }
@@ -905,7 +917,7 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
 }
 
 /// `--msg-scene=hover|shift|failed|send-error|menu|more|emoji|reply|edit|delete`: message actions mid-use;
-/// `uploads|pins|search|search-options|switcher|autocomplete|jump|present|slowmode|counter`: the
+/// `uploads|pins|search|search-options|switcher|switcher-link|switcher-account|autocomplete|jump|present|slowmode|counter`: the
 /// composer and navigation tools.
 /// `picker-emoji|picker-sticker|picker-gif|picker-gif-search|picker-memes|react-picker|
 /// reaction-tip|reactions-modal|expr-info|sticker-info`: the expression surfaces.
@@ -1002,6 +1014,14 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.toggle_switcher();
             if let Some(sw) = &mut st.switcher {
                 sw.query = rune::TextEdit::new("#");
+                sw.query.focused = true;
+            }
+        }
+        "switcher-link" | "switcher-account" => {
+            st.toggle_switcher();
+            st.web_base = "https://web.fluxer.app".into();
+            if let Some(sw) = &mut st.switcher {
+                sw.query = rune::TextEdit::new(if scene == "switcher-link" { "https://web.fluxer.app/channels/1/2/3" } else { "ada" });
                 sw.query.focused = true;
             }
         }
@@ -1216,7 +1236,11 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             };
             st.media_ui.invites.insert("rustlang".into(), inv("rustlang", 9900, "Rust Programming", json!({"features": ["VERIFIED"], "embed_splash": "demo"})));
             st.media_ui.invites.insert("gone".into(), super::invite_embed::Preview::Unknown);
-            st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ", json!({"features": ["PARTNERED"]})));
+            // Five custom instance badges: three show, then "+2".
+            st.media_ui.guild_badges = (1..=5u64)
+                .map(|i| serde_json::from_value(json!({"id": (500 + i).to_string(), "name": format!("Badge {i}"), "asset_url": format!("https://media.fluxer.app/emojis/{}.webp", 76 + i)})).expect("badge"))
+                .collect();
+            st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ", json!({"features": ["PARTNERED"], "badge_ids": ["501", "502", "503", "504", "505"]})));
             st.media_ui.invites.insert("closed".into(), inv("closed", 9901, "Quiet Corner", json!({"features": ["INVITES_DISABLED", "DISCOVERABLE"]})));
         }
         "system" => {

@@ -59,7 +59,7 @@ fn image(st: &ShellState, key: &str, saved: impl FnOnce() -> Load) -> Option<Pix
 }
 
 /// `PreviewGuildInviteHeader`: icon, "You've been invited to join", name and counts.
-fn header(store: &Store, st: &ShellState, g: Snowflake, info: &Guild, p: &Palette) -> El {
+fn header<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, info: &Guild, p: &Palette, acc: ShellAccess<S>) -> El {
     let name = st.form.text.get("name").map_or(info.name.clone(), |e| e.text.clone());
     let icon = image(st, "icon", || info.icon.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_icon_url(b, g, h, 80.0, s))));
     let icon = match icon {
@@ -80,7 +80,7 @@ fn header(store: &Store, st: &ShellState, g: Snowflake, info: &Guild, p: &Palett
                 .gap(4.0)
                 .items_center()
                 .child(text(t("You've been invited to join")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary))
-                .child(row().gap(8.0).center_y().child(text(name).font(font(20.0, 700.0).lh(26.0)).color(p.text_primary)).children(crate::shell::invite_embed::guild_badge(&info.features, st, p)))
+                .child(row().gap(8.0).center_y().child(text(name).font(font(20.0, 700.0).lh(26.0)).color(p.text_primary)).children(crate::shell::invite_embed::guild_badge(&info.features, &info.badge_ids, st, p, acc)))
                 .child(
                     row()
                         .gap(16.0)
@@ -105,7 +105,7 @@ fn mock_input(label: &str, placeholder: &str, p: &Palette) -> El {
 pub fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, info: &Guild, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let which = st.form.data.get(KEY)?.as_str()?;
     let splash = image(st, "splash", || info.splash.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_wide_url(b, "splashes", g, h, s))));
-    let head = header(store, st, g, info, p);
+    let head = header(store, st, g, info, p, acc);
     Some(if which == "page" { page(st, info, head, splash, p, acc) } else { modal(head, splash, p, acc) })
 }
 

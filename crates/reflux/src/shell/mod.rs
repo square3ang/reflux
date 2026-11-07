@@ -26,7 +26,7 @@ pub(crate) mod role_icon;
 pub mod expr;
 pub(crate) mod friends;
 mod guilds;
-mod markdown;
+pub(crate) mod markdown;
 mod members;
 pub mod members_page;
 mod menus;
@@ -732,6 +732,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         }
     }
     crate::settings::view_shell_modals(store, st, p, acc, &mut layer);
+    invite_embed::tip_layer(st, p, &mut layer);
     layer.extend(crate::settings::sudo::view(st, p, acc));
     layer.extend(upload::edit_modal(st, p, acc));
     layer.extend(switcher::view(store, st, p, acc));
