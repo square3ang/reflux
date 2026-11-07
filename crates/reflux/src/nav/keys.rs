@@ -80,8 +80,9 @@ pub fn label(a: Action) -> String {
 /// while recording"), and the first Tab with nothing focused turning on keyboard mode.
 // shortcut: a Tab inside a field moves focus without showing the intro.
 pub fn on_key(sh: &mut ShellState, k: &KeyEvent) -> bool {
-    // The popout closed some other way (a press outside): recording ends with it.
-    if sh.nav.recording.is_some_and(|i| !sh.popups.is_open(&editor_id(i))) {
+    // The popout closed some other way (the settings modal closed, a press outside): recording
+    // ends with it.
+    if sh.nav.recording.is_some_and(|i| sh.settings.is_none() || !sh.popups.is_open(&editor_id(i))) {
         sh.nav.recording = None;
     }
     if let Some(i) = sh.nav.recording {
@@ -134,6 +135,8 @@ fn dots<S: 'static>(id: String, menu: RowMenu, p: &Palette, acc: ShellAccess<S>)
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(t("More keybind options"))
+        .focusable(true)
+        .focus_ring(4.0, 0.0, p.focus_primary)
         .child(icon(&icons::DOTS_THREE_VERTICAL, 18.0).color(p.text_primary_muted).group_color(p.text_primary))
         .on_press(move |s: &mut S| {
             let sh = acc(s);
@@ -300,6 +303,9 @@ fn recorder<S: 'static>(st: &ShellState, i: usize, combo: Option<Combo>, p: &Pal
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(t("Edit keybind"))
+        .expanded(open)
+        .focusable(true)
+        .focus_ring(4.0, 0.0, p.focus_primary)
         .child(icon(&icons::PENCIL_SIMPLE_BOLD, 12.0).color(p.text_primary_muted))
         .child(inner)
         .on_press(move |s: &mut S| {
@@ -327,6 +333,15 @@ fn editor<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: 
         sh.popups.close();
         sh.nav.recording = None;
     };
+    // Escape while recording cancels the recording and keeps the editor open; a second Escape
+    // closes it (`KeybindEditorPopout`'s cancelRecording, then its onClose).
+    let escape = move |s: &mut S| {
+        let sh = acc(s);
+        if sh.nav.recording.take().is_some() {
+            return;
+        }
+        sh.popups.close();
+    };
     let inner = match (rec, combo) {
         (true, _) => text(t("Press a keybind…")).font(font(14.0, 600.0).lh(18.0)).color(p.status_danger),
         (false, Some(c)) => caps(&c, p),
@@ -344,6 +359,8 @@ fn editor<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: 
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(t("Record keybind"))
+        .focusable(true)
+        .focus_ring(4.0, 0.0, p.focus_primary)
         .child(icon(&icons::KEYBOARD_BOLD, 20.0).color(if rec { p.status_danger } else { p.text_primary_muted }))
         .child(inner)
         .on_press(move |s: &mut S| acc(s).nav.recording = Some(i));
@@ -381,8 +398,8 @@ fn editor<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: 
                 .child(text(t("Press a key to bind. Escape cancels.")).font(font(13.0, 400.0).lh(18.0)).color(p.text_secondary).wrap()),
         )
         .child(rbox)
-        .child(row().w_full().gap(8.0).center_y().child(row().grow(1.0).children(clear)).child(Button::new(t("Done")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("kb-done").on_press(close).el(p)))
-        .modal(true, close);
+        .child(row().w_full().gap(8.0).center_y().child(row().grow(1.0).children(clear)).child(Button::new(t("Done")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("kb-done").on_press(close).el(p).default_button()))
+        .modal(true, escape);
     layer.push(crate::ui::overlay::anchor(surface, &editor_id(i), crate::ui::Placement::Bottom, 8.0));
 }
 

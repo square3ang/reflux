@@ -63,6 +63,9 @@ impl<'a, S: 'static> Input<'a, S> {
         if let Some(l) = self.label {
             field = field.label(l);
         }
+        if let Some(e) = self.error {
+            field = field.invalid(true).description(e.to_string());
+        }
         if self.secure {
             field = field.secure();
         }
@@ -112,7 +115,7 @@ impl<'a, S: 'static> Input<'a, S> {
         let mut group = col().w_full().gap(6.0).child(boxed);
         if let Some(e) = self.error {
             group = group.child(
-                text(e).font(font(14.0, 400.0).lh(20.0)).color(mix(p.status_danger, p.text_primary, 78.0)).wrap(),
+                text(e).font(font(14.0, 400.0).lh(20.0)).color(mix(p.status_danger, p.text_primary, 78.0)).wrap().role("alert"),
             );
         }
         let mut fieldset = col().w_full().gap(4.0);

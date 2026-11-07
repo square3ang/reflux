@@ -81,6 +81,10 @@ impl<S: 'static> Modal<S> {
             .box_shadow(Shadow { x: 0.0, y: 20.0, blur: 48.0, spread: -8.0, color: rgba(0, 0, 0, 0.2), inset: false })
             .role("dialog")
             .label(self.title)
+            // The dialog itself is the initial Tab stop: opening it announces the title and
+            // Enter doesn't press the close button before the person has looked at it.
+            .focusable(true)
+            .no_focus_ring()
             .child(header)
             .child(col().w_full().grow(1.0).px(16.0).pb(16.0).children(self.body));
         if let Some(f) = self.footer {

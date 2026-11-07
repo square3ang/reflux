@@ -220,7 +220,7 @@ pub fn menu_slider<S: 'static>(key: String, label: &str, value: f32, min: f32, m
                     .child(text(label.to_string()).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).grow(1.0))
                     .child(text(shown).font(font(12.0, 500.0).lh(18.0)).color(p.text_tertiary)),
             )
-            .child(super::Slider::new(key, value, min, max).mini().on_change(on).el(p)),
+            .child(super::Slider::new(key, value, min, max).mini().label(label).on_change(on).el(p)),
     ))
 }
 
@@ -280,6 +280,12 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
         words = words.child(hint_text(h, p));
     }
     let mut r = row_shell(p, it.danger).key(format!("{menu}-{}", it.id)).child(words).role("menuitem").label(it.label.clone());
+    if let Some(h) = &it.hint {
+        r = r.description(h.clone());
+    }
+    if let Some(k) = it.shortcut.as_ref().filter(|_| crate::look::with(|l| l.menu_shortcuts)) {
+        r = r.shortcut_hint(k.clone());
+    }
     if let Some(h) = &it.hint {
         // Padding, the gap and the trailing icon around the hint.
         r = r.min_w(hint_width(h) + 2.0 * 9.0 + 8.0 + 18.0);

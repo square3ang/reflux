@@ -71,6 +71,7 @@ impl<'a, S: 'static> Select<'a, S> {
             .role("combobox")
             .expanded(open)
             .label(self.label.unwrap_or(self.placeholder))
+            .focus_ring(4.0, 0.0, p.focus_primary)
             .focusable(!self.disabled);
         if self.disabled {
             trigger = trigger.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
@@ -134,6 +135,7 @@ impl<'a, S: 'static> Select<'a, S> {
                 ))
                 .focus_group()
                 .role("listbox")
+                .label(self.label.unwrap_or(self.placeholder))
                 .modal(true, move |s: &mut S| access(s).close());
             layer.push(anchor(popup, self.id, Placement::BottomStart, 4.0));
         }

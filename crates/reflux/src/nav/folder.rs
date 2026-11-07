@@ -102,15 +102,18 @@ fn settings<S: 'static>(store: &Store, st: &ShellState, fid: Option<i64>, p: &Pa
     };
     let name = Input::new("folder-name", &form.name, move |s: &mut S| &mut acc(s).nav.folder_form.name).label("Folder name").placeholder(&auto).el(p);
     let preview = el().size(40.0, 40.0).radius(8.0).fill(if form.color == 0 { p.brand_primary_light } else { crate::shell::role_color(form.color) });
-    let swatches = row().gap(8.0).children(SWATCHES.iter().map(|&c| {
+    let swatches = row().gap(8.0).focus_group().role("radiogroup").label("Folder color").children(SWATCHES.iter().map(|&c| {
         let on = form.color == c;
         el().size(28.0, 28.0)
             .radius(6.0)
             .fill(crate::shell::role_color(c))
             .border(if on { 2.0 } else { 0.0 }, p.text_primary)
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("radio")
             .label(crate::guild::hex(c))
+            .checked(on)
+            .focusable(true)
+            .focus_selected(on)
             .on_press(move |s: &mut S| acc(s).nav.folder_form.color = c)
     }));
     let color = col()
@@ -145,7 +148,7 @@ fn settings<S: 'static>(store: &Store, st: &ShellState, fid: Option<i64>, p: &Pa
                 .child(Button::new("Delete folder").variant(ButtonVariant::Danger).on_press(delete).el(p))
                 .child(el().grow(1.0))
                 .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
-                .child(Button::new("Save").on_press(save).el(p)),
+                .child(Button::new("Save").on_press(save).el(p).default_button()),
         )
         .el(p)
 }

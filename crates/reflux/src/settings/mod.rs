@@ -412,6 +412,10 @@ pub(crate) fn frame<S: 'static>(label: &str, title: &str, head: Vec<El>, nav: El
         .clip_rounded(radius)
         .role("dialog")
         .label(label.to_string())
+        // The dialog is the initial Tab stop: opening it announces the title, and Enter does not
+        // press a sidebar tab before the person has looked at it.
+        .focusable(true)
+        .no_focus_ring()
         .child(sidebar)
         .child(content(title, body, p, &m, close.clone()))
         .modal(true, close);

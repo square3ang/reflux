@@ -91,6 +91,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             }
         };
         // `.inputWrapper`: 44 tall, radius 8, the read-only text, a divider and the 48px button.
+        // The whole field is the button: Tab reaches it, Space / Return opens the calendar.
         let field = row()
             .key(self.id)
             .w_full()
@@ -98,6 +99,12 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .radius(8.0)
             .fill(bg)
             .border(1.0, over(border, bg))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(self.label.unwrap_or(t("Select a date and time")))
+            .focusable(true)
+            .focus_ring(4.0, 0.0, p.focus_primary)
+            .on_press(toggle)
             .child(
                 el().grow(1.0).min_w(0.0).px(16.0).py(10.0).child(match &shown_text {
                     Some(v) => text(v.clone()).color(p.text_primary),
@@ -110,12 +117,9 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .w(48.0)
                     .h_full()
                     .center()
-                    .cursor(rune::Cursor::Pointer)
-                    .role("button")
-                    .label(t("Open date picker"))
                     .hover_group()
                     .child(icon(&icons::CALENDAR_BLANK, 18.0).color(p.text_tertiary).group_color(p.text_primary))
-                    .on_press(toggle),
+                    .inert(),
             );
         let mut c = col().w_full().gap(4.0);
         if let Some(l) = self.label {
@@ -130,10 +134,18 @@ impl<'a, S: 'static> DatePicker<'a, S> {
         // The popover: caption with prev/next, weekday row, the day grid, then the time row.
         let (first, last) = (self.min.map(|d| d.with_day(1).unwrap_or(d)), self.max.map(|d| d.with_day(1).unwrap_or(d)));
         let nav = |ic: &'static rune::Icon, key: &str, label: &str, to: NaiveDate, off: bool| {
-            let mut b = row().key(format!("{}-{key}", self.id)).size(28.0, 28.0).center().radius(6.0).role("button").label(label.to_string());
+            let mut b = row()
+                .key(format!("{}-{key}", self.id))
+                .size(28.0, 28.0)
+                .center()
+                .radius(6.0)
+                .role("button")
+                .label(label.to_string())
+                .focusable(!off)
+                .focus_ring(4.0, 0.0, p.focus_primary);
             b = b.child(icon(ic, 16.0).color(p.text_tertiary).group_color(p.text_primary)).hover_group();
             if off {
-                return b.opacity(0.3);
+                return b.opacity(0.3).disabled(true);
             }
             let open_at = open_at.clone();
             b.hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| open_at(s, to))
@@ -148,9 +160,10 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .child(text(month.format("%B %Y").to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
             .child(nav(&icons::CARET_RIGHT, "next", t("Next month"), add_months(month, 1), last.is_some_and(|l| month >= l)));
         let weekdays = row().children(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(|d| row().size(DAY, 28.0).center().child(text(t(d)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))));
-        let mut grid = col().child(weekdays);
-        for wk in weeks(month) {
-            grid = grid.child(row().children(wk.map(|d| {
+        let mut grid = col().child(weekdays).focus_group().role("grid").label(t("Select a date"));
+        for (w, wk) in weeks(month).into_iter().enumerate() {
+            grid = grid.child(row().children(wk.iter().enumerate().map(|(col, &day)| {
+                let d = day;
                 let label = d.day().to_string();
                 let n = label.len();
                 let (sel, outside) = (self.value == Some(d), d.month() != month.month());
@@ -161,15 +174,26 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                 if d == today && !sel {
                     num = num.spans(vec![Span::new(0, n).underline(p.brand_primary_foreground)]);
                 }
-                let mut b = row().key(format!("{}-{d}", self.id)).size(DAY - 4.0, DAY - 4.0).center().radius(6.0).role("button").child(num);
+                let mut b = row()
+                    .key(format!("{}-{d}", self.id))
+                    .size(DAY - 4.0, DAY - 4.0)
+                    .center()
+                    .radius(6.0)
+                    .role("button")
+                    .label(crate::desktop::time::medium_date(d, crate::i18n::locale()))
+                    .focusable(!off)
+                    .focus_selected(sel)
+                    .tab_index(if sel { 1 } else { 0 })
+                    .position_in_set(w * 7 + col + 1, 42)
+                    .child(num);
                 if sel {
                     b = b.fill(p.brand_primary);
                 }
                 if off {
-                    b = b.opacity(0.25).cursor(rune::Cursor::NotAllowed);
+                    b = b.opacity(0.25).cursor(rune::Cursor::NotAllowed).disabled(true);
                 } else if let Some(f) = &self.on_pick {
                     let f = f.clone();
-                    b = b.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| f(s, d));
+                    b = b.cursor(rune::Cursor::Pointer).focus_highlight(p.background_modifier_hover).on_press(move |s: &mut S| f(s, d));
                     if !sel {
                         b = b.hover(p.background_modifier_hover);
                     }

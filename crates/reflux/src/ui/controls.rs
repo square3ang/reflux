@@ -215,16 +215,19 @@ pub struct Slider<S: 'static> {
     mini: bool,
     disabled: bool,
     key: String,
+    label: Option<String>,
     on_change: Option<Rc<dyn Fn(&mut S, f32)>>,
 }
 
 impl<S: 'static> Slider<S> {
     pub fn new(key: impl Into<String>, value: f32, min: f32, max: f32) -> Self {
-        Self { value, min, max, step: 1.0, mini: false, disabled: false, key: key.into(), on_change: None }
+        Self { value, min, max, step: 1.0, mini: false, disabled: false, key: key.into(), label: None, on_change: None }
     }
     pub fn step(mut self, s: f32) -> Self { self.step = s; self }
     pub fn mini(mut self) -> Self { self.mini = true; self }
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
+    /// The accessible name; the key (an id) when unset.
+    pub fn label(mut self, l: impl Into<String>) -> Self { self.label = Some(l.into()); self }
     pub fn on_change(mut self, f: impl Fn(&mut S, f32) + 'static) -> Self { self.on_change = Some(Rc::new(f)); self }
 
     pub fn el(self, p: &Palette) -> El {
@@ -265,6 +268,7 @@ impl<S: 'static> Slider<S> {
             .child(el().grow(frac))
             .child(grab)
             .child(el().grow(1.0 - frac));
+        let label = self.label.clone().unwrap_or_else(|| self.key.clone());
         let mut ctl = row()
             .key(self.key)
             .w_full()
@@ -273,25 +277,30 @@ impl<S: 'static> Slider<S> {
             .center_y()
             .child(rail)
             .child(thumb_row)
+            .role("slider")
+            .label(label)
+            .focus_ring(4.0, 0.0, p.focus_primary)
             .range_value(self.value as f64, self.min as f64, self.max as f64)
             .range_step(self.step as f64)
             .hover_group();
         if self.disabled {
-            return ctl.opacity(0.55).disabled(true).role("slider");
+            return ctl.opacity(0.55).disabled(true);
         }
         if let Some(f) = self.on_change {
             let (min, max, step) = (self.min, self.max, self.step);
             let snap = move |v: f32| (((v - min) / step).round() * step + min).clamp(min, max);
             let value = self.value;
-            let g = f.clone();
+            let (g, end) = (f.clone(), f.clone());
             ctl = ctl
                 .cursor(rune::Cursor::Pointer)
                 .on_drag(move |s: &mut S, d, _| {
                     let t = ((d.x - thumb / 2.0) / (d.w - thumb).max(1.0)).clamp(0.0, 1.0);
                     f(s, snap(min + t * (max - min)));
                 })
-                .on_step(move |s: &mut S, delta, _| g(s, snap(value + delta as f32 * step)));
+                .on_step(move |s: &mut S, delta, _| g(s, snap(value + delta as f32 * step)))
+                // Home / End take the slider to its ends, as AppKit's do.
+                .on_step_limit(move |s: &mut S, max_end, _| end(s, if max_end { max } else { min }));
         }
-        ctl.role("slider")
+        ctl
     }
 }

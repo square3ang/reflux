@@ -183,8 +183,12 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         None => None,
     };
     // Shift on its own: the message action bar's full layout (`MessageActionBar` showFullActions).
+    // The Voice tab's push-to-talk recorder takes a modifier press as its key too.
     if let Key::Modifier { .. } = k.key {
         let Some(sh) = sh else { return false };
+        if push_to_talk(sh, k) {
+            return true;
+        }
         sh.shift_held = k.mods.shift;
         return false;
     }
@@ -204,9 +208,18 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 /// the Voice tab's key recorder.
 fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
     use crate::shell::voice::Op;
-    let key = format!("{:?}", k.key);
+    // The settings modal closed under the recorder: don't capture the next key silently.
+    if sh.voice.recording_key && sh.settings.is_none() {
+        sh.voice.recording_key = false;
+        return false;
+    }
+    let key = key_name(k);
     let v = &mut sh.voice;
     if v.recording_key {
+        // A modifier is recorded on its press; its release and auto-repeats are ignored.
+        if matches!(&k.key, Key::Modifier { pressed: false, .. }) {
+            return true;
+        }
         v.recording_key = false;
         if k.key != Key::Escape {
             v.settings.ptt_key = Some(key);
@@ -217,11 +230,24 @@ fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
     if !v.settings.ptt() || v.settings.ptt_key.as_deref() != Some(key.as_str()) {
         return false;
     }
+    // A modifier's release is handled by `on_key_up`; starting on it would hold forever.
+    if matches!(&k.key, Key::Modifier { pressed: false, .. }) {
+        return false;
+    }
     if !v.ptt_held {
         v.ptt_held = true;
         sh.intents.push(Intent::Voice(Op::PushToTalk(true)));
     }
     true
+}
+
+/// The stored name of an in-window key (the Voice tab's PTT setting): `format!("{:?}", Key)`,
+/// except a modifier loses its press state so its press and release compare equal.
+pub fn key_name(k: &KeyEvent) -> String {
+    match &k.key {
+        Key::Modifier { modifier, .. } => format!("Modifier {{ modifier: {modifier:?}, pressed: true }}"),
+        _ => format!("{:?}", k.key),
+    }
 }
 
 /// Runs a keybind; false when it did nothing (the key goes on).

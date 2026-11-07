@@ -769,7 +769,6 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     crate::desktop::nagbar::layer(st, p, acc, &mut layer);
     crate::guild::layer(store, st, p, acc, &mut layer);
     crate::social::layer(store, st, p, acc, &mut layer);
-    crate::nav::layer(store, st, p, acc, &mut layer);
     if let Some(ui) = &st.settings {
         crate::settings::view(store, st, ui, p, st.premium, acc, &mut layer);
         // The in-tab Quick CSS editor's completions, under its caret.
@@ -782,6 +781,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             layer.push(crate::quick_css_syntax::popup(&l, 0, p, edit).anchored("quick-css-caret", rune::Side::Bottom, rune::Align::Start, 2.0));
         }
     }
+    // Navigation overlays (the keybind list, keyboard intro, favorites and folder dialogs) sit
+    // above the settings modal: the keybind list opens from inside it.
+    crate::nav::layer(store, st, p, acc, &mut layer);
     crate::settings::view_shell_modals(store, st, p, acc, &mut layer);
     layer.extend(crate::settings::sudo::view(st, p, acc));
     layer.extend(upload::edit_modal(st, p, acc));
@@ -810,7 +812,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     badges::tip_layer(st, p, &mut layer);
     let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
         let sh = acc(s);
-        let key = format!("{:?}", k.key);
+        let key = crate::keybinds::key_name(k);
         if sh.voice.ptt_held && sh.voice.settings.ptt_key.as_deref() == Some(key.as_str()) {
             sh.voice.ptt_held = false;
             sh.intents.push(Intent::Voice(voice::Op::PushToTalk(false)));

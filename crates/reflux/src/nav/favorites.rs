@@ -162,6 +162,9 @@ pub fn rail_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         .role("button")
         .label("Favorites")
         .key("rail-favorites")
+        .focusable(true)
+        .focus_selected(selected)
+        .focus_ring(4.0, 0.0, p.focus_primary)
         .on_hover_change(move |s: &mut S, inside, _| acc(s).nav.hover_favorites = inside)
         .on_press(move |s: &mut S| select(acc(s)))
 }
@@ -181,6 +184,9 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         .role("button")
         .label("Open favorites menu")
         .key(HEADER_MENU)
+        .expanded(open)
+        .focusable(true)
+        .focus_ring(4.0, 0.0, p.focus_primary)
         .on_press(move |s: &mut S| acc(s).popups.toggle(HEADER_MENU))
         .child(icon(&icons::STAR_FILL, 16.0).color(p.text_primary))
         .child(text("Favorites").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
@@ -251,7 +257,10 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
     }
     list = list.child(el().h(10.0 + dim::LAYOUT_USER_AREA_HEIGHT + dim::FOOTER_BOX_INSET + 1.0 + dim::SPACING_2));
     // `FavoritesChannelListContextMenu` on the list's empty space.
-    let list = list.on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(LIST_MENU, [at.x, at.y]));
+    let list = list
+        .focus_group()
+        .role("list")
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(LIST_MENU, [at.x, at.y]));
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("favorites-channels").child(list);
     col().w(dim::LAYOUT_SIDEBAR_WIDTH).h_full().min_h(0.0).fill(p.background_secondary).child(header).child(scroller(viewport, false, p))
 }
@@ -286,6 +295,9 @@ fn fav_row<S: 'static>(store: &Store, st: &ShellState, c: &reflux_model::Channel
         .cursor(rune::Cursor::Pointer)
         .role("link")
         .label(shown.clone())
+        .focusable(true)
+        .focus_selected(selected)
+        .focus_highlight(p.surface_interactive_hover_bg)
         .hover_group()
         .child(el().size(24.0, 24.0).child(face).child(badge))
         .child(text(shown).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_chat }).truncate().grow(1.0).shrink())
@@ -343,6 +355,9 @@ fn category_row<S: 'static>(st: &ShellState, c: &Category, collapsed: bool, rows
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(c.name.clone())
+        .expanded(!collapsed)
+        .focusable(true)
+        .focus_highlight(p.surface_interactive_hover_bg)
         .on_press(move |s: &mut S| {
             let id = id.clone();
             update_mine(acc(s), |a| toggle_collapsed(a, &id));
@@ -551,7 +566,7 @@ fn edit_modal<S: 'static>(st: &ShellState, e: Edit, p: &Palette, acc: ShellAcces
     let footer = row()
         .gap(8.0)
         .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close).el(p))
-        .child(Button::new(action).key("favorite-edit-save").disabled(blank && !matches!(e, Edit::Nickname(_))).on_press(save).el(p));
+        .child(Button::new(action).key("favorite-edit-save").disabled(blank && !matches!(e, Edit::Nickname(_))).on_press(save).el(p).default_button());
     Modal::new(title, close).body(field).footer(footer).el(p)
 }
 
