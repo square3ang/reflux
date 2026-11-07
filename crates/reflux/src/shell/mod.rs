@@ -45,6 +45,7 @@ pub mod gifv;
 pub mod voice_message;
 pub mod system_msg;
 pub mod queue;
+pub mod typing;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
@@ -251,8 +252,9 @@ pub struct ShellState {
     pub expr: expr::Expr,
     /// The instance's GIF provider name (`Klipy`); empty when GIFs are off.
     pub gif_provider: String,
-    /// When the last typing notice went out, and for which channel (`TypingSendThrottle`).
-    pub typing_sent: Option<(Snowflake, u64)>,
+    /// Our typing notice slot (`TypingSendSlot`), and the main draft as last seen.
+    pub typing: Option<typing::Slot>,
+    pub typing_seen: Option<(Snowflake, String)>,
     /// The message list shows its newest row (read states may be acked).
     pub at_bottom: bool,
     /// Where the red NEW line stays after the channel was acked while open (Fluxer's sticky
@@ -378,7 +380,8 @@ impl Default for ShellState {
             confirm_delete: None,
             expr: expr::Expr::default(),
             gif_provider: String::new(),
-            typing_sent: None,
+            typing: None,
+            typing_seen: None,
             at_bottom: true,
             sticky_unread: None,
             hold_ack: None,
@@ -534,6 +537,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         changed = true;
     }
     changed |= media_poll(store, st, tx);
+    typing::tick(store, st, tx);
     // A jump to a loaded message only scrolls; the runtime loads the others first.
     st.intents.retain(|i| match i {
         Intent::JumpTo { channel, message } if store.messages(*channel).iter().any(|m| m.id == *message) => {
@@ -633,6 +637,9 @@ pub fn first_channel(store: &Store, guild: Snowflake) -> Option<Snowflake> {
     store.channel_groups(guild).iter().flat_map(|g| g.text.iter()).find(|c| c.kind != ChannelType::GUILD_LINK).map(|c| c.id)
 }
 
+/// The window-filling shell column; its last-frame size stands in for the viewport.
+pub const BODY_KEY: &str = "shell-body";
+
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     // `WatchStreamOverlay` in full-window mode.
@@ -679,7 +686,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(crate::desktop::notices::instance(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::desktop::notices::premium(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
+    let body = col().key(BODY_KEY).w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(crate::desktop::notices::instance(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::desktop::notices::premium(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
     crate::compose::floating_toolbar(st, p, acc, &mut layer);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);

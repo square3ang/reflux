@@ -1489,8 +1489,8 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .items_start()
         .cursor(rune::Cursor::Text)
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
-        // shortcut: a fixed 15-line cap before the field scrolls; Fluxer caps at half the window.
-        .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(15.0 * 22.0 + 5.0).scroll(ScrollSpec { stick_bottom: true }).child(field))
+        // `max-height: 50svh`: the field scrolls past half the window.
+        .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).child(field))
         .child(
             row()
                 .gap(dim::COMPOSER_ACTION_GAP)
@@ -1602,16 +1602,15 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
         st.cooldowns.insert(channel, st.now_ms + slowmode as u64 * 1000);
     }
     st.composer.clear();
-    st.typing_sent = None; // `handleOwnMessageSent`
+    st.typing = None; // `handleOwnMessageSent`
     st.ac_dismissed = None;
 }
 
 type Ac = (autocomplete::Trigger, Vec<autocomplete::Completion>);
 
 /// The composer's own keys: the autocomplete's Up/Down/Tab/Enter/Escape when it is open, Escape
-/// drops the reply, Up in an empty composer edits the last own message, and typing sends a
-/// typing notice at most every 8 s (`TypingSendThrottle`).
-// shortcut: no 1.5 s send delay or stop-typing on clear; the notice goes out at once.
+/// drops the reply, Up in an empty composer edits the last own message. The main composer's
+/// typing notices come from [`super::typing::tick`]; a thread panel's start on a key press.
 fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, last_own: Option<&Message>, ac: Option<&Ac>) -> bool {
     if let Some((t, items)) = ac {
         let n = items.len();
@@ -1649,18 +1648,14 @@ fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, las
         },
         Key::Text(_) if !k.mods.cmd => {
             st.ac_index = 0;
-            if st.typing_sent.is_none_or(|(c, at)| c != channel || st.now_ms.saturating_sub(at) >= TYPING_THROTTLE_MS) {
-                st.typing_sent = Some((channel, st.now_ms));
-                st.intents.push(Intent::Typing(channel));
+            if st.channel != Some(channel) {
+                super::typing::start(st, channel);
             }
             false
         }
         _ => false,
     }
 }
-
-/// `TYPING_ROLLING_THROTTLE_MS`.
-const TYPING_THROTTLE_MS: u64 = 8000;
 
 /// `ChannelReplyBar`: "Replying to **name**", the @ ON/OFF mention toggle and a close button, in
 /// the composer's action stack (`.composerActionStack`).
@@ -1796,13 +1791,7 @@ mod tests {
         let key = |k: Key| rune::KeyEvent { key: k, mods: Default::default() };
         let mut st = ShellState { now_ms: 10_000, ..Default::default() };
         assert!(!composer_key(&mut st, ch, &key(Key::Text("a".into())), None, None), "typing still reaches the field");
-        st.now_ms += TYPING_THROTTLE_MS - 1;
-        composer_key(&mut st, ch, &key(Key::Text("b".into())), None, None);
-        assert_eq!(st.intents, [Intent::Typing(ch)], "one notice per 8 s");
-        st.now_ms += 1;
-        composer_key(&mut st, ch, &key(Key::Text("c".into())), None, None);
-        assert_eq!(st.intents.len(), 2);
-
+        assert_eq!(st.typing.map(|t| t.channel), Some(ch), "a thread panel schedules its notice");
         let mut mine = msg(9, 1, "2026-11-06T12:00:00Z");
         mine.content = "hi".into();
         assert!(composer_key(&mut st, ch, &key(Key::Up), Some(&mine), None));
