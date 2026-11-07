@@ -1,7 +1,8 @@
 //! Account tiers (`AccountTierRules.ts`, `AccountGates.ts`), their presentation
 //! (`AccountGatePresentation.tsx`), the claim account flow (`ClaimAccountModal.tsx`: the
-//! username variant and the account email flow) and the "My text didn't go through" help
-//! (`MessagingPausedHelpModal.tsx`).
+//! username variant with its recovery kit, the account email flow, the legacy
+//! `EmailClaimAccountModal` and `offerAuthenticatorCalmly`) and the "My text didn't go through"
+//! help (`MessagingPausedHelpModal.tsx`).
 
 use reflux_model::User;
 use reflux_store::Store;
@@ -191,10 +192,31 @@ pub fn unclaimed_nagbar(need: Option<Need>) -> (&'static str, &'static str) {
 const CLAIM: &str = "claim-account";
 const CLAIM_SEND: &str = "claim-account-send";
 
+/// The legacy flow's request in flight under `CLAIM` (`EmailClaimAccountModal`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Step {
+    #[default]
+    None,
+    /// `POST /users/@me/email-change/start`: the ticket and original proof.
+    Start,
+    /// `request-new`: the code goes to the new address.
+    Request,
+    /// `verify-new`: the code for an email token.
+    Verify,
+    /// `PATCH /users/@me` with the token and the password.
+    Apply,
+}
+
 #[derive(Default)]
 pub struct Claim {
     /// `UsernameClaimAccountModal` (username sign-in instances).
     pub username_mode: bool,
+    /// `EmailClaimAccountModal`: the server reports no account tier (`reportsAccountTier`).
+    pub legacy: bool,
+    pub ticket: Option<String>,
+    pub proof: Option<String>,
+    pub email_token: Option<String>,
+    pub step: Step,
     /// The code step of the email flow.
     pub verify: bool,
     /// `reason`: the gate that opened it.
@@ -226,6 +248,12 @@ pub fn open_claim(store: &Store, sh: &mut ShellState, reason: Option<String>) {
     let me = super::devtools::me(store, sh).map(|m| m.into_owned());
     let existing_email = me.as_ref().filter(|m| need(m, &cfg) == Some(Need::SetPassword)).and_then(|m| m.email.clone());
     let start_with_code = me.as_ref().is_some_and(|m| tier(m, &cfg) == Tier::Unverified);
+    if !cfg.username && me.as_ref().is_some_and(|m| m.account_tier.is_none() && m.claimed.is_none()) {
+        let mut c = Claim { legacy: true, reason, ..Default::default() };
+        c.email.focused = true;
+        sh.account_gate.claim = Some(c);
+        return;
+    }
     let mut c = Claim {
         username_mode: cfg.username,
         verify: start_with_code && !cfg.username,
@@ -267,6 +295,55 @@ fn finish(sh: &mut ShellState, toast: &str) {
     crate::desktop::toast(&mut sh.desktop, t(toast), true);
 }
 
+fn fetch(sh: &mut ShellState, key: &str, method: reqwest::Method, path: &str, body: Value) {
+    sh.intents.push(Intent::Fetch { key: key.into(), method, path: path.into(), body: Some(body) });
+}
+
+/// The legacy flow's next request after `step` answered `v`.
+fn legacy_next(sh: &mut ShellState, step: Step, v: &Value) {
+    let now = sh.now_ms;
+    let Some(c) = sh.account_gate.claim.as_mut() else { return };
+    let s = |k: &str| v[k].as_str().map(str::to_string);
+    match step {
+        Step::Start => {
+            (c.ticket, c.proof) = (s("ticket"), s("original_proof"));
+            if v["resend_available_at"].is_string() {
+                c.resend_at = resend_at(v, now);
+            }
+            let body = json!({ "ticket": c.ticket, "new_email": c.email.text.trim(), "original_proof": c.proof, "new_password": c.password.text });
+            (c.step, c.busy) = (Step::Request, true);
+            fetch(sh, CLAIM, reqwest::Method::POST, "/users/@me/email-change/request-new", body);
+        }
+        Step::Request => {
+            c.resend_at = if v["resend_available_at"].is_string() { resend_at(v, now) } else { 0 };
+            (c.verify, c.code, c.error) = (true, TextEdit::default(), None);
+            c.code.focused = true;
+            crate::desktop::toast(&mut sh.desktop, t("Verification code sent"), true);
+        }
+        Step::Verify => {
+            c.email_token = s("email_token");
+            let body = json!({ "email_token": c.email_token, "new_password": c.password.text });
+            (c.step, c.busy) = (Step::Apply, true);
+            fetch(sh, CLAIM, reqwest::Method::PATCH, "/users/@me", body);
+        }
+        Step::Apply => finish(sh, "Account claimed successfully"),
+        Step::None => {}
+    }
+}
+
+/// `offerAuthenticatorCalmly`: once per account on this device, unless it has a passkey.
+fn offer_authenticator(store: &Store, sh: &mut ShellState) {
+    let Some(me) = store.me.as_ref() else { return };
+    if sh.prefs.authenticator_offered.contains(&me.base.id) || me.authenticator_types.contains(&reflux_model::AuthenticatorType::WEBAUTHN) {
+        return;
+    }
+    let id = me.base.id;
+    crate::shell::expr::image_search::save_prefs(sh, |p| {
+        p.authenticator_offered.insert(id);
+    });
+    sh.account_gate.offer = true;
+}
+
 /// Answers to the claim requests.
 pub fn poll(store: &Store, sh: &mut ShellState) -> bool {
     let mut changed = false;
@@ -288,21 +365,40 @@ pub fn poll(store: &Store, sh: &mut ShellState) -> bool {
             c.busy = false;
         }
         match (key, r) {
+            (CLAIM_SEND, Fetched::Done(_)) if c.legacy => {
+                c.resend_at = now + 30_000;
+                crate::desktop::toast(&mut sh.desktop, t("Code resent"), true);
+            }
             (CLAIM_SEND, Fetched::Done(v)) => c.resend_at = resend_at(&v, now),
             (_, Fetched::Failed(e)) => {
                 let field = if c.verify { "code" } else if c.username_mode { "username" } else { "email" };
                 c.error = Some((field, message(&e)));
                 c.resent = false;
+                c.step = Step::None;
             }
-            (_, Fetched::Done(v)) if c.username_mode => {
-                let _ = v;
+            (_, Fetched::Done(v)) if c.legacy => {
+                let step = std::mem::take(&mut c.step);
+                legacy_next(sh, step, &v);
+            }
+            (_, Fetched::Done(_)) if c.username_mode => {
+                // `createRecoveryKitWithPasswordAndOpen` when a password was set.
+                let password = std::mem::take(&mut c.password.text);
                 finish(sh, "Account claimed successfully");
+                if !password.is_empty() {
+                    sh.account_gate.recovery_kit = true;
+                    sh.form.error = None;
+                    sh.api(reqwest::Method::POST, "/users/@me/recovery-kit", Some(json!({ "password": password })), crate::guild::Then::Keep("m.kit".into()));
+                }
             }
-            (_, Fetched::Done(_)) if c.verify => finish(sh, "Email confirmed"),
+            (_, Fetched::Done(_)) if c.verify => {
+                finish(sh, "Email confirmed");
+                offer_authenticator(store, sh);
+            }
             (_, Fetched::Done(v)) => {
                 if v["next_step"].as_str().unwrap_or("none") == "none" {
                     let toast = if c.existing_email.is_none() { "Email added" } else { "Password set" };
                     finish(sh, toast);
+                    offer_authenticator(store, sh);
                 } else {
                     (c.verify, c.resend_at, c.error) = (true, resend_at(&v, now), None);
                     c.code = TextEdit::default();
@@ -321,6 +417,27 @@ fn submit(sh: &mut ShellState) {
         return;
     }
     c.error = None;
+    if c.legacy {
+        let (step, path, method, body) = if !c.verify {
+            if c.email.text.trim().is_empty() || c.password.text.is_empty() {
+                return;
+            }
+            match (&c.ticket, &c.proof) {
+                (Some(ticket), Some(proof)) => (Step::Request, "/users/@me/email-change/request-new", reqwest::Method::POST, json!({ "ticket": ticket, "new_email": c.email.text.trim(), "original_proof": proof, "new_password": c.password.text })),
+                _ => (Step::Start, "/users/@me/email-change/start", reqwest::Method::POST, json!({})),
+            }
+        } else if let Some(token) = &c.email_token {
+            (Step::Apply, "/users/@me", reqwest::Method::PATCH, json!({ "email_token": token, "new_password": c.password.text }))
+        } else {
+            if c.code.text.trim().is_empty() || c.password.text.is_empty() {
+                return;
+            }
+            (Step::Verify, "/users/@me/email-change/verify-new", reqwest::Method::POST, json!({ "ticket": c.ticket, "code": c.code.text.trim(), "original_proof": c.proof }))
+        };
+        (c.step, c.busy) = (step, true);
+        fetch(sh, CLAIM, method, path, body);
+        return;
+    }
     let (path, method, body) = if c.username_mode {
         if c.password.text != c.confirm.text {
             c.error = Some(("confirm", t("Passwords do not match").into()));
@@ -357,7 +474,34 @@ pub fn claim_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
     let err = |f: &str| c.error.as_ref().filter(|(k, _)| *k == f).map(|(_, m)| m.as_str());
     let go = move |s: &mut S| submit(acc(s));
     let mut body = col().w_full().gap(16.0);
-    let (title, footer) = if c.username_mode {
+    let password = |key: &'static str| Input::new(key, &c.password, move |s: &mut S| -> &mut TextEdit { &mut claim_mut(acc(s)).password }).label(t("Password")).secure().placeholder(&"•".repeat(32)).error(err("password")).el(p);
+    let (title, footer) = if c.legacy {
+        // `EmailClaimAccountModal`: collect, then verify.
+        let cancel = Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p);
+        let footer = if c.verify {
+            let left = c.resend_at.saturating_sub(st.now_ms).div_ceil(1000);
+            let label = if left > 0 { tf("Resend ({resendSecondsRemaining}s)", &[("resendSecondsRemaining", &left.to_string())]) } else { t("Resend").to_string() };
+            let resend = Button::new(label).disabled(left > 0 || c.sending || c.busy).key("claim-resend").on_press(move |s: &mut S| {
+                let sh = acc(s);
+                let Some(c) = sh.account_gate.claim.as_mut() else { return };
+                let Some(ticket) = c.ticket.clone() else { return };
+                (c.sending, c.error) = (true, None);
+                fetch(sh, CLAIM_SEND, reqwest::Method::POST, "/users/@me/email-change/resend-new", json!({ "ticket": ticket }));
+            });
+            body = body
+                .child(desc(t("Enter the code we sent to your email to confirm it. Your password will be set once the code is confirmed.").into()))
+                .child(Input::new("claim-code", &c.code, move |s: &mut S| -> &mut TextEdit { &mut claim_mut(acc(s)).code }).label(t("Verification code")).placeholder("XXXX-XXXX").error(err("code")).el(p))
+                .child(password("claim-password-2"));
+            row().gap(8.0).child(cancel).child(resend.el(p)).child(Button::new(t("Claim account")).submitting(c.busy).key("claim-submit").on_press(go).el(p))
+        } else {
+            body = body
+                .child(desc(t("Claim your account by adding an email and password. We will send a verification code to confirm your email before finishing.").into()))
+                .child(Input::new("claim-email", &c.email, move |s: &mut S| -> &mut TextEdit { &mut claim_mut(acc(s)).email }).label(t("Email")).placeholder("you@example.com").error(err("email")).el(p))
+                .child(password("claim-password"));
+            row().gap(8.0).child(cancel).child(Button::new(t("Send code")).submitting(c.busy).key("claim-submit").on_press(go).el(p))
+        };
+        (t("Claim your account"), footer)
+    } else if c.username_mode {
         body = body
             .children(c.reason.clone().map(desc))
             .child(desc(t("Claim your account by choosing a username and password. You sign in with them, so pick ones you will remember.").into()))
@@ -432,6 +576,44 @@ pub fn claim_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
     Some(Modal::new(title, close).body(body).footer(footer).el(p))
 }
 
+/// The kit made after a username claim (`createRecoveryKitWithPasswordAndOpen`): over the app,
+/// or a toast when it can't be made.
+pub fn recovery_kit<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    (st.account_gate.recovery_kit && st.settings.is_none()).then(|| crate::settings::recovery_kit::kit(store, st, p, acc))
+}
+
+/// Drops the kit with Fluxer's toast when creating it failed.
+pub fn poll_kit(sh: &mut ShellState) -> bool {
+    if !sh.account_gate.recovery_kit || sh.form.data.contains_key("m.kit") || sh.form.error.is_none() {
+        return false;
+    }
+    sh.account_gate.recovery_kit = false;
+    sh.form.error = None;
+    crate::desktop::toast(&mut sh.desktop, t("Couldn't create your recovery kit. You can create one later in your account settings."), false);
+    true
+}
+
+/// `AuthenticatorOfferModal`: Add passkey runs `startPasskeyRegistration` from the Account tab.
+pub fn offer_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    if !st.account_gate.offer {
+        return None;
+    }
+    let close = move |s: &mut S| acc(s).account_gate.offer = false;
+    let add = move |s: &mut S| {
+        let sh = acc(s);
+        sh.account_gate.offer = false;
+        sh.open_settings(Some("account_security"));
+        sh.open_account_modal(crate::settings::AccountModal::NamePasskey);
+        sh.api(reqwest::Method::POST, "/users/@me/mfa/webauthn/credentials/registration-options", Some(json!({})), crate::guild::Then::Keep("m.passkey_options".into()));
+    };
+    let body = text(t("Add a passkey to sign in with your fingerprint, face or screen lock. You can also do this later in settings.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
+    let footer = row()
+        .gap(8.0)
+        .child(Button::new(t("Not now")).variant(ButtonVariant::Secondary).key("offer-not-now").on_press(close).el(p))
+        .child(Button::new(t("Add passkey")).key("offer-add").on_press(add).el(p));
+    Some(Modal::new(t("Sign in faster next time"), close).body(col().w_full().child(body)).footer(footer).el(p))
+}
+
 // ---- Messaging paused ---------------------------------------------------------------------------
 
 pub const SUPPORT_EMAIL: &str = "support@fluxer.com";
@@ -493,6 +675,10 @@ pub struct Ui {
     pub was_connected: bool,
     /// A nagbar's confirmation modal.
     pub bar_confirm: Option<crate::desktop::top_bars::Confirm>,
+    /// The recovery kit made right after a username claim, shown over the app.
+    pub recovery_kit: bool,
+    /// `AuthenticatorOfferModal` is up.
+    pub offer: bool,
 }
 
 #[cfg(test)]

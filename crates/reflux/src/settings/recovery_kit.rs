@@ -121,7 +121,7 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
 }
 
 /// `RecoveryKitModal`.
-fn kit<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+pub(crate) fn kit<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).close_account_modals();
     let Some(k) = st.form.data.get("m.kit").cloned() else {
         let msg = match &st.form.error {

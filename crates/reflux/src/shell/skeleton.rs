@@ -7,8 +7,6 @@ use rune::{Color, El, col, el, row};
 
 use crate::theme::{Palette, dim};
 
-// shortcut: skeletons are static: no 3.2 s shimmer sweep (Fluxer's reduced-motion look) and no profile pulse.
-
 /// `SkeletonEmphasis`: the `--skeleton-opacity` of a block.
 #[derive(Clone, Copy)]
 enum Emphasis {
@@ -17,23 +15,52 @@ enum Emphasis {
     Muted,
 }
 
-fn tone(p: &Palette, e: Emphasis) -> Color {
-    let o = match e {
+fn opacity(e: Emphasis) -> f32 {
+    match e {
         Emphasis::Strong => 0.55,
         Emphasis::Default => 0.45,
         Emphasis::Muted => 0.35,
-    };
+    }
+}
+
+fn tone(p: &Palette, e: Emphasis) -> Color {
     let c = p.background_modifier_accent;
-    Color { a: c.a * o, ..c }
+    Color { a: c.a * opacity(e), ..c }
+}
+
+/// `.skeleton`: the accent fill at the emphasis' opacity with the 3.2 s `skeleton-shimmer`:
+/// a 105° band of 7% `--text-primary`, twice the block's width, swept from `-50%` to `150%`
+/// (right to left). Reduced motion drops the band, as Fluxer does.
+fn block(b: El, radius: f32, e: Emphasis, p: &Palette) -> El {
+    let b = b.radius(radius).fill(tone(p, e));
+    if crate::look::reduced_motion() {
+        return b;
+    }
+    let peak = Color { a: 0.07 * opacity(e), ..p.text_primary };
+    let clear = Color { a: 0.0, ..peak };
+    let band = el()
+        .pin(Some(0.0), Some(0.0), None, Some(0.0))
+        .w_frac(2.0)
+        .linear_gradient(105f32.to_radians(), [(0.0, clear), (0.5, peak), (1.0, clear)])
+        // `background-position` -50% -> 150% of (block - image) moves the 2x-wide image's left
+        // edge from +1/2 to -3/2 block widths: +1/4 to -3/4 of its own width.
+        .looping(rune::LoopSpec::slide(3.2, [0.25, 0.0], [-0.75, 0.0]).easing(rune::Easing::LINEAR))
+        .inert();
+    b.clip_rounded(radius).child(band)
 }
 
 /// `SkeletonLine`: a pill `frac` of its row wide.
 fn line(frac: f32, h: f32, e: Emphasis, p: &Palette) -> El {
-    el().w_frac(frac / 100.0).h(h).radius(h / 2.0).fill(tone(p, e))
+    block(el().w_frac(frac / 100.0).h(h), h / 2.0, e, p)
+}
+
+/// A fixed-size pill (`SkeletonLine` / `SkeletonCircle`) for other skeletons.
+pub(crate) fn pill(w: f32, h: f32, muted: bool, p: &Palette) -> El {
+    block(el().size(w, h), h / 2.0, if muted { Emphasis::Muted } else { Emphasis::Default }, p)
 }
 
 fn circle(size: f32, p: &Palette) -> El {
-    el().size(size, size).radius(size / 2.0).fill(tone(p, Emphasis::Default))
+    block(el().size(size, size), size / 2.0, Emphasis::Default, p)
 }
 
 /// `createSkeletonRandomFromKey`: FNV-1a over the key seeding a xorshift32.
@@ -110,7 +137,7 @@ pub fn messages(channel: Snowflake, compact: bool, p: &Palette) -> El {
     let groups = specs(&channel.to_string(), compact, spacing, 800.0);
     let n = groups.len();
     let pad_x = if compact { dim::MESSAGE_COMPACT_HORIZONTAL_PADDING } else { dim::CHAT_HORIZONTAL_PADDING_DEFAULT };
-    let attachment = |a: Option<(u32, u32)>, indent: f32| a.map(|(w, h)| row().pt(8.0).pl(indent).child(el().size(w as f32, h as f32).radius(8.0).fill(tone(p, Emphasis::Muted))));
+    let attachment = |a: Option<(u32, u32)>, indent: f32| a.map(|(w, h)| row().pt(8.0).pl(indent).child(block(el().size(w as f32, h as f32), 8.0, Emphasis::Muted, p)));
     let rows = groups.into_iter().enumerate().map(|(i, g)| {
         let mut group = col().w_full();
         if compact {
@@ -165,8 +192,15 @@ pub fn forced(o: &super::devtools::Options) -> bool {
     o.force_loading_skeleton && !o.bypass_loading_skeleton
 }
 
+/// The booting screen: only the skeleton (Fluxer doesn't mount the app behind it), which
+/// fades out over the app when it goes (`.containerExiting`, `useLoadingSkeletonRetention`).
+pub fn screen(p: &Palette) -> El {
+    rune_kit::root(el().w_full().h_full().fill(p.background_tertiary), vec![app(p).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).transition(rune::Transition::asymmetric(rune::Transition::none(), rune::Transition::opacity()))])
+}
+
 /// `AppSkeleton`: the rail, a channel sidebar, the chat column and the user area, shown
 /// until the first READY.
+// shortcut: fixed rail / sidebar / member shapes; no `SkeletonLayoutMemory` of the last layout. Port it if the jump on READY matters.
 pub fn app(p: &Palette) -> El {
     let rail = col()
         .w(dim::LAYOUT_GUILD_LIST_WIDTH)
@@ -174,8 +208,8 @@ pub fn app(p: &Palette) -> El {
         .pt(12.0)
         .gap(dim::GUILD_LIST_ITEM_GAP + 4.0)
         .items_center()
-        .child(el().size(dim::GUILD_LIST_ITEM_BOX_SIZE, dim::GUILD_LIST_ITEM_BOX_SIZE).radius(16.0).fill(tone(p, Emphasis::Strong)))
-        .child(el().w(32.0).h(2.0).radius(1.0).fill(tone(p, Emphasis::Muted)))
+        .child(block(el().size(dim::GUILD_LIST_ITEM_BOX_SIZE, dim::GUILD_LIST_ITEM_BOX_SIZE), 16.0, Emphasis::Strong, p))
+        .child(block(el().w(32.0).h(2.0), 1.0, Emphasis::Muted, p))
         .children((0..7).map(|_| circle(dim::GUILD_LIST_ITEM_BOX_SIZE, p)));
     let mut r = Rng::from_key("app-skeleton");
     let channels = (0..14).map(|i| {
@@ -183,7 +217,7 @@ pub fn app(p: &Palette) -> El {
         if i % 6 == 0 {
             row().w_full().h(28.0).pt(12.0).px(8.0).center_y().child(line(w * 0.6, 10.0, Emphasis::Muted, p))
         } else {
-            row().w_full().h(34.0).px(8.0).gap(8.0).center_y().child(el().size(20.0, 20.0).radius(4.0).fill(tone(p, Emphasis::Muted))).child(line(w, 12.0, Emphasis::Default, p))
+            row().w_full().h(34.0).px(8.0).gap(8.0).center_y().child(block(el().size(20.0, 20.0), 4.0, Emphasis::Muted, p)).child(line(w, 12.0, Emphasis::Default, p))
         }
     });
     let user_area = row()
@@ -203,7 +237,7 @@ pub fn app(p: &Palette) -> El {
         .child(el().w_full().h(1.0).fill(p.skeleton_chrome_border_color))
         .child(col().w_full().grow(1.0).min_h(0.0).px(8.0).pt(8.0).clip_rounded(0.0).children(channels))
         .child(user_area);
-    let header = row().w_full().h(dim::LAYOUT_HEADER_HEIGHT).px(16.0).gap(8.0).center_y().child(el().size(24.0, 24.0).radius(6.0).fill(tone(p, Emphasis::Muted))).child(line(18.0, 14.0, Emphasis::Strong, p));
+    let header = row().w_full().h(dim::LAYOUT_HEADER_HEIGHT).px(16.0).gap(8.0).center_y().child(block(el().size(24.0, 24.0), 6.0, Emphasis::Muted, p)).child(line(18.0, 14.0, Emphasis::Strong, p));
     let composer = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).child(el().w_full().h(dim::FOOTER_BOX_HEIGHT).radius(dim::FOOTER_BOX_RADIUS).fill(p.background_textarea));
     let chat = col()
         .grow(1.0)
@@ -258,10 +292,18 @@ pub fn profile_popout(border: Color, p: &Palette) -> El {
         .clip_rounded(6.0)
         .role("status")
         .label(crate::i18n::t("Loading profile"))
-        .child(header)
-        .child(content)
-        .child(footer)
+        .child(col().w_full().grow(1.0).min_h(0.0).cycle(PULSE).child(header).child(content).child(footer))
 }
+
+/// The popout's pulse: opacity 1 → 0.65 → 1 over 1.4 s, ease-in-out each way (sampled at
+/// eighths); reduced motion holds it at 1.
+const PULSE: rune::Cycle = rune::Cycle {
+    period: 1.4,
+    phase: 0.0,
+    stops: &[(0.0, 1.0), (0.125, 0.955), (0.25, 0.825), (0.375, 0.695), (0.5, 0.65), (0.625, 0.695), (0.75, 0.825), (0.875, 0.955), (1.0, 1.0)],
+    still: 1.0,
+    fps: 30.0,
+};
 
 #[cfg(test)]
 mod tests {

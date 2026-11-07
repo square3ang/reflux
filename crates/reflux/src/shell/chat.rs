@@ -55,15 +55,26 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
             Some(gate) => vec![gate],
             None => {
                 let mut v = vec![messages(store, st, c, p, acc, layer, false)];
-                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main))] });
+                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).or_else(|| super::barrier::follow(store, c, p, acc)).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main))] });
                 v
             }
         })
-        // Files dragged in from other apps join the tray.
-        .on_drop_files(move |s: &mut S, files, _| {
-            let st = acc(s);
-            st.drop_hover = false;
-            super::upload::add_paths(st, files);
+        // Files dragged in from other apps join the tray (`UploadManager.onDrop`).
+        .on_drop_files({
+            let (send, attach) = (super::gating::can_send(store, st, c), super::gating::can_attach(store, st, c));
+            move |s: &mut S, files, _| {
+                let st = acc(s);
+                st.drop_hover = false;
+                if !send {
+                    return;
+                }
+                if !attach {
+                    let images = !files.is_empty() && files.iter().all(|f| super::upload::content_type(&f.to_string_lossy()).starts_with("image/"));
+                    super::gating::deny_attach(st, images, send);
+                } else {
+                    super::upload::add_paths(st, files);
+                }
+            }
         })
         .on_drop_hover(move |s: &mut S, over, _| acc(s).drop_hover = over);
     if st.drop_hover {
@@ -555,6 +566,17 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     }
     let more = store.messages.get(&c.id).is_some_and(|w| w.has_more_before);
     let newer = store.messages.get(&c.id).is_some_and(|w| w.has_more_after);
+    // `ChannelMessages`' head and tail `ScrollFillerSkeleton`s while older or newer pages exist
+    // (the head one with its 16px `.fillerBuffer`); seeing one loads that page.
+    let compact = store.settings.message_display_compact;
+    let head = more && !rows.is_empty();
+    if head {
+        rows.insert(0, col().w_full().key(format!("{pre}msgs-head-filler")).child(super::skeleton::messages(c.id, compact, p)).child(el().h(16.0)));
+    }
+    if newer && !rows.is_empty() {
+        rows.push(col().w_full().key(format!("{pre}msgs-tail-filler")).child(super::skeleton::messages(c.id, compact, p)));
+    }
+    let n_rows = rows.len();
     let cid = c.id;
     let list = col()
         .w_full()
@@ -578,11 +600,11 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 st.intents.push(Intent::LoadOlder { channel: cid });
             }
             // The clearance row is the last; seeing it means the newest message is on screen.
-            let bottom = r.end > n_items;
-            if bottom && newer && !st.intents.contains(&Intent::LoadNewer { channel: cid }) {
+            let bottom = r.end > n_rows;
+            if r.end + usize::from(newer) > n_rows && newer && !st.intents.contains(&Intent::LoadNewer { channel: cid }) {
                 st.intents.push(Intent::LoadNewer { channel: cid });
             }
-            let below = (n_items + 1).saturating_sub(r.end);
+            let below = (n_rows + 1).saturating_sub(r.end);
             let fits = r.start == 0 && bottom;
             let (at_bottom, rows_below, list_fits) = if pane {
                 (&mut st.threads.at_bottom, &mut st.threads.rows_below, &mut st.threads.list_fits)
@@ -1421,9 +1443,13 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             .child(icon(i, 22.0).color(p.text_primary_muted).group_color(p.text_primary))
     };
     let post = c.kind.is_thread() && c.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| reflux_store::threads::is_forum(p.kind));
+    // `ChannelTextarea`'s `disabled` (the create pane checks its parent elsewhere).
+    let send_ok = slot == Slot::Create || super::gating::can_send(store, st, c);
+    let attach_ok = super::gating::can_attach(store, st, c);
     let placeholder = match c.kind {
         _ if slot == Slot::Create => t("Enter a message to start the conversation!").to_string(),
         _ if post => crate::i18n::tf("Send a message in \"{name}\"", &[("name", &(c.name.clone().unwrap_or_default()).to_string())]),
+        _ if !send_ok => t("You can't send messages in this channel.").to_string(),
         ChannelType::DM => crate::i18n::tf("Message @{userName}", &[("userName", &(channel_title(store, c)).to_string())]),
         ChannelType::GROUP_DM => crate::i18n::tf("Message {groupName}", &[("groupName", &(channel_title(store, c)).to_string())]),
         _ => crate::i18n::tf("Message #{channelName}", &[("channelName", &(c.name.clone().unwrap_or_default()).to_string())]),
@@ -1454,6 +1480,9 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         let mass = crate::social::mass_mention(store, c, &st.composer.text).filter(|_| slot == Slot::Main);
         let suggested = suggested.clone();
         std::rc::Rc::new(move |s: &mut S| match (slot, mass) {
+            _ if !send_ok => {}
+            // `handleSubmit`: files in the tray need ATTACH_FILES.
+            (Slot::Main | Slot::Pane, _) if !attach_ok && !(if slot == Slot::Pane { &acc(s).threads.uploads } else { &acc(s).uploads }).is_empty() => super::gating::deny_attach(acc(s), false, true),
             (Slot::Create, _) => super::threads::submit_create(acc(s), &suggested),
             (Slot::Main, Some((mention, n))) => {
                 let st = acc(s);
@@ -1494,12 +1523,17 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         })
         // A pasted image joins the tray.
         .on_input_paste(move |s: &mut S, content, _| match content.image() {
+            Some(_) if slot == Slot::Main && !attach_ok => {
+                super::gating::deny_attach(acc(s), false, true);
+                true
+            }
             Some(img) if slot == Slot::Main => {
                 super::upload::add_png(acc(s), img.png().to_vec());
                 true
             }
             _ => false,
         })
+        .disabled(!send_ok)
         // Enter sends; Shift+Enter is the field's own newline.
         .on_submit({
             let submit = submit.clone();
@@ -1507,8 +1541,13 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         });
     // The thread side panel has its own "+" menu and tray; the new-thread pane has none.
     let plus_id = if slot == Slot::Pane { "thread-composer-plus" } else { "composer-plus" };
-    let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id).on_press(move |s: &mut S| acc(s).popups.toggle(plus_id));
-    let plus = if slot == Slot::Create { el().size(32.0, 32.0) } else { plus };
+    let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id);
+    let plus = match slot {
+        Slot::Create => el().size(32.0, 32.0),
+        // `.button:disabled`: 0.7, not-allowed, no hover.
+        _ if !send_ok => row().size(32.0, 32.0).center().opacity(0.7).cursor(rune::Cursor::NotAllowed).disabled(true).child(icon(&icons::PLUS_BOLD, 22.0).color(p.text_primary_muted)),
+        _ => plus.on_press(move |s: &mut S| acc(s).popups.toggle(plus_id)),
+    };
     let look = &st.prefs.look;
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
@@ -1522,8 +1561,12 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .cursor(rune::Cursor::Text)
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
         // `max-height: 50svh`: the field scrolls past half the window.
-        .child(col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).child(field))
-        .child(
+        .child({
+            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).child(field);
+            if send_ok { column } else { column.inert() }
+        })
+        // `TextareaButtons` renders nothing while disabled.
+        .children(send_ok.then(|| {
             row()
                 .gap(dim::COMPOSER_ACTION_GAP)
                 .center_y()
@@ -1539,8 +1582,10 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                     let b = button(&icons::PAPER_PLANE_RIGHT, t("Send message")).key(format!("composer-send-{}", slot as u8));
                     let submit = submit.clone();
                     if blocked { b.opacity(0.5) } else { b.on_press(move |s: &mut S| submit(s)) }
-                })),
-        );
+                }))
+        }));
+    // `wrapperStyles.disabled` (opacity 0.6, not-allowed) on both the outer box and the input row.
+    let input_row = if send_ok { input_row } else { input_row.opacity(0.6).cursor(rune::Cursor::NotAllowed) };
     let mut boxed = col()
         .w_full()
         .radius(dim::FOOTER_BOX_RADIUS)
@@ -1558,6 +1603,9 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         boxed = boxed.child(sticker);
     }
     boxed = boxed.child(input_row);
+    if !send_ok {
+        boxed = boxed.opacity(0.6);
+    }
     // `CharacterCounter`: from 80% of the limit; red under 50 left.
     let len = draft.text.chars().count();
     if len * 10 > limit * 8 {

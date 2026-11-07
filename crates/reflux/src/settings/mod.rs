@@ -17,7 +17,7 @@ pub(crate) use privacy::open_url;
 pub(crate) mod profile;
 mod advanced;
 pub(crate) mod badges;
-mod recovery_kit;
+pub(crate) mod recovery_kit;
 mod recovery_pdf;
 pub(crate) mod crop;
 mod timezone;
@@ -440,6 +440,7 @@ impl ShellState {
             u.modal = None;
         }
         self.account.modal = None;
+        self.account_gate.recovery_kit = false;
         // Dropping a pending PIN reply ends that key request.
         self.account.passkey_pin = None;
         self.form.text.retain(|k, _| !k.starts_with("m."));

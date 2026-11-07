@@ -1,13 +1,13 @@
 //! Member list skeletons (`channel/components/MemberListSkeleton.tsx`, `skeleton/Skeleton.module.css`):
-//! `background-modifier-accent` pills at 45% (35% muted), no shimmer.
+//! `background-modifier-accent` pills at 45% (35% muted), with the shared shimmer.
 
-use rune::{El, col, el, row};
+use rune::{El, col, row};
 
 use crate::theme::{Palette, dim};
 
 /// A skeleton block (`SkeletonLine` is pill-shaped, `SkeletonCircle` round).
 fn block(w: f32, h: f32, muted: bool, p: &Palette) -> El {
-    el().size(w, h).radius(h / 2.0).fill(p.background_modifier_accent).opacity(if muted { 0.35 } else { 0.45 })
+    crate::shell::skeleton::pill(w, h, muted, p)
 }
 
 /// `createSkeletonRandomFromKey`'s role: a stable 0..1 per row.

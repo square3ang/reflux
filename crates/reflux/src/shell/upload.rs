@@ -236,23 +236,27 @@ pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &r
     let can_thread = !c.kind.is_thread()
         && c.guild_id.is_some()
         && [reflux_store::threads::CreateKind::Public, reflux_store::threads::CreateKind::Private].into_iter().any(|k| store.can_create_thread(c, k));
+    let hint = super::gating::upload_hint(super::gating::can_send(store, st, c), super::gating::can_attach(store, st, c));
+    let gated = |i: MenuItem<S>| match hint {
+        Some(h) => i.disabled(true).hint(h),
+        None => i,
+    };
     let mut m = Menu::new(if pane { "thread-composer-plus" } else { "composer-plus" }).placement(Placement::Top);
-    m = m
-        .item(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
-            crate::file_picker::open_files(tx, "Upload file", None, acc, move |sh, r| match r {
-                Ok(paths) => in_slot(sh, slot, |sh| add_paths(sh, &paths)),
-                Err(e) => sh.notice = Some(("Upload failed".into(), e)),
-            });
-        }));
+    m = m.item(gated(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+        crate::file_picker::open_files(tx, "Upload file", None, acc, move |sh, r| match r {
+            Ok(paths) => in_slot(sh, slot, |sh| add_paths(sh, &paths)),
+            Err(e) => sh.notice = Some(("Upload failed".into(), e)),
+        });
+    })));
     if has_text {
-        m = m.item(MenuItem::new("upload-text", t("Upload your message as a file")).icon(&icons::FILE_TEXT_FILL).on_select(move |s: &mut S| in_slot(acc(s), slot, text_as_file)));
+        m = m.item(gated(MenuItem::new("upload-text", t("Upload your message as a file")).icon(&icons::FILE_TEXT_FILL).on_select(move |s: &mut S| in_slot(acc(s), slot, text_as_file))));
     }
     if can_thread {
         m = m.item(MenuItem::new("create-thread", t("Create thread")).icon(&icons::CHATS_FILL).on_select(move |s: &mut S| super::threads::start_create(acc(s), parent, None)));
     }
-    m.item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).on_select(move |s: &mut S| {
+    m.item(gated(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).on_select(move |s: &mut S| {
             acc(s).intents.push(super::Intent::Voice(super::voice::Op::RecordStart(parent)));
-        }))
+        })))
         .submenu("customize", t("Customize"), customize(st, acc))
         .el(&st.popups, super::pops(acc), p, layer);
 }

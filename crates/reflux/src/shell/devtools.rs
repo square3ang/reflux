@@ -1039,6 +1039,11 @@ pub fn demo(sh: &mut ShellState, store: &mut Store, scene: &str) {
             sh.open_profile(Snowflake(1001), sh.guild, String::new(), "member-1001".into(), crate::ui::Placement::LeftStart);
         }
         "messages-skeleton" => drop(sh.channel.and_then(|c| store.messages.remove(&c))),
+        "no-send" => sh.prefs.dev.force_no_send_messages = true,
+        "no-attach" => {
+            sh.prefs.dev.force_no_attach_files = true;
+            sh.popups.toggle("composer-plus");
+        }
         "media-details-geo" => sh.media_ui.mature_details = Some(super::attachments::Gate::Geo),
         "media-details-check" => sh.media_ui.mature_details = Some(super::attachments::Gate::Check),
         // `--dev=media-gate:geo_restricted`, `--dev=barrier:account_too_new`,

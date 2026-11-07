@@ -103,6 +103,8 @@ pub struct Prefs {
     /// `VoiceSessionRestore`'s snapshot, and `UnclaimedNagbarSnooze` by user (unix ms).
     pub voice_restore: Option<top_bars::VoiceSnapshot>,
     pub unclaimed_snoozed_until: std::collections::HashMap<Snowflake, u64>,
+    /// Users offered a passkey after claiming (`fluxer.authenticator_offer_dismissed:<id>`).
+    pub authenticator_offered: std::collections::HashSet<Snowflake>,
 }
 
 impl Default for Prefs {
@@ -143,6 +145,7 @@ impl Default for Prefs {
             dev: Default::default(),
             voice_restore: None,
             unclaimed_snoozed_until: Default::default(),
+            authenticator_offered: Default::default(),
         }
     }
 }

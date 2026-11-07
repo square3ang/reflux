@@ -162,6 +162,15 @@ fn timer(left_ms: u64, p: &Palette) -> Option<El> {
     })
 }
 
+/// `AnnouncementFollowBarrier`: an announcement channel the member can't post in.
+pub fn follow<S: 'static>(store: &Store, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let id = c.id;
+    super::gating::follow_only(store, c).then(|| {
+        let b = Button::new(t("Follow")).variant(crate::ui::ButtonVariant::Secondary).size(ButtonSize::Small).key("barrier-follow").on_press(move |s: &mut S| acc(s).open_social(crate::social::Modal::Follow(id))).el(p);
+        base(&icons::MEGAPHONE_SIMPLE_FILL, "Follow to get these announcements in a channel you choose.", Some(b), p)
+    })
+}
+
 /// The barrier for `c`, if the member can't send there.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let r = reason(store, st, c)?;

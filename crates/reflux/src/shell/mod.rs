@@ -44,6 +44,7 @@ pub mod status;
 pub mod switcher;
 mod switcher_extra;
 pub mod forum;
+pub mod gating;
 pub mod threads;
 pub mod upload;
 pub mod voice;
@@ -583,6 +584,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= crate::settings::search::poll(store, st, tx);
     changed |= crate::settings::dev::poll(st);
     changed |= account_gate::poll(store, st);
+    changed |= account_gate::poll_kit(st);
     changed |= barrier::poll(store, st, tx);
     changed |= crate::desktop::top_bars::poll(store, st);
     if std::mem::take(&mut st.search_requested) {
@@ -695,9 +697,8 @@ pub const BODY_KEY: &str = "shell-body";
 
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
-    // shortcut: `forceLoadingSkeleton` swaps the whole shell for the skeleton (Fluxer keeps the app mounted behind it).
     if skeleton::forced(&st.prefs.dev) {
-        return skeleton::app(p);
+        return skeleton::screen(p);
     }
     // `WatchStreamOverlay` in full-window mode.
     if st.voice.stream_fullscreen
@@ -778,6 +779,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(debug::modal(store, st, p, acc));
     layer.extend(devtools::modal(st, p, acc));
     layer.extend(account_gate::claim_modal(st, p, acc));
+    layer.extend(account_gate::recovery_kit(store, st, p, acc));
+    layer.extend(account_gate::offer_modal(st, p, acc));
     layer.extend(account_gate::help_modal(store, st, p, acc));
     layer.extend(crate::desktop::top_bars::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);

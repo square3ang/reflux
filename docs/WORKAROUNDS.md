@@ -104,10 +104,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 | Clear attachment mocks | no attachment mock items exist to clear | — |
 | Titlebar platform override | Reflux uses the system titlebar (see Rune) | a custom titlebar |
 | Nagbars: desktop download, corrupted installation, domain moved | web-only bars | never |
-| Force no send messages / no attach files | the toggles are saved but nothing reads them: Fluxer's forced composer gating (`AnnouncementFollowBarrier`, the attach button) isn't ported | composer permission gating |
 | Trigger React crash | there is no crash screen | a crash screen |
-| Loading skeletons: static, from fixed sizes | no 3.2 s shimmer or profile pulse; the app skeleton doesn't remember the last layout (`SkeletonLayoutMemory`), the message filler only shows before a channel's first page (not above older pages while they load), and `forceLoadingSkeleton` swaps the whole shell for it | a shimmer gradient animation; layout memory |
-| Claim account: the username variant and the email flow only | the legacy `EmailClaimAccountModal` (server reports no tier), the recovery kit after a username claim and `offerAuthenticatorCalmly` aren't ported | they are ported |
+| Loading skeletons from fixed sizes | the app skeleton doesn't remember the last layout (`SkeletonLayoutMemory`) | layout memory is ported |
 | Voice session restore: Reconnect rejoins the channel only | the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`) | voice restores media |
 | Desktop notification nagbar: forced only | Fluxer never shows it in its desktop app (`isDesktop()`); Enable turns on the `notifications` pref | — |
 | Nagbar dismissals are local (`dismissed_nagbars`, `unclaimed_snoozed_until`) | Fluxer syncs some of them; Reflux keeps them on this device | they're synced |
@@ -174,15 +172,14 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:364` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
 - `crates/reflux/src/shell/markdown.rs:395` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:698` `forceLoadingSkeleton` swaps the whole shell for the skeleton (Fluxer keeps the app mounted behind it).
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
-- `crates/reflux/src/shell/skeleton.rs:10` skeletons are static: no 3.2 s shimmer sweep (Fluxer's reduced-motion look) and no profile pulse.
+- `crates/reflux/src/shell/skeleton.rs:203` fixed rail / sidebar / member shapes; no `SkeletonLayoutMemory` of the last layout. Port it if the jump on READY matters.
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:226` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
-- `crates/reflux/src/ui/menu.rs:191` rune can't tell us which way the parent flipped, so a nested submenu opens to the
+- `crates/reflux/src/ui/menu.rs:195` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a

@@ -170,10 +170,14 @@ fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>,
     let open = inside(&popups.sub, &id);
     let caret = row().size(18.0, 18.0).center().child(icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
     let mut words = col().grow(1.0).shrink().min_w(0.0).child(label_text(&label, p.text_primary));
+    let min_w = hint.as_deref().map(|h| hint_width(h) + 2.0 * 9.0 + 8.0 + 18.0);
     if let Some(h) = hint {
-        words = words.child(text(h).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary_muted).mt(1.0).max_w(320.0).wrap());
+        words = words.child(hint_text(&h, p));
     }
     let mut r = row_shell(p, false).key(key.clone()).child(words).child(caret).role("menuitem").label(label).expanded(open);
+    if let Some(w) = min_w {
+        r = r.min_w(w);
+    }
     if disabled {
         return r.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
     }
@@ -241,6 +245,17 @@ fn row_shell(p: &Palette, danger: bool) -> El {
         .cursor(rune::Cursor::Pointer)
 }
 
+/// A hint line under an item's label. It sizes the menu like CSS max-content (one line up to
+/// 320 wide, then wrapping): a wrapping text alone adds no width, and the popup would be measured
+/// a line short.
+fn hint_text(h: &str, p: &Palette) -> El {
+    text(h.to_string()).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary_muted).mt(1.0).max_w(320.0).wrap()
+}
+
+fn hint_width(h: &str) -> f32 {
+    rune::text::measure(h, &[], font(12.0, 400.0).lh(16.0), None).0.min(320.0)
+}
+
 fn label_text(l: &str, c: Color) -> El {
     text(l).font(font(13.0, 500.0).lh(18.0)).color(c).truncate().grow(1.0).shrink()
 }
@@ -262,9 +277,13 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
     }
     words = words.child(line);
     if let Some(h) = &it.hint {
-        words = words.child(text(h.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary_muted).mt(1.0).max_w(320.0).wrap());
+        words = words.child(hint_text(h, p));
     }
     let mut r = row_shell(p, it.danger).key(format!("{menu}-{}", it.id)).child(words).role("menuitem").label(it.label.clone());
+    if let Some(h) = &it.hint {
+        // Padding, the gap and the trailing icon around the hint.
+        r = r.min_w(hint_width(h) + 2.0 * 9.0 + 8.0 + 18.0);
+    }
     let trailing = match it.check {
         Check::None => it.icon.map(|i| icon(i, 18.0).color(fg)),
         Check::Checkbox(on) => {
