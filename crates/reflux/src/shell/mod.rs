@@ -800,10 +800,16 @@ pub(crate) fn avatar_anim(store: &Store, st: &ShellState, user: Snowflake, size:
     Avatar::new(size).pixels(px.as_ref()).status(status).surface(surface).el(p)
 }
 
-/// `GroupDMAvatar` without an icon: two or three recipients clustered in the circle, each later
+/// `GroupDMAvatar`: the group's icon (`getChannelIconURL`, the `icons` route under the channel
+/// ID); without one (or if it fails), two or three recipients clustered in the circle, each later
 /// one cut out of the earlier by a 2px ring of `surface`.
-// shortcut: group DM icons aren't loaded; the recipient cluster always shows.
 pub(crate) fn group_avatar(store: &Store, st: &ShellState, c: &Channel, size: f32, surface: Color, p: &Palette) -> El {
+    let icon = c.icon.as_deref().filter(|h| !h.is_empty()).map(|h| st.media.asset(|b, s| media::guild_icon_url(b, c.id, h, size, s)));
+    match icon {
+        Some(Load::Ready(px)) => return Avatar::new(size).pixels(Some(&px)).surface(surface).el(p),
+        Some(Load::Pending) => return Avatar::new(size).pixels(None).surface(surface).el(p),
+        Some(Load::Failed) | None => {}
+    }
     let me = store.my_id();
     let mut ids: Vec<Snowflake> = c.recipients.iter().map(|u| u.id).filter(|&u| u != me).take(3).collect();
     if ids.len() == 1 {

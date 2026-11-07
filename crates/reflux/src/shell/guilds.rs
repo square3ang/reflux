@@ -238,12 +238,26 @@ pub fn acronym(name: &str) -> String {
     if out.is_empty() { "?".into() } else { out }
 }
 
-/// `getGuildAcronymFontScale`: 18 18 16 14 12 10 px per 48px icon by length.
-// shortcut: skips the canvas width fit that shrinks wide acronyms further.
+/// `getFittedGuildAcronymFontScale`: 18 18 16 14 12 10 px per 48px icon by length, then a
+/// smaller step (or the exact fit) when the text is wider than the icon less 4px each side.
 fn acronym_font_size(a: &str, size: f32) -> f32 {
+    // `measureText` at 100px, weight 500, in the UI font.
+    let (w, _) = rune::text::measure(a, &[], font(100.0, 500.0), None);
+    (fit_scale(a.chars().count(), w / 100.0) * size).max(8.0)
+}
+
+/// `fitGuildAcronymFontScale`.
+fn fit_scale(len: usize, width_per_em: f32) -> f32 {
     const SIZES: [f32; 6] = [18.0, 18.0, 16.0, 14.0, 12.0, 10.0];
-    let n = a.chars().count().clamp(1, 6);
-    (SIZES[n - 1] / 48.0 * size).max(8.0)
+    let scale = SIZES[len.clamp(1, 6) - 1] / 48.0;
+    if width_per_em <= 0.0 {
+        return scale;
+    }
+    let max = (48.0 - 8.0) / 48.0 / width_per_em;
+    if scale <= max {
+        return scale;
+    }
+    SIZES.iter().map(|s| s / 48.0).find(|&c| c < scale && c <= max).unwrap_or(max)
 }
 
 /// The folder's accent: its colour, else `brand-primary-light` (`brand-primary` on light).
@@ -442,5 +456,8 @@ mod tests {
         assert_eq!(acronym("rust-lang"), "r-l");
         assert_eq!(acronym("  "), "?");
         assert_eq!(acronym_font_size("FH", 48.0), 18.0);
+        assert_eq!(fit_scale(2, 1.0), 18.0 / 48.0, "fits");
+        assert_eq!(fit_scale(2, 2.5), 14.0 / 48.0, "the first smaller size that fits");
+        assert_eq!(fit_scale(6, 5.0), 40.0 / 48.0 / 5.0, "nothing fits: the exact scale");
     }
 }
