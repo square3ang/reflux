@@ -411,7 +411,7 @@ impl Demo {
         }
         account_fixtures(&mut shell, &store, now);
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--account-ui=")) {
-            if sc == "birthday"
+            if sc.starts_with("birthday")
                 && let Some(me) = &mut store.me
             {
                 me.date_of_birth_required = true;
@@ -476,9 +476,11 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
     use crate::settings::ShellModal;
     match scene {
         "menu" => sh.popups.open = Some(super::status::MENU.into()),
-        "birthday" => {
+        "birthday" | "birthday-logout" => {
+            sh.marketing_base = Some("https://fluxer.app".into());
             sh.birthday.dob.month = Some("3".into());
             sh.birthday.error = Some("Something went wrong. Try again.".into());
+            sh.birthday.confirm_logout = scene == "birthday-logout";
         }
         "status" => super::status::open(sh, ShellModal::CustomStatus),
         "crop" | "crop-banner" => {

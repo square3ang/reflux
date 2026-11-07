@@ -264,6 +264,8 @@ pub struct ShellState {
     pub hold_ack: Option<Snowflake>,
     /// Instance web app origin, for message links (`https://web.fluxer.app`).
     pub web_base: String,
+    /// The instance's marketing site (help articles), `None` when self-hosted.
+    pub marketing_base: Option<String>,
     /// The user settings modal, when open.
     pub settings: Option<crate::settings::SettingsUi>,
     /// The instance shows Billing tabs (`shouldShowPremiumFeatures`).
@@ -386,6 +388,7 @@ impl Default for ShellState {
             sticky_unread: None,
             hold_ack: None,
             web_base: String::new(),
+            marketing_base: None,
             settings: None,
             premium: false,
             personal_notes: true,

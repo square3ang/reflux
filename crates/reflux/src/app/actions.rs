@@ -241,6 +241,7 @@ pub(super) fn tick(s: &mut State) -> bool {
         && s.app.shell.web_base.is_empty()
     {
         s.app.shell.web_base = inst.discovery.endpoints.webapp.clone();
+        s.app.shell.marketing_base = (!inst.discovery.features.self_hosted).then(|| inst.discovery.endpoints.marketing.clone());
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
         s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
         s.app.shell.gift_base = inst.discovery.endpoints.gift.clone();
