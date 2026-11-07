@@ -233,7 +233,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
                     sh.select_channel(id);
                 }
             } else {
-                super::voice_join::request::<S>(sh, guild, id);
+                super::voice_join::request(sh, guild, id);
             }
         });
         if double {
