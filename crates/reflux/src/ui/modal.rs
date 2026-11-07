@@ -51,6 +51,7 @@ impl<S: 'static> Modal<S> {
             ModalSize::Large => (800.0, 400.0),
         };
         let close = self.on_close.clone();
+        let enter = self.on_close.clone();
         let x = row()
             .size(32.0, 32.0)
             .center()
@@ -61,6 +62,14 @@ impl<S: 'static> Modal<S> {
             .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(t("Close"))
             .on_press(move |s: &mut S| close(s))
+            .on_key(move |s: &mut S, k, _| {
+                if crate::ui::enters(k) {
+                    enter(s);
+                    true
+                } else {
+                    false
+                }
+            })
             .child(icon(&icons::X_BOLD, 24.0).color(p.text_primary_muted).group_color(p.text_primary).group_opacity(0.5, 1.0));
         let header = row()
             .w_full()
@@ -84,7 +93,7 @@ impl<S: 'static> Modal<S> {
             // The dialog itself is the initial Tab stop: opening it announces the title and
             // Enter doesn't press the close button before the person has looked at it.
             .focusable(true)
-            .no_focus_ring()
+            .focus_ring(2.0, -2.0, p.focus_primary)
             .child(header)
             .child(col().w_full().grow(1.0).px(16.0).pb(16.0).children(self.body));
         if let Some(f) = self.footer {
@@ -101,5 +110,70 @@ impl<S: 'static> Modal<S> {
                     .center()
                     .child(card.modal(true, move |s: &mut S| close(s))),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::Button;
+    use rune::{Cx, Env, Key, KeyEvent, Mods, Runtime, col};
+
+    #[derive(Default)]
+    struct St {
+        open: bool,
+    }
+
+    fn view(s: &St, _: &mut Cx<St>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        let mut root = col().size(400.0, 300.0).child(
+            Button::new("Open").key("open").on_press(|s: &mut St| s.open = true).el(p),
+        );
+        if s.open {
+            let footer = Button::new("Delete").key("delete").on_press(|s: &mut St| s.open = false).el(p);
+            root = root.child(
+                Modal::new("Confirm", |s: &mut St| s.open = false)
+                    .body(text("Body").font(font(14.0, 400.0)).color(p.text_primary))
+                    .footer(footer)
+                    .el(p),
+            );
+        }
+        root
+    }
+
+    fn press(rt: &mut Runtime<St>, k: Key) {
+        rt.key(KeyEvent { key: k, mods: Mods::default() });
+        rt.frame(0.0);
+    }
+
+    fn focused(rt: &Runtime<St>) -> String {
+        let e = rt.elements().into_iter().find(|e| e.focused).expect("something is focused");
+        e.key.or_else(|| (e.role == "dialog").then(|| e.role.to_string())).unwrap_or_default()
+    }
+
+    #[test]
+    fn modal_takes_focus_traps_tab_and_restores_the_opener() {
+        let mut rt = Runtime::with_text(St::default(), view, (400.0, 300.0), Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), "open");
+        press(&mut rt, Key::Text(" ".into()));
+        assert!(rt.state.open);
+        // The dialog itself takes the first focus, not its close button: Enter must not dismiss it.
+        let f = rt.elements().into_iter().find(|e| e.focused).unwrap();
+        assert_eq!((f.role, f.label.as_deref()), ("dialog", Some("Confirm")));
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.open, "Enter on the dialog does not press Close");
+        // Tab stays inside: close, then the footer button.
+        press(&mut rt, Key::Tab);
+        assert_eq!(rt.elements().into_iter().find(|e| e.focused).unwrap().label.as_deref(), Some("Close"));
+        press(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), "delete");
+        press(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), "dialog", "Tab wraps inside the modal");
+        // Escape dismisses and focus returns to what opened it.
+        press(&mut rt, Key::Escape);
+        assert!(!rt.state.open);
+        assert_eq!(focused(&rt), "open");
     }
 }

@@ -304,3 +304,39 @@ impl<S: 'static> Slider<S> {
         ctl
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune::{Cx, Env, Key, KeyEvent, Mods, Runtime, col};
+
+    fn slider(v: &f32, _: &mut Cx<f32>) -> El {
+        col().w_full().h_full().child(
+            Slider::new("volume", *v, 0.0, 100.0)
+                .label("Volume")
+                .on_change(|s: &mut f32, x| *s = x)
+                .el(crate::theme::palette(crate::theme::Kind::Dark)),
+        )
+    }
+
+    fn key(rt: &mut Runtime<f32>, k: Key) {
+        rt.key(KeyEvent { key: k, mods: Mods::default() });
+        rt.frame(0.0);
+    }
+
+    #[test]
+    fn slider_takes_focus_steps_and_jumps_to_its_ends() {
+        let mut rt = Runtime::with_text(50.0, slider, (200.0, 80.0), Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        key(&mut rt, Key::Tab);
+        let focused = rt.elements().into_iter().find(|e| e.focused).expect("the slider takes Tab");
+        assert_eq!(focused.key.as_deref(), Some("volume"));
+        assert_eq!((focused.role, focused.label.as_deref()), ("slider", Some("Volume")));
+        key(&mut rt, Key::Right);
+        assert_eq!(rt.state, 51.0, "Right steps by one");
+        key(&mut rt, Key::End);
+        assert_eq!(rt.state, 100.0, "End takes the maximum");
+        key(&mut rt, Key::Home);
+        assert_eq!(rt.state, 0.0, "Home takes the minimum");
+    }
+}

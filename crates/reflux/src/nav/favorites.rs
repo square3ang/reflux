@@ -188,6 +188,14 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         .focusable(true)
         .focus_ring(4.0, 0.0, p.focus_primary)
         .on_press(move |s: &mut S| acc(s).popups.toggle(HEADER_MENU))
+        .on_key(move |s: &mut S, k, _| {
+            if crate::ui::enters(k) {
+                acc(s).popups.toggle(HEADER_MENU);
+                true
+            } else {
+                false
+            }
+        })
         .child(icon(&icons::STAR_FILL, 16.0).color(p.text_primary))
         .child(text("Favorites").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
         .child(icon(if open { &icons::X } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_primary))
@@ -274,6 +282,14 @@ fn fav_row<S: 'static>(store: &Store, st: &ShellState, c: &reflux_model::Channel
     let guild = c.guild_id;
     let muted = store.is_muted(c);
     let unread = store.has_unread(id);
+    let mentions = store.mention_count(id);
+    // Read by a screen reader with the row: unread and mention state, not just the name.
+    let mut spoken = shown.clone();
+    if mentions > 0 {
+        spoken = format!("{spoken}, {}", crate::i18n::tp("{count, plural, one {# mention} other {# mentions}}", mentions as i64, &[]));
+    } else if unread && !muted {
+        spoken = format!("{spoken}, {}", crate::i18n::t("Unread messages"));
+    }
     let fg = if selected { p.surface_interactive_selected_color } else if unread && !muted { p.text_secondary } else { p.text_primary_muted };
     let face = guild.map_or_else(|| el().size(24.0, 24.0), |g| crate::shell::guild_face(store, st, g, 24.0, false, p));
     let badge = row()
@@ -294,15 +310,14 @@ fn fav_row<S: 'static>(store: &Store, st: &ShellState, c: &reflux_model::Channel
         .radius(6.0)
         .cursor(rune::Cursor::Pointer)
         .role("link")
-        .label(shown.clone())
+        .label(spoken)
         .focusable(true)
         .focus_selected(selected)
-        .focus_highlight(p.surface_interactive_hover_bg)
         .hover_group()
         .child(el().size(24.0, 24.0).child(face).child(badge))
         .child(text(shown).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_chat }).truncate().grow(1.0).shrink())
         .children(mention_badge(store.mention_count(id) as u64, true, p));
-    item = if selected { item.fill(p.background_modifier_selected) } else { item.hover(p.background_modifier_hover) };
+    item = if selected { item.fill(p.background_modifier_selected) } else { item.hover(p.background_modifier_hover).focus_highlight(p.surface_interactive_hover_bg) };
     if muted && !selected {
         item = item.opacity(0.5);
     }

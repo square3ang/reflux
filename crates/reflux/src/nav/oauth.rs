@@ -389,12 +389,12 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             None => Button::new(t("Cancel")).variant(ButtonVariant::Secondary).disabled(busy).on_press(close).el(p),
         });
         footer = footer.child(match steps.get(at + 1) {
-            Some(next) => Button::new(t("Next")).key("oauth-next").disabled(cannot || busy).on_press(go(*next)).el(p),
+            Some(next) => Button::new(t("Next")).key("oauth-next").disabled(cannot || busy).on_press(go(*next)).el(p).default_button(),
             None => Button::new(t("Authorize")).key("oauth-authorize").disabled(cannot).submitting(busy).on_press(move |s: &mut S| {
                 if let Some(o) = acc(s).nav.oauth.as_mut() {
                     o.submit = true;
                 }
-            }).el(p),
+            }).el(p).default_button(),
         });
     }
     let modal = Modal::new(t("Authorize application"), close).body(body).footer(footer).el(p);

@@ -1,5 +1,7 @@
 //! `fluxer_app/src/features/ui/button/Button.module.css`.
 
+use std::rc::Rc;
+
 use rune::{Color, El, Icon, LoopSpec, icon, row, text};
 
 use super::{mix, over, rgba};
@@ -50,8 +52,8 @@ pub struct Button<S: 'static> {
     disabled: bool,
     submitting: bool,
     key: Option<String>,
-    on_press: Option<Box<dyn Fn(&mut S)>>,
-    on_press_tx: Option<Box<dyn Fn(&mut S, &mut rune::Tx)>>,
+    on_press: Option<Rc<dyn Fn(&mut S)>>,
+    on_press_tx: Option<Rc<dyn Fn(&mut S, &mut rune::Tx)>>,
     icon_right: bool,
 }
 
@@ -84,9 +86,9 @@ impl<S: 'static> Button<S> {
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
     pub fn submitting(mut self, s: bool) -> Self { self.submitting = s; self }
     pub fn key(mut self, k: impl Into<String>) -> Self { self.key = Some(k.into()); self }
-    pub fn on_press(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_press = Some(Box::new(f)); self }
+    pub fn on_press(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_press = Some(Rc::new(f)); self }
     /// `on_press` that needs the `Tx` (open a URL, copy).
-    pub fn on_press_tx(mut self, f: impl Fn(&mut S, &mut rune::Tx) + 'static) -> Self { self.on_press_tx = Some(Box::new(f)); self }
+    pub fn on_press_tx(mut self, f: impl Fn(&mut S, &mut rune::Tx) + 'static) -> Self { self.on_press_tx = Some(Rc::new(f)); self }
     /// `rightIcon`: the icon after the label.
     pub fn icon_right(mut self, i: &'static Icon) -> Self { self.icon = Some(i); self.icon_right = true; self }
 
@@ -186,16 +188,34 @@ impl<S: 'static> Button<S> {
             b = b.key(k);
         }
         if live {
+            let enter_press = self.on_press.clone();
+            let enter_tx = self.on_press_tx.clone();
             b = b.hover(hover).press(press).cursor(rune::Cursor::Pointer);
             // The hover border: a second border over the first, shown while the button is hovered.
             if let Some(c) = hover_border {
                 b = b.hover_group().child(rune::el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(radius).border(1.0, over(c, hover)).group_opacity(0.0, 1.0).inert());
             }
             if let Some(f) = self.on_press {
-                b = b.on_press(f);
+                b = b.on_press(move |s: &mut S| f(s));
             }
             if let Some(f) = self.on_press_tx {
                 b = b.on_press_tx(move |s: &mut S, tx: &mut rune::Tx| f(s, tx));
+            }
+            // Web buttons activate on Enter; Rune's AppKit rule would give Return to the dialog's
+            // default button instead.
+            if enter_press.is_some() || enter_tx.is_some() {
+                b = b.on_key(move |s: &mut S, k, tx| {
+                    if !super::enters(k) {
+                        return false;
+                    }
+                    if let Some(f) = &enter_press {
+                        f(s);
+                    }
+                    if let Some(f) = &enter_tx {
+                        f(s, tx);
+                    }
+                    true
+                });
             }
         }
         b

@@ -101,7 +101,17 @@ impl<'a, S: 'static> Input<'a, S> {
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
                     .label(if revealed { t("Hide password") } else { t("Show password") })
+                    .focusable(true)
+                    .focus_ring(4.0, 0.0, p.focus_primary)
                     .on_press(move |s: &mut S| toggle(s))
+                    .on_key(move |s: &mut S, k, _| {
+                        if super::enters(k) {
+                            toggle(s);
+                            true
+                        } else {
+                            false
+                        }
+                    })
                     .child(icon(eye, 18.0).color(p.text_tertiary)),
             );
         } else {

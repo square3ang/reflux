@@ -66,7 +66,20 @@ fn key_name(k: K) -> String {
     match k {
         K::Up => "ArrowUp".into(),
         K::Down => "ArrowDown".into(),
+        K::Left => "ArrowLeft".into(),
+        K::Right => "ArrowRight".into(),
+        K::Home => "Home".into(),
+        K::End => "End".into(),
+        K::PageUp => "PageUp".into(),
+        K::PageDown => "PageDown".into(),
         K::Escape => "Escape".into(),
+        K::Enter => "Enter".into(),
+        K::Tab => "Tab".into(),
+        K::Backspace => "Backspace".into(),
+        K::Delete => "Delete".into(),
+        K::Insert => "Insert".into(),
+        K::Function(n) => format!("F{n}"),
+        K::Space => " ".into(),
         K::Char(c) => c.to_string(),
     }
 }
@@ -83,7 +96,20 @@ fn combo_of(fs: &[Field]) -> Option<Combo> {
     let key = match key.as_str() {
         "ArrowUp" => K::Up,
         "ArrowDown" => K::Down,
+        "ArrowLeft" => K::Left,
+        "ArrowRight" => K::Right,
+        "Home" => K::Home,
+        "End" => K::End,
+        "PageUp" => K::PageUp,
+        "PageDown" => K::PageDown,
         "Escape" => K::Escape,
+        "Enter" => K::Enter,
+        "Tab" => K::Tab,
+        "Backspace" => K::Backspace,
+        "Delete" => K::Delete,
+        "Insert" => K::Insert,
+        " " => K::Space,
+        f if f.len() > 1 && f.starts_with('F') => K::Function(f[1..].parse().ok()?),
         s if s.chars().count() == 1 => K::Char(s.chars().next()?.to_ascii_lowercase()),
         _ => return None,
     };
@@ -227,6 +253,15 @@ pub fn poll(store: &Store, st: &mut ShellState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_trips_the_wider_key_set() {
+        for key in [K::Left, K::Right, K::Home, K::End, K::PageUp, K::PageDown, K::Enter, K::Tab, K::Backspace, K::Delete, K::Insert, K::Function(8), K::Space] {
+            let combo = Combo { key, ctrl: false, alt: false, shift: false };
+            let l = Local { keybinds: vec![Custom { action: Some(Action::ToggleMute), combo: Some(combo), enabled: true }], disabled: Vec::new() };
+            assert_eq!(parse(&build(&l, &[])), l, "{key:?}");
+        }
+    }
 
     #[test]
     fn round_trips_and_keeps_foreign_entries() {

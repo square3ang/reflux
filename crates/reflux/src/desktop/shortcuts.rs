@@ -120,7 +120,20 @@ impl Binding {
         let key = match c.key {
             K::Up => GKey::Up,
             K::Down => GKey::Down,
+            K::Left => GKey::Left,
+            K::Right => GKey::Right,
+            K::Home => GKey::Home,
+            K::End => GKey::End,
+            K::PageUp => GKey::PageUp,
+            K::PageDown => GKey::PageDown,
             K::Escape => GKey::Escape,
+            K::Enter => GKey::Enter,
+            K::Tab => GKey::Tab,
+            K::Backspace => GKey::Backspace,
+            K::Delete => GKey::Delete,
+            K::Insert => GKey::Insert,
+            K::Function(n) => GKey::F(n),
+            K::Space => GKey::Char(' '),
             K::Char(ch) => GKey::char(ch),
         };
         Binding { action, key, mods: Some(Mods { ctrl: c.ctrl, alt: c.alt, shift: c.shift }) }

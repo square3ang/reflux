@@ -4,7 +4,7 @@
 use std::f32::consts::PI;
 use std::rc::Rc;
 
-use rune::{El, col, icon, row, text};
+use rune::{El, Key, col, icon, row, text};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, popout_shadow};
 use super::over;
@@ -76,7 +76,19 @@ impl<'a, S: 'static> Select<'a, S> {
         if self.disabled {
             trigger = trigger.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
         } else {
-            trigger = trigger.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| access(s).toggle(&id));
+            let id2 = id.clone();
+            trigger = trigger
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut S| access(s).toggle(&id))
+                // Web selects open on Enter as well as Space.
+                .on_key(move |s: &mut S, k, _| {
+                    if k.key == Key::Enter {
+                        access(s).toggle(&id2);
+                        true
+                    } else {
+                        false
+                    }
+                });
         }
 
         if open {

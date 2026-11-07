@@ -125,6 +125,7 @@ fn caps(combo: &Combo, p: &Palette) -> El {
 /// `.dotsButton`: 28 square, muted, opens the row menu.
 fn dots<S: 'static>(id: String, menu: RowMenu, p: &Palette, acc: ShellAccess<S>) -> El {
     let key = id.clone();
+    let (enter_key, enter_menu) = (key.clone(), menu.clone());
     row()
         .key(id)
         .size(28.0, 28.0)
@@ -142,6 +143,16 @@ fn dots<S: 'static>(id: String, menu: RowMenu, p: &Palette, acc: ShellAccess<S>)
             let sh = acc(s);
             sh.nav.key_menu = Some(menu.clone());
             sh.popups.toggle(&key);
+        })
+        .on_key(move |s: &mut S, k, _| {
+            if crate::ui::enters(k) {
+                let sh = acc(s);
+                sh.nav.key_menu = Some(enter_menu.clone());
+                sh.popups.toggle(&enter_key);
+                true
+            } else {
+                false
+            }
         })
 }
 
@@ -286,6 +297,7 @@ fn custom_row<S: 'static>(st: &ShellState, i: usize, c: &Custom, clash: Option<&
 /// opens the [`editor`] popout.
 fn recorder<S: 'static>(st: &ShellState, i: usize, combo: Option<Combo>, p: &Palette, acc: ShellAccess<S>) -> El {
     let id = editor_id(i);
+    let enter_id = id.clone();
     let open = st.popups.is_open(&id);
     let inner = match combo {
         Some(c) => caps(&c, p),
@@ -314,6 +326,16 @@ fn recorder<S: 'static>(st: &ShellState, i: usize, combo: Option<Combo>, p: &Pal
             sh.popups.toggle(&id);
             // The popout opens recording (`useState(true)`).
             sh.nav.recording = (!was).then_some(i);
+        })
+        .on_key(move |s: &mut S, k, _| {
+            if !crate::ui::enters(k) {
+                return false;
+            }
+            let sh = acc(s);
+            let was = sh.popups.is_open(&enter_id);
+            sh.popups.toggle(&enter_id);
+            sh.nav.recording = (!was).then_some(i);
+            true
         })
 }
 
@@ -358,12 +380,20 @@ fn editor<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: 
         .fill(if rec { p.control_button_danger_hover_bg } else { p.background_secondary })
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(t("Record keybind"))
+        .label(if rec { t("Press a keybind…") } else { t("Record keybind") })
         .focusable(true)
         .focus_ring(4.0, 0.0, p.focus_primary)
         .child(icon(&icons::KEYBOARD_BOLD, 20.0).color(if rec { p.status_danger } else { p.text_primary_muted }))
         .child(inner)
-        .on_press(move |s: &mut S| acc(s).nav.recording = Some(i));
+        .on_press(move |s: &mut S| acc(s).nav.recording = Some(i))
+        .on_key(move |s: &mut S, k, _| {
+            if crate::ui::enters(k) {
+                acc(s).nav.recording = Some(i);
+                true
+            } else {
+                false
+            }
+        });
     let clear = combo.is_some().then(|| {
         Button::new(t("Clear"))
             .variant(ButtonVariant::Secondary)
@@ -730,11 +760,11 @@ mod tests {
 
     #[test]
     fn recording_captures_the_next_combo() {
-        let mut st = ShellState::default();
+        let mut st = ShellState { settings: Some(crate::settings::SettingsUi::new(Some("keybinds"))), ..ShellState::default() };
         update_mine(&mut st, |m| m.keybinds.push(Custom { action: Some(Action::ToggleMute), combo: None, enabled: true }));
         st.nav.recording = Some(0);
         st.popups.toggle(&editor_id(0));
-        assert!(on_key(&mut st, &ev(Key::Text(" ".into()), false)), "an unrecordable key is swallowed while recording");
+        assert!(on_key(&mut st, &ev(Key::ContextMenu, false)), "an unrecordable key is swallowed while recording");
         assert_eq!(st.nav.recording, Some(0));
         assert!(on_key(&mut st, &ev(Key::Command('l'), true)));
         assert_eq!(st.nav.recording, None);
@@ -746,5 +776,27 @@ mod tests {
         st.popups.close();
         assert!(!on_key(&mut st, &ev(Key::Text("x".into()), false)), "a closed popout stops recording");
         assert_eq!(st.nav.recording, None);
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    fn ev(key: Key) -> KeyEvent {
+        KeyEvent { key, mods: rune::Mods::default() }
+    }
+
+    #[test]
+    fn a_closed_settings_modal_stops_keybind_recording() {
+        let mut st = ShellState { settings: Some(crate::settings::SettingsUi::new(Some("keybinds"))), ..ShellState::default() };
+        update_mine(&mut st, |m| m.keybinds.push(Custom { action: Some(Action::ToggleMute), combo: None, enabled: true }));
+        st.nav.recording = Some(0);
+        st.popups.toggle(&editor_id(0));
+        // The settings modal closed (Escape from the popout closes it), leaving the popup id set.
+        st.settings = None;
+        assert!(!on_key(&mut st, &ev(Key::Text("x".into()))), "the key goes back to the app");
+        assert_eq!(st.nav.recording, None);
+        assert_eq!(mine(&st).keybinds[0].combo, None);
     }
 }

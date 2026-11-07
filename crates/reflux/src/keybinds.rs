@@ -39,7 +39,22 @@ pub enum Action {
 pub enum K {
     Up,
     Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
     Escape,
+    Enter,
+    Tab,
+    Backspace,
+    Delete,
+    Insert,
+    /// F1 through F24.
+    Function(u8),
+    /// The space bar (a character, but not one `typed` accepts).
+    Space,
     /// A character: `Key::Command` with Ctrl (Cmd on macOS), else typed (`Key::Text`), which
     /// reaches the keybinds only when no text field takes it.
     Char(char),
@@ -72,7 +87,7 @@ const fn b(action: Action, label: &'static str, section: &'static str, combo: Co
 }
 
 use Action::*;
-use K::{Char, Down, Escape, Up};
+use K::{Backspace, Char, Delete, Down, End, Enter, Escape, Function, Home, Insert, Left, PageDown, PageUp, Right, Space, Tab, Up};
 
 pub const BINDS: &[Bind] = &[
     b(ShowKeybinds, "Show keybind list", "defaults", c(Char('/'), true, false, false)),
@@ -124,8 +139,22 @@ impl Combo {
         let key = match &k.key {
             Key::Up => Up,
             Key::Down => Down,
+            Key::Left => Left,
+            Key::Right => Right,
+            Key::Home => Home,
+            Key::End => End,
+            Key::PageUp => PageUp,
+            Key::PageDown => PageDown,
             Key::Escape => Escape,
+            Key::Enter => Enter,
+            Key::Tab => Tab,
+            Key::Backspace => Backspace,
+            Key::Delete => Delete,
+            Key::Insert => Insert,
+            Key::Function(n) => Function(*n),
+            Key::Command(' ') => Space,
             Key::Command(ch) => Char(ch.to_ascii_lowercase()),
+            Key::Text(t) if t == " " => Space,
             Key::Text(t) => Char(typed(t)?),
             _ => return None,
         };
@@ -135,7 +164,23 @@ impl Combo {
     pub fn matches(&self, k: &KeyEvent) -> bool {
         let m = &k.mods;
         let key = match (&k.key, self.key) {
-            (Key::Up, Up) | (Key::Down, Down) | (Key::Escape, Escape) => true,
+            (Key::Up, Up)
+            | (Key::Down, Down)
+            | (Key::Left, Left)
+            | (Key::Right, Right)
+            | (Key::Home, Home)
+            | (Key::End, End)
+            | (Key::PageUp, PageUp)
+            | (Key::PageDown, PageDown)
+            | (Key::Escape, Escape)
+            | (Key::Enter, Enter)
+            | (Key::Tab, Tab)
+            | (Key::Backspace, Backspace)
+            | (Key::Delete, Delete)
+            | (Key::Insert, Insert) => true,
+            (Key::Function(n), Function(want)) => *n == want,
+            (Key::Text(t), Space) => t == " ",
+            (Key::Command(' '), Space) => true,
             (Key::Command(ch), Char(want)) => ch.eq_ignore_ascii_case(&want),
             (Key::Text(t), Char(want)) => typed(t) == Some(want),
             _ => false,
@@ -163,7 +208,20 @@ impl Combo {
         v.push(match self.key {
             Up => "↑".into(),
             Down => "↓".into(),
+            Left => "←".into(),
+            Right => "→".into(),
+            Home => "Home".into(),
+            End => "End".into(),
+            PageUp => "PgUp".into(),
+            PageDown => "PgDn".into(),
             Escape => "Esc".into(),
+            Enter => "Enter".into(),
+            Tab => "Tab".into(),
+            Backspace => "Backspace".into(),
+            Delete => "Del".into(),
+            Insert => "Ins".into(),
+            Function(n) => format!("F{n}"),
+            Space => "Space".into(),
             Char(ch) => ch.to_ascii_uppercase().to_string(),
         });
         v
@@ -230,9 +288,13 @@ fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
     if !v.settings.ptt() || v.settings.ptt_key.as_deref() != Some(key.as_str()) {
         return false;
     }
-    // A modifier's release is handled by `on_key_up`; starting on it would hold forever.
+    // A modifier's release arrives here (no `on_key_up` for it): let go, don't start.
     if matches!(&k.key, Key::Modifier { pressed: false, .. }) {
-        return false;
+        if v.ptt_held {
+            v.ptt_held = false;
+            sh.intents.push(Intent::Voice(Op::PushToTalk(false)));
+        }
+        return true;
     }
     if !v.ptt_held {
         v.ptt_held = true;
@@ -388,7 +450,55 @@ mod tests {
         assert_eq!(plain, c(Char('g'), false, false, true), "a typed character records without Ctrl");
         assert!(plain.matches(&ev(Key::Text("G".into()), false, false, true)));
         assert!(!plain.matches(&ev(Key::Command('g'), true, false, true)));
-        assert_eq!(Combo::from_event(&ev(Key::Text(" ".into()), false, false, false)), None);
+        let f8 = Combo::from_event(&ev(Key::Function(8), false, false, false)).unwrap();
+        assert_eq!(f8, c(Function(8), false, false, false));
+        assert_eq!(f8.caps(), vec!["F8".to_string()]);
+        assert!(f8.matches(&ev(Key::Function(8), false, false, false)));
+        for k in [Key::Left, Key::Right, Key::Home, Key::End, Key::PageUp, Key::PageDown, Key::Enter, Key::Tab, Key::Backspace, Key::Delete, Key::Insert] {
+            let combo = Combo::from_event(&ev(k.clone(), false, false, false)).unwrap();
+            assert!(combo.matches(&ev(k, false, false, false)));
+        }
+        let space = Combo::from_event(&ev(Key::Text(" ".into()), false, false, false)).unwrap();
+        assert_eq!(space.key, Space);
+        assert!(space.matches(&ev(Key::Text(" ".into()), false, false, false)));
         assert_eq!(Combo::from_event(&ev(Key::Text("ab".into()), false, false, false)), None);
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    fn ev(key: Key) -> KeyEvent {
+        KeyEvent { key, mods: rune::Mods::default() }
+    }
+
+    #[test]
+    fn push_to_talk_records_and_accepts_a_modifier_alone() {
+        let mut st = ShellState { settings: Some(crate::settings::SettingsUi::new(Some("voice_video"))), ..ShellState::default() };
+        st.voice.settings.push_to_talk = true;
+        st.voice.recording_key = true;
+        let ctrl = || Key::Modifier { modifier: rune::Modifier::ControlLeft, pressed: true };
+        assert!(push_to_talk(&mut st, &ev(ctrl())));
+        assert_eq!(st.voice.settings.ptt_key.as_deref(), Some("Modifier { modifier: ControlLeft, pressed: true }"), "recorded without its press state");
+        assert!(!st.voice.recording_key);
+        assert!(!st.voice.ptt_held, "recording a key must not press it");
+        // The next press holds it; its release lets go.
+        assert!(push_to_talk(&mut st, &ev(ctrl())));
+        assert!(st.voice.ptt_held);
+        assert!(push_to_talk(&mut st, &ev(Key::Modifier { modifier: rune::Modifier::ControlLeft, pressed: false })));
+        assert!(!st.voice.ptt_held, "the modifier release ends push-to-talk");
+        // A release alone never starts it.
+        assert!(push_to_talk(&mut st, &ev(Key::Modifier { modifier: rune::Modifier::ControlLeft, pressed: false })));
+        assert!(!st.voice.ptt_held);
+    }
+
+    #[test]
+    fn a_closed_voice_settings_modal_drops_the_recorder() {
+        let mut st = ShellState::default();
+        st.voice.recording_key = true;
+        assert!(!push_to_talk(&mut st, &ev(Key::Text("x".into()))));
+        assert!(!st.voice.recording_key);
+        assert_eq!(st.voice.settings.ptt_key, None, "the key is not silently rebound");
     }
 }

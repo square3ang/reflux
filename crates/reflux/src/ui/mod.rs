@@ -29,6 +29,12 @@ pub use modal::{Modal, ModalSize};
 pub use overlay::{Placement, PopupAccess, Popups, Tooltip, popup_access};
 pub use select::Select;
 
+/// Whether `k` is a plain Enter: the web activates focused buttons and pickers with it, where
+/// Rune's AppKit rule gives Return to the default button.
+pub fn enters(k: &rune::KeyEvent) -> bool {
+    k.key == rune::Key::Enter && !k.mods.cmd && !k.mods.ctrl && !k.mods.alt && !k.mods.logo
+}
+
 /// Whether a palette is the light theme (its primary text is dark).
 pub fn is_light(p: &crate::theme::Palette) -> bool {
     p.text_primary.r + p.text_primary.g + p.text_primary.b < 1.5

@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use rune::{Color, El, Icon, Tx, col, el, icon, row, text};
+use rune::{Color, El, Icon, Key, Tx, col, el, icon, row, text};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, anchor_at_point, popout_shadow};
 use super::{mix, over};
@@ -155,6 +155,23 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
             MenuEntry::El(e) => *e,
             MenuEntry::Submenu(id, label, entries) => submenu(menu, popups, access, p, parent, id, label, None, false, entries),
             MenuEntry::SubmenuHint { id, label, hint, disabled, entries } => submenu(menu, popups, access, p, parent, id, label, hint, disabled, entries),
+        });
+    }
+    if parent.is_none() {
+        // Escape and Left close one submenu level first (the popup is modal, so Rune would
+        // otherwise dismiss the whole menu).
+        c = c.on_key(move |s: &mut S, k: &rune::KeyEvent, _| {
+            if !matches!(k.key, Key::Escape | Key::Left) || k.mods != rune::Mods::default() {
+                return false;
+            }
+            let p = access(s);
+            match p.sub.take() {
+                Some(sub) => {
+                    p.sub = sub.rsplit_once('/').map(|(outer, _)| outer.to_string());
+                    true
+                }
+                None => false,
+            }
         });
     }
     c

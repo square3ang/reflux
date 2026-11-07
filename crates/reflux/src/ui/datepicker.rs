@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use rune::{El, Span, TextEdit, col, el, icon, row, text, text_input};
+use rune::{El, Key, Span, TextEdit, col, el, icon, row, text, text_input};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, popout_shadow};
 use super::{mix, over};
@@ -86,9 +86,9 @@ impl<'a, S: 'static> DatePicker<'a, S> {
         };
         let toggle = {
             let (id, open_at) = (self.id.to_string(), open_at.clone());
-            move |s: &mut S| {
+            Rc::new(move |s: &mut S| {
                 if shown(access(s), &id).is_some() { access(s).close() } else { open_at(s, start) }
-            }
+            })
         };
         // `.inputWrapper`: 44 tall, radius 8, the read-only text, a divider and the 48px button.
         // The whole field is the button: Tab reaches it, Space / Return opens the calendar.
@@ -104,7 +104,19 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .label(self.label.unwrap_or(t("Select a date and time")))
             .focusable(true)
             .focus_ring(4.0, 0.0, p.focus_primary)
-            .on_press(toggle)
+            .on_press({
+                let toggle = toggle.clone();
+                move |s: &mut S| toggle(s)
+            })
+            // Web fields open on Enter as well as Space.
+            .on_key(move |s: &mut S, k, _| {
+                if k.key == Key::Enter {
+                    toggle(s);
+                    true
+                } else {
+                    false
+                }
+            })
             .child(
                 el().grow(1.0).min_w(0.0).px(16.0).py(10.0).child(match &shown_text {
                     Some(v) => text(v.clone()).color(p.text_primary),
@@ -160,13 +172,14 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .child(text(month.format("%B %Y").to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
             .child(nav(&icons::CARET_RIGHT, "next", t("Next month"), add_months(month, 1), last.is_some_and(|l| month >= l)));
         let weekdays = row().children(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(|d| row().size(DAY, 28.0).center().child(text(t(d)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))));
-        let mut grid = col().child(weekdays).focus_group().role("grid").label(t("Select a date"));
+        let mut grid = col().child(weekdays).focus_group().role("grid").label(t("Select a date and time"));
         for (w, wk) in weeks(month).into_iter().enumerate() {
             grid = grid.child(row().children(wk.iter().enumerate().map(|(col, &day)| {
                 let d = day;
                 let label = d.day().to_string();
                 let n = label.len();
                 let (sel, outside) = (self.value == Some(d), d.month() != month.month());
+                let initial = sel || (self.value.is_none() && d == today && !outside);
                 let off = self.min.is_some_and(|m| d < m) || self.max.is_some_and(|m| d > m);
                 let fg = if sel { p.brand_primary_fill } else if outside { mix(p.text_primary_muted, rune::Color { a: 0.0, ..p.text_primary_muted }, 40.0) } else { p.text_primary };
                 let weight = if sel { 600.0 } else if d == today { 700.0 } else { 400.0 };
@@ -182,8 +195,9 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .role("button")
                     .label(crate::desktop::time::medium_date(d, crate::i18n::locale()))
                     .focusable(!off)
-                    .focus_selected(sel)
-                    .tab_index(if sel { 1 } else { 0 })
+                    .focus_selected(initial)
+                    // The calendar opens on the chosen day, not on the month arrows.
+                    .tab_index(if initial { 1 } else { 0 })
                     .position_in_set(w * 7 + col + 1, 42)
                     .child(num);
                 if sel {
@@ -231,6 +245,48 @@ impl<'a, S: 'static> DatePicker<'a, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rune::Key;
+
+    #[derive(Default)]
+    struct State {
+        pops: Popups,
+        picked: Option<NaiveDate>,
+    }
+
+    fn view(s: &State, _: &mut rune::Cx<State>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        let mut layer = Vec::new();
+        let pops = s.pops.clone();
+        let field = DatePicker::new("dp", s.picked).label("Date").on_pick(|s: &mut State, d| {
+            s.picked = Some(d);
+            s.pops.close();
+        }).el(&pops, |s: &mut State| &mut s.pops, p, &mut layer);
+        rune::col().w_full().h_full().child(field).children(layer)
+    }
+
+    fn press(rt: &mut rune::Runtime<State>, k: Key) {
+        rt.key(rune::KeyEvent { key: k, mods: rune::Mods::default() });
+        rt.frame(0.0);
+    }
+
+    #[test]
+    fn calendar_is_keyboard_reachable() {
+        let mut rt = rune::Runtime::with_text(State::default(), view, (500.0, 500.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab);
+        let field = rt.elements().into_iter().find(|e| e.focused).expect("the field takes Tab");
+        assert_eq!((field.key.as_deref(), field.role), (Some("dp"), "button"));
+        press(&mut rt, Key::Text(" ".into()));
+        assert!(rt.state.pops.open.as_deref().is_some_and(|o| o.starts_with("dp@")));
+        let day = rt.elements().into_iter().find(|e| e.focused).expect("a day takes focus");
+        assert!(day.key.as_deref().is_some_and(|k| k.starts_with("dp-20")), "{:?}", day.key);
+        press(&mut rt, Key::Right);
+        let next = rt.elements().into_iter().find(|e| e.focused).expect("arrow moves the day");
+        assert_ne!(next.key, day.key);
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.picked.is_some(), "Return picks the focused day");
+        assert!(rt.state.pops.open.is_none(), "picking closes the calendar");
+    }
 
     #[test]
     fn months_and_weeks() {
