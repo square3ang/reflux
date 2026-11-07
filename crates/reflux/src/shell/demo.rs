@@ -987,6 +987,10 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
                 sw.query.focused = true;
             }
         }
+        "switcher-empty" => {
+            st.prefs.recent = vec![Snowflake(GENERAL), Snowflake(2202), Snowflake(2203)];
+            st.toggle_switcher();
+        }
         "pending-sticker" => {
             st.composer = rune::TextEdit::new("ship it");
             st.pending_sticker = store.guilds.values().flat_map(|g| g.stickers.first()).next().map(|x| (Snowflake(GENERAL), x.id));

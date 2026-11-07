@@ -1,9 +1,8 @@
 //! The Ctrl+K quick switcher (`QuickSwitcherModal`, `search/state/QuickSwitcher.tsx`): fuzzy over
 //! communities, channels, DMs and people, with `@` `#` `!` `*` prefixes to narrow it.
-// shortcut: the empty query lists previous channels and unread ones, without Fluxer's
-// mentions section; no message links, other accounts or member search over the network.
+// shortcut: no message links, other accounts or member search over the network.
 
-use reflux_model::{ChannelType, RelationshipType, Snowflake};
+use reflux_model::{ChannelType, NotificationLevel, RelationshipType, Snowflake};
 use reflux_store::Store;
 use rune::{Color, El, Key, ScrollSpec, TextEdit, col, el, icon, row, text, text_input};
 
@@ -64,8 +63,58 @@ pub fn score(value: &str, q: &str) -> u32 {
 /// `HISTORY_LIMIT`, `PREVIOUS_CHANNELS_WITH_SECTIONS`, `PREVIOUS_CHANNELS_ALONE`.
 const HISTORY: usize = 8;
 
+/// `generateDefaultResults`: up to 7 previous channels (3 when other sections follow), then
+/// channels with mentions, then the open community's unread channels; the first 3 previous
+/// ones and the open channel aren't repeated.
+// shortcut: mentions are ordered by newest message, not by when the mention arrived.
+fn default_results(store: &Store, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>) -> Vec<Hit> {
+    let me = store.my_id();
+    let hit = |c: &reflux_model::Channel, section: &'static str| {
+        let title = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| c.recipients.iter().filter(|u| u.id != me).map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", "));
+        let meta = c.guild_id.and_then(|g| store.guilds.get(&g)?.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
+        Hit { target: Target::Channel(c.guild_id, c.id, c.kind == ChannelType::GUILD_VOICE), title, meta, score: 1, section: Some(section) }
+    };
+    // `collectChannelResults`: known, visible and not seen yet.
+    let collect = |ids: Vec<Snowflake>, seen: &mut Vec<Snowflake>, section| {
+        let mut out = Vec::new();
+        for id in ids {
+            let Some(c) = store.channels.get(&id).filter(|c| !seen.contains(&id) && (c.guild_id.is_none() || store.can_view(id))) else { continue };
+            seen.push(id);
+            out.push(hit(c, section));
+        }
+        out
+    };
+    let mut history: Vec<Snowflake> = Vec::new();
+    for &c in recent {
+        if Some(c) != current && !history.contains(&c) {
+            history.push(c);
+        }
+    }
+    history.truncate(HISTORY - 1);
+    let previous = collect(history, &mut Vec::new(), "Previous channels");
+    let mut seen: Vec<Snowflake> = previous.iter().take(3).filter_map(|h| if let Target::Channel(_, c, _) = h.target { Some(c) } else { None }).chain(current).collect();
+    let mut mentioned: Vec<&reflux_model::Channel> = store.read_states.keys().filter(|&&c| store.mention_count(c) > 0).filter_map(|c| store.channels.get(c)).collect();
+    mentioned.sort_by_key(|c| std::cmp::Reverse(c.last_message_id));
+    let mut sections = collect(mentioned.iter().map(|c| c.id).collect(), &mut seen, "Mentions");
+    if let Some(g) = guild {
+        // `isUnreadInCurrentCommunity`: text and announcement channels, not muted, unread, in a
+        // community whose (locked) unread badge level is all messages.
+        let s = store.guild_settings.get(&Some(g));
+        let level = s.map(|s| s.message_notifications).filter(|l| *l != NotificationLevel::INHERIT).unwrap_or_else(|| {
+            NotificationLevel(store.guilds.get(&g).and_then(|g| g.info.as_ref()).map_or(0, |i| i.default_message_notifications))
+        });
+        let all = level == NotificationLevel::ALL_MESSAGES && !s.is_some_and(|s| reflux_store::mute_active(s.muted, s.mute_config.as_ref(), crate::app::now_ms()));
+        if all {
+            let ids = store.channel_groups(g).iter().flat_map(|grp| grp.text.iter()).filter(|c| matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT) && !store.is_muted(c) && store.has_unread(c.id)).map(|c| c.id).collect();
+            sections.extend(collect(ids, &mut seen, "Unread channels"));
+        }
+    }
+    let cap = if sections.is_empty() { 7 } else { 3 };
+    previous.into_iter().take(cap).chain(sections).collect()
+}
+
 /// Results for a query, best first. `recent`: channels visited, newest first; `current`: the open one.
-pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option<Snowflake>) -> Vec<Hit> {
+pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>) -> Vec<Hit> {
     let q = query.trim();
     let (mode, q) = match q.chars().next() {
         Some(c @ ('@' | '#' | '!' | '*')) => (Some(c), q[1..].trim()),
@@ -82,34 +131,7 @@ pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option
         }
     };
     if q.is_empty() && mode.is_none() {
-        // `generateDefaultResults`: previous channels, then unread channels and DMs.
-        let previous: Vec<Snowflake> = recent.iter().copied().filter(|&c| Some(c) != current && store.channels.contains_key(&c)).take(HISTORY - 1).collect();
-        for &c in &previous {
-            let Some(ch) = store.channels.get(&c) else { continue };
-            let name = ch.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| ch.recipients.iter().filter(|u| u.id != me).map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", "));
-            let meta = ch.guild_id.map(guild_name).unwrap_or_default();
-            push(Target::Channel(ch.guild_id, c, ch.kind == ChannelType::GUILD_VOICE), name, meta, "");
-        }
-        let n_prev = previous.len();
-        let seen: Vec<Snowflake> = previous.iter().take(3).copied().chain(current).collect();
-        for c in store.private_channels() {
-            if store.has_unread(c.id) && !seen.contains(&c.id) {
-                let name = c.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| c.recipients.iter().filter(|u| u.id != me).map(|u| store.display_name(None, u.id)).collect::<Vec<_>>().join(", "));
-                push(Target::Channel(None, c.id, false), name, String::new(), "");
-            }
-        }
-        for g in store.guilds.keys() {
-            for grp in store.channel_groups(*g) {
-                for c in grp.text.iter().filter(|c| store.has_unread(c.id) && !store.is_muted(c) && !seen.contains(&c.id)) {
-                    push(Target::Channel(Some(*g), c.id, false), c.name.clone().unwrap_or_default(), guild_name(*g), "");
-                }
-            }
-        }
-        let unread = hits.split_off(n_prev);
-        hits.truncate(if unread.is_empty() { 7 } else { 3 });
-        hits.iter_mut().for_each(|h| h.section = Some("Previous channels"));
-        hits.extend(unread.into_iter().map(|h| Hit { section: Some("Unread channels"), ..h }));
-        return hits;
+        return default_results(store, recent, current, guild);
     }
     if want('@') {
         let mut seen = std::collections::HashSet::new();
@@ -163,7 +185,7 @@ fn choose(store_first: impl Fn(Snowflake) -> Option<Snowflake>, st: &mut ShellSt
 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let sw = st.switcher.as_ref()?;
-    let hits = results(store, &sw.query.text, &st.prefs.recent, st.channel);
+    let hits = results(store, &sw.query.text, &st.prefs.recent, st.channel, st.guild);
     let selected = sw.selected.min(hits.len().saturating_sub(1));
     let firsts: std::collections::HashMap<Snowflake, Option<Snowflake>> = store.guilds.keys().map(|g| (*g, super::first_channel(store, *g))).collect();
     let pick = {
@@ -332,15 +354,15 @@ mod tests {
     #[test]
     fn prefixes_narrow_the_demo() {
         let d = crate::shell::demo::Demo::new();
-        let all = results(&d.store, "gen", &[], None);
+        let all = results(&d.store, "gen", &[], None, Some(Snowflake(2000)));
         assert!(matches!(all[0].target, Target::Channel(Some(_), _, false)), "{all:?}");
-        assert!(results(&d.store, "#lou", &[], None).is_empty(), "Lounge is a voice channel");
-        assert!(matches!(results(&d.store, "!lou", &[], None)[0].target, Target::Channel(_, _, true)));
-        assert!(matches!(results(&d.store, "*rust", &[], None)[0].target, Target::Guild(_)));
-        assert!(results(&d.store, "@ada", &[], None).iter().all(|h| matches!(h.target, Target::User(_))));
-        assert!(!results(&d.store, "", &[], None).is_empty(), "unread channels by default");
+        assert!(results(&d.store, "#lou", &[], None, Some(Snowflake(2000))).is_empty(), "Lounge is a voice channel");
+        assert!(matches!(results(&d.store, "!lou", &[], None, Some(Snowflake(2000)))[0].target, Target::Channel(_, _, true)));
+        assert!(matches!(results(&d.store, "*rust", &[], None, Some(Snowflake(2000)))[0].target, Target::Guild(_)));
+        assert!(results(&d.store, "@ada", &[], None, Some(Snowflake(2000))).iter().all(|h| matches!(h.target, Target::User(_))));
+        assert!(!results(&d.store, "", &[], None, Some(Snowflake(2000))).is_empty(), "unread channels by default");
         let general = Snowflake(2201);
-        let r = results(&d.store, "", &[general, Snowflake(2202)], Some(general));
+        let r = results(&d.store, "", &[general, Snowflake(2202)], Some(general), Some(Snowflake(2000)));
         assert_eq!(r[0].target, Target::Channel(Some(Snowflake(2000)), Snowflake(2202), false), "the open channel isn't a previous one");
         assert_eq!(r[0].section, Some("Previous channels"));
         assert!(r.iter().filter(|h| h.section == Some("Unread channels")).all(|h| h.target != r[0].target), "no repeats");

@@ -613,8 +613,8 @@ impl Store {
         (unread, mentions)
     }
 
-    /// Muted through guild settings, the channel override or its category's override.
-    // shortcut: ignores `mute_config.end_time` expiry; pass `now` in if timed mutes matter.
+    /// Muted through guild settings, the channel override or its category's override; timed
+    /// mutes end at `mute_config.end_time`.
     pub fn is_muted(&self, c: &Channel) -> bool {
         if c.kind.is_thread() {
             return self.is_thread_muted(c);
