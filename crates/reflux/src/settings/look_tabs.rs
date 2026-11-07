@@ -22,7 +22,7 @@ fn update<S>(s: &mut S, acc: ShellAccess<S>, f: impl FnOnce(&mut Prefs)) {
     let sh = acc(s);
     let mut prefs = sh.prefs.clone();
     f(&mut prefs.look);
-    sh.intents.push(Intent::Prefs(prefs));
+    sh.intents.push(Intent::Prefs(Box::new(prefs)));
 }
 
 fn switch<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, label: &str, desc: Option<&str>, get: fn(&Prefs) -> bool, put: fn(&mut Prefs, bool)) -> El {
@@ -352,7 +352,7 @@ pub fn notifications<S: 'static>(store: &Store, st: &ShellState, p: &Palette, ac
             let sh = acc(s);
             let mut prefs = sh.prefs.clone();
             prefs.sounds = all_off;
-            sh.intents.push(Intent::Prefs(prefs));
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
         })
         .el(p);
     let max = format!("{} MB", CUSTOM_MAX_BYTES / 1024 / 1024);

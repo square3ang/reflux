@@ -205,6 +205,7 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.web_base = inst.discovery.endpoints.webapp.clone();
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
         s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
+        s.app.shell.gift_base = inst.discovery.endpoints.gift.clone();
         let gif = &inst.discovery.gif;
         // Picker frecency, favorites and skin tone, once per sign-in.
         if !s.app.shell.expr.persist {

@@ -83,7 +83,7 @@ fn main() {
     }
     // The remembered size, and a launch at login with "Start minimized" stays in the tray.
     let prefs = if rune::is_headless() { desktop::Prefs::default() } else { session::load().desktop };
-    let mut app = rune::App::new(AppSpec {
+    let app = rune::App::new(AppSpec {
         fonts: theme::FONTS,
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
@@ -105,6 +105,7 @@ fn main() {
     .keep_running()
     .on_close(desktop::on_close)
     .on_focus(|s, focused, _| s.desktop.focused = focused);
+    let mut app = desktop::menu::install(app);
     popout::register(&mut app);
     if desktop::autostart::start_hidden(&prefs) && !rune::is_headless() {
         app = app.windowless();

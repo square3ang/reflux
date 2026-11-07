@@ -221,7 +221,7 @@ impl Demo {
                           user(1004, "alan", "Alan Turing"), user(1005, "margaret", "Margaret Hamilton"),
                           user(1006, "ken", "Ken Thompson"), user(1007, "fluxbot", "Fluxbot"),
                           user(1008, "hedy", "Hedy Lamarr"), user(1009, "spammer", "Spam Bot")],
-                "relationships": [{"id": "1001", "type": 1}, {"id": "1003", "type": 1}, {"id": "1004", "type": 1},
+                "relationships": [{"id": "1001", "type": 1}, {"id": "1003", "type": 1, "friend_shares_voice_activity": true}, {"id": "1004", "type": 1, "friend_shares_voice_activity": true},
                                   {"id": "1006", "type": 1}, {"id": "1005", "type": 3}, {"id": "1008", "type": 4},
                                   {"id": "1009", "type": 2}],
                 "notes": {"1001": "Wrote the first program"},
@@ -252,7 +252,7 @@ impl Demo {
                     {"id": 7, "name": "Friends", "color": 0x2ECC71, "guild_ids": ["5000", "6000"]},
                     {"id": -1, "guild_ids": ["7000"]},
                 ]},
-                "user_guild_settings": [{"guild_id": HQ.to_string(), "channel_overrides": {"2203": {"muted": true}}}],
+                "user_guild_settings": [{"guild_id": HQ.to_string(), "channel_overrides": {"2203": {"muted": true, "message_notifications": 3}, "2200": {"muted": false, "message_notifications": 1}}}],
             }),
         );
         // Unread activity in other HQ channels (they have no loaded window; this bumps last IDs).

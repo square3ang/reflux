@@ -5,6 +5,7 @@
 
 pub mod autostart;
 pub mod link;
+pub mod menu;
 pub mod nagbar;
 pub mod notify;
 pub mod shortcuts;
@@ -65,6 +66,11 @@ pub struct Prefs {
     pub skipped_update: Option<String>,
     /// Per-account preferences (favorites, keybinds), by user ID.
     pub accounts: std::collections::HashMap<String, crate::nav::AccountPrefs>,
+    /// Channels opened, newest first (`SelectedChannel.recentVisits`, the quick switcher's
+    /// "Previous channels").
+    pub recent: Vec<Snowflake>,
+    /// Message searches by scope (guild, or the DM channel), newest first (`SearchHistory`).
+    pub search_history: std::collections::HashMap<Snowflake, Vec<String>>,
 }
 
 impl Default for Prefs {
@@ -89,6 +95,8 @@ impl Default for Prefs {
             look: Default::default(),
             skipped_update: None,
             accounts: Default::default(),
+            recent: Vec::new(),
+            search_history: Default::default(),
         }
     }
 }
@@ -172,7 +180,7 @@ pub struct Desktop {
     /// OBS / XSplit is running (`StreamerModeProcessDetection.ts`).
     pub capture_app: bool,
     streamer_polled: Option<std::time::Instant>,
-    update_checked: Option<std::time::Instant>,
+    pub update_checked: Option<std::time::Instant>,
 }
 
 /// `Sound.playSound`: unless all sounds, this sound or streaming privacy mutes it; the user's
@@ -223,6 +231,11 @@ pub fn start(ui: &rune::AppHandle<State>) {
 /// A `fluxer://` link from a launch: kept until the shell is up.
 pub fn open_link(s: &mut State, url: &str) {
     let Some(l) = link::parse(url) else { return eprintln!("reflux: ignoring link {url:?}") };
+    if let link::Link::Web(path) = &l {
+        // Signed in or not, on the saved instance's web app.
+        let base = s.app.instance.as_ref().map_or_else(|| format!("https://{}", s.app.saved.instance), |i| i.discovery.endpoints.webapp.clone());
+        return crate::settings::open_url(&format!("{}{path}", base.trim_end_matches('/')));
+    }
     s.desktop.pending_link = Some(l);
     if s.app.route == Route::Main {
         ready(s);
@@ -241,6 +254,8 @@ pub fn ready(s: &mut State) {
         }
         link::Link::Channel { guild, channel } => sh.select_guild(guild, Some(channel)),
         link::Link::OAuth2(params) => crate::nav::oauth::open(sh, params),
+        link::Link::Gift(code) => crate::settings::open_gift(sh, code),
+        link::Link::Web(_) => {}
     }
 }
 
@@ -322,7 +337,7 @@ fn attention(s: &State) {
 }
 
 /// `LocationState`: the channel open last, if it still exists.
-fn reopen(s: &mut State) {
+pub(crate) fn reopen(s: &mut State) {
     let Some((guild, channel)) = s.app.saved.desktop.last else { return };
     let sh = &mut s.app.shell;
     if sh.channel.is_none() && s.app.store.channels.contains_key(&channel) && guild.is_none_or(|g| s.app.store.guilds.contains_key(&g)) {
@@ -339,6 +354,11 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
     if s.app.route == Route::Main && here.is_some() && prefs.last != here && !rune::is_headless() {
         prefs.last = here;
+        if let Some((_, c)) = here {
+            prefs.recent.retain(|&x| x != c);
+            prefs.recent.insert(0, c);
+            prefs.recent.truncate(8);
+        }
         crate::session::save(&s.app.saved);
     }
     time::set_format(s.app.store.settings.time_format);

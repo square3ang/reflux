@@ -21,9 +21,11 @@ use crate::{State, session};
 
 mod account;
 mod actions;
+mod cache;
 mod chat;
 mod expr;
 mod guild;
+mod idle;
 mod invites;
 mod threads;
 pub(crate) use guild::entered;
@@ -148,6 +150,8 @@ pub struct App {
     /// The thread subscription last sent: (guild, thread whose member list is open).
     thread_sub: Option<(Snowflake, Option<Snowflake>)>,
     voice: voice::VoiceRt,
+    idle: idle::Idle,
+    cache: cache::Cache,
 }
 
 /// What views (the shell) ask for; `act` runs it.
@@ -199,6 +203,7 @@ fn boot(s: &mut State) {
     s.login.instance = TextEdit::new(s.app.saved.instance.clone());
     if s.app.saved.token.is_some() {
         s.app.route = Route::Connecting;
+        cache::restore(s);
     }
     discover(s);
 }
@@ -236,13 +241,13 @@ pub fn discover(s: &mut State) {
                     if s.login.step == Step::Instance {
                         s.login.step = Step::Method;
                     }
-                    if s.app.route == Route::Connecting {
+                    if matches!(s.app.route, Route::Connecting | Route::Main) {
                         connect(s);
                     }
                 }
                 Err(e) => {
                     let msg = format!("Couldn't reach {host}: {e}");
-                    if s.app.route == Route::Connecting {
+                    if matches!(s.app.route, Route::Connecting | Route::Main) {
                         s.app.error = Some(msg);
                     } else {
                         s.login.step = Step::Instance;
@@ -589,11 +594,15 @@ fn reset(s: &mut State) {
 /// this device takes over instead, like Fluxer's switcher after a logout.
 fn sign_out(s: &mut State, message: Option<String>) {
     reset(s);
+    if let Some(a) = &s.app.saved.current {
+        cache::forget(a);
+    }
     s.app.saved.token = None;
     s.app.saved.current = None;
     if s.app.saved.switch_to(0) {
         session::save(&s.app.saved);
         s.app.route = Route::Connecting;
+        cache::restore(s);
         return discover(s);
     }
     s.app.route = Route::Auth;
@@ -681,11 +690,13 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 reflux_model::DispatchEvent::EntranceSoundPlay(e) => voice::on_entrance(s, e),
                 _ => {}
             }
-            if let reflux_model::DispatchEvent::Ready(_) = &d {
+            if let reflux_model::DispatchEvent::Ready(r) = &d {
                 s.app.member_sub = None; // a new session has no subscriptions
                 s.app.thread_sub = None;
                 s.app.route = Route::Main;
                 account::remember_me(s);
+                idle::ready(s);
+                cache::ready(s, r);
                 if !s.app.store.settings.locale.is_empty() {
                     crate::i18n::set_locale(&s.app.store.settings.locale);
                     crate::desktop::spell::configure(&s.app.saved.desktop); // the locale's dictionary
@@ -783,7 +794,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::Logout => act(s, Action::Logout),
             Intent::Prefs(p) => {
                 crate::desktop::prefs_changed(&s.app.saved.desktop, &p);
-                s.app.saved.desktop = p;
+                s.app.saved.desktop = *p;
                 session::save(&s.app.saved);
             }
             Intent::Desktop(r) => crate::desktop::run(s, r, tx),
@@ -813,6 +824,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.prefs = s.app.saved.desktop.clone();
     crate::desktop::tick(s, tx);
     voice::tick(s, tx);
+    idle::tick(s, tx);
+    cache::tick(s);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
     actions::tick(s) || ran || shell || threads_changed

@@ -11,7 +11,15 @@ pub enum Link {
     Channel { guild: Option<Snowflake>, channel: Snowflake },
     /// `fluxer://oauth2/authorize?…`: its query (`crate::nav::oauth`).
     OAuth2(Vec<(String, String)>),
+    Gift(String),
+    /// An account email's page (reset password, verify email, recover account, authorize IP,
+    /// revert email change), with its `#token=` fragment. Fluxer's desktop app doesn't route
+    /// these in-app, so they open on the instance's web app.
+    Web(String),
 }
+
+/// The web app's account email pages (`Routes.RESET_PASSWORD` …).
+const WEB_PAGES: &[&str] = &["reset", "verify", "recover", "authorize-ip", "wasntme"];
 
 /// `fluxer://invite/CODE`, `fluxer://channels/@me/C`, `fluxer://channels/G/C[/M]`. Like Fluxer,
 /// links that try to name an instance (a query) are refused; links resolve against the
@@ -24,11 +32,17 @@ pub fn parse(url: &str) -> Option<Link> {
     if rest.contains(['?', '"', '\'', '<', '>', '\\']) {
         return None;
     }
-    let rest = rest.split('#').next()?.trim_matches('/');
+    let (path, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let path = path.trim_matches('/');
+    if WEB_PAGES.contains(&path) {
+        return Some(Link::Web(if fragment.is_empty() { format!("/{path}") } else { format!("/{path}#{fragment}") }));
+    }
+    let rest = path;
     let parts: Vec<&str> = rest.split('/').collect();
     let id = |s: &str| s.parse::<u64>().ok().map(Snowflake);
     match parts.as_slice() {
         ["invite", code] => crate::guild::parse_invite(code).map(Link::Invite),
+        ["gift", code] if !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => Some(Link::Gift(code.to_string())),
         ["channels", "@me", c, ..] => Some(Link::Channel { guild: None, channel: id(c)? }),
         ["channels", g, c, ..] => Some(Link::Channel { guild: Some(id(g)?), channel: id(c)? }),
         _ => None,
@@ -105,6 +119,10 @@ mod tests {
         assert_eq!(parse("fluxer://invite/AbCd12"), Some(Link::Invite("AbCd12".into())));
         assert_eq!(parse("fluxer://channels/@me/42"), Some(Link::Channel { guild: None, channel: Snowflake(42) }));
         assert_eq!(parse("fluxer://channels/1/2/3"), Some(Link::Channel { guild: Some(Snowflake(1)), channel: Snowflake(2) }));
+        assert_eq!(parse("fluxer://gift/G1ft-x"), Some(Link::Gift("G1ft-x".into())));
+        assert_eq!(parse("fluxer://reset#token=abc"), Some(Link::Web("/reset#token=abc".into())));
+        assert_eq!(parse("fluxer://verify"), Some(Link::Web("/verify".into())));
+        assert_eq!(parse("fluxer://recover/x"), None);
         assert_eq!(parse("fluxer://channels/x/2"), None);
         assert_eq!(parse("fluxer://invite/abc?instance=evil.example"), None, "instance designation refused");
         assert_eq!(parse("https://fluxer.gg/abc"), None);

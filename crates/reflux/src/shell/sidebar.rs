@@ -64,6 +64,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
 
     // `.navigationContainer`: padding-right 8; 10px drop zones above and below.
     let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0);
+    groups = groups.children(super::members_page::sidebar_row(store, st, gid, p, acc));
     let hide_muted = store.guild_settings.get(&Some(gid)).is_some_and(|s| s.hide_muted_channels);
     for g in store.channel_groups(gid) {
         let collapsed = g.category.is_some_and(|c| st.collapsed.contains(&c.id));
@@ -71,7 +72,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
             groups = groups.child(category(cat, collapsed, p, acc));
         }
         for c in g.text.iter().chain(g.voice.iter()) {
-            let selected = st.channel == Some(c.id);
+            let selected = st.channel == Some(c.id) && st.social.members.is_none();
             // A collapsed category still shows its selected and unread channels.
             if collapsed && !selected && !store.has_unread(c.id) {
                 continue;
@@ -284,7 +285,7 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
 }
 
 /// Home: the DM list (`DirectMessageList`, `DMListItem`).
-// shortcut: pinned DMs, message previews and the create-DM picker (the + is inert) aren't done.
+// shortcut: pinned DMs and message previews aren't done.
 pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     // `.dmListHeader`: the quick switcher button with its keybind hint.
     let kbd = |k: &str| {

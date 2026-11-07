@@ -351,11 +351,48 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
             acc(s).social(Method::DELETE, format!("/channels/{ch}/messages/{id}/reactions"), None, Done::Nothing)
         })));
     }
+    // `MediaMenuData.canEditAltText`: your own (or, with Manage Messages, anyone's) images and videos.
+    if (own || perms.contains(P::MANAGE_MESSAGES)) && m.message_snapshots.is_empty() {
+        let media: Vec<_> = m.attachments.iter().filter(|a| a.content_type.starts_with("image/") || a.content_type.starts_with("video/")).collect();
+        for a in &media {
+            let label = if media.len() == 1 { t("Edit alt text").to_string() } else { format!("{} ({})", t("Edit alt text"), a.filename) };
+            let (att, desc) = (a.id, a.description.clone().unwrap_or_default());
+            out.push(MenuEntry::Item(MenuItem::new(format!("alt-text-{att}"), label).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
+                let st = acc(s);
+                st.open_social(Modal::AltText { channel: ch, message: id, attachment: att });
+                st.form.text.insert("alt".into(), rune::TextEdit::new(desc.clone()));
+            })));
+        }
+    }
     if !own {
         let r = Modal::Report { target: "message", guild: c.guild_id, channel: Some(ch), id };
         out.push(MenuEntry::Item(MenuItem::new("report-message", t("Report message")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| super::moderation::open_report(acc(s), r.clone()))));
     }
     out
+}
+
+/// `EditAltTextModal`: the attachment's description, saved with a message PATCH that lists every
+/// attachment (only this one changes).
+// shortcut: a single-line field with a counter (Fluxer's is a 3–8 row textarea).
+pub fn alt_text<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, id: Snowflake, att: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+    const MAX: usize = 4096; // `MAX_ATTACHMENT_ALT_TEXT_LENGTH`
+    let Some(m) = store.messages(ch).iter().find(|m| m.id == id).cloned() else { return Dialog::new(t("Edit alt text"), super::close(acc)).el(p) };
+    let len = st.form.value("alt", "").chars().count();
+    let mut items = vec![
+        super::field(st, acc, "alt", "", t("Alt text description"), t("Describe this media for screen readers"), p),
+        text(format!("{len}/{MAX}")).font(font(12.0, 400.0).lh(16.0)).color(if len > MAX { p.status_danger } else { p.text_tertiary }),
+    ];
+    items.extend(super::error(st, p));
+    let go = move |s: &mut S| {
+        let sh = acc(s);
+        let d = sh.form.value("alt", "");
+        if d.chars().count() > MAX {
+            return;
+        }
+        let atts: Vec<Value> = m.attachments.iter().map(|a| if a.id == att { json!({ "id": a.id, "description": Some(d.trim()).filter(|d| !d.is_empty()) }) } else { json!({ "id": a.id }) }).collect();
+        sh.social(Method::PATCH, format!("/channels/{ch}/messages/{id}"), Some(json!({ "content": m.content, "attachments": atts })), Done::Toast(t("Alt text updated")));
+    };
+    Dialog::new(t("Edit alt text"), super::close(acc)).body(super::body(items)).footer(super::footer(st, t("Save"), false, "alt-text-save", acc, go, p)).el(p)
 }
 
 // ---- Forward / publish / follow ------------------------------------------------------------

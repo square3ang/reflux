@@ -11,6 +11,9 @@ mod desktop_tabs;
 mod look_tabs;
 pub(crate) mod dev;
 pub(crate) mod privacy;
+mod premium;
+pub use premium::{gift_accept, open_gift};
+pub(crate) use privacy::open_url;
 mod profile;
 pub mod sudo;
 pub(crate) mod tabs;
@@ -419,6 +422,7 @@ pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
         "privacy_safety" => sh.load("harvest", "/users/@me/harvest/latest"),
         "my_profile" => profile::load(sh),
         "applications" => dev::load(sh),
+        "gift_inventory" => sh.load("gifts", "/users/@me/gifts"),
         _ => {}
     }
 }

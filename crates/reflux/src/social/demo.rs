@@ -1,6 +1,6 @@
 //! `--social=<scene>` for `--shell-demo`: this module's dialogs, popouts and pages mid-use.
 //! Scenes: `kick ban timeout untimeout nickname transfer ban-details report create-dm add-group
-//! edit-group friend-nick group-nick forward publish follow topic duplicate invite webhook`
+//! edit-group friend-nick group-nick forward publish follow topic alt-text members-page duplicate invite webhook`
 //! (dialogs), `inbox inbox-bookmarks inbox-unread bell mute user-menu group-menu msg-menu`
 //! (popouts and menus), `gs-moderation gs-vanity_url gs-webhooks gs-explore cs-invites
 //! cs-webhooks` (settings tabs), `discovery preview welcome dm-welcome group-welcome notes
@@ -75,6 +75,43 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             data(st, "guild", json!("2000"));
         }
         "topic" => st.open_social(Modal::Topic(s(GENERAL))),
+        "members-page" => {
+            st.open_members_page(g);
+            st.intents.clear();
+            let m = |u: u64, nick: Option<&str>, roles: &[u64], joined: i64, src: u8| json!({"user_id": u.to_string(), "username": format!("user{u}"), "discriminator": "0",
+                "global_name": null, "nickname": nick, "role_ids": roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), "joined_at": joined, "is_bot": u == 1007,
+                "supplemental": {"join_source_type": src, "source_invite_code": if src == 1 { Some("rust") } else { None }, "inviter_id": null}});
+            st.social.data.insert("members-search".into(), json!({"members": [m(ME, Some("Square"), &[2010], 1767225600, 0), m(1001, Some("Ada"), &[2010, 2012], 1767312000, 1),
+                m(1002, Some("Linus"), &[2011], 1767398400, 2), m(1003, None, &[2012], 1767484800, 6), m(1007, Some("Fluxbot"), &[], 1767571200, 3)],
+                "page_result_count": 5, "total_result_count": 8, "indexing": false}));
+        }
+        "alt-text" => {
+            let m = store.messages(s(GENERAL)).iter().find(|m| m.attachments.iter().any(|a| a.id == s(9001))).map(|m| m.id).unwrap_or_default();
+            st.open_social(Modal::AltText { channel: s(GENERAL), message: m, attachment: s(9001) });
+            st.form.text.insert("alt".into(), rune::TextEdit::new("The settings window with the theme picker open"));
+        }
+        "debug-message" => {
+            let m = store.messages(s(GENERAL)).last().map(|m| m.id).unwrap_or_default();
+            st.open_debug(crate::shell::debug::Subject::Message(s(GENERAL), m));
+        }
+        "debug-client" => {
+            st.open_debug(crate::shell::debug::Subject::Client);
+            st.intents.clear();
+            st.expr.fetched.insert("debug-experiments".into(), crate::shell::expr::Fetched::Done(json!({"assignments": {"voice_noise_suppression": 1}})));
+        }
+        "gift" => {
+            crate::settings::open_gift(st, "G1ftC0de".into());
+            st.intents.clear();
+            data(st, "gift", json!({"code": "G1ftC0de", "duration_type": "months", "duration_quantity": 3, "redeemed": false, "created_by": {"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}}));
+        }
+        "gifts" => {
+            st.open_settings(Some("gift_inventory"));
+            st.intents.clear();
+            st.gift_base = "https://fluxer.gift".into();
+            data(st, "gifts", json!([
+                {"code": "AbCdEf123", "duration_type": "months", "duration_quantity": 1, "created_at": "2026-10-02T10:00:00Z", "redeemed_at": null, "redeemed_by": null},
+                {"code": "XyZ987", "duration_type": "years", "duration_quantity": 1, "created_at": "2026-06-11T10:00:00Z", "redeemed_at": "2026-06-12T09:00:00Z", "redeemed_by": {"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}}]));
+        }
         "duplicate" => st.open_social(Modal::Duplicate(s(2202))),
         "invite" => {
             st.open_social(Modal::InviteAccept("rust".into()));

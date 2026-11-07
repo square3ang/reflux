@@ -30,7 +30,7 @@ use crate::ui::{Button, ButtonVariant, Input, mix};
 use crate::i18n::t;
 
 pub use channel::{bell_button, blocked_bar, blocked_runs, mass_mention, mute_entry, welcome};
-pub use discovery::{discovery_page, invite_code, open as open_discovery, open_invite, preview_nagbar};
+pub use discovery::{discovery_page, gift_code, invite_code, open as open_discovery, open_invite, preview_nagbar};
 pub use dm::{group_items, open_create_dm};
 pub use inbox::{inbox_button, message_items};
 pub use moderation::{member_items, open_report};
@@ -60,6 +60,8 @@ pub struct Social {
     pub api_base: String,
     /// The composer's (length limit, slowmode) for a send held by the confirmation.
     pub pending_send: (usize, u32),
+    /// The community members page, while it shows.
+    pub members: Option<crate::shell::members_page::MembersPage>,
 }
 
 impl Social {
@@ -93,8 +95,12 @@ pub enum Modal {
     Duplicate(Snowflake),
     /// `InviteAcceptModal` for an invite code.
     InviteAccept(String),
+    /// `GiftAcceptModal` for a gift code.
+    GiftAccept(String),
     /// A webhook being edited.
     Webhook { guild: Snowflake, id: Snowflake },
+    /// `EditAltTextModal` for one of a message's attachments.
+    AltText { channel: Snowflake, message: Snowflake, attachment: Snowflake },
 }
 
 /// A request a view asks for.
@@ -128,6 +134,8 @@ pub enum Done {
     EnterGuild(Snowflake),
     /// Back to a community settings tab.
     GuildTab(Snowflake, &'static str),
+    /// Close the dialog and show a success toast.
+    Toast(&'static str),
 }
 
 impl ShellState {
@@ -204,6 +212,12 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
             sh.select_guild(Some(g), None);
         }
         Done::GuildTab(g, tab) if same => sh.open_guild_settings(g, tab),
+        Done::Toast(msg) => {
+            if same {
+                sh.dialog = None;
+            }
+            crate::desktop::toast(&mut sh.desktop, msg, true);
+        }
         Done::OpenChannel => {
             sh.dialog = None;
             if let Some(id) = id_of(&v, "id") {
@@ -242,7 +256,9 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             Modal::Topic(c) => channel::topic(store, st, c, p, acc),
             Modal::Duplicate(c) => channel::duplicate(store, st, c, p, acc),
             Modal::InviteAccept(code) => discovery::invite_accept(store, st, &code, p, acc),
+            Modal::GiftAccept(code) => crate::settings::gift_accept(st, &code, p, acc),
             Modal::Webhook { guild, id } => tabs::webhook_editor(store, st, guild, id, p, acc, layer),
+            Modal::AltText { channel, message, attachment } => inbox::alt_text(store, st, channel, message, attachment, p, acc),
         };
         // Under any select list it opened.
         layer.insert(start, modal);
@@ -321,7 +337,11 @@ pub fn override_patch(store: &Store, guild: Option<Snowflake>, channel: Snowflak
     let key = channel.to_string();
     let mut ov = all.get(&key).cloned().unwrap_or_else(|| json!({ "muted": false, "message_notifications": 3 }));
     f(&mut ov);
-    all[key] = ov;
+    // `Value::Null` removes the override.
+    match ov {
+        Value::Null => drop(all.as_object_mut().map(|m| m.remove(&key))),
+        ov => all[key] = ov,
+    }
     json!({ "channel_overrides": all })
 }
 
@@ -378,5 +398,7 @@ mod tests {
         assert_eq!(p["channel_overrides"]["5"]["muted"], json!(true));
         assert_eq!(p["channel_overrides"]["6"]["message_notifications"], json!(2));
         assert_eq!(p["channel_overrides"]["6"]["muted"], json!(false));
+        let p = override_patch(&store, Some(Snowflake(1)), Snowflake(5), |o| *o = Value::Null);
+        assert_eq!(p, json!({ "channel_overrides": {} }), "null removes the override");
     }
 }

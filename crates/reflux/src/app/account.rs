@@ -18,6 +18,7 @@ pub(super) fn run(s: &mut State, op: Op) {
                 session::save(&s.app.saved);
                 reset(s);
                 s.app.route = Route::Connecting;
+                super::cache::restore(s);
                 discover(s); // the instance may differ; connects once discovered
             }
         }

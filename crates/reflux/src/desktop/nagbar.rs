@@ -66,7 +66,7 @@ fn prefs<S: 'static>(acc: ShellAccess<S>, f: impl Fn(&mut super::Prefs) + 'stati
         let sh = acc(s);
         let mut p = sh.prefs.clone();
         f(&mut p);
-        sh.intents.push(Intent::Prefs(p));
+        sh.intents.push(Intent::Prefs(Box::new(p)));
     }
 }
 
@@ -162,7 +162,7 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
         if !p.words.contains(&add) {
             p.words.push(add.clone());
         }
-        sh.intents.push(Intent::Prefs(p));
+        sh.intents.push(Intent::Prefs(Box::new(p)));
         super::toast(&mut sh.desktop, tf("Added \"{word}\" to dictionary", &[("word", &add)]), true);
         sh.desktop.spell_menu = None;
         sh.popups.close();

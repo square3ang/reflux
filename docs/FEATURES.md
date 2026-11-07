@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows). Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -17,7 +17,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
 | Devices | DONE | | tabs/DevicesTab.tsx |
-| Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | MISSING | | tabs/PlutoniumTab.tsx etc. |
+| Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | PARTIAL | read-only: Plutonium link card + subscription status, Gifts inventory (copy links); checkout, plan changes, redeem form, Operator pass and Payments are in the browser | tabs/PlutoniumTab.tsx etc. |
 | Appearance | DONE | (device prefs in session.json, not the synced-preferences protobuf; Active now has no panel to show) | tabs/AppearanceTab.tsx |
 | Themes | PARTIAL | theme library/saved themes and backups; font and non-colour variables can't be overridden; Quick CSS applies only `:root` colour variables (the rest is counted and reported) | F/theme_settings/* |
 | Notifications | PARTIAL | per-sound volume overrides | tabs/NotificationsTab.tsx |
@@ -70,7 +70,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Instance picker, login, TOTP, IP auth, register, forgot pw, verify nagbar | DONE | | F/auth/* |
 | Passkeys | PARTIAL | USB only | D/Passkeys.ts |
-| Reset pw / verify email / recover pages | MISSING | web-only links | F/auth/… |
+| Reset pw / verify email / recover pages | DONE | `fluxer://` reset, verify, recover, authorize-ip and wasntme links open the web app (Fluxer desktop doesn't route them in-app either) | F/auth/… |
 | SSO login | DONE | via the browser handoff | AuthSsoPanel.tsx |
 | Browser login handoff | MISSING | | BrowserLoginHandoffModal.tsx |
 | Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
@@ -119,11 +119,11 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
 | NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
-| Guild members page | MISSING | | GuildMembersPage.tsx |
+| Guild members page | PARTIAL | search on Enter (no debounce); no column filters, page-size picker or indexing poll | GuildMembersPage.tsx |
 | DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
 | Group DM management | DONE | | EditGroupModal.tsx |
-| Active Now | MISSING | | ActiveNowSidebar.tsx |
+| Active Now | PARTIAL | no stream thumbnail / Watch stream; doesn't hide on narrow windows | ActiveNowSidebar.tsx |
 | Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
 | Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
@@ -140,7 +140,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Inbox / recent mentions | PARTIAL | no paging past 25; unread tab lists channels only | InboxPopout.tsx |
 | Who reacted | PARTIAL | reactors past the first 100; filter right-click "Remove reaction" (it's in the message menu) | ReactionTooltip.tsx, MessageReactionsModal.tsx |
 | Media viewer | DONE | | MediaModal.tsx |
-| Edit alt text | MISSING | | EditAltTextModal.tsx |
+| Edit alt text | DONE | single-line field | EditAltTextModal.tsx |
 | External link warning | DONE | | ExternalLinkWarningModal.tsx |
 | Markdown alerts/tables | PARTIAL | | markdown/renderers/* |
 | Code highlighting | DONE | | F/code_highlighting/* |
@@ -153,10 +153,10 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Sounds, status select, custom status display | DONE | | |
 | Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
 | Timed mute expiry | DONE | | useMuteSheet.ts |
-| Per-channel overrides | PARTIAL | set from the header bell only; the notification modal has no overrides section | GuildNotificationSettingsModal.tsx |
+| Per-channel overrides | DONE | header bell + the notification modal's overrides section | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
 | TTS | PARTIAL | speaks through the OS tool (spd-say/espeak-ng/say/PowerShell); no queue, no TtsTextFormatter simplification, replies not announced as such | TextToSpeech.tsx |
-| Auto-idle | MISSING | | LocalPresence.ts |
+| Auto-idle | PARTIAL | only Reflux's own window input counts (no OS idle query) | LocalPresence.ts |
 | Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
 
 ### relationship / user
@@ -175,7 +175,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Create/join, header popout, context menu, privacy modal, leave | DONE | | |
-| Notification modal | PARTIAL | channel overrides | GuildNotificationSettingsModal.tsx |
+| Notification modal | DONE | | GuildNotificationSettingsModal.tsx |
 | Edit community profile | DONE | | MyProfileTab.tsx |
 | Delete my messages | MISSING | | useDeleteMyMessagesInGuild.tsx |
 | Preview nagbar | DONE | (Join / Stop previewing; visiting permissions in `compute_permissions`) | GuildPreviewNagbar.tsx |
@@ -223,17 +223,17 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Animated emoji/avatars/stickers | DONE | | |
 | Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
-| Gifts *(low)* | MISSING | | F/gift/* |
+| Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
 | Invite: friends list, accept preview, pause | PARTIAL | friends list in the invite modal | F/invite/* |
 | Discovery page | PARTIAL | card images, language filter | DiscoveryPage.tsx |
-| Search UI chips/suggestions, history | MISSING | no chips, value suggestions or history (filters are typed) | F/search/* |
-| Quick switcher recents | PARTIAL | empty query lists unread channels and DMs, not recents | QuickSwitcher.tsx |
+| Search UI chips/suggestions, history | PARTIAL | filter + value suggestions and per-scope history done; no chips, scope menu, date pickers or keyboard nav | F/search/* |
+| Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
 | Reduced motion, screen reader announcements | DONE | | F/accessibility/* |
 | Streamer mode | PARTIAL | names masked via Store::display_name, account gate, invite link, sounds, notifications; notes in profile not hidden | F/streamer_mode/* |
-| Debug modals, experiments, account engine cache, premium *(low)* | MISSING | | |
+| Debug modals, experiments, account engine cache, premium *(low)* | PARTIAL | debug user/channel/community/member/message + Developer tools (state, settings, `/experiments` read-only); offline cache (last READY + 50 msgs × 30 channels per account); premium see §1.1; JSON not syntax-highlighted | |
 
 ## 3. Desktop shell
 | Feature | Status | Missing | Official source |
@@ -250,7 +250,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
 | Zoom | DONE | | D/Menu.ts |
 | Screen-share picker / app audio | PARTIAL | | D/DisplayMedia.ts |
-| App menu (macOS) | MISSING | | D/Menu.ts |
+| App menu (macOS) | DONE | built on Rune standard menus; not verified on a Mac | D/Menu.ts |
 | File downloads | DONE | | D/FileDownloads.ts |
 | Copy image | DONE | | D/MediaClipboard.ts |
 | Streamer-mode detection, theme folder, troubleshooting *(low)* | PARTIAL | theme folder, troubleshooting (OBS/XSplit detection done) | |

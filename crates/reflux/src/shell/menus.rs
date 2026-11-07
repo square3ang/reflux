@@ -118,6 +118,13 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
         if let Some(c) = dm {
             m = m.item(copy_id(t("Copy channel ID"), c));
         }
+        m = m.item(super::debug::item("debug-user", t("Debug user"), super::debug::Subject::User(user), acc));
+        if let Some(g) = guild {
+            m = m.item(super::debug::item("debug-member", t("Debug community member"), super::debug::Subject::Member(g, user), acc));
+        }
+        if store.my_id() == user {
+            m = m.item(super::debug::item("debug-client", "Developer tools", super::debug::Subject::Client, acc));
+        }
     }
     m
 }
@@ -160,6 +167,7 @@ fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: She
     }
     if store.settings.developer_mode {
         m = m.separator().item(copy_id(t("Copy community ID"), g));
+        m = m.item(super::debug::item("debug-guild", t("Debug community"), super::debug::Subject::Guild(g), acc));
     }
     m
 }
@@ -223,6 +231,7 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
     }
     if store.settings.developer_mode {
         m = m.separator().item(copy_id(t("Copy channel ID"), c));
+        m = m.item(super::debug::item("debug-channel", t("Debug channel"), super::debug::Subject::Channel(c), acc));
     }
     m
 }

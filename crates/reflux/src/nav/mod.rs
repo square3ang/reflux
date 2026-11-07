@@ -93,7 +93,7 @@ pub fn update_mine(st: &mut ShellState, f: impl FnOnce(&mut AccountPrefs)) {
     let mut prefs = st.prefs.clone();
     f(prefs.accounts.entry(st.account.me.to_string()).or_default());
     st.prefs = prefs.clone();
-    st.intents.push(crate::shell::Intent::Prefs(prefs));
+    st.intents.push(crate::shell::Intent::Prefs(Box::new(prefs)));
 }
 
 /// Once a frame with the store: writes a released rail drop as the new `guild_folders`.

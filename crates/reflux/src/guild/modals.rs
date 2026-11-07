@@ -465,9 +465,109 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
                 .child(Switch::new(s.suppress_everyone).label("Suppress @everyone and @here").on_toggle(patch(json!({ "suppress_everyone": !s.suppress_everyone }))).el(p))
                 .child(Switch::new(s.suppress_roles).label(t("Suppress all role mentions")).on_toggle(patch(json!({ "suppress_roles": !s.suppress_roles }))).el(p)),
         )
-        .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p));
-    // shortcut: unread badges, the reply mention preference and per-channel overrides aren't here.
+        .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p))
+        .child(overrides(store, st, g, level, p, acc, layer));
+    // shortcut: unread badges and the reply mention preference aren't here.
     Modal::new(t("Notification settings"), close(acc)).size(ModalSize::Medium).body(body).el(p)
+}
+
+/// The "Notification overrides" section: a picker that adds a channel or category, then a
+/// 2fr/1fr×4 grid (name, All, Mentions, Nothing, Mute) with a remove button on hover.
+fn overrides<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, guild_level: u32, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let ov = store.guild_settings.get(&Some(g)).and_then(|s| s.channel_overrides.clone()).unwrap_or_default();
+    // The API replaces the whole `channel_overrides` map, so each patch is built from the store now.
+    let send = move |v: Value| move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: v.clone() });
+    let patch_ov = |c: Snowflake, body: Value| {
+        send(crate::social::override_patch(store, Some(g), c, |o| match body.as_object() {
+            Some(m) => m.iter().for_each(|(k, v)| o[k] = v.clone()),
+            None => *o = Value::Null,
+        }))
+    };
+    let mut chans: Vec<_> = store.channels.values().filter(|c| c.guild_id == Some(g) && !c.kind.is_thread() && (c.kind == ChannelType::GUILD_CATEGORY || store.can_view(c.id))).collect();
+    chans.sort_by_key(|c| (c.position, c.id));
+    let opts: Vec<(String, String)> = chans.iter().filter(|c| !ov.contains_key(&c.id)).map(|c| (c.id.to_string(), c.name.clone().unwrap_or_default())).collect();
+    let opts: Vec<(&str, &str)> = opts.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let adds: Vec<(String, Value)> = chans.iter().filter(|c| !ov.contains_key(&c.id)).map(|c| (c.id.to_string(), crate::social::override_patch(store, Some(g), c.id, |_| {}))).collect();
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    let picker = Select::new("override-add", &opts, None)
+        .placeholder(t("Select a channel or category"))
+        .width(568.0)
+        .on_choose(move |s: &mut S, v| {
+            if let Some(patch) = adds.iter().find(|(id, _)| id == v).map(|(_, p)| p.clone()) {
+                acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch });
+            }
+        })
+        .el(&st.popups, pops, p, layer);
+    let mut section = col().w_full().gap(12.0).child(label(t("Notification overrides"), 600.0, p)).child(picker);
+    let mut rows: Vec<_> = ov.iter().filter_map(|(id, o)| Some((store.channels.get(id)?, o))).collect();
+    rows.sort_by_key(|(c, _)| (c.position, c.id));
+    if rows.is_empty() {
+        return section;
+    }
+    let cell = |e: El| row().grow(1.0).w(0.0).center().child(e);
+    let head = |s: &str| cell(text(s.to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary));
+    section = section.child(
+        row()
+            .w_full()
+            .mt(8.0)
+            .px(12.0)
+            .py(8.0)
+            .gap(8.0)
+            .child(row().grow(2.0).w(0.0).child(text(t("Channel or category").to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary)))
+            .child(head(&t("All").to_uppercase()))
+            .child(head(&t("Mentions").to_uppercase()))
+            .child(head(&t("Nothing").to_uppercase()))
+            .child(head(&t("Mute").to_uppercase())),
+    );
+    for (c, o) in rows {
+        let id = c.id;
+        let level = match o.message_notifications.0 {
+            3 => guild_level,
+            l => l as u32,
+        };
+        let is_cat = c.kind == ChannelType::GUILD_CATEGORY;
+        let sub = (!is_cat).then(|| c.parent_id.and_then(|pid| store.channels.get(&pid)?.name.clone()).unwrap_or_else(|| t("No category").to_string()));
+        let name = col().min_w(0.0).child(text(c.name.clone().unwrap_or_default()).font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).truncate()).children(sub.map(|s| text(s).font(font(12.0, 400.0).lh(16.8)).color(p.text_tertiary)));
+        let glyph: &'static Icon = if is_cat { &icons::FOLDER } else { crate::shell::channel_icon(c.kind) };
+        let check = |n: u32| cell(crate::ui::Checkbox::new(level == n).on_toggle(patch_ov(id, json!({ "message_notifications": n }))).el(p));
+        let remove = row()
+            .pin(None, Some(-12.0), None, None)
+            .h_full()
+            .center_y()
+            .group_opacity(0.0, 1.0)
+            .child(
+                row()
+                    .size(24.0, 24.0)
+                    .center()
+                    .radius(999.0)
+                    .fill(p.status_danger)
+                    .cursor(rune::Cursor::Pointer)
+                    .role("button")
+                    .label(t("Remove override").to_string())
+                    .key(format!("override-remove-{id}"))
+                    .on_press(patch_ov(id, Value::Null))
+                    .child(icon(&icons::X_BOLD, 14.0).color(rune::Color::WHITE)),
+            );
+        section = section.child(
+            row()
+                .w_full()
+                .min_h(64.0)
+                .padding(12.0)
+                .gap(8.0)
+                .center_y()
+                .radius(8.0)
+                .border(1.0, p.background_header_secondary)
+                .hover(p.background_secondary)
+                .hover_group()
+                .child(row().grow(2.0).w(0.0).min_w(0.0).gap(8.0).center_y().child(icon(glyph, 20.0).color(p.text_tertiary)).child(name))
+                .child(check(0))
+                .child(check(1))
+                .child(check(2))
+                .child(cell(crate::ui::Checkbox::new(o.muted).on_toggle(patch_ov(id, json!({ "muted": !o.muted }))).el(p)))
+                .child(remove),
+        );
+    }
+    section
 }
 
 // ---- Privacy --------------------------------------------------------------------------------

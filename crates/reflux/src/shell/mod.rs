@@ -5,9 +5,11 @@
 //! Views are pure; what needs the network goes out as an [`Intent`] queued on
 //! [`ShellState::intents`] for the runtime to drain.
 
+pub mod active_now;
 pub mod attachments;
 mod autocomplete;
 mod chat;
+pub mod debug;
 mod compact;
 pub(crate) mod embeds;
 pub(crate) mod highlight;
@@ -22,6 +24,7 @@ pub(crate) mod friends;
 mod guilds;
 mod markdown;
 mod members;
+pub mod members_page;
 mod menus;
 pub mod pins;
 pub(crate) mod profile;
@@ -123,7 +126,7 @@ pub enum Intent {
     /// `PATCH /users/@me/guilds/{guild}/settings` (`None` = DMs).
     PatchGuildSettings { guild: Option<Snowflake>, patch: serde_json::Value },
     /// Save changed local desktop preferences.
-    Prefs(crate::desktop::Prefs),
+    Prefs(Box<crate::desktop::Prefs>),
     /// Switch the interface language (a `crate::i18n::LOCALES` code).
     SetLocale(&'static str),
     /// `GET /invites/{code}` into `media_ui.invites`.
@@ -268,6 +271,8 @@ pub struct ShellState {
     pub form: crate::guild::Form,
     /// Invite link origin (`discovery.endpoints.invite`, e.g. `https://fluxer.gg`).
     pub invite_base: String,
+    /// Gift links (`endpoints.gift`).
+    pub gift_base: String,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
     /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
@@ -317,6 +322,8 @@ pub struct ShellState {
     pub social: crate::social::Social,
     /// Rail folders and drag and drop, favorites, keybinds and other navigation extras.
     pub nav: crate::nav::Nav,
+    /// Developer-mode debug modal.
+    pub debug: Option<debug::Debug>,
 }
 
 impl Default for ShellState {
@@ -362,6 +369,7 @@ impl Default for ShellState {
             dialog: None,
             form: Default::default(),
             invite_base: String::new(),
+            gift_base: String::new(),
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),
@@ -389,6 +397,7 @@ impl Default for ShellState {
             threads: Default::default(),
             social: crate::social::Social::new(),
             nav: Default::default(),
+            debug: None,
         }
     }
 }
@@ -404,6 +413,7 @@ impl ShellState {
         self.nav.favorites = false;
         self.guild = guild;
         self.social.discovery = false;
+        self.social.members = None;
         self.intents.push(Intent::SelectGuild(guild));
         match channel {
             Some(c) => self.select_channel(c),
@@ -450,6 +460,7 @@ impl ShellState {
         }
         self.channel = Some(channel);
         self.social.discovery = false;
+        self.social.members = None;
         self.voice.call_view = false;
         self.intents.push(Intent::SelectChannel(channel));
     }
@@ -594,7 +605,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         _ if st.voice.watching.is_some() => voice::viewer(store, st, p, acc).unwrap_or_else(el),
         (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc),
         _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, _)| g.is_some()) => call::view(store, st, p, acc).unwrap_or_else(el),
-        (None, None) => friends::view(store, st, p, acc, &mut layer),
+        (Some(_), _) if st.social.members.as_ref().is_some_and(|m| Some(m.guild) == st.guild) => members_page::view(store, st, p, acc).unwrap_or_else(el),
+        (None, None) => row().grow(1.0).min_w(0.0).h_full().child(friends::view(store, st, p, acc, &mut layer)).children(active_now::view(store, st, p, acc)),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
     // `OutlineFrame`: 1px divider-coloured border (no top on the web/system-titlebar build), the
@@ -635,6 +647,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(upload::notice_modal(st, p, acc));
     layer.extend(lightbox::view(st, p, acc));
     layer.extend(links::modal(st, p, acc));
+    layer.extend(debug::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);

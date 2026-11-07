@@ -249,7 +249,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
             .child(pins);
     }
     if !forum {
-        right = right.child(super::search::bar(st, p, acc, layer));
+        right = right.child(super::search::bar(store, st, p, acc, layer));
     }
     right = right.child(crate::social::inbox_button(st, p, acc));
     row()
@@ -391,15 +391,21 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         sticky
     };
     let mut md = Md::new(store, &st.media, c.guild_id, p, "");
-    // Links to messages on this instance jump in-app, invites open the invite modal; others
-    // open in the browser.
-    let (web, inv) = (st.web_base.clone(), st.invite_base.clone());
+    // Links to messages on this instance jump in-app, invites and gifts open their modals;
+    // others open in the browser.
+    let (web, inv, gift) = (st.web_base.clone(), st.invite_base.clone(), st.gift_base.clone());
     md.on_link = Some(std::rc::Rc::new(move |t: El| {
-        let (web, inv) = (web.clone(), inv.clone());
-        t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| match (super::parse_message_link(&web, url), crate::social::invite_code(&inv, &web, url)) {
-            (Some((g, ch, m)), _) => super::jump(acc(s), g, ch, m),
-            (None, Some(code)) => crate::social::open_invite(acc(s), code),
-            _ => super::links::open(acc(s), url, tx),
+        let (web, inv, gift) = (web.clone(), inv.clone(), gift.clone());
+        t.on_link(move |s: &mut S, url: &str, tx: &mut Tx| {
+            if let Some((g, ch, m)) = super::parse_message_link(&web, url) {
+                super::jump(acc(s), g, ch, m)
+            } else if let Some(code) = crate::social::invite_code(&inv, &web, url) {
+                crate::social::open_invite(acc(s), code)
+            } else if let Some(code) = crate::social::gift_code(&gift, &web, url) {
+                crate::settings::open_gift(acc(s), code)
+            } else {
+                super::links::open(acc(s), url, tx)
+            }
         })
     }));
     md.on_emoji = Some(std::rc::Rc::new(move |e: El, kind: &reflux_markdown::EmojiKind, key: String| {
@@ -689,8 +695,9 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
 }
 
 /// `MessageContextMenu`, for a right-click and the action bar's More.
-// shortcut: no forward, bookmarks, speak, suppress embeds, report or
-// media items.
+// Forward, bookmarks, suppress embeds, publish, alt text and report come from
+// `social::message_items`.
+// shortcut: no speak or media items (copy/save image).
 fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
     let mut menu = Menu::new(menu).placement(Placement::LeftStart);
     let (id, ch) = (m.id, m.channel_id);
@@ -746,6 +753,7 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
     menu.separator().item(MenuItem::new("copy-id", t("Copy message ID")).icon(&icons::SNOWFLAKE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
         tx.copy(if tx.mods().shift { format!("{cid}-{mid}") } else { mid.to_string() })
     }))
+    .item(super::debug::item("debug-message", t("Debug message"), super::debug::Subject::Message(cid, mid), acc))
 }
 
 /// `showDeleteConfirmation`: the `ConfirmModal` with a preview of the message.

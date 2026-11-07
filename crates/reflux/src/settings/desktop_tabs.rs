@@ -27,7 +27,7 @@ fn switch_if<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, labe
         let sh = acc(s);
         let mut prefs = sh.prefs.clone();
         put(&mut prefs, !on);
-        sh.intents.push(Intent::Prefs(prefs));
+        sh.intents.push(Intent::Prefs(Box::new(prefs)));
     })
     .el(p)
 }
@@ -87,7 +87,7 @@ pub fn scaling<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
             let mut prefs = sh.prefs.clone();
             prefs.zoom = clamp_zoom(v / 100.0);
             crate::desktop::window::set_zoom(prefs.zoom);
-            sh.intents.push(Intent::Prefs(prefs));
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
         })
         .el(p);
     let zoom = col()
@@ -109,7 +109,7 @@ pub fn scaling<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
                     let mut prefs = sh.prefs.clone();
                     prefs.zoom = 1.0;
                     crate::desktop::window::set_zoom(1.0);
-                    sh.intents.push(Intent::Prefs(prefs));
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
                 })),
         );
     section(t("App zoom level"), zoom, false, p)
@@ -233,7 +233,7 @@ fn spellcheck<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                     list.push(package.into());
                 }
                 prefs.spell_langs = list;
-                sh.intents.push(Intent::Prefs(prefs));
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
             })
             .el(p)
     }));
@@ -261,7 +261,7 @@ fn spellcheck<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                             let sh = acc(s);
                             let mut prefs = sh.prefs.clone();
                             prefs.words.retain(|x| *x != word);
-                            sh.intents.push(Intent::Prefs(prefs));
+                            sh.intents.push(Intent::Prefs(Box::new(prefs)));
                         }),
                 )
         }));

@@ -273,11 +273,20 @@ pub fn invite_accept<S: 'static>(_store: &Store, st: &ShellState, code: &str, p:
 
 /// The code of an invite link on this instance (`{invite}/code` or `{webapp}/invite/code`).
 pub fn invite_code(invite_base: &str, web_base: &str, url: &str) -> Option<String> {
+    link_code(invite_base, web_base, "/invite", url)
+}
+
+/// The code of a gift link on this instance (`{gift}/code` or `{webapp}/gift/code`).
+pub fn gift_code(gift_base: &str, web_base: &str, url: &str) -> Option<String> {
+    link_code(gift_base, web_base, "/gift", url)
+}
+
+fn link_code(base: &str, web_base: &str, web_path: &str, url: &str) -> Option<String> {
     let strip = |base: &str, extra: &str| {
         let b = base.trim_end_matches('/');
         (!b.is_empty()).then(|| url.strip_prefix(&format!("{b}{extra}/"))).flatten()
     };
-    let rest = strip(invite_base, "").or_else(|| strip(web_base, "/invite"))?;
+    let rest = strip(base, "").or_else(|| strip(web_base, web_path))?;
     let code = rest.split(['?', '#', '/']).next()?;
     (!code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then(|| code.to_string())
 }
@@ -302,5 +311,6 @@ mod tests {
         assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://web.fluxer.app/invite/xyz?x=1"), Some("xyz".into()));
         assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://example.com/xyz"), None);
         assert_eq!(invite_code("", "", "https://example.com/xyz"), None);
+        assert_eq!(gift_code("https://fluxer.gift", "https://web.fluxer.app", "https://web.fluxer.app/gift/G1ft"), Some("G1ft".into()));
     }
 }

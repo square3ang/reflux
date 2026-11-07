@@ -210,7 +210,7 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         let mut p = sh.prefs.clone();
         p.zoom = if a == ZoomReset { 1.0 } else { crate::desktop::window::step_zoom(p.zoom, a == ZoomIn) };
         crate::desktop::window::set_zoom(p.zoom);
-        sh.intents.push(Intent::Prefs(p));
+        sh.intents.push(Intent::Prefs(Box::new(p)));
         return true;
     }
     // Modals keep their own keys (Esc closes them), except the keybind list itself.
