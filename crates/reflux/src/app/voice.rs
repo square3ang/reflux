@@ -58,6 +58,10 @@ pub struct VoiceRt {
     stream_audio: Option<(Arc<StreamAudio>, crate::gst::AudioCapture)>,
     /// `VoiceP2pConsent`: the channel whose peer-to-peer call the user agreed to.
     p2p_agreed: Option<Snowflake>,
+    /// `syncConversionWatchdog`: the armed timer's token, while our state says the server took the
+    /// call off P2P and no standard grant has arrived yet.
+    conversion: Option<u64>,
+    conversion_seq: u64,
 }
 
 /// Our voice connection ID (live tests compare the gateway's echo with it).
@@ -528,8 +532,10 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     if v.p2p {
         return start_mesh(s, v);
     }
-    // A LiveKit grant (also when a P2P call switched to LiveKit) ends any P2P agreement.
+    // A LiveKit grant (also when a P2P call switched to LiveKit) ends any P2P agreement and
+    // satisfies the conversion watchdog.
     s.app.voice.p2p_agreed = None;
+    s.app.voice.conversion = None;
     let (Some(endpoint), Some(token)) = (v.endpoint.clone(), v.token.clone()) else {
         eprintln!("reflux: voice: a grant without a LiveKit endpoint or token");
         return fail(s);
@@ -729,7 +735,14 @@ fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
     match ev {
         mesh::Event::Signal { to, data } => update(move |s| {
             let Some((guild, channel)) = s.app.shell.voice.channel.filter(|_| current(s)) else { return };
-            let sig = VoiceSignal { guild_id: guild, channel_id: channel, to: Some(to), from: None, user_id: None, data };
+            let sig = VoiceSignal { guild_id: guild, channel_id: channel, to: Some(to.clone()), from: None, user_id: None, data };
+            if signal_size(&sig) > VOICE_SIGNAL_MAX_JSON_BYTES {
+                eprintln!("reflux: voice: a signal to {to} is over {VOICE_SIGNAL_MAX_JSON_BYTES} bytes; failing the peer");
+                if let Some(user) = s.app.store.voice_states.iter().find(|((_, _), v)| v.connection_id.as_deref() == Some(to.as_str())).map(|((_, u), _)| *u) {
+                    on_peer_status(s, user, mesh::Status::Failed);
+                }
+                return;
+            }
             if let Some(gw) = &s.app.gateway {
                 let _ = gw.send(Command::Send(GatewayPayload::command(OpCode::VOICE_SIGNAL, sig)));
             }
@@ -823,12 +836,28 @@ fn on_peer_status(s: &mut State, user: Snowflake, status: mesh::Status) {
 
 /// `syncRoster`: the other connections in our channel that send peer-to-peer (and ones already
 /// connected), once our own state says we're in the mesh; and their server mutes.
-fn sync_roster(s: &State) {
-    let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) else { return };
+fn sync_roster(s: &mut State) {
     let Some((guild, channel)) = s.app.shell.voice.channel else { return };
-    let own = s.app.voice.connection_id.as_deref();
+    let own = s.app.voice.connection_id.clone();
+    let own_p2p = s
+        .app
+        .store
+        .voice_states
+        .iter()
+        .filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel))
+        .find(|(_, v)| v.connection_id.is_some() && v.connection_id == own)
+        .map(|(_, v)| v.p2p);
+    // The server converts a P2P call to the SFU by flipping our own state's `p2p`; a standard
+    // grant follows. If it doesn't, the call is gone (VoiceMeshEngine.ts `syncConversionWatchdog`).
+    // Only a mesh call can be converted; a plain LiveKit call always reports `p2p: false`.
+    let in_mesh = s.app.voice.call.as_ref().and_then(|c| c.mesh()).is_some();
+    sync_conversion_watchdog(s, in_mesh && own_p2p == Some(false));
+    if !in_mesh {
+        return;
+    }
+    let mesh = s.app.voice.call.as_ref().and_then(|c| c.mesh()).expect("just checked");
+    let own = own.as_deref();
     let states = || s.app.store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel));
-    let own_p2p = states().find(|(_, v)| v.connection_id.as_deref() == own).map(|(_, v)| v.p2p);
     let mut roster = Vec::new();
     for ((_, user), v) in states() {
         let Some(conn) = v.connection_id.clone().filter(|c| Some(c.as_str()) != own) else { continue };
@@ -838,6 +867,45 @@ fn sync_roster(s: &State) {
         }
     }
     mesh.set_roster(&roster);
+}
+
+/// `CONVERSION_GRACE_MS`: how long a converted call may go without a standard grant.
+const CONVERSION_GRACE: Duration = Duration::from_secs(10);
+/// `VOICE_SIGNAL_MAX_JSON_BYTES`: the gateway refuses larger payloads; Fluxer fails the peer first.
+const VOICE_SIGNAL_MAX_JSON_BYTES: usize = 16_000;
+
+/// `syncConversionWatchdog`: arms (or clears) the timer started when our own voice state left
+/// P2P mode. A standard grant clears it in [`on_server_update`]; expiry ends the call.
+fn sync_conversion_watchdog(s: &mut State, converting: bool) {
+    if !converting {
+        s.app.voice.conversion = None;
+        return;
+    }
+    if s.app.voice.conversion.is_some() {
+        return;
+    }
+    let (token, generation) = {
+        let v = &mut s.app.voice;
+        v.conversion_seq += 1;
+        (v.conversion_seq, v.generation)
+    };
+    s.app.voice.conversion = Some(token);
+    spawn(async move {
+        tokio::time::sleep(CONVERSION_GRACE).await;
+        update(move |s| {
+            if s.app.voice.conversion != Some(token) || s.app.voice.generation != generation {
+                return;
+            }
+            s.app.voice.conversion = None;
+            eprintln!("reflux: voice: the call left P2P mode without a standard grant");
+            leave(s, true);
+        });
+    });
+}
+
+/// The op 13 payload's size, as the gateway measures it (`GatewaySocket.sendVoiceSignal`).
+fn signal_size(sig: &VoiceSignal) -> usize {
+    serde_json::to_vec(&GatewayPayload::command(OpCode::VOICE_SIGNAL, sig)).map_or(0, |b| b.len())
 }
 
 /// VOICE_SIGNAL for our peer-to-peer call.
@@ -1288,6 +1356,18 @@ fn send_voice_message(s: &mut State) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oversized_signals_are_refused() {
+        use reflux_model::{OpCode, Snowflake, VoiceSignal};
+        use serde_json::json;
+        let sig = |data| VoiceSignal { guild_id: None, channel_id: Snowflake(1), to: Some("c".into()), from: None, user_id: None, data };
+        assert!(super::signal_size(&sig(json!({ "type": "offer", "sdp": "v=0" }))) <= super::VOICE_SIGNAL_MAX_JSON_BYTES);
+        // A session description near the gateway's limit is refused like Fluxer's `sendVoiceSignal`.
+        let big = sig(json!({ "type": "offer", "sdp": "x".repeat(super::VOICE_SIGNAL_MAX_JSON_BYTES) }));
+        assert!(super::signal_size(&big) > super::VOICE_SIGNAL_MAX_JSON_BYTES);
+        assert_eq!(OpCode::VOICE_SIGNAL.0, 13);
+    }
+
     #[test]
     fn encoder_preference_sets_the_env() {
         let mut st = super::Settings { encoder: "nvenc".into(), ..Default::default() };

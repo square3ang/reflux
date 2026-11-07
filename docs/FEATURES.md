@@ -199,7 +199,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Watch stream | DONE |  | WatchStreamOverlay.tsx |
 | Camera | PARTIAL | Linux only (GStreamer); no background effects; never tested in a real call | CameraPreviewModal.tsx |
 | Call view grid | DONE |  | VoiceCallView.tsx |
-| DM calls / ringing / P2P | PARTIAL | P2P mesh (op 13, STUN-only) verified by a loopback test only, never against a real peer; no conversion watchdog or oversized-signal check; rollout read once per session; DM calls untested against a server | IncomingCallUI.tsx, VoiceMeshEngine.ts |
+| DM calls / ringing / P2P | PARTIAL | P2P mesh (op 13, STUN-only) verified by a loopback test only, never against a real peer; conversion watchdog (10 s) and the 16 KB outbound-signal check ported; rollout read once per session; DM calls untested against a server | IncomingCallUI.tsx, VoiceMeshEngine.ts |
 | Per-user volume / local mute | DONE |  | VoiceParticipantMenuItems.tsx |
 | Noise suppression | DONE |  | | AudioProcessingModal.tsx |
 | Voice details popout | DONE | | VoiceDetailsPopout.tsx |
