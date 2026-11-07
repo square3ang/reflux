@@ -127,8 +127,9 @@ pub enum Done {
     Form(String),
     /// Keep the response as `social.data[key]`.
     Data(String),
-    /// Append this page's `guilds` to `social.data[key]` (Explore's next page).
-    AppendData(String),
+    /// Append this page's `guilds` to `social.data[key]` (Explore's next page), if the list still
+    /// holds the `usize` it was requested after (a new search or a second click drops it).
+    AppendGuilds(String, usize),
     /// GET `path` into `form.data[key]` (a list the request changed).
     Reload(String, String),
     /// Open the guild or channel the response is, and close the dialog.
@@ -199,12 +200,10 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
         Done::Data(k) => {
             sh.social.data.insert(k, v);
         }
-        Done::AppendData(k) => {
-            let more = v.get("guilds").and_then(|g| g.as_array()).cloned().unwrap_or_default();
-            let kept = sh.social.data.entry(k).or_insert_with(|| json!({ "guilds": [], "total": 0 }));
-            if let Some(list) = kept.get_mut("guilds").and_then(|g| g.as_array_mut()) {
-                list.extend(more);
-            }
+        Done::AppendGuilds(k, after) => {
+            let Some(kept) = sh.social.data.get_mut(&k) else { return };
+            let Some(list) = kept.get_mut("guilds").and_then(Value::as_array_mut).filter(|l| l.len() == after) else { return };
+            list.extend(v.get("guilds").and_then(Value::as_array).into_iter().flatten().cloned());
             if let Some(total) = v.get("total") {
                 kept["total"] = total.clone();
             }
@@ -386,6 +385,17 @@ pub fn expire_mutes(store: &mut Store, now_iso: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explore_pages_append_once() {
+        let mut sh = ShellState::default();
+        sh.social.data.insert("discovery".into(), json!({ "total": 3, "guilds": [{ "id": "1" }] }));
+        let page = json!({ "total": 3, "guilds": [{ "id": "2" }, { "id": "3" }] });
+        apply(&mut sh, Done::AppendGuilds("discovery".into(), 1), page.clone(), None, true);
+        // A second click's page (or one for a search since replaced) is dropped.
+        apply(&mut sh, Done::AppendGuilds("discovery".into(), 1), page, None, true);
+        assert_eq!(sh.social.data["discovery"]["guilds"].as_array().map(Vec::len), Some(3));
+    }
 
     #[test]
     fn timed_mutes_expire() {

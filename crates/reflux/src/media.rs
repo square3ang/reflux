@@ -13,15 +13,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use reflux_model::Snowflake;
 use rune::{Image, ImageCache, Pixels, Waker};
 
-
 /// A body cap: the media proxy is remote input, so nothing here buffers an unbounded response.
-const MAX_IMAGE_BYTES: usize = 64 << 20;
+pub(crate) const MAX_IMAGE_BYTES: usize = 64 << 20;
 const MAX_TEXT_BYTES: usize = 4 << 20;
 const MAX_DOWNLOAD_BYTES: usize = 512 << 20;
 
 /// GETs `url` and reads at most `cap` bytes, refusing a larger body from `Content-Length` or
 /// while streaming, so a hostile or broken proxy can't exhaust memory or the disk.
-async fn get_capped(http: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>, String> {
+pub(crate) async fn get_capped(http: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>, String> {
     let mut resp = http.get(url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
     if resp.content_length().is_some_and(|n| n > cap as u64) {
         return Err(format!("response is larger than {cap} bytes"));
@@ -309,6 +308,11 @@ impl Media {
         *self.0.base.lock().unwrap_or_else(|e| e.into_inner()) = base.to_owned();
     }
 
+    /// The media client, for one-off fetches through [`get_capped`].
+    pub fn http(&self) -> reqwest::Client {
+        self.0.http.clone()
+    }
+
     pub fn base(&self) -> String {
         self.0.base.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -547,13 +551,11 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut sock, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 1024];
-                let _ = sock.read(&mut buf);
-                // Content-Length exceeds the cap, so it must be refused before the body arrives.
-                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n");
-            }
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf);
+            // Content-Length exceeds the cap, so it must be refused before the body arrives.
+            let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n");
         });
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let http = reqwest::Client::new();

@@ -102,7 +102,7 @@ fn load_more(st: &mut ShellState) {
     let Some(v) = st.social.data.get("discovery") else { return };
     let offset = v["guilds"].as_array().map_or(0, |g| g.len());
     let path = search_path_from(&st.social.discovery_query.text, st.social.discovery_category, st.social.discovery_language, offset);
-    st.social(Method::GET, path, None, Done::AppendData("discovery".into()));
+    st.social(Method::GET, path, None, Done::AppendGuilds("discovery".into(), offset));
 }
 
 fn compact(n: u64) -> String {

@@ -11,7 +11,7 @@ mod expr_upload;
 pub(crate) mod channel_opts;
 mod create_access;
 mod overview_extra;
-mod role_extra;
+pub(crate) mod role_extra;
 mod invite_friends;
 mod forum;
 mod menu;

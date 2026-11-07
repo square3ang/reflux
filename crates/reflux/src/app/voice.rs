@@ -736,10 +736,11 @@ fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
         mesh::Event::Signal { to, data } => update(move |s| {
             let Some((guild, channel)) = s.app.shell.voice.channel.filter(|_| current(s)) else { return };
             let sig = VoiceSignal { guild_id: guild, channel_id: channel, to: Some(to.clone()), from: None, user_id: None, data };
+            // `VoiceMeshPeer.send`: an oversized signal fails the peer (its status event opens the dialog).
             if signal_size(&sig) > VOICE_SIGNAL_MAX_JSON_BYTES {
                 eprintln!("reflux: voice: a signal to {to} is over {VOICE_SIGNAL_MAX_JSON_BYTES} bytes; failing the peer");
-                if let Some(user) = s.app.store.voice_states.iter().find(|((_, _), v)| v.connection_id.as_deref() == Some(to.as_str())).map(|((_, u), _)| *u) {
-                    on_peer_status(s, user, mesh::Status::Failed);
+                if let Some(m) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
+                    m.fail_peer(&to);
                 }
                 return;
             }
@@ -850,12 +851,10 @@ fn sync_roster(s: &mut State) {
     // The server converts a P2P call to the SFU by flipping our own state's `p2p`; a standard
     // grant follows. If it doesn't, the call is gone (VoiceMeshEngine.ts `syncConversionWatchdog`).
     // Only a mesh call can be converted; a plain LiveKit call always reports `p2p: false`.
-    let in_mesh = s.app.voice.call.as_ref().and_then(|c| c.mesh()).is_some();
-    sync_conversion_watchdog(s, in_mesh && own_p2p == Some(false));
-    if !in_mesh {
-        return;
-    }
-    let mesh = s.app.voice.call.as_ref().and_then(|c| c.mesh()).expect("just checked");
+    let call = s.app.voice.call.clone();
+    let mesh = call.as_deref().and_then(|c| c.mesh());
+    sync_conversion_watchdog(s, mesh.is_some() && own_p2p == Some(false));
+    let Some(mesh) = mesh else { return };
     let own = own.as_deref();
     let states = || s.app.store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel));
     let mut roster = Vec::new();

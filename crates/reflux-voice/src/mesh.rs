@@ -316,6 +316,13 @@ impl Mesh {
         }
     }
 
+    /// `VoiceMeshPeer.fail`: gives up on `conn` (e.g. a signal to it was too big to send).
+    pub fn fail_peer(&self, conn: &str) {
+        if let Some((_, tx)) = self.sh.peers.lock().unwrap().get(conn) {
+            let _ = tx.send(Cmd::Fail);
+        }
+    }
+
     /// A participant's server mute: their microphone stops playing here.
     pub fn server_mute(&self, conn: &str, muted: bool) {
         if let Some((_, tx)) = self.sh.peers.lock().unwrap().get(conn) {
@@ -444,6 +451,7 @@ enum Cmd {
     SyncAll,
     Interest,
     ServerMute(bool),
+    Fail,
     Close,
     /// From the peer connection of generation `g`.
     Ice(u64, Candidate),
@@ -607,6 +615,7 @@ impl Peer {
                     self.connection_state(state).await?;
                 }
             }
+            Cmd::Fail => self.fail(),
             Cmd::Close => {}
         }
         Ok(())

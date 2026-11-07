@@ -110,6 +110,9 @@ fn pick(st: &mut ShellState, item: &Item, shift: bool, _: &mut Tx) {
         Some(For::Form { key, .. }) => {
             let e = reaction_emoji(item, tone);
             st.form.data.insert(key.into(), serde_json::json!({ "id": e.id.map(|i| i.to_string()), "name": e.name }));
+            if key == "role-emoji" {
+                crate::guild::role_extra::emoji_picked(st, e.id.map(|i| i.to_string()));
+            }
         }
         None => return,
     }
