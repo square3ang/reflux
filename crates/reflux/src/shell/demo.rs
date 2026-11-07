@@ -329,6 +329,9 @@ impl Demo {
             } else if a == "--compact" {
                 store.settings.message_display_compact = true;
             } else if a == "--settings" || a.starts_with("--settings=") {
+                // The live test instance grants `feature_higher_video_quality` (16 Mbps ceiling).
+                shell.limits.higher_video_quality = true;
+                shell.limits.screen_share_bitrate = 16_000_000;
                 shell.open_settings(a.strip_prefix("--settings="));
                 let sound = |id: u64, name: &str| super::voice::EntranceSound { id: Snowflake(id), name: name.into(), url: String::new(), duration_ms: 1240 };
                 let mut lib = super::voice::EntranceLibrary { sounds: vec![sound(1, "airhorn"), sound(2, "door chime")], ..Default::default() };
@@ -856,6 +859,10 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     if let Ok(ev) = DispatchEvent::parse("VOICE_STATE_UPDATE", &me) {
         store.apply(&ev, 0);
     }
+    // The test instance grants `feature_higher_video_quality` (16 Mbps ceiling), like the
+    // voice snapshots of a server that sells no Plutonium.
+    st.limits.higher_video_quality = true;
+    st.limits.screen_share_bitrate = 16_000_000;
     st.voice.channel = Some(lounge);
     st.voice.self_mute = true;
     st.voice.connected = scene != "connecting";
@@ -867,7 +874,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         st.voice.watching = Some(Snowflake(1004));
         fake_frames(&st.voice.stream, 160);
     }
-    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "camera" | "share" | "share-pick" | "full" | "refused" | "processing" | "trim") {
+    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -890,7 +897,21 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.cameras = Some(vec!["Integrated Camera".into()]);
             fake_frames(&st.voice.self_view, 220);
         }
-        "share" => crate::shell::call::open_screen_picker(st),
+        // The drop-downs open, so the snapshots show the offered lists.
+        "share" => {
+            crate::shell::call::open_screen_picker(st);
+            st.popups.open = Some("share-res".into());
+        }
+        "share-fps" => {
+            crate::shell::call::open_screen_picker(st);
+            st.popups.open = Some("share-fps".into());
+        }
+        "share-devices" => {
+            st.voice.modal = Some(Modal::ScreenShare);
+            st.voice.screen_tab = "devices".into();
+            st.voice.cameras = Some(vec!["Integrated Camera".into(), "Virtual Camera".into()]);
+            st.voice.screen_device = Some("Integrated Camera".into());
+        }
         // The in-app picker (X11 / Windows) with fixture thumbnails and Linux app audio.
         "share-pick" => {
             st.voice.modal = Some(Modal::ScreenShare);
@@ -912,6 +933,25 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.settings.stream_volumes.insert(1004, 60.0);
             st.popups.open_at(super::call::TILE_MENU, [700.0, 200.0]);
             st.target = Some(super::Target::User { user: Snowflake(1004), guild: Some(Snowflake(HQ)), dm: None });
+        }
+        // Our own live stream's menu (`ActiveScreenShareMenu`): Stop streaming + Stream quality.
+        "share-menu" => {
+            st.limits.higher_video_quality = true;
+            st.limits.screen_share_bitrate = 16_000_000;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
+            st.voice.screen = true;
+            st.popups.open_at(super::call::TILE_MENU, [700.0, 300.0]);
+            st.popups.sub = Some("stream-quality".into());
+            st.target = Some(super::Target::User { user: Snowflake(ME), guild: Some(Snowflake(HQ)), dm: None });
+        }
+        "share-menu-res" => {
+            st.limits.higher_video_quality = true;
+            st.limits.screen_share_bitrate = 16_000_000;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
+            st.voice.screen = true;
+            st.popups.open_at(super::call::TILE_MENU, [700.0, 300.0]);
+            st.popups.sub = Some("stream-quality/stream-quality-res".into());
+            st.target = Some(super::Target::User { user: Snowflake(ME), guild: Some(Snowflake(HQ)), dm: None });
         }
         "processing" => {
             st.voice.settings.processing = "custom".into();

@@ -34,11 +34,21 @@ pub struct VoiceRt {
     generation: u64,
     /// Our connection ID from VOICE_SERVER_UPDATE (tells our voice state from other sessions').
     connection_id: Option<String>,
-    share: Option<ScreenShare>,
+    pub(super) share: Option<ScreenShare>,
+    /// A camera / capture device shared as a screen share (`Devices` in the picker), and the
+    /// capture feeding it.
+    pub(super) device_share: Option<Arc<Camera>>,
+    device_capture: Option<crate::camera::CameraCapture>,
+    /// A quality change from the in-call menu restarts the share once the old track is
+    /// unpublished.
+    pub(super) restart_screen: bool,
+    /// The picker's source list is being refreshed, and when it last was.
+    screen_sources_loading: bool,
+    screen_sources_at: Option<std::time::Instant>,
     watch: Option<tokio::task::AbortHandle>,
     pub(super) devices_loading: bool,
     /// The published camera track, and the slot the capture pushes frames into.
-    camera: Option<Arc<Camera>>,
+    pub(super) camera: Option<Arc<Camera>>,
     feed: Arc<Mutex<Option<Arc<Camera>>>>,
     capture: Option<crate::camera::CameraCapture>,
     /// Remote camera renderers by user.
@@ -126,10 +136,21 @@ fn run_op(s: &mut State, op: Op) {
             update(move |s| s.app.shell.voice.cameras = Some(names));
         }),
         Op::Settings => {
+            let before = s.app.saved.voice_settings.clone();
             s.app.saved.voice_settings = s.app.shell.voice.settings.clone();
             crate::session::save(&s.app.saved);
             apply_encoder(&s.app.saved.voice_settings);
             apply_self(s);
+            // `StreamSettingsMenuContent` with applyToLiveStream: a running share picks up
+            // resolution / frame rate / bitrate / audio / encoder changes at once.
+            if (s.app.voice.share.is_some() || s.app.voice.device_share.is_some()) && screen_settings_changed(&before, &s.app.saved.voice_settings) {
+                s.app.voice.restart_screen = true;
+                s.app.shell.intents.push(crate::shell::Intent::ToggleScreen);
+            }
+        }
+        Op::ChangeScreen => {
+            s.app.voice.restart_screen = true;
+            s.app.shell.intents.push(crate::shell::Intent::ToggleScreen);
         }
         Op::LocalMute(user, muted) => {
             let v = &mut s.app.shell.voice;
@@ -241,13 +262,15 @@ fn run_op(s: &mut State, op: Op) {
             }
         }
         Op::LoadScreenSources => {
-            if reflux_voice::can_list_sources() && !rune::is_headless() {
-                s.app.shell.voice.screen_sources = None;
+            if reflux_voice::can_list_sources() && !rune::is_headless() && !s.app.voice.screen_sources_loading {
+                s.app.voice.screen_sources_loading = true;
                 spawn(async move {
                     let mut list = tokio::task::spawn_blocking(|| reflux_voice::screen_sources(320)).await.unwrap_or_default();
                     // `isOwnWindow`: our own windows go last.
                     list.sort_by_key(|src| src.window && crate::desktop::window::is_own(src.id));
                     update(move |s| {
+                        s.app.voice.screen_sources_loading = false;
+                        s.app.voice.screen_sources_at = Some(std::time::Instant::now());
                         s.app.shell.voice.screen_sources = Some(
                             list.into_iter()
                                 .map(|mut src| {
@@ -546,6 +569,9 @@ fn drop_call(s: &mut State) {
     let rt = &mut s.app.voice;
     rt.generation += 1;
     rt.share = None;
+    rt.device_share = None;
+    rt.device_capture = None;
+    rt.restart_screen = false;
     rt.camera = None;
     *rt.feed.lock().unwrap() = None;
     if let Some(w) = rt.watch.take() {
@@ -1173,6 +1199,18 @@ pub(super) fn apply_encoder(settings: &Settings) {
     }
 }
 
+/// Whether a settings change affects what a live screen share publishes.
+fn screen_settings_changed(a: &Settings, b: &Settings) -> bool {
+    a.streaming_mode != b.streaming_mode
+        || a.screen_height != b.screen_height
+        || a.screen_fps != b.screen_fps
+        || a.screen_bitrate != b.screen_bitrate
+        || a.screen_content_hint != b.screen_content_hint
+        || a.screen_svc != b.screen_svc
+        || a.encoder != b.encoder
+        || a.stream_audio != b.stream_audio
+}
+
 fn toggle_screen(s: &mut State) {
     let Some(call) = s.app.voice.call.clone() else { return };
     if let Some(share) = s.app.voice.share.take() {
@@ -1180,12 +1218,47 @@ fn toggle_screen(s: &mut State) {
         send_state(s);
         crate::desktop::play(s, crate::desktop::Sound::ScreenShareStop);
         let audio = s.app.voice.stream_audio.take().map(|(a, _capture)| a);
+        let restart = std::mem::take(&mut s.app.voice.restart_screen);
+        let generation = s.app.voice.generation;
         return spawn(async move {
             if let Err(e) = call.stop_screen(share).await {
                 eprintln!("reflux: stop screen share: {e}");
             }
             if let Some(a) = audio {
                 let _ = call.unpublish_stream_audio(&a).await;
+            }
+            if restart {
+                update(move |s| {
+                    if s.app.voice.generation == generation && !s.app.shell.voice.screen && s.app.voice.share.is_none() {
+                        s.app.shell.intents.push(crate::shell::Intent::ToggleScreen);
+                    }
+                });
+            }
+        });
+    }
+    if let Some(cam) = s.app.voice.device_share.take() {
+        s.app.shell.voice.screen = false;
+        s.app.voice.device_capture = None;
+        send_state(s);
+        crate::desktop::play(s, crate::desktop::Sound::ScreenShareStop);
+        let audio = s.app.voice.stream_audio.take().map(|(a, _capture)| a);
+        let restart = std::mem::take(&mut s.app.voice.restart_screen);
+        let generation = s.app.voice.generation;
+        return spawn(async move {
+            if let Err(e) = call.unpublish_camera(&cam).await {
+                eprintln!("reflux: stop device share: {e}");
+            }
+            if let Some(a) = audio {
+                let _ = call.unpublish_stream_audio(&a).await;
+            }
+            if restart {
+                // Let the capture device go before the new share opens it.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                update(move |s| {
+                    if s.app.voice.generation == generation && !s.app.shell.voice.screen && s.app.voice.device_share.is_none() {
+                        s.app.shell.intents.push(crate::shell::Intent::ToggleScreen);
+                    }
+                });
             }
         });
     }
@@ -1194,9 +1267,79 @@ fn toggle_screen(s: &mut State) {
     }
     s.app.shell.voice.screen = true;
     let generation = s.app.voice.generation;
-    let quality = s.app.shell.voice.settings.screen_quality();
-    let pick = s.app.shell.voice.screen_pick.take();
+    // `hasHigherVideoQuality`: P2P calls get it for free.
+    let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
+    let quality = s.app.shell.voice.settings.screen_quality(&s.app.shell.limits, higher);
     let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::gst::available());
+    // `Devices` in the picker: a camera / capture device published as the screen share.
+    if let Some(device) = s.app.shell.voice.screen_device.clone() {
+        let (w, h) = quality.fit(3840, 2160);
+        s.app.shell.voice.share_pick = None;
+        let fps = quality.fps;
+        spawn(async move {
+            let cam = match call.publish_test_screen(quality, w, h).await {
+                Ok(c) => Arc::new(c),
+                Err(e) => {
+                    eprintln!("reflux: device share: {e}");
+                    update(move |s| {
+                        if s.app.voice.generation == generation {
+                            s.app.shell.voice.screen = false;
+                        }
+                    });
+                    return;
+                }
+            };
+            let feed = cam.clone();
+            // A restart may open the device before the old pipeline has released it; retry once.
+            let start = |feed: Arc<Camera>| {
+                crate::camera::CameraCapture::start(Some(&device), w, h, fps, move |w, h, rgba| feed.push_rgba(w, h, &rgba))
+            };
+            let capture = start(feed.clone()).or_else(|| {
+                std::thread::sleep(Duration::from_millis(300));
+                start(feed)
+            });
+            let Some(capture) = capture else {
+                let _ = call.unpublish_camera(&cam).await;
+                update(move |s| {
+                    if s.app.voice.generation == generation && s.app.shell.voice.screen {
+                        s.app.shell.voice.screen = false;
+                        s.app.shell.notice = Some((t("Couldn't share this device").to_string(), t("Reflux couldn't open the capture device.").to_string()));
+                    }
+                });
+                return;
+            };
+            let audio = match app_audio {
+                Some(node) => match call.publish_stream_audio().await {
+                    Ok(a) => Some((Arc::new(a), node)),
+                    Err(e) => {
+                        eprintln!("reflux: stream audio: {e}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            update(move |s| {
+                if s.app.voice.generation != generation || !s.app.shell.voice.screen {
+                    return;
+                }
+                s.app.voice.device_share = Some(cam);
+                s.app.voice.device_capture = Some(capture);
+                if let Some((a, node)) = audio {
+                    let sink = a.clone();
+                    match crate::gst::AudioCapture::start(&node, move |pcm| sink.push(pcm)) {
+                        Some(capture) => s.app.voice.stream_audio = Some((a, capture)),
+                        None => eprintln!("reflux: couldn't capture audio from PipeWire node {node}"),
+                    }
+                }
+                crate::desktop::play(s, crate::desktop::Sound::ScreenShareStart);
+                send_state(s);
+            });
+        });
+        return;
+    }
+    // A live quality change restarts from the source the share already used.
+    let pick = s.app.shell.voice.screen_pick.take().or_else(|| s.app.shell.voice.share_pick.clone());
+    s.app.shell.voice.share_pick = pick.clone();
     spawn(async move {
         let r = call.start_screen(quality, pick).await;
         // `AudioSourcePickerLinux`: the chosen application's audio goes with the stream.
@@ -1268,9 +1411,9 @@ fn ensure_capture(s: &mut State) {
         return;
     }
     let st = &s.app.shell.voice.settings;
-    let (w, h) = st.camera_size();
-    // Fluxer's camera takes the shared `videoFrameRate` (our screen share fps), at most 60.
-    let fps = st.screen_fps.min(60);
+    let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
+    let q = st.camera_quality(higher);
+    let (w, h, fps) = (q.width, q.height, q.fps);
     let mirror = st.mirror_camera;
     let feed = s.app.voice.feed.clone();
     let view = s.app.shell.voice.self_view.clone();
@@ -1322,9 +1465,10 @@ fn toggle_camera(s: &mut State) {
         return;
     }
     let generation = s.app.voice.generation;
-    let (w, h) = s.app.shell.voice.settings.camera_size();
+    let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
+    let q = s.app.shell.voice.settings.camera_quality(higher);
     spawn(async move {
-        let r = call.publish_camera(w, h).await;
+        let r = call.publish_camera(q).await;
         update(move |s| match r {
             Ok(cam) if s.app.voice.generation == generation && s.app.shell.voice.camera => {
                 let cam = Arc::new(cam);
@@ -1366,6 +1510,16 @@ fn ensure_mic(s: &mut State) {
 /// refreshes the meter and the recording.
 pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     crate::popout::sync(s);
+    // `DESKTOP_SOURCE_LIST_POLL_INTERVAL_MS`: refresh the picker's thumbnails while it is open.
+    // shortcut: 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+    if s.app.shell.voice.modal == Some(Modal::ScreenShare)
+        && reflux_voice::can_list_sources()
+        && !rune::is_headless()
+        && !s.app.voice.screen_sources_loading
+        && s.app.voice.screen_sources_at.is_none_or(|t| t.elapsed() >= Duration::from_secs(2))
+    {
+        s.app.shell.intents.push(Intent::Voice(Op::LoadScreenSources));
+    }
     // Active Now's "Watch stream" joined first: watch once the share arrives.
     if let Some(u) = s.app.shell.voice.watch_on_join {
         if s.app.shell.voice.channel.is_none() {

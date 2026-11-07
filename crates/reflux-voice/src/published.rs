@@ -19,6 +19,14 @@ pub struct Published {
     /// RTCP receiver reports the SFU sent back about this stream (it receives it).
     pub sfu_reports: u64,
     pub sfu_lost: i64,
+    /// What the encoder produced (`outbound-rtp`): frame size, instantaneous rate and the
+    /// pacer's target bitrate.
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub frames_per_second: f64,
+    pub target_bitrate: f64,
+    /// `quality_limitation_reason` (`none` / `bandwidth` / `cpu`).
+    pub limitation: String,
 }
 
 impl Call {
@@ -48,6 +56,11 @@ impl Call {
                     out.frames_encoded += o.outbound.frames_encoded;
                     out.packets_sent += o.sent.packets_sent;
                     out.bytes_sent += o.sent.bytes_sent;
+                    out.frame_width = out.frame_width.max(o.outbound.frame_width);
+                    out.frame_height = out.frame_height.max(o.outbound.frame_height);
+                    out.frames_per_second = out.frames_per_second.max(o.outbound.frames_per_second);
+                    out.target_bitrate = out.target_bitrate.max(o.outbound.target_bitrate);
+                    out.limitation = format!("{:?}", o.outbound.quality_limitation_reason);
                     for r in &all {
                         if let RtcStats::RemoteInboundRtp(r) = r
                             && r.remote_inbound.local_id == o.rtc.id

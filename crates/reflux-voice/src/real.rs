@@ -303,18 +303,7 @@ impl Call {
         };
         let (width, height) = quality.fit(width, height);
         let source = NativeVideoSource::new(VideoResolution { width, height }, true);
-        let track = LocalVideoTrack::create_video_track("screen_share", RtcVideoSource::Native(source.clone()));
-        let opts = TrackPublishOptions {
-            source: TrackSource::Screenshare,
-            video_codec: VideoCodec::H264,
-            video_encoder: encoder_backend(),
-            simulcast: false,
-            video_encoding: quality.bitrate.map(|b| livekit::options::VideoEncoding { max_bitrate: b, max_framerate: quality.fps as f64 }),
-            scalability_mode: quality.scalability_mode(VideoCodec::H264),
-            degradation_preference: Some(quality.degradation()),
-            ..Default::default()
-        };
-        let sid = match self.publish(LocalTrack::Video(track), opts, (width, height)).await {
+        let sid = match self.publish_screen(&source, quality, width, height).await {
             Ok(sid) => sid,
             Err(e) => {
                 stop.store(true, Ordering::Relaxed);
@@ -323,6 +312,13 @@ impl Call {
         };
         *slot.lock().unwrap() = Some(source);
         Ok(ScreenShare { sid, stop })
+    }
+
+    /// Publishes a prepared screen source; [`start_screen`] and the live test share this so both
+    /// apply the same resolution, frame rate, bitrate and degradation settings.
+    async fn publish_screen(&self, source: &NativeVideoSource, quality: ScreenQuality, width: u32, height: u32) -> Result<TrackSid, Error> {
+        let track = LocalVideoTrack::create_video_track("screen_share", RtcVideoSource::Native(source.clone()));
+        self.publish(LocalTrack::Video(track), quality.publish_options(width, height), (width, height)).await
     }
 
     pub async fn stop_screen(&self, share: ScreenShare) -> Result<(), Error> {
@@ -351,28 +347,29 @@ impl Call {
 
     /// Publishes a camera track the app feeds with [`Camera::push_rgba`]. H.264 Constrained
     /// Baseline (42e01f) so NVENC / VA-API can encode it, like the screen share.
-    pub async fn publish_camera(&self, width: u32, height: u32) -> Result<Camera, Error> {
-        self.publish_video(width, height, TrackSource::Camera).await
-    }
-
-    /// A screen share track fed by the caller (a test pattern in live tests), so encoding can
-    /// be checked without a capture source or portal dialog.
-    pub async fn publish_test_screen(&self, width: u32, height: u32) -> Result<Camera, Error> {
-        self.publish_video(width, height, TrackSource::Screenshare).await
-    }
-
-    async fn publish_video(&self, width: u32, height: u32, kind: TrackSource) -> Result<Camera, Error> {
-        let screen = kind == TrackSource::Screenshare;
-        let source = NativeVideoSource::new(VideoResolution { width, height }, screen);
-        let track = LocalVideoTrack::create_video_track(if screen { "screen_share" } else { "camera" }, RtcVideoSource::Native(source.clone()));
+    pub async fn publish_camera(&self, quality: CameraQuality) -> Result<Camera, Error> {
+        let (width, height) = (quality.width, quality.height);
+        let source = NativeVideoSource::new(VideoResolution { width, height }, false);
+        let track = LocalVideoTrack::create_video_track("camera", RtcVideoSource::Native(source.clone()));
         let opts = TrackPublishOptions {
-            source: kind,
+            source: TrackSource::Camera,
             video_codec: VideoCodec::H264,
             video_encoder: encoder_backend(),
             simulcast: false,
+            video_encoding: Some(quality.encoding()),
             ..Default::default()
         };
         let sid = self.publish(LocalTrack::Video(track), opts, (width, height)).await?;
+        Ok(Camera { sid, source, buffer: Mutex::new(I420Buffer::new(width, height)) })
+    }
+
+    /// A screen share track fed by the caller (a test pattern in live tests), so encoding can
+    /// be checked without a capture source or portal dialog. `width`×`height` is the capture
+    /// size; the published frame is [`ScreenQuality::fit`] of it, like [`start_screen`].
+    pub async fn publish_test_screen(&self, quality: ScreenQuality, width: u32, height: u32) -> Result<Camera, Error> {
+        let (width, height) = quality.fit(width, height);
+        let source = NativeVideoSource::new(VideoResolution { width, height }, true);
+        let sid = self.publish_screen(&source, quality, width, height).await?;
         Ok(Camera { sid, source, buffer: Mutex::new(I420Buffer::new(width, height)) })
     }
 
@@ -495,33 +492,86 @@ pub enum Svc {
     Temporal,
 }
 
+/// `MAX_SCREEN_SHARE_BITRATE`: Fluxer's fallback ceiling (bits/s) when the instance has no
+/// `max_screen_share_bitrate` limit.
+pub const MAX_SCREEN_SHARE_BITRATE: u64 = 9_000_000;
+
+/// `DIMENSIONS` (`ScreenShareOptions.ts`): the pixel budget of each resolution preset.
+const SCREEN_SHARE_RUNGS: [(u32, u32); 6] = [(426, 240), (854, 480), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
+
+/// `BITRATE_KBPS` for 15 / 30 / 60 fps (Fluxer's 90 and 120 columns equal 60).
+const SCREEN_SHARE_KBPS: [[u64; 3]; 6] = [[300, 500, 700], [1200, 2000, 3000], [2000, 3000, 4500], [3000, 4500, 6000], [4000, 5500, 6000], [4500, 6000, 6000]];
+
+fn floor_even(value: f64) -> u32 {
+    ((value / 2.0).floor() as u32 * 2).max(2)
+}
+
+/// The bitrate table's column: 15 / 30 / 60 fps.
+fn fps_column(fps: u32) -> usize {
+    if fps >= 60 { 2 } else if fps >= 30 { 1 } else { 0 }
+}
+
+/// The bitrate row's frame rate: `resolveScreenShareFrameRate`.
+fn fps_bucket(fps: u32) -> u32 {
+    if fps >= 60 { 60 } else if fps >= 30 { 30 } else { 15 }
+}
+
+/// `resolveBitrateRungForPixels`: the largest preset whose pixels fit the sent frame.
+fn bitrate_rung(pixels: u64) -> usize {
+    let mut rung = 0;
+    for (i, (w, h)) in SCREEN_SHARE_RUNGS.iter().enumerate() {
+        if *w as u64 * *h as u64 > pixels {
+            break;
+        }
+        rung = i;
+    }
+    rung
+}
+
+/// A camera track's capture size, frame rate and bitrate cap (`CAMERA_RESOLUTION_PRESET_TABLE`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraQuality {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub bitrate: u64,
+}
+
+impl CameraQuality {
+    pub fn encoding(&self) -> livekit::options::VideoEncoding {
+        livekit::options::VideoEncoding { max_bitrate: self.bitrate, max_framerate: self.fps.max(1) as f64 }
+    }
+}
+
 /// Screen share quality (`StreamSettings`): frame rate, the tallest frame sent (`None` =
-/// source size), a bitrate cap in bits/s (`None` = LiveKit's choice), and Advanced's content
-/// hint and SVC mode.
+/// source), a bitrate cap in bits/s (`None` = Fluxer's resolution/frame-rate table), the
+/// instance's bitrate ceiling, and Advanced's content hint and SVC mode.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenQuality {
     pub fps: u32,
     pub max_height: Option<u32>,
     pub bitrate: Option<u64>,
+    /// `max_screen_share_bitrate` from the instance's limits.
+    pub ceiling: u64,
     pub content_hint: ContentHint,
     pub svc: Svc,
 }
 
 impl Default for ScreenQuality {
     fn default() -> Self {
-        Self { fps: 30, max_height: Some(720), bitrate: None, content_hint: ContentHint::default(), svc: Svc::default() }
+        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default() }
     }
 }
 
 impl ScreenQuality {
-    /// `resolveScreenShareDegradationPreference` for a display share in Custom mode (Reflux has
-    /// no Gaming / Screen share presets). libwebrtc's native track has no content hint setter,
-    /// so the hint acts through this; "motion" is dropped for display shares
-    /// (`resolveScreenShareContentHint`) and counts as no hint.
-    pub fn degradation(&self) -> livekit::options::DegradationPreference {
+    /// `resolveScreenShareDegradationPreference` for a display share. libwebrtc's native track
+    /// has no content hint setter, so the hint acts through this; "motion" is dropped for
+    /// display shares (`resolveScreenShareContentHint`) and counts as no hint.
+    pub fn degradation(&self, width: u32, height: u32) -> livekit::options::DegradationPreference {
         use livekit::options::DegradationPreference::*;
+        let pixels = width as u64 * height as u64;
         let detailed = matches!(self.content_hint, ContentHint::Detail | ContentHint::Text);
-        if self.max_height.is_none() || detailed || self.bitrate.is_some_and(|b| b < 500_000) { MaintainResolution } else { MaintainFramerate }
+        if bitrate_rung(pixels) == SCREEN_SHARE_RUNGS.len() - 1 || detailed || self.max_bitrate(width, height) < 500_000 { MaintainResolution } else { MaintainFramerate }
     }
 
     /// `resolveScreenShareLayering`: SVC applies to AV1 and VP9 only.
@@ -529,13 +579,56 @@ impl ScreenQuality {
         matches!(codec, VideoCodec::AV1 | VideoCodec::VP9).then(|| if self.svc == Svc::SingleLayer { "L1T1" } else { "L1T3" }.to_string())
     }
 
-    /// The frame size sent for a `w`×`h` capture: scaled down to `max_height`, even sides.
+    /// The frame size sent for a `w`×`h` capture (`resolveEffectiveScreenShareDimensions`):
+    /// scaled down to the preset's pixel budget, even sides.
     pub fn fit(&self, w: u32, h: u32) -> (u32, u32) {
-        let (w, h) = match self.max_height {
-            Some(m) if h > m => ((w as u64 * m as u64 / h as u64) as u32, m),
-            _ => (w, h),
+        let (bw, bh) = match self.max_height {
+            None => SCREEN_SHARE_RUNGS[SCREEN_SHARE_RUNGS.len() - 1],
+            Some(m) => SCREEN_SHARE_RUNGS.iter().copied().find(|(_, h)| *h == m).unwrap_or_else(|| ((m as u64 * 16).div_ceil(9) as u32, m)),
+        };
+        let budget = bw as u64 * bh as u64;
+        let pixels = w.max(1) as u64 * h.max(1) as u64;
+        let (w, h) = if pixels <= budget {
+            (w, h)
+        } else {
+            let scale = (budget as f64 / pixels as f64).sqrt();
+            (floor_even(w as f64 * scale), floor_even(h as f64 * scale))
         };
         (w.max(2) & !1, h.max(2) & !1)
+    }
+
+    /// The encoder's bitrate cap: the chosen value, else `computeScreenShareBitrateBps`
+    /// (`max(rung floor, 0.02 bits/pixel/frame)`, scaled by the instance ceiling).
+    pub fn max_bitrate(&self, width: u32, height: u32) -> u64 {
+        let pixels = width as u64 * height as u64;
+        let chosen = match self.bitrate {
+            Some(b) => b,
+            None => {
+                let scale = (self.ceiling as f64 / MAX_SCREEN_SHARE_BITRATE as f64).max(1.0);
+                let floor = SCREEN_SHARE_KBPS[bitrate_rung(pixels)][fps_column(self.fps)] as f64 * 1000.0 * scale;
+                let computed = 0.02 * pixels as f64 * fps_bucket(self.fps) as f64 * scale;
+                floor.max(computed).round() as u64
+            }
+        };
+        chosen.min(self.ceiling)
+    }
+
+    /// `buildScreenShareOptions`' `screenShareEncoding` plus the degradation preference. With an
+    /// SVC mode chosen the share is VP9 (software): libwebrtc only offers scalability for AV1 /
+    /// VP9, and the NVENC / VA-API factories here encode H.264 only.
+    pub fn publish_options(&self, width: u32, height: u32) -> TrackPublishOptions {
+        let svc = self.svc != Svc::Auto;
+        let codec = if svc { VideoCodec::VP9 } else { VideoCodec::H264 };
+        TrackPublishOptions {
+            source: TrackSource::Screenshare,
+            video_codec: codec,
+            video_encoder: if svc { VideoEncoderBackend::Software } else { encoder_backend() },
+            simulcast: false,
+            video_encoding: Some(livekit::options::VideoEncoding { max_bitrate: self.max_bitrate(width, height), max_framerate: self.fps.clamp(1, 120) as f64 }),
+            scalability_mode: self.scalability_mode(codec),
+            degradation_preference: Some(self.degradation(width, height)),
+            ..Default::default()
+        }
     }
 }
 
@@ -754,6 +847,56 @@ mod tests {
         assert_eq!(q.fit(2560, 1440), (1280, 720));
         assert_eq!(q.fit(1280, 600), (1280, 600));
         assert_eq!(super::ScreenQuality { max_height: None, ..q }.fit(1921, 1081), (1920, 1080));
+        // Area budget, not just the height: 21:9 1440p at 720p ends at 1280×620, not 1720×720.
+        assert_eq!(q.fit(3440, 1440), (1482, 620));
+        // 480p fits a 16:9 1080p source into its 854×480 pixel budget (852×480 after even flooring).
+        assert_eq!(super::ScreenQuality { max_height: Some(480), ..q }.fit(1920, 1080), (852, 480));
+        // 1440p is 2560×1440.
+        assert_eq!(super::ScreenQuality { max_height: Some(1440), ..q }.fit(3840, 2160), (2560, 1440));
+    }
+
+    #[test]
+    fn automatic_bitrate_follows_fluxers_table() {
+        use super::{ScreenQuality, MAX_SCREEN_SHARE_BITRATE};
+        let q = ScreenQuality::default();
+        // 720p30: max(medium/30 = 3 Mbps, 0.02 × 921600 × 30).
+        assert_eq!(q.max_bitrate(1280, 720), 3_000_000);
+        // 480p15 floor.
+        assert_eq!(ScreenQuality { max_height: Some(480), fps: 15, ..q }.max_bitrate(854, 480), 1_200_000);
+        // 720p15 (the old LiveKit preset silently capped everyone at 15 FPS / 1 Mbps).
+        assert_eq!(ScreenQuality { fps: 15, ..q }.max_bitrate(1280, 720), 2_000_000);
+        // 1080p60: high/60 = 6 Mbps.
+        assert_eq!(ScreenQuality { max_height: Some(1080), fps: 60, ..q }.max_bitrate(1920, 1080), 6_000_000);
+        // Source at 4K/60: the 6 Mbps rung floor, but 0.02 bits/pixel/frame computes 9.95 Mbps,
+        // so the 9 Mbps default ceiling wins.
+        assert_eq!(ScreenQuality { max_height: None, fps: 60, ..q }.max_bitrate(3840, 2160), 9_000_000);
+        // A manual cap wins, and the instance ceiling caps both.
+        assert_eq!(ScreenQuality { bitrate: Some(8_000_000), ..q }.max_bitrate(1280, 720), 8_000_000);
+        assert_eq!(ScreenQuality { bitrate: Some(50_000_000), ..q }.max_bitrate(1280, 720), MAX_SCREEN_SHARE_BITRATE);
+        assert_eq!(ScreenQuality { ceiling: 16_000_000, bitrate: Some(30_000_000), ..q }.max_bitrate(1280, 720), 16_000_000);
+        // The whole automatic table scales with a raised instance ceiling (Fluxer's `scale`).
+        assert_eq!(ScreenQuality { ceiling: 16_000_000, ..q }.max_bitrate(1280, 720), 5_333_333);
+        assert_eq!(ScreenQuality { ceiling: 16_000_000, max_height: Some(1080), fps: 60, ..q }.max_bitrate(1920, 1080), 10_666_667);
+    }
+
+    #[test]
+    fn encoding_always_carries_the_frame_rate() {
+        let q = super::ScreenQuality { max_height: Some(1080), fps: 60, ..Default::default() };
+        let enc = q.publish_options(1920, 1080).video_encoding.expect("screen shares always set an encoding");
+        assert_eq!(enc.max_bitrate, 6_000_000);
+        assert_eq!(enc.max_framerate, 60.0);
+        let opts = q.publish_options(1920, 1080);
+        assert!(!opts.simulcast);
+        assert_eq!(opts.degradation_preference, Some(livekit::options::DegradationPreference::MaintainResolution));
+        // An SVC mode only applies to VP9/AV1, so choosing one publishes VP9 (software) and the
+        // layering string is set; Automatic stays H.264 with the hardware encoder.
+        assert_eq!(opts.video_codec, livekit::options::VideoCodec::H264);
+        assert_eq!(opts.scalability_mode, None);
+        let svc = super::ScreenQuality { svc: super::Svc::Temporal, ..q };
+        let opts = svc.publish_options(1920, 1080);
+        assert_eq!(opts.video_codec, livekit::options::VideoCodec::VP9);
+        assert_eq!(opts.video_encoder, livekit::webrtc::rtp_sender::VideoEncoderBackend::Software);
+        assert_eq!(opts.scalability_mode.as_deref(), Some("L1T3"));
     }
 
     #[test]
@@ -761,11 +904,12 @@ mod tests {
         use super::{ContentHint, ScreenQuality, Svc};
         use livekit::options::{DegradationPreference::*, VideoCodec};
         let q = ScreenQuality { content_hint: ContentHint::Motion, ..Default::default() };
-        assert_eq!(q.degradation(), MaintainFramerate);
-        assert_eq!(ScreenQuality { content_hint: ContentHint::Auto, ..q }.degradation(), MaintainFramerate);
-        assert_eq!(ScreenQuality { content_hint: ContentHint::Text, ..q }.degradation(), MaintainResolution);
-        assert_eq!(ScreenQuality { max_height: None, ..q }.degradation(), MaintainResolution, "source");
-        assert_eq!(ScreenQuality { bitrate: Some(400_000), ..q }.degradation(), MaintainResolution, "low bitrate");
+        assert_eq!(q.degradation(1280, 720), MaintainFramerate);
+        assert_eq!(ScreenQuality { content_hint: ContentHint::Auto, ..q }.degradation(1280, 720), MaintainFramerate);
+        assert_eq!(ScreenQuality { content_hint: ContentHint::Text, ..q }.degradation(1280, 720), MaintainResolution);
+        assert_eq!(ScreenQuality { max_height: None, ..q }.degradation(3840, 2160), MaintainResolution, "source rung");
+        assert_eq!(ScreenQuality { max_height: None, ..q }.degradation(1920, 1080), MaintainFramerate, "a 1080p source is not the source rung");
+        assert_eq!(ScreenQuality { bitrate: Some(400_000), ..q }.degradation(1280, 720), MaintainResolution, "low bitrate");
         assert_eq!(q.scalability_mode(VideoCodec::H264), None);
         assert_eq!(q.scalability_mode(VideoCodec::VP9).as_deref(), Some("L1T3"));
         assert_eq!(ScreenQuality { svc: Svc::SingleLayer, ..q }.scalability_mode(VideoCodec::AV1).as_deref(), Some("L1T1"));

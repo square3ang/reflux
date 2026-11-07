@@ -49,7 +49,9 @@ Rules:
 | macOS deep links only as launch arguments | an open-URL event isn't exposed by Rune and needs the bundle's URL scheme | `desktop/` deep links | Rune forwards `application:openURLs:` |
 | Flatpak autostart through the XDG Background portal, result kept in a state file | no `~/.config/autostart` access in the sandbox | `desktop/autostart*` | — |
 | Multi-file picking through the XDG portal (`multiple: true`), else Rune's one-file dialog; Windows/macOS one file per dialog | Rune's dialog picks one file | `file_picker.rs` | Rune multi-select dialog |
-| Wayland: no in-app screen-share thumbnails; Applications / Entire screen buttons steer the portal dialog | the portal can't enumerate sources | `shell/call.rs`, `reflux-voice` `ScreenSource::portal` | — |
+| Wayland: no in-app screen-share thumbnails; the Applications / Entire screen tabs steer the portal dialog | the portal can't enumerate sources | `shell/call.rs`, `reflux-voice` `ScreenSource::portal` | — |
+| The picker's source list refreshes every 2 s (Fluxer: 1 s), re-capturing every thumbnail | libwebrtc's capturer has no incremental thumbnail update | `app/voice.rs` `tick`, `Op::LoadScreenSources` | the SDK exposes a thumbnail stream |
+| Screen-share Devices tab lists capture devices by name, with no live preview | a preview needs camera permission and a second capture per device | `shell/call.rs` | device previews through the camera capture |
 | Wayland ignores always-on-top for PiP pop-outs | winit can't request it | `popout.rs` | compositor protocol support |
 | Theme folders are rescanned every 2 s | same as Fluxer's polling fallback; no cross-platform file watcher used | `settings/theme_folder.rs` | add a notify-based watcher |
 | TTS through the platform's CLI voice (`spd-say`, `say`, PowerShell) | no speech API in Rune | `desktop/tts.rs` | — |
@@ -72,6 +74,8 @@ Rules:
 | Device selection is persisted by the Pulse description label (duplicates get `" (name)"`), not by an immutable device id | the shared picker/session stores one plain string per side (`Saved::voice_input`/`voice_output`) | `reflux-voice/src/audio/pulse.rs`, `session.rs` | the device lists carry `(id, label)` pairs |
 | H.264 profile `42e01f` for NVENC | the hardware factory rejects other profiles | `reflux-voice` | — |
 | Screen-share "content hint" maps to libwebrtc's degradation preference | the Rust SDK has no content-hint setter | `reflux-voice`, `settings/advanced.rs` | SDK exposes `contentHint` |
+| Choosing an SVC mode publishes VP9 with the software encoder; Automatic uses H.264 + NVENC/VA-API | libwebrtc only offers scalability for AV1/VP9, and the hardware factories here encode H.264 only | `reflux-voice` `ScreenQuality::publish_options`, `settings/advanced.rs` | hardware AV1/VP9 encoders are exposed |
+| A live quality change and "Change stream" stop the share, then publish a new track from the saved source | the Rust SDK doesn't expose a published sender's encoding parameters, and native capture has no in-place source switch | `app/voice.rs` `toggle_screen`, `Op::Settings`/`Op::ChangeScreen` | the SDK exposes `RtpSender` parameters and source switching |
 | "No hardware encoder was found" never shows on the encoder setting | webrtc-sys doesn't expose its encoder factory probe | `settings/advanced.rs` | the SDK exposes the probe |
 | P2P mesh is our own implementation of `VoiceMeshEngine` (op 13, STUN only) | no JS engine to reuse | `reflux-voice/src/mesh.rs`, `app/voice.rs` | — |
 
@@ -137,7 +141,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:16` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
-- `crates/reflux/src/app/voice.rs:1028` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1054` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1514` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -160,12 +165,13 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:216` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
-- `crates/reflux/src/settings/advanced.rs:336` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+- `crates/reflux/src/settings/advanced.rs:348` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
+- `crates/reflux/src/shell/call.rs:934` device cards are names only (Fluxer shows live previews, which needs
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -178,7 +184,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/skeleton.rs:203` fixed rail / sidebar / member shapes; no `SkeletonLayoutMemory` of the last layout. Port it if the jump on READY matters.
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
-- `crates/reflux/src/shell/upload.rs:226` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
+- `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:195` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.

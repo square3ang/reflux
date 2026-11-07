@@ -102,12 +102,25 @@ pub struct Limits {
     /// from [`guild_limits`] (`Guild.resolveGuildLimit`).
     pub guild_emojis: u64,
     pub guild_stickers: u64,
+    /// `feature_higher_video_quality`: >720p camera, >30 FPS screen share, premium resolutions.
+    pub higher_video_quality: bool,
+    /// `max_screen_share_bitrate`, the screen share bitrate ceiling in bits/s.
+    pub screen_share_bitrate: u64,
 }
 
 impl Default for Limits {
     /// `DEFAULT_STOCK_LIMITS` without premium.
     fn default() -> Self {
-        Limits { message_length: 2000, file_size: 25 * 1024 * 1024, files: 10, global_expressions: false, guild_emojis: 500, guild_stickers: 500 }
+        Limits {
+            message_length: 2000,
+            file_size: 25 * 1024 * 1024,
+            files: 10,
+            global_expressions: false,
+            guild_emojis: 500,
+            guild_stickers: 500,
+            higher_video_quality: false,
+            screen_share_bitrate: reflux_voice::MAX_SCREEN_SHARE_BITRATE,
+        }
     }
 }
 
@@ -137,6 +150,8 @@ pub fn resolve(cfg: &LimitConfig, traits: &[String], features: &[String]) -> Lim
         l.global_expressions = set(l.global_expressions as u64, get("feature_global_expressions")) > 0;
         l.guild_emojis = set(l.guild_emojis, get("max_guild_emojis"));
         l.guild_stickers = set(l.guild_stickers, get("max_guild_stickers"));
+        l.higher_video_quality = set(l.higher_video_quality as u64, get("feature_higher_video_quality")) > 0;
+        l.screen_share_bitrate = set(l.screen_share_bitrate, get("max_screen_share_bitrate"));
     }
     l
 }

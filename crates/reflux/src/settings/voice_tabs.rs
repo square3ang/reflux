@@ -207,8 +207,10 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             sh.intents.push(Intent::Voice(Op::Preview(true)));
         })
         .el(p);
-    let quality = [("low", "480p"), ("medium", "720p"), ("high", "1080p")];
-    let cam_quality = Select::new("camera-quality", &quality, Some(set_.camera_quality.as_str()))
+    let quality: Vec<(&str, &str)> =
+        if st.limits.higher_video_quality { vec![("low", "480p"), ("medium", "720p"), ("high", "1080p")] } else { vec![("low", "480p"), ("medium", "720p")] };
+    let cam_q = if quality.iter().any(|(v, _)| *v == set_.camera_quality) { set_.camera_quality.as_str() } else { "medium" };
+    let cam_quality = Select::new("camera-quality", &quality, Some(cam_q))
         .label(t("Camera quality"))
         .width(340.0)
         .on_choose(move |s: &mut S, val| {
@@ -227,18 +229,22 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     out = out.child(section(t("Video"), video, false, p));
 
     // ---- Screen share
-    let res = [("720", "720p"), ("1080", "1080p"), ("1440", "1440p"), ("source", "Source")];
-    let fps = [("15", "15 FPS"), ("30", "30 FPS"), ("60", "60 FPS")];
-    let rates = [("auto", "Automatic"), ("2500000", "2.5 Mbps"), ("5000000", "5 Mbps"), ("8000000", "8 Mbps"), ("12000000", "12 Mbps")];
-    let res_v = set_.screen_height.map_or("source".to_string(), |h| h.to_string());
-    let fps_v = set_.screen_fps.to_string();
-    let rate_v = set_.screen_bitrate.map_or("auto".to_string(), |b| b.to_string());
+    let higher = st.limits.higher_video_quality;
+    let quality = set_.screen_quality(&st.limits, higher);
+    let res = crate::shell::voice::screen_resolutions(higher);
+    let res: Vec<(&str, &str)> = res.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    let fps = crate::shell::voice::screen_frame_rates(higher);
+    let fps: Vec<(&str, &str)> = fps.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    let res_v = quality.max_height.map_or("source".to_string(), |h| h.to_string());
+    let fps_v = quality.fps.to_string();
     let r = Select::new("settings-share-res", &res, Some(&res_v))
         .label(t("Screen share quality"))
         .width(220.0)
         .on_choose(move |s: &mut S, val| {
             let h = val.parse().ok();
-            set(acc, move |st: &mut Settings| st.screen_height = h)(s)
+            set(acc, move |st: &mut Settings| {
+                (st.screen_height, st.streaming_mode) = (h, "custom".into());
+            })(s)
         })
         .el(&st.popups, pops, p, layer);
     let f = Select::new("settings-share-fps", &fps, Some(&fps_v))
@@ -246,23 +252,41 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
         .width(220.0)
         .on_choose(move |s: &mut S, val| {
             let n = val.parse().unwrap_or(30);
-            set(acc, move |st: &mut Settings| st.screen_fps = n)(s)
+            set(acc, move |st: &mut Settings| {
+                (st.screen_fps, st.streaming_mode) = (n, "custom".into());
+            })(s)
         })
         .el(&st.popups, pops, p, layer);
-    let b = Select::new("settings-share-bitrate", &rates, Some(&rate_v))
-        .label(t("Bitrate"))
-        .width(220.0)
-        .on_choose(move |s: &mut S, val| {
-            let b = val.parse().ok();
-            set(acc, move |st: &mut Settings| st.screen_bitrate = b)(s)
-        })
-        .el(&st.popups, pops, p, layer);
-    let share = col()
-        .w_full()
-        .gap(20.0)
-        .child(row().w_full().gap(16.0).child(r).child(f))
-        .child(b)
-        .child(desc(t("With Automatic, the bitrate follows your resolution and frame rate. Higher values keep fast motion sharper and use more upload bandwidth."), p));
+    let mut share = col().w_full().gap(20.0).child(row().w_full().gap(16.0).child(r).child(f));
+    if let Some(preset) = set_.screen_preset() {
+        let note = crate::i18n::tf("Set by the {preset} preset. Picking a value here switches to Custom.", &[("preset", t(preset.0))]);
+        share = share.child(desc(&note, p));
+    }
+    if !higher && st.premium {
+        let note = crate::i18n::tf("Frame rates above 30 FPS require {premiumProductName}", &[("premiumProductName", "Plutonium")]);
+        share = share.child(desc(&note, p));
+    }
+    // `UserVideoTab`: the bitrate select is part of the higher-quality tier.
+    if higher {
+        let rates = crate::shell::voice::screen_bitrates(st.limits.screen_share_bitrate, set_.screen_bitrate);
+        let rates: Vec<(&str, &str)> = rates.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+        let rate_v = set_.screen_bitrate.map_or("auto".to_string(), |b| b.to_string());
+        let b = Select::new("settings-share-bitrate", &rates, Some(&rate_v))
+            .label(t("Bitrate"))
+            .width(220.0)
+            .on_choose(move |s: &mut S, val| {
+                let b = val.parse().ok();
+                set(acc, move |st: &mut Settings| st.screen_bitrate = b)(s)
+            })
+            .el(&st.popups, pops, p, layer);
+        share = share.child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(b)
+                .child(desc(t("With Automatic, the bitrate follows your resolution and frame rate. Higher values keep fast motion sharper and use more upload bandwidth."), p)),
+        );
+    }
     out = out.child(section(t("Screen share"), share, false, p));
 
     // The encoder path lives in Advanced (`ScreenShareEncoderControls`), like Fluxer.

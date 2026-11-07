@@ -322,11 +322,11 @@ impl Call {
         None
     }
 
-    pub async fn publish_camera(&self, _width: u32, _height: u32) -> Result<Camera, Error> {
+    pub async fn publish_camera(&self, _quality: CameraQuality) -> Result<Camera, Error> {
         Err(Error::Unavailable)
     }
 
-    pub async fn publish_test_screen(&self, _width: u32, _height: u32) -> Result<Camera, Error> {
+    pub async fn publish_test_screen(&self, _quality: ScreenQuality, _width: u32, _height: u32) -> Result<Camera, Error> {
         Err(Error::Unavailable)
     }
 
@@ -384,6 +384,11 @@ pub struct Published {
     pub bytes_sent: u64,
     pub sfu_reports: u64,
     pub sfu_lost: i64,
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub frames_per_second: f64,
+    pub target_bitrate: f64,
+    pub limitation: String,
 }
 
 /// `ScreenShareContentHint`.
@@ -405,30 +410,92 @@ pub enum Svc {
     Temporal,
 }
 
+/// `MAX_SCREEN_SHARE_BITRATE`: Fluxer's fallback ceiling (bits/s).
+pub const MAX_SCREEN_SHARE_BITRATE: u64 = 9_000_000;
+
+const SCREEN_SHARE_RUNGS: [(u32, u32); 6] = [(426, 240), (854, 480), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
+const SCREEN_SHARE_KBPS: [[u64; 3]; 6] = [[300, 500, 700], [1200, 2000, 3000], [2000, 3000, 4500], [3000, 4500, 6000], [4000, 5500, 6000], [4500, 6000, 6000]];
+
+fn floor_even(value: f64) -> u32 {
+    ((value / 2.0).floor() as u32 * 2).max(2)
+}
+
+fn fps_bucket(fps: u32) -> u32 {
+    if fps >= 60 { 60 } else if fps >= 30 { 30 } else { 15 }
+}
+
+fn fps_column(fps: u32) -> usize {
+    if fps >= 60 { 2 } else if fps >= 30 { 1 } else { 0 }
+}
+
+fn bitrate_rung(pixels: u64) -> usize {
+    let mut rung = 0;
+    for (i, (w, h)) in SCREEN_SHARE_RUNGS.iter().enumerate() {
+        if *w as u64 * *h as u64 > pixels {
+            break;
+        }
+        rung = i;
+    }
+    rung
+}
+
+/// A camera track's capture size, frame rate and bitrate cap.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraQuality {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub bitrate: u64,
+}
+
 /// Screen share quality (`StreamSettings`). Kept so the picker's settings compile.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenQuality {
     pub fps: u32,
     pub max_height: Option<u32>,
     pub bitrate: Option<u64>,
+    pub ceiling: u64,
     pub content_hint: ContentHint,
     pub svc: Svc,
 }
 
 impl Default for ScreenQuality {
     fn default() -> Self {
-        Self { fps: 30, max_height: Some(720), bitrate: None, content_hint: ContentHint::default(), svc: Svc::default() }
+        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default() }
     }
 }
 
 impl ScreenQuality {
-    /// The frame size sent for a `w`×`h` capture: scaled down to `max_height`, even sides.
+    /// The frame size sent for a `w`×`h` capture (the preset's pixel budget), even sides.
     pub fn fit(&self, w: u32, h: u32) -> (u32, u32) {
-        let (w, h) = match self.max_height {
-            Some(m) if h > m => ((w as u64 * m as u64 / h as u64) as u32, m),
-            _ => (w, h),
+        let (bw, bh) = match self.max_height {
+            None => SCREEN_SHARE_RUNGS[SCREEN_SHARE_RUNGS.len() - 1],
+            Some(m) => SCREEN_SHARE_RUNGS.iter().copied().find(|(_, h)| *h == m).unwrap_or_else(|| ((m as u64 * 16).div_ceil(9) as u32, m)),
+        };
+        let budget = bw as u64 * bh as u64;
+        let pixels = w.max(1) as u64 * h.max(1) as u64;
+        let (w, h) = if pixels <= budget {
+            (w, h)
+        } else {
+            let scale = (budget as f64 / pixels as f64).sqrt();
+            (floor_even(w as f64 * scale), floor_even(h as f64 * scale))
         };
         (w.max(2) & !1, h.max(2) & !1)
+    }
+
+    /// The encoder's bitrate cap (Fluxer's automatic table or the chosen value).
+    pub fn max_bitrate(&self, width: u32, height: u32) -> u64 {
+        let pixels = width as u64 * height as u64;
+        let chosen = match self.bitrate {
+            Some(b) => b,
+            None => {
+                let scale = (self.ceiling as f64 / MAX_SCREEN_SHARE_BITRATE as f64).max(1.0);
+                let floor = SCREEN_SHARE_KBPS[bitrate_rung(pixels)][fps_column(self.fps)] as f64 * 1000.0 * scale;
+                let computed = 0.02 * pixels as f64 * fps_bucket(self.fps) as f64 * scale;
+                floor.max(computed).round() as u64
+            }
+        };
+        chosen.min(self.ceiling)
     }
 }
 
@@ -498,6 +565,11 @@ mod tests {
         assert_eq!(q.fit(2560, 1440), (1280, 720));
         assert_eq!(q.fit(1280, 600), (1280, 600));
         assert_eq!(ScreenQuality { max_height: None, ..q }.fit(1921, 1081), (1920, 1080));
+        assert_eq!(q.fit(3440, 1440), (1482, 620), "area budget, not just the height");
+        assert_eq!(ScreenQuality { max_height: Some(480), ..q }.fit(1920, 1080), (852, 480));
+        assert_eq!(ScreenQuality { max_height: Some(1440), ..q }.fit(3840, 2160), (2560, 1440));
+        assert_eq!(q.max_bitrate(1280, 720), 3_000_000);
+        assert_eq!(ScreenQuality { fps: 15, ..q }.max_bitrate(1280, 720), 2_000_000);
     }
 
     #[tokio::test]

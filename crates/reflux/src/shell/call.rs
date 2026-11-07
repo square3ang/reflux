@@ -838,9 +838,13 @@ fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>,
 /// Opens the screen share picker and starts listing what it offers.
 pub fn open_screen_picker(sh: &mut ShellState) {
     sh.voice.modal = Some(Modal::ScreenShare);
+    sh.voice.screen_tab = "apps".into();
+    sh.voice.screen_device = None;
+    sh.voice.screen_sources = None;
     // Wayland: the portal picker, opened on the Applications tab (`preferredDisplaySurface`).
     sh.voice.screen_pick = (cfg!(target_os = "linux") && !reflux_voice::can_list_sources()).then(|| reflux_voice::ScreenSource::portal(true));
     sh.intents.push(Intent::Voice(Op::LoadScreenSources));
+    sh.intents.push(Intent::Voice(Op::LoadCameras));
     sh.intents.push(Intent::Voice(Op::LoadAudioSources));
 }
 
@@ -851,16 +855,64 @@ pub fn open_screen_picker(sh: &mut ShellState) {
 fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static, layer: &mut Vec<El>) -> crate::ui::Modal<S> {
     let v = &st.voice;
     let set = &v.settings;
-    let res = [("720", "720p"), ("1080", "1080p"), ("1440", "1440p"), ("source", "Source")];
-    let fps = [("15", "15 FPS"), ("30", "30 FPS"), ("60", "60 FPS")];
-    let res_v = set.screen_height.map_or("source".to_string(), |h| h.to_string());
-    let fps_v = set.screen_fps.to_string();
+    let higher = st.limits.higher_video_quality;
+    let quality = set.screen_quality(&st.limits, higher);
+    let listed = reflux_voice::can_list_sources() || v.screen_sources.is_some();
+    let tab = match v.screen_tab.as_str() {
+        "displays" => "displays",
+        "devices" => "devices",
+        _ => "apps",
+    };
+    let mut body = col().w_full().gap(16.0);
+    // `ScreenSharePickerModal` tabs: Applications / Entire screen / Devices (default Applications).
+    let mut tabs = row().gap(8.0);
+    for (id, label) in [("apps", "Applications"), ("displays", "Entire screen"), ("devices", "Devices")] {
+        let on = tab == id;
+        tabs = tabs.child(
+            Button::new(t(label))
+                .variant(if on { ButtonVariant::Primary } else { ButtonVariant::Secondary })
+                .key(format!("share-tab-{id}"))
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.screen_tab = id.into();
+                    sh.voice.screen_device = None;
+                    // Wayland's portal needs its preference set before the system dialog.
+                    sh.voice.screen_pick = (!reflux_voice::can_list_sources() && id != "devices").then(|| reflux_voice::ScreenSource::portal(id == "apps"));
+                })
+                .el(p),
+        );
+    }
+    body = body.child(tabs);
+
+    // `StreamSettingsMenuContent`'s streaming modes. The descriptions are Fluxer's, including
+    // the higher-quality "Sharp text at up to 4K, up to 15 FPS" copy.
+    let modes = [
+        ("gaming", "Gaming", Some(if higher { "Smooth 60 FPS at up to 1440p" } else { "Smooth 30 FPS at up to 720p" })),
+        ("screenshare", "Screen share", Some(if higher { "Sharp text at up to 4K, up to 15 FPS" } else { "Sharp text at 720p, up to 30 FPS" })),
+        ("custom", "Custom", Some("Dial in your own numbers")),
+    ];
+    body = body.child(
+        crate::ui::RadioGroup::new(&modes, Some(set.streaming_mode.as_str()))
+            .on_change(move |s: &mut S, val| {
+                acc(s).voice.settings.streaming_mode = val.to_string();
+                acc(s).intents.push(Intent::Voice(Op::Settings));
+            })
+            .el(p),
+    );
+
+    // Picking either value switches to Custom, like `resolveScreenShareQualityPick`.
+    let res = crate::shell::voice::screen_resolutions(higher);
+    let res: Vec<(&str, &str)> = res.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    let fps = crate::shell::voice::screen_frame_rates(higher);
+    let fps: Vec<(&str, &str)> = fps.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
+    let res_v = quality.max_height.map_or("source".to_string(), |h| h.to_string());
+    let fps_v = quality.fps.to_string();
     let r = crate::ui::Select::new("share-res", &res, Some(&res_v))
         .label(t("Resolution"))
         .width(190.0)
         .on_choose(move |s: &mut S, v| {
             let sh = acc(s);
-            sh.voice.settings.screen_height = v.parse().ok();
+            (sh.voice.settings.screen_height, sh.voice.settings.streaming_mode) = (v.parse().ok(), "custom".into());
             sh.intents.push(Intent::Voice(Op::Settings));
         })
         .el(&st.popups, pops(acc), p, layer);
@@ -869,53 +921,94 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
         .width(190.0)
         .on_choose(move |s: &mut S, v| {
             let sh = acc(s);
-            sh.voice.settings.screen_fps = v.parse().unwrap_or(30);
+            (sh.voice.settings.screen_fps, sh.voice.settings.streaming_mode) = (v.parse().unwrap_or(30), "custom".into());
             sh.intents.push(Intent::Voice(Op::Settings));
         })
         .el(&st.popups, pops(acc), p, layer);
-    let mut body = col().w_full().gap(16.0);
-    let listed = reflux_voice::can_list_sources() || v.screen_sources.is_some();
-    match &v.screen_sources {
-        _ if !listed => {
-            // Wayland: which kind of source the portal offers (`set-display-media-portal-preference`).
-            if let Some(pick) = v.screen_pick.as_ref().filter(|x| x.id == reflux_voice::ScreenSource::PORTAL) {
-                let tab = |window: bool, label: &str| {
-                    let variant = if pick.window == window { ButtonVariant::Primary } else { ButtonVariant::Secondary };
-                    Button::new(t(label)).variant(variant).key(format!("share-surface-{window}")).on_press(move |s: &mut S| acc(s).voice.screen_pick = Some(reflux_voice::ScreenSource::portal(window))).el(p)
-                };
-                body = body.child(row().gap(8.0).child(tab(true, "Applications")).child(tab(false, "Entire screen")));
+    match tab {
+        "devices" => {
+            let cams = v.cameras.clone().unwrap_or_default();
+            if cams.is_empty() {
+                body = body.child(body_text(t("No capture devices found."), p));
+            } else {
+                // shortcut: device cards are names only (Fluxer shows live previews, which needs
+                // camera permission and a capture per device); add previews if users ask.
+                let mut cards = col().w_full().gap(6.0);
+                for name in cams {
+                    let picked = v.screen_device.as_deref() == Some(name.as_str());
+                    let pick = name.clone();
+                    cards = cards.child(
+                        row()
+                            .key(format!("share-device-{name}"))
+                            .w_full()
+                            .padding(10.0)
+                            .gap(10.0)
+                            .center_y()
+                            .radius(8.0)
+                            .border(2.0, if picked { p.brand_primary } else { p.background_modifier_accent })
+                            .hover(p.background_modifier_hover)
+                            .cursor(rune::Cursor::Pointer)
+                            .role("radio")
+                            .label(name.clone())
+                            .child(icon(&icons::VIDEO_CAMERA, 18.0).color(if picked { p.brand_primary } else { p.text_primary_muted }))
+                            .child(text(name).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
+                            .on_press(move |s: &mut S| {
+                                let sh = acc(s);
+                                sh.voice.screen_device = Some(pick.clone());
+                                sh.voice.screen_pick = None;
+                            }),
+                    );
+                }
+                body = body.child(cards);
             }
+        }
+        _ if !listed => {
             body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p))
         }
-        None => body = body.child(body_text(t("Loading…"), p)),
-        Some(list) => {
-            let card = |src: &reflux_voice::ScreenSource, px: &Pixels| {
-                let picked = v.screen_pick.as_ref().is_some_and(|x| x.id == src.id && x.window == src.window);
-                let pick = src.clone();
-                col()
-                    .key(format!("share-src-{}-{}", src.window as u8, src.id))
-                    .w(176.0)
-                    .gap(6.0)
-                    .padding(6.0)
-                    .radius(8.0)
-                    .border(2.0, if picked { p.brand_primary } else { Color::TRANSPARENT })
-                    .hover(p.background_modifier_hover)
-                    .cursor(rune::Cursor::Pointer)
-                    .role("radio")
-                    .label(src.title.clone())
-                    .child(el().w(160.0).h(90.0).radius(6.0).clip_rounded(6.0).fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit))
-                    .child(text(src.title.clone()).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary).truncate())
-                    .on_press(move |s: &mut S| acc(s).voice.screen_pick = Some(pick.clone()))
-            };
-            for (window, title) in [(false, t("Screens")), (true, t("Windows"))] {
-                let cards: Vec<El> = list.iter().filter(|(s, _)| s.window == window).map(|(s, px)| card(s, px)).collect();
-                if !cards.is_empty() {
-                    body = body.child(text(title).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary)).child(row().w_full().flex_wrap().gap(8.0).children(cards));
+        _ => match &v.screen_sources {
+            None => body = body.child(body_text(t("Loading…"), p)),
+            Some(list) => {
+                let windows = tab == "apps";
+                let card = |src: &reflux_voice::ScreenSource, px: &Pixels| {
+                    let picked = v.screen_pick.as_ref().is_some_and(|x| x.id == src.id && x.window == src.window);
+                    let pick = src.clone();
+                    col()
+                        .key(format!("share-src-{}-{}", src.window as u8, src.id))
+                        .w(176.0)
+                        .gap(6.0)
+                        .padding(6.0)
+                        .radius(8.0)
+                        .border(2.0, if picked { p.brand_primary } else { Color::TRANSPARENT })
+                        .hover(p.background_modifier_hover)
+                        .cursor(rune::Cursor::Pointer)
+                        .role("radio")
+                        .label(src.title.clone())
+                        .child(el().w(160.0).h(90.0).radius(6.0).clip_rounded(6.0).fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit))
+                        .child(text(src.title.clone()).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary).truncate())
+                        .on_press(move |s: &mut S| {
+                            let sh = acc(s);
+                            sh.voice.screen_pick = Some(pick.clone());
+                            sh.voice.screen_device = None;
+                        })
+                };
+                let cards: Vec<El> = list.iter().filter(|(s, _)| s.window == windows).map(|(s, px)| card(s, px)).collect();
+                if cards.is_empty() {
+                    body = body.child(body_text(t(if windows { "No application windows found." } else { "No displays found." }), p));
+                } else {
+                    body = body.child(row().w_full().flex_wrap().gap(8.0).children(cards));
                 }
             }
-        }
+        },
     }
     body = body.child(row().w_full().gap(16.0).child(r).child(f));
+    if let Some(preset) = set.screen_preset() {
+        let note = crate::i18n::tf("Set by the {preset} preset. Picking a value here switches to Custom.", &[("preset", t(preset.0))]);
+        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap());
+    }
+    if !higher && st.premium {
+        let note = crate::i18n::tf("Frame rates above 30 FPS require {premiumProductName}", &[("premiumProductName", "Plutonium")]);
+        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap());
+    }
     if let Some(apps) = &v.audio_sources {
         let opts: Vec<(&str, &str)> = std::iter::once(("", "No audio")).chain(apps.iter().map(|(id, name)| (id.as_str(), name.as_str()))).collect();
         let cur = set.stream_audio.clone().filter(|id| apps.iter().any(|(x, _)| x == id)).unwrap_or_default();
@@ -931,9 +1024,10 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                 .el(&st.popups, pops(acc), p, layer),
         );
     }
-    let ready = !listed || v.screen_pick.is_some();
+    // A camera/device share or a listed source; on Wayland the portal's default pick counts.
+    let ready = if tab == "devices" { v.screen_device.is_some() } else { v.screen_pick.is_some() };
     crate::ui::Modal::new(t("Share your screen"), close)
-        .size(if listed { crate::ui::ModalSize::Medium } else { crate::ui::ModalSize::Small })
+        .size(if listed || tab == "devices" { crate::ui::ModalSize::Medium } else { crate::ui::ModalSize::Small })
         .body(body)
         .footer(
             row()
@@ -941,9 +1035,10 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                 .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("share-cancel").on_press(close).el(p))
                 .child(Button::new("Go live").key("share-go").disabled(!ready).on_press(move |s: &mut S| {
                     let sh = acc(s);
+                    let changing = sh.voice.screen;
                     sh.voice.modal = None;
                     sh.voice.screen_sources = None;
-                    sh.intents.push(Intent::ToggleScreen);
+                    sh.intents.push(if changing { Intent::Voice(Op::ChangeScreen) } else { Intent::ToggleScreen });
                 }).el(p)),
         )
 }
@@ -1096,6 +1191,12 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         acc(s).voice.focus = (!focused).then_some(user);
     }));
     let streaming = store.voice_states.get(&(guild, user)).is_some_and(|v| v.self_stream);
+    if streaming && user == me {
+        m = m
+            .item(MenuItem::new("stop-stream", t("Stop streaming")).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen)))
+            .item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))))
+            .submenu("stream-quality", t("Stream quality"), stream_quality_entries(st, acc));
+    }
     if streaming && user != me {
         m = m.item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);
@@ -1153,6 +1254,57 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         }
     }
     m.el(&st.popups, pops(acc), p, layer);
+}
+
+/// `StreamSettingsMenuContent`'s compactLive variant ("Stream quality"): frame rate and
+/// resolution radios. Options above the instance's higher-quality tier are visible but locked
+/// when the instance sells Plutonium, like Fluxer's premium badge rows.
+fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate::ui::MenuEntry<S>> {
+    let higher = st.limits.higher_video_quality;
+    let premium = st.premium;
+    let quality = st.voice.settings.screen_quality(&st.limits, st.limits.higher_video_quality);
+    let mut fps = Vec::new();
+    for value in [15u32, 30, 60] {
+        let locked = value > 30 && !higher;
+        if locked && !premium {
+            continue;
+        }
+        let label = crate::i18n::tf("{frameRate} FPS", &[("frameRate", &value.to_string())]);
+        let mut item = MenuItem::new(format!("stream-fps-{value}"), label).radio(quality.fps == value);
+        item = if locked {
+            item.disabled(true).hint(t("Plutonium"))
+        } else {
+            item.on_select(move |s: &mut S| {
+                let sh = acc(s);
+                (sh.voice.settings.screen_fps, sh.voice.settings.streaming_mode) = (value, "custom".into());
+                sh.intents.push(Intent::Voice(Op::Settings));
+            })
+        };
+        fps.push(crate::ui::MenuEntry::Item(item));
+    }
+    let current = quality.max_height.map_or("source".to_string(), |h| h.to_string());
+    let mut res = Vec::new();
+    for (value, label) in crate::shell::voice::screen_resolutions(true) {
+        let locked = value != "480" && value != "720" && !higher;
+        if locked && !premium {
+            continue;
+        }
+        let mut item = MenuItem::new(format!("stream-res-{value}"), label).radio(current == value);
+        item = if locked {
+            item.disabled(true).hint(t("Plutonium"))
+        } else {
+            item.on_select(move |s: &mut S| {
+                let sh = acc(s);
+                (sh.voice.settings.screen_height, sh.voice.settings.streaming_mode) = (value.parse().ok(), "custom".into());
+                sh.intents.push(Intent::Voice(Op::Settings));
+            })
+        };
+        res.push(crate::ui::MenuEntry::Item(item));
+    }
+    vec![
+        crate::ui::MenuEntry::Submenu("stream-quality-fps".into(), t("Frame rate").to_string(), fps),
+        crate::ui::MenuEntry::Submenu("stream-quality-res".into(), t("Resolution").to_string(), res),
+    ]
 }
 
 #[cfg(test)]

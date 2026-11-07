@@ -421,7 +421,7 @@ pub fn encoder_modal<S: 'static>(
         .child(combo(
             "advanced-svc-mode",
             "SVC mode",
-            "Layering for AV1 and VP9 when available.",
+            "Choosing a mode shares in VP9 (software encoding) so layers apply; Automatic uses H.264 with the hardware encoder.",
             &[
                 ("auto", "Automatic"),
                 ("single_layer", "Single layer"),

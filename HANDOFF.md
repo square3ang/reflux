@@ -128,7 +128,10 @@ See `git log` for details. Crates:
   `LIVEKIT_PREFERRED_HW_ENCODER` / software), local mute, voice details popout (ping graph),
   E2EE (`e2ee_key` → shared-key AES-GCM frame encryption + lock badge), moderator move follow,
   reconnecting state, join-confirm / channel-full / refused modals, watch-stream full window +
-  spectators, video/audio attachment playback through GStreamer (`gst` feature, default; Linux,
+  spectators, screen-share streaming modes (Gaming / Screen share / Custom) with Fluxer's
+  resolution, frame-rate and bitrate mapping (instance limits), content hint, an SVC mode that
+  publishes VP9 so it applies, the picker's Devices tab and thumbnail refresh, live quality /
+  source re-configure of a running share, video/audio attachment playback through GStreamer (`gst` feature, default; Linux,
   `--no-default-features` drops it; tested end to end by `cargo test -p reflux gst::` on clips it
   encodes) and Media Foundation on Windows (`mf.rs`; `scripts/mf-wine-test.sh` builds just that
   module (and the MF camera; set `TMPDIR` to a disk dir when /tmp is a full tmpfs) for windows-gnu with zig and runs it under wine: H.264/AAC mp4 + mp3, frames/sound/

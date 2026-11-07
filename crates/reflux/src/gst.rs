@@ -246,6 +246,16 @@ mod imp {
             let src = dev.create_element(None).ok()?;
             let convert = gst::ElementFactory::make("videoconvert").build().ok()?;
             let scale = gst::ElementFactory::make("videoscale").build().ok()?;
+            // PipeWire-backed cameras only accept their native sizes (Hagibis: no 640×360 or
+            // 854×480, "set output format: -22"); capture at a native 16:9 size and let
+            // videoscale produce the asked one.
+            let pipewire = src.factory().is_some_and(|f| f.name() == "pipewiresrc");
+            let source_caps = if pipewire {
+                let (sw, sh): (i32, i32) = if height > 720 { (1920, 1080) } else { (1280, 720) };
+                Some(gst::ElementFactory::make("capsfilter").property("caps", gst::Caps::builder("video/x-raw").field("width", sw).field("height", sh).build()).build().ok()?)
+            } else {
+                None
+            };
             let caps = gst::Caps::builder("video/x-raw")
                 .field("format", "RGBA")
                 .field("width", width as i32)
@@ -265,8 +275,13 @@ mod imp {
             // Capture, not playback: hand frames over as they come instead of waiting on the clock.
             appsink.set_sync(false);
             let pipeline = gst::Pipeline::new();
-            pipeline.add_many([&src, &convert, &scale, appsink.upcast_ref()]).ok()?;
-            gst::Element::link_many([&src, &convert, &scale, appsink.upcast_ref()]).ok()?;
+            let mut elements: Vec<&gst::Element> = vec![&src];
+            if let Some(filter) = &source_caps {
+                elements.push(filter);
+            }
+            elements.extend([&convert, &scale, appsink.upcast_ref()]);
+            pipeline.add_many(elements.iter().copied()).ok()?;
+            gst::Element::link_many(elements.iter().copied()).ok()?;
             pipeline.set_state(gst::State::Playing).map_err(|e| eprintln!("reflux: camera: {e}")).ok()?;
             Some(Self { pipeline })
         }

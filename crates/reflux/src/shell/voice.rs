@@ -95,6 +95,12 @@ pub struct Voice {
     /// one picked (`None` = the system picker).
     pub screen_sources: Option<Vec<(reflux_voice::ScreenSource, Pixels)>>,
     pub screen_pick: Option<reflux_voice::ScreenSource>,
+    /// The source the running share started from, so a quality change can restart it.
+    pub share_pick: Option<reflux_voice::ScreenSource>,
+    /// The picker's tab (`apps`, `displays`, `devices`).
+    pub screen_tab: String,
+    /// The camera / capture device a `Devices` share uses.
+    pub screen_device: Option<String>,
     /// Linux screen share audio: (PipeWire `object.serial`, application name).
     pub audio_sources: Option<Vec<(String, String)>>,
     /// `VoiceP2pRollout` (`GET /experiments`): peer-to-peer calls offered, and their cap.
@@ -134,7 +140,10 @@ pub struct Settings {
     pub mirror_camera: bool,
     /// `low` (480p), `medium` (720p) or `high` (1080p).
     pub camera_quality: String,
-    /// Tallest screen share frame (`None` = source).
+    /// `streamingMode`: `gaming` (1440p60), `screenshare` (1080p30) or `custom` (the saved
+    /// resolution and frame rate below). The free tier clamps presets to 720p30.
+    pub streaming_mode: String,
+    /// Tallest custom screen share frame (`None` = source).
     pub screen_height: Option<u32>,
     pub screen_fps: u32,
     /// Bits/s, `None` = automatic.
@@ -144,7 +153,8 @@ pub struct Settings {
     pub encoder: String,
     /// `screenShareContentHint`: `auto`, `motion`, `detail` or `text`.
     pub screen_content_hint: String,
-    /// `screenShareScalabilityMode`: `auto`, `single_layer` or `temporal`.
+    /// `screenShareScalabilityMode`: `auto` (H.264 / hardware), `single_layer` or `temporal`
+    /// (VP9 + software, so the layers apply).
     pub screen_svc: String,
     /// `ParticipantVolume`: per-user volume (0..200 %).
     pub user_volumes: HashMap<u64, f32>,
@@ -178,6 +188,7 @@ impl Default for Settings {
             camera: None,
             mirror_camera: true,
             camera_quality: "medium".into(),
+            streaming_mode: "screenshare".into(),
             screen_height: Some(720),
             screen_fps: 30,
             screen_bitrate: None,
@@ -226,35 +237,98 @@ impl Settings {
         self.push_to_talk && self.processing != "studio"
     }
 
-    pub fn camera_size(&self) -> (u32, u32) {
-        match self.camera_quality.as_str() {
-            "low" => (854, 480),
-            "high" => (1920, 1080),
-            _ => (1280, 720),
-        }
+    /// The camera's capture size, frame rate and bitrate (`CAMERA_RESOLUTION_PRESET_TABLE`;
+    /// 1080p needs the instance's `feature_higher_video_quality`).
+    pub fn camera_quality(&self, higher_video_quality: bool) -> reflux_voice::CameraQuality {
+        let (width, height, fps, bitrate) = match self.camera_quality.as_str() {
+            // 480p is 640×360 in Fluxer.
+            "low" => (640, 360, 20, 450_000),
+            "high" if higher_video_quality => (1920, 1080, 30, 3_000_000),
+            _ => (1280, 720, 30, 1_700_000),
+        };
+        reflux_voice::CameraQuality { width, height, fps, bitrate }
     }
 
-    pub fn screen_quality(&self) -> reflux_voice::ScreenQuality {
+    /// `resolveScreenShareTarget` for a display share: the streaming mode's resolution and
+    /// frame rate (`gaming` 1440p60, `screenshare` 1080p30, `custom` the saved values), clamped
+    /// to 720p/30 without `feature_higher_video_quality` (a P2P call always has it), plus the
+    /// instance's bitrate ceiling.
+    pub fn screen_quality(&self, limits: &crate::shell::upload::Limits, higher_video_quality: bool) -> reflux_voice::ScreenQuality {
         use reflux_voice::{ContentHint, Svc};
-        let content_hint = match self.screen_content_hint.as_str() {
+        let higher = higher_video_quality;
+        let custom_hint = match self.screen_content_hint.as_str() {
             "auto" => ContentHint::Auto,
             "motion" => ContentHint::Motion,
             "detail" => ContentHint::Detail,
             _ => ContentHint::Text,
         };
+        let (max_height, fps, content_hint) = match self.streaming_mode.as_str() {
+            "gaming" => (Some(1440), 60, ContentHint::Motion),
+            // `resolveScreenShareContentHintForMode`: Custom keeps the saved hint.
+            "custom" => (self.screen_height, self.screen_fps, custom_hint),
+            _ => (Some(1080), 30, ContentHint::Text),
+        };
+        let (max_height, fps) = if higher { (max_height, fps.clamp(1, 60)) } else { (Some(max_height.unwrap_or(720).min(720)), fps.clamp(1, 30)) };
         let svc = match self.screen_svc.as_str() {
             "single_layer" => Svc::SingleLayer,
             "temporal" => Svc::Temporal,
             _ => Svc::Auto,
         };
         reflux_voice::ScreenQuality {
-            fps: self.screen_fps,
-            max_height: self.screen_height,
-            bitrate: self.screen_bitrate,
+            fps,
+            max_height,
+            bitrate: higher.then_some(self.screen_bitrate).flatten(),
+            ceiling: limits.screen_share_bitrate,
             content_hint,
             svc,
         }
     }
+
+    /// `resolveUserVideoTabScreenShareState`: the effective (resolution, frame rate) the selects
+    /// show, and whether a preset owns them.
+    pub fn screen_preset(&self) -> Option<(&'static str, Option<u32>, u32)> {
+        match self.streaming_mode.as_str() {
+            "gaming" => Some(("Gaming", Some(1440), 60)),
+            "screenshare" => Some(("Screen share", Some(1080), 30)),
+            _ => None,
+        }
+    }
+}
+
+/// `OFFERED_SCREEN_SHARE_RESOLUTIONS`: 480p and 720p; 1080p, 1440p and Source need the
+/// instance's `feature_higher_video_quality`.
+pub fn screen_resolutions(higher: bool) -> Vec<(String, String)> {
+    let mut v = vec![("480".to_string(), "480p".to_string()), ("720".to_string(), "720p".to_string())];
+    if higher {
+        v.extend([("1080", "1080p"), ("1440", "1440p")].map(|(a, b)| (a.to_string(), b.to_string())));
+        v.push(("source".into(), t("Source").to_string()));
+    }
+    v
+}
+
+/// `SUPPORTED_SCREEN_SHARE_FRAME_RATES` as Fluxer offers them: 15 / 30, and 60 with the
+/// higher-quality feature.
+pub fn screen_frame_rates(higher: bool) -> Vec<(String, String)> {
+    let rates = if higher { &[15, 30, 60][..] } else { &[15, 30][..] };
+    rates.iter().map(|f| (f.to_string(), crate::i18n::tf("{frameRate} FPS", &[("frameRate", &f.to_string())]))).collect()
+}
+
+/// `buildBitrateOptions` + Automatic: Fluxer's steps (`SCREEN_SHARE_BITRATE_STEPS_BPS`) below
+/// the instance ceiling, the ceiling itself, then the saved value if it is not in the list.
+pub fn screen_bitrates(ceiling: u64, chosen: Option<u64>) -> Vec<(String, String)> {
+    const STEPS: [u64; 11] = [2_000_000, 4_000_000, 6_000_000, 8_000_000, 10_000_000, 15_000_000, 20_000_000, 25_000_000, 30_000_000, 40_000_000, 50_000_000];
+    let mut values: Vec<u64> = STEPS.into_iter().filter(|b| *b < ceiling).collect();
+    values.push(ceiling);
+    values.extend(chosen.filter(|c| *c <= ceiling));
+    values.sort_unstable();
+    values.dedup();
+    let mbps = |b: u64| if b.is_multiple_of(1_000_000) { (b / 1_000_000).to_string() } else { format!("{:.1}", b as f64 / 1_000_000.0) };
+    let mut out = vec![("auto".to_string(), t("Automatic").to_string())];
+    out.extend(values.into_iter().map(|b| {
+        let label = crate::i18n::tf("{bitrate} Mbps", &[("bitrate", &mbps(b))]);
+        (b.to_string(), label)
+    }));
+    out
 }
 
 /// Voice dialogs.
@@ -471,6 +545,8 @@ pub enum Op {
     LoadCameras,
     /// `voice.settings` changed: save and apply.
     Settings,
+    /// `Change stream`: stop the running share and start it from the picker's new source.
+    ChangeScreen,
     LocalMute(Snowflake, bool),
     /// Check eligibility, join and ring (`CallCommands.startCall`).
     StartCall(Snowflake),
@@ -533,6 +609,8 @@ impl ShellState {
         v.speaking.clear();
         v.pings.clear();
         v.videos.clear();
+        v.share_pick = None;
+        v.screen_device = None;
         self.intents.push(Intent::JoinVoice { guild, channel });
     }
 
@@ -910,5 +988,70 @@ mod tests {
         assert_eq!(st.intents, [Intent::SelectChannel(Snowflake(2)), Intent::JoinVoice { guild: Some(Snowflake(1)), channel: Snowflake(2) }]);
         st.leave_voice();
         assert_eq!(st.intents.last(), Some(&Intent::LeaveVoice));
+    }
+
+    #[test]
+    fn screen_quality_follows_the_instance_tier() {
+        let mut set = Settings { streaming_mode: "custom".into(), screen_height: Some(1440), screen_fps: 60, screen_bitrate: Some(8_000_000), ..Default::default() };
+        let free = crate::shell::upload::Limits { screen_share_bitrate: 16_000_000, ..Default::default() };
+        let q = set.screen_quality(&free, false);
+        assert_eq!((q.max_height, q.fps, q.bitrate, q.ceiling), (Some(720), 30, None, 16_000_000), "720p/30 without higher video quality");
+        set.screen_height = Some(480);
+        set.screen_fps = 15;
+        assert_eq!(set.screen_quality(&free, false).max_height, Some(480), "480p is part of the free tier");
+        let paid = crate::shell::upload::Limits { higher_video_quality: true, screen_share_bitrate: 16_000_000, ..Default::default() };
+        set.screen_height = Some(1440);
+        set.screen_fps = 60;
+        let q = set.screen_quality(&paid, true);
+        assert_eq!((q.max_height, q.fps, q.bitrate), (Some(1440), 60, Some(8_000_000)));
+        // Presets own the values until a resolution/frame rate pick switches to Custom.
+        set.streaming_mode = "gaming".into();
+        let q = set.screen_quality(&paid, true);
+        assert_eq!((q.max_height, q.fps, q.bitrate), (Some(1440), 60, Some(8_000_000)), "gaming: 1440p60");
+        set.streaming_mode = "screenshare".into();
+        let q = set.screen_quality(&paid, true);
+        assert_eq!((q.max_height, q.fps), (Some(1080), 30), "screen share: 1080p30");
+        set.streaming_mode = "gaming".into();
+        let q = set.screen_quality(&free, false);
+        assert_eq!((q.max_height, q.fps), (Some(720), 30), "presets clamp to 720p30 without higher video quality");
+        assert_eq!(set.screen_preset().map(|p| p.0), Some("Gaming"));
+        set.streaming_mode = "custom".into();
+        assert_eq!(set.screen_preset(), None);
+        assert_eq!(screen_resolutions(false).iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(), ["480", "720"]);
+        assert_eq!(screen_resolutions(true).len(), 5);
+        assert_eq!(screen_frame_rates(false).len(), 2);
+        assert_eq!(screen_frame_rates(true).len(), 3);
+        let all = screen_bitrates(16_000_000, None);
+        let rates: Vec<&str> = all.iter().map(|(v, _)| v.as_str()).collect();
+        assert_eq!(rates, ["auto", "2000000", "4000000", "6000000", "8000000", "10000000", "15000000", "16000000"]);
+        assert_eq!(screen_bitrates(16_000_000, Some(12_000_000))[1].0, "2000000");
+        assert!(screen_bitrates(16_000_000, Some(12_000_000)).iter().any(|(v, _)| v == "12000000"), "a saved custom value stays selectable");
+    }
+
+    #[test]
+    fn screen_settings_round_trip_through_session_json() {
+        let s = Settings { streaming_mode: "custom".into(), screen_height: Some(480), screen_fps: 60, screen_bitrate: Some(4_000_000), screen_content_hint: "detail".into(), ..Default::default() };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.screen_height, Some(480));
+        assert_eq!(back.screen_fps, 60);
+        assert_eq!(back.screen_bitrate, Some(4_000_000));
+        assert_eq!(back.screen_content_hint, "detail");
+        assert_eq!(back.streaming_mode, "custom");
+    }
+
+    #[test]
+    fn camera_quality_follows_fluxer_presets() {
+        let mut set = Settings { camera_quality: "low".into(), ..Default::default() };
+        let q = set.camera_quality(false);
+        assert_eq!((q.width, q.height, q.fps, q.bitrate), (640, 360, 20, 450_000));
+        set.camera_quality = "medium".into();
+        let q = set.camera_quality(false);
+        assert_eq!((q.width, q.height, q.fps, q.bitrate), (1280, 720, 30, 1_700_000));
+        set.camera_quality = "high".into();
+        let q = set.camera_quality(false);
+        assert_eq!((q.width, q.height, q.fps), (1280, 720, 30), "1080p is gated");
+        let q = set.camera_quality(true);
+        assert_eq!((q.width, q.height, q.fps, q.bitrate), (1920, 1080, 30, 3_000_000));
     }
 }
