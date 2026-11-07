@@ -555,7 +555,7 @@ fn sections(store: &Store, st: &ShellState, all: &[Item], favorites: &[String], 
 }
 
 /// `groupByGuildInGuildListOrder`: the guild list, the selected guild first.
-fn guild_order(store: &Store, st: &ShellState) -> Vec<Snowflake> {
+pub(crate) fn guild_order(store: &Store, st: &ShellState) -> Vec<Snowflake> {
     let mut ids: Vec<Snowflake> = store
         .guild_list()
         .into_iter()
@@ -573,7 +573,7 @@ fn guild_order(store: &Store, st: &ShellState) -> Vec<Snowflake> {
 
 /// `checkEmojiAvailability` / `checkStickerAvailability`: a guild's expression works in its
 /// own channels, elsewhere with the external permission and `feature_global_expressions`.
-fn can_use(store: &Store, st: &ShellState, channel: Option<&Channel>, guild: Snowflake, external: Permissions) -> bool {
+pub(crate) fn can_use(store: &Store, st: &ShellState, channel: Option<&Channel>, guild: Snowflake, external: Permissions) -> bool {
     match channel.and_then(|c| c.guild_id.map(|g| (c.id, g))) {
         Some((_, g)) if g == guild => true,
         Some((c, _)) => store.permissions(c).contains(external) && st.limits.global_expressions,

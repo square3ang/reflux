@@ -164,7 +164,7 @@ const BAN_DURATIONS: [(&str, &str); 9] = [
     ("2592000", "1 month"),
 ];
 /// `BAN_DELETE_MESSAGE_OPTIONS`.
-const BAN_DELETE: [(&str, &str, Option<&str>); 7] = [
+pub(crate) const BAN_DELETE: [(&str, &str, Option<&str>); 7] = [
     ("0", "Don't delete any", None),
     ("3600", "Previous hour", None),
     ("21600", "Previous 6 hours", None),

@@ -1014,6 +1014,11 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.composer = rune::TextEdit::new("hey @a");
             st.composer.focused = true;
         }
+        // The /ban delete-history choices after a member.
+        "command-choices" => {
+            st.composer = rune::TextEdit::new("/ban <@1001> ");
+            st.composer.focused = true;
+        }
         "jump" => {
             st.highlight = Some(ids[4]);
             st.scroll_to = Some(format!("msg-{}", ids[4]));

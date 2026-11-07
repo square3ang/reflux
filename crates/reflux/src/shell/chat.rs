@@ -1409,12 +1409,12 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     let last_own = store.messages(cid).iter().rev().find(|m| m.author.id == me && is_user_message(m) && !is_pending(m)).cloned().filter(|_| slot != Slot::Create);
     // The completions for the word at the caret, unless dismissed with Escape.
     let ac = autocomplete::trigger(&draft.text, draft.focus)
-        .filter(|t| draft.focused && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())))
         .map(|t| {
-            let items = autocomplete::completions(store, c, &t);
+            let items = autocomplete::completions(store, st, c, &t);
             (t, items)
         })
-        .filter(|(_, items)| !items.is_empty());
+        .or_else(|| super::command_hints::hints(store, st, c, &draft.text, draft.focus))
+        .filter(|(t, items)| draft.focused && !items.is_empty() && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())));
     let ac_keys = ac.clone();
     let (limit, slow) = (st.limits.message_length, if slot == Slot::Create { 0 } else { slowmode(store, c) });
     let suggested = match (slot, st.threads.panel) {
