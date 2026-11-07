@@ -1024,27 +1024,25 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
             Span::new(n, n + 2).size(12.0),
             Span::new(n + 2, line.len()).size(dim::MESSAGE_TIMESTAMP_FONT_SIZE).color(mix(p.message_timestamp_color, Color::TRANSPARENT, 60.0)),
         ];
-        // shortcut: the whole name line is the click target, not just the name.
+        // Only the name opens the profile (`.messageUsername`, underlined on hover).
+        let name_link = |e: El, range: std::ops::Range<usize>| {
+            let (open, menu) = (open.clone(), menu.clone());
+            e.link(rune::Link::new(range, "name").hover(rune::LinkPaint::new().underline(author_color(store, m, p))))
+                .on_link(move |s: &mut S, _: &str, _: &mut Tx| open(s))
+                .on_link_secondary(move |s: &mut S, _: &str, at, tx: &mut Tx| menu(s, at, tx))
+        };
         let role_icon = m.guild_id.or_else(|| store.channels.get(&m.channel_id).and_then(|c| c.guild_id)).and_then(|g| super::role_icon::icon_role(store, g, m.author.id)).and_then(|r| super::role_icon::view(st, r, 20.0));
         let line = match role_icon {
             // `.messageRoleIcon`: 4px after the name, the time after it.
             Some(ic) => row()
                 .center_y()
                 .min_w(0.0)
-                .child(rich(name.clone(), spans[..1].to_vec()).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).truncate())
+                .child(name_link(rich(name.clone(), spans[..1].to_vec()).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).truncate(), 0..n))
                 .child(ic.ml(4.0))
                 .child(rich(line[n..].to_string(), spans[1..].iter().map(|s| Span { start: s.start - n as u32, end: s.end - n as u32, ..s.clone() }).collect()).font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))),
-            None => rich(line, spans),
+            None => name_link(rich(line, spans), 0..n),
         };
-        content = content.child(
-            line
-                .font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))
-                .color(p.text_primary)
-                .truncate()
-                .cursor(rune::Cursor::Pointer)
-                .on_press(open)
-                .on_secondary_press(menu),
-        );
+        content = content.child(line.font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary).truncate());
     }
     if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         content = content.child(editor(edit, m, p, acc));
