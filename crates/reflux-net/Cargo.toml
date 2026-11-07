@@ -26,4 +26,5 @@ fastrand = "2"
 [dev-dependencies]
 # examples/live_probe.rs
 reflux-store.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi"] }

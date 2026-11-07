@@ -95,11 +95,32 @@ fn at_path<'a>(v: &'a Value, error: &str) -> (&'a Value, String) {
 }
 
 fn session() -> Value {
-    let dir = std::env::var_os("REFLUX_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dirs_config().join("reflux"));
+    let dir = session_dir();
     let bytes = std::fs::read(dir.join("session.json")).expect("no saved session; run `reflux --import-fluxer-session` first");
     serde_json::from_slice(&bytes).expect("session.json")
+}
+
+fn session_dir() -> PathBuf {
+    std::env::var_os("REFLUX_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs_config().join("reflux"))
+}
+
+/// The active token: the file's (no keyring) or the keyring entry the app wrote for it
+/// (`crates/reflux/src/session.rs`: service "reflux", user "<config dir>#<slot>").
+fn token(s: &Value) -> Option<String> {
+    if let Some(t) = s["token"].as_str() {
+        return Some(t.to_owned());
+    }
+    let dir = session_dir();
+    // The active session lives under the "session" slot; the switcher's others under their own.
+    let active = format!("{}#session", dir.display());
+    if let Ok(t) = keyring::Entry::new("reflux", &active).and_then(|e| e.get_password()) {
+        return Some(t);
+    }
+    let current = &s["current"];
+    let user = format!("{}#account:{}:{}", dir.display(), current["instance"].as_str()?, current["user_id"].as_str()?);
+    keyring::Entry::new("reflux", &user).ok()?.get_password().ok()
 }
 
 fn dirs_config() -> PathBuf {
@@ -114,11 +135,14 @@ async fn main() {
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).with_target(false).init();
     let secs: u64 = std::env::var("REFLUX_PROBE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(60);
     let s = session();
-    let (host, token) = (s["instance"].as_str().unwrap_or_default(), s["token"].as_str().expect("signed out").to_owned());
+    let host = s["instance"].as_str().unwrap_or_default().to_owned();
+    // The keyring's Secret Service client blocks; run it off the async runtime.
+    let sent = s.clone();
+    let token = tokio::task::spawn_blocking(move || token(&sent)).await.expect("token task").expect("signed out");
     let mut rep = Report::default();
 
     let http = reflux_net::http_client();
-    let d = match reflux_net::discover(&http, host).await {
+    let d = match reflux_net::discover(&http, &host).await {
         Ok(d) => d,
         Err(e) => return println!("discovery FAILED: {e}"),
     };
