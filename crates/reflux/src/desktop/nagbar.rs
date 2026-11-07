@@ -71,12 +71,13 @@ fn prefs<S: 'static>(acc: ShellAccess<S>, f: impl Fn(&mut super::Prefs) + 'stati
 }
 
 /// The bars, top to bottom.
-pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
+pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<super::top_bars::Bar> {
+    use super::top_bars::Bar;
     let v = &st.desktop;
     let mut out = Vec::new();
     // `forceConnectionNotice` (Developer tools' "Service incident nagbar").
     if crate::shell::devtools::nagbar(st, "forceIncident").unwrap_or(v.offline) {
-        out.push(bar::<S>("nagbar-connection", rgb(0x4e, 0x50, 0x58), t("Connection lost. Reconnecting…").into(), Vec::new(), None));
+        out.push(Bar::new(-100.0, false, bar::<S>("nagbar-connection", rgb(0x4e, 0x50, 0x58), t("Connection lost. Reconnecting…").into(), Vec::new(), None)));
     }
     if let Some(u) = &v.update {
         let product = [("productName", "Fluxer")];
@@ -94,20 +95,22 @@ pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
         };
         let version = u.version.clone();
         let dismiss = prefs(acc, move |p| p.skipped_update = Some(version.clone()));
-        out.push(bar("nagbar-update", p.brand_primary, format!("{message} ({})", u.version), actions, Some(Box::new(dismiss))));
+        // The desktop update bar is Reflux's own: it stays outside Fluxer's pick, like its
+        // build-environment bar.
+        out.push(Bar { pinned: true, ..Bar::new(-1000.0, true, bar("nagbar-update", p.brand_primary, format!("{message} ({})", u.version), actions, Some(Box::new(dismiss)))) });
     }
     if v.streamer && !st.prefs.streamer.nagbar_dismissed {
         let off = prefs(acc, |p| {
             (p.streamer.manual, p.streamer.auto, p.streamer.nagbar_dismissed) = (false, false, false);
         });
         let dismiss = prefs(acc, |p| p.streamer.nagbar_dismissed = true);
-        out.push(bar(
+        out.push(Bar::new(-2.5, true, bar(
             "nagbar-streamer",
             rgb(0x58, 0x65, 0xf2),
             t("Streaming privacy is on. Names are shortened.").into(),
             vec![button("nagbar-streamer-off", t("Turn off"), p, off)],
             Some(Box::new(dismiss)),
-        ));
+        )));
     }
     out
 }

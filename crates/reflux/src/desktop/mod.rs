@@ -17,6 +17,7 @@ pub mod sound;
 pub mod spell;
 pub mod streamer;
 pub mod time;
+pub mod top_bars;
 pub mod tts;
 mod tray;
 pub mod updater;
@@ -99,6 +100,9 @@ pub struct Prefs {
     pub ris_custom: Vec<(String, String, String)>,
     /// Developer tools overrides (Fluxer's persisted `DeveloperOptions`, kept on this device).
     pub dev: crate::shell::devtools::Options,
+    /// `VoiceSessionRestore`'s snapshot, and `UnclaimedNagbarSnooze` by user (unix ms).
+    pub voice_restore: Option<top_bars::VoiceSnapshot>,
+    pub unclaimed_snoozed_until: std::collections::HashMap<Snowflake, u64>,
 }
 
 impl Default for Prefs {
@@ -137,6 +141,8 @@ impl Default for Prefs {
             ris_enabled: vec!["google_lens".into()],
             ris_custom: Vec::new(),
             dev: Default::default(),
+            voice_restore: None,
+            unclaimed_snoozed_until: Default::default(),
         }
     }
 }

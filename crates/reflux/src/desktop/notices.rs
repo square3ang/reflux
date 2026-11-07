@@ -182,7 +182,8 @@ fn learn_more<S: 'static>(url: String, p: &Palette, acc: ShellAccess<S>) -> El {
 }
 
 /// Maintenance, then the instance notice (they sit under Connection and Terms).
-pub fn instance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
+pub fn instance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<super::top_bars::Bar> {
+    use super::top_bars::Bar;
     let mut out = Vec::new();
     // `getDeveloperScheduledMaintenance`: an hour from now, for an hour.
     let forced = match crate::shell::devtools::nagbar(st, "forceScheduledMaintenance") {
@@ -204,14 +205,14 @@ pub fn instance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -
                 Status::InProgress => rgb(0x9a, 0x34, 0x12),
                 Status::Completed => rgb(0x16, 0x65, 0x34),
             };
-            out.push(super::nagbar::bar("nagbar-maintenance", bg, maintenance_message(m), vec![learn_more(m.url.clone(), p, acc)], Some(dismiss(acc, key))));
+            out.push(Bar::new(-1.0, true, super::nagbar::bar("nagbar-maintenance", bg, maintenance_message(m), vec![learn_more(m.url.clone(), p, acc)], Some(dismiss(acc, key)))));
         }
     }
     if let Some(n) = &st.desktop.notice {
         let key = format!("notice:{}", n.id);
         if !dismissed(st, &key) && live(n, chrono::Utc::now()) {
             let actions = n.url.clone().map(|u| learn_more(u, p, acc)).into_iter().collect();
-            out.push(super::nagbar::bar("nagbar-notice", rgb(0x42, 0x85, 0xf4), n.message.clone(), actions, Some(dismiss(acc, key))));
+            out.push(Bar::new(-1.5, true, super::nagbar::bar("nagbar-notice", rgb(0x42, 0x85, 0xf4), n.message.clone(), actions, Some(dismiss(acc, key)))));
         }
     }
     out
@@ -223,7 +224,8 @@ fn ms(ts: &str) -> Option<i64> {
 
 /// `PremiumGracePeriodNagbar`, `PremiumExpiredNagbar`, `PremiumOnboardingNagbar` and
 /// `GiftInventoryNagbar`, in that order (under the email verification bar).
-pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
+pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<super::top_bars::Bar> {
+    use super::top_bars::Bar;
     let mut out = Vec::new();
     let Some(me) = crate::shell::devtools::me(store, st).filter(|_| st.premium) else { return out };
     let me = &*me;
@@ -258,14 +260,14 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
                 "Your {premiumProductName} subscription failed to renew. You still have access to all {premiumProductName} features until {formattedGraceDate}. Update your payment method before then to keep your access.",
                 &[("premiumProductName", PRODUCT), ("formattedGraceDate", &super::time::long_date(&date, crate::i18n::locale()))],
             );
-            out.push(super::nagbar::bar("nagbar-premium-grace", rgb(0xf9, 0x73, 0x16), msg, vec![super::nagbar::button("nagbar-premium-manage", t("Manage subscription"), p, portal)], Some(dismiss(acc, "premium-grace".into()))));
+            out.push(Bar::new(1.0, true, super::nagbar::bar("nagbar-premium-grace", rgb(0xf9, 0x73, 0x16), msg, vec![super::nagbar::button("nagbar-premium-manage", t("Manage subscription"), p, portal)], Some(dismiss(acc, "premium-grace".into())))));
         }
         if force("forcePremiumExpired").unwrap_or(expired) {
             let msg = tf(
                 "Your {premiumProductName} subscription has expired, and you no longer have access to {premiumProductName} features. Reactivate your subscription to get access again.",
                 &[("premiumProductName", PRODUCT)],
             );
-            out.push(super::nagbar::bar("nagbar-premium-expired", p.status_danger, msg, vec![super::nagbar::button("nagbar-premium-reactivate", t("Reactivate"), p, portal)], Some(dismiss(acc, "premium-expired".into()))));
+            out.push(Bar::new(0.0, true, super::nagbar::bar("nagbar-premium-expired", p.status_danger, msg, vec![super::nagbar::button("nagbar-premium-reactivate", t("Reactivate"), p, portal)], Some(dismiss(acc, "premium-expired".into())))));
         }
     }
     let premium_now = kind == PremiumType::LIFETIME || (kind != PremiumType::default() && until.is_none_or(|u| u > now));
@@ -284,14 +286,14 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
             web("/channels/@premium")(s);
         };
         let label = tf("View {premiumProductName} features", &[("premiumProductName", PRODUCT)]);
-        out.push(super::nagbar::bar("nagbar-premium-onboarding", p.brand_primary, onboarding(me, now), vec![super::nagbar::button("nagbar-premium-view", &label, p, view)], Some(Box::new(close))));
+        out.push(Bar::new(4.0, true, super::nagbar::bar("nagbar-premium-onboarding", p.brand_primary, onboarding(me, now), vec![super::nagbar::button("nagbar-premium-view", &label, p, view)], Some(Box::new(close)))));
     }
     if force("forceGiftInventory").unwrap_or(me.has_unread_gift_inventory) {
         let n = me.unread_gift_inventory_count.max(1);
         let msg = if n == 1 { t("You have a new gift code waiting in your gift inventory.").to_string() } else { tf("You have {count} new gift codes waiting in your gift inventory.", &[("count", &n.to_string())]) };
         let open = move |s: &mut S| acc(s).open_settings(Some("gift_inventory"));
         let close = move |s: &mut S| acc(s).api(reqwest::Method::PATCH, "/users/@me", Some(json!({ "has_unread_gift_inventory": false })), crate::guild::Then::Nothing);
-        out.push(super::nagbar::bar("nagbar-gifts", p.brand_primary, msg, vec![super::nagbar::button("nagbar-gifts-view", t("View gift inventory"), p, open)], Some(Box::new(close))));
+        out.push(Bar::new(5.0, true, super::nagbar::bar("nagbar-gifts", p.brand_primary, msg, vec![super::nagbar::button("nagbar-gifts-view", t("View gift inventory"), p, open)], Some(Box::new(close)))));
     }
     out
 }

@@ -5,13 +5,15 @@
 //! Views are pure; what needs the network goes out as an [`Intent`] queued on
 //! [`ShellState::intents`] for the runtime to drain.
 
+pub mod account_gate;
 pub mod active_now;
 pub mod attachments;
+pub mod barrier;
 mod birthday;
 mod autocomplete;
 mod guild_banner;
 mod command_hints;
-mod chat;
+pub(crate) mod chat;
 pub mod debug;
 pub mod devtools;
 mod compact;
@@ -35,6 +37,7 @@ pub mod pins;
 pub(crate) mod local_time;
 pub(crate) mod profile;
 pub mod search;
+pub mod skeleton;
 mod search_query;
 mod sidebar;
 pub mod status;
@@ -184,13 +187,13 @@ pub enum Intent {
 
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
 /// and a super-compact inverted button, gap 12.
-fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+pub(crate) fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<crate::desktop::top_bars::Bar> {
     let me = devtools::me(store, st)?;
     // `forceEmailVerification` / `forceHideEmailVerification`.
     match devtools::nagbar(st, "forceEmailVerification") {
         Some(false) => return None,
         Some(true) => {}
-        None if me.verified || me.email.is_none() => return None,
+        None if !account_gate::needs_email_confirmation(&me, &st.tiers) => return None,
         None => {}
     }
     let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
@@ -211,7 +214,7 @@ fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             .el(p);
         (crate::i18n::tf("Hey {displayName}, please confirm your email address.", &[("displayName", &name.to_string())]), Some(b))
     };
-    Some(
+    Some(crate::desktop::top_bars::Bar::new(-3.0, false,
         row()
             .w_full()
             .min_h(36.0)
@@ -223,7 +226,7 @@ fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             .child(rune::text(message).font(crate::theme::font(14.0, 600.0).lh(20.0)).color(rune::Color::WHITE).wrap().align(rune::Align::Center))
             .children(button)
             .role("status"),
-    )
+    ))
 }
 
 /// What the open context menu or profile popout is about.
@@ -391,6 +394,9 @@ pub struct ShellState {
     pub debug: Option<debug::Debug>,
     /// Local `synced_preferences` fields waiting to be sent ([`crate::synced::flush`]).
     pub synced: crate::synced::Queue,
+    /// The instance's account tier rules, and the claim / messaging paused dialogs.
+    pub tiers: account_gate::Cfg,
+    pub account_gate: account_gate::Ui,
 }
 
 impl Default for ShellState {
@@ -477,6 +483,8 @@ impl Default for ShellState {
             nav: Default::default(),
             debug: None,
             synced: Default::default(),
+            tiers: Default::default(),
+            account_gate: Default::default(),
         }
     }
 }
@@ -574,6 +582,9 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= crate::guild::poll_overwrite_search(store, st, tx);
     changed |= crate::settings::search::poll(store, st, tx);
     changed |= crate::settings::dev::poll(st);
+    changed |= account_gate::poll(store, st);
+    changed |= barrier::poll(store, st, tx);
+    changed |= crate::desktop::top_bars::poll(store, st);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;
@@ -684,6 +695,10 @@ pub const BODY_KEY: &str = "shell-body";
 
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    // shortcut: `forceLoadingSkeleton` swaps the whole shell for the skeleton (Fluxer keeps the app mounted behind it).
+    if skeleton::forced(&st.prefs.dev) {
+        return skeleton::app(p);
+    }
     // `WatchStreamOverlay` in full-window mode.
     if st.voice.stream_fullscreen
         && let Some(v) = voice::viewer(store, st, p, acc)
@@ -728,7 +743,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().key(BODY_KEY).w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(crate::desktop::notices::instance(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::desktop::notices::premium(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
+    let top = crate::desktop::top_bars::view(store, st, p, acc);
+    let guild_bars = crate::desktop::top_bars::guild(store, st, top.len(), p, acc);
+    let body = col().key(BODY_KEY).w_full().h_full().children(top).children(crate::social::preview_nagbar(store, st, p, acc)).children(guild_bars).child(body);
     crate::compose::floating_toolbar(st, p, acc, &mut layer);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
@@ -756,9 +773,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(upload::notice_modal(st, p, acc));
     layer.extend(lightbox::view(st, p, acc));
     layer.extend(attachments::delete_modal(st, p, acc));
+    layer.extend(attachments::details_modal(st, p, acc));
     layer.extend(links::modal(st, p, acc));
     layer.extend(debug::modal(store, st, p, acc));
     layer.extend(devtools::modal(st, p, acc));
+    layer.extend(account_gate::claim_modal(st, p, acc));
+    layer.extend(account_gate::help_modal(store, st, p, acc));
+    layer.extend(crate::desktop::top_bars::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);

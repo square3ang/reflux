@@ -24,6 +24,8 @@ pub struct MediaUi {
     pub viewer: Option<lightbox::Viewer>,
     /// Keys of spoilers and mature media the user revealed.
     pub revealed: HashSet<String>,
+    /// `MatureMediaGateDetailsModal`'s reason, while it's open.
+    pub mature_details: Option<Gate>,
     /// The clip playing inline, by its tile key.
     pub playing: Option<(String, Player)>,
     /// The same through GStreamer, where Rune's player can't decode (`clip::native`).
@@ -198,6 +200,45 @@ pub fn gate_reason(store: &Store, st: &ShellState, c: &Channel) -> Option<Gate> 
     let agreed = crate::nav::mine(st).mature_agreed;
     let ok = |id: Snowflake| st.media_ui.mature_ok.contains(&id) || agreed.contains(&id);
     (!(ok(c.id) || c.parent_id.is_some_and(ok) || ok(g))).then_some(Gate::Consent)
+}
+
+/// `useMatureMedia`'s gate reason for mature media in the open channel, when it's a geo or
+/// account gate (consent gates the channel instead).
+fn media_gate(store: &Store, st: &ShellState) -> Option<Gate> {
+    match st.prefs.dev.mock_mature_media_gate_reason.as_str() {
+        "geo_restricted" => return Some(Gate::Geo),
+        "none" => {}
+        _ => return Some(Gate::Check),
+    }
+    let c = store.channels.get(&st.channel?)?;
+    gate_reason(store, st, c).filter(|g| *g != Gate::Consent)
+}
+
+/// `MatureMediaGateDetailsModal`.
+pub fn details_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let gate = st.media_ui.mature_details?;
+    let close = move |s: &mut S| acc(s).media_ui.mature_details = None;
+    let para = |s: String| text(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
+    let modal = crate::ui::Modal::new(t("Mature media"), close);
+    Some(match gate {
+        Gate::Geo => {
+            let region = geo(st).map_or_else(|| region_display_name(None, None), |(c, r)| region_display_name(Some(&c), r.as_deref()));
+            let ok = crate::ui::Button::new(t("Close")).key("mature-details-close").on_press(close).el(p);
+            modal.body(para(tf("Due to mature content laws in {regionName}, this media is not available from your current region.", &[("regionName", &region)]))).footer(ok).el(p)
+        }
+        _ => {
+            let url = st.marketing_base.as_ref().map(|b| format!("{}/help/change-date-of-birth", b.trim_end_matches('/')));
+            let body = match url {
+                Some(url) => {
+                    let (s, range) = crate::i18n::tf_marked("This mature media is not available to your account. <0>Learn more</0>", &[]);
+                    let spans = vec![rune::Span::new(range.start, range.end).color(p.text_link)];
+                    rich(s, spans).link(rune::Link::new(range, url)).on_link(|_: &mut S, url: &str, tx: &mut rune::Tx| drop(tx.open_url(url))).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap()
+                }
+                None => para(t("This mature media is not available to your account.").into()),
+            };
+            modal.body(body).el(p)
+        }
+    })
 }
 
 /// The client's `GET /ip` country and region (`GeoIP`), once loaded.
@@ -554,6 +595,20 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     }
     if hidden_mature {
         let key = format!("{}-mature", t.key);
+        // A geo or account gate can't be revealed: Reveal explains it (`MatureMediaBlurOverlay`).
+        if let Some(gate) = media_gate(store, st) {
+            let reveal = row()
+                .py(8.0)
+                .px(12.0)
+                .radius(6.0)
+                .fill(p.background_modifier_accent)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .child(text(crate::i18n::t("Reveal")).font(font(12.0, 600.0).lh(12.0)).color(p.text_primary))
+                .on_press(move |s: &mut S| acc(s).media_ui.mature_details = Some(gate));
+            let reveal = super::badges::tip(format!("{key}-details"), super::badges::label_tip(crate::i18n::t("Click for details"), p), 240.0, reveal, acc);
+            return tile.child(fill().fill(p.spoiler_overlay_color).backdrop_blur(12.0)).child(fill().center().child(reveal));
+        }
         let reveal = row()
             .py(8.0)
             .px(12.0)

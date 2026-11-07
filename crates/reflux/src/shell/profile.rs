@@ -189,6 +189,11 @@ pub fn preview(store: &Store, st: &ShellState, c: Card, p: &Palette) -> El {
 
 pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (key, placement) = st.profile_anchor.clone()?;
+    // `showProfileSkeleton`: forced, or the profile is still loading.
+    if st.prefs.dev.force_profile_skeletons || matches!(st.account.profiles.get(&(user, guild)), Some(Ok(Value::Null))) {
+        let card = super::skeleton::profile_popout(accent(store, None, user), p).key("profile-popout").modal(true, move |s: &mut S| acc(s).popups.close());
+        return Some(anchor(card, &key, placement, 8.0));
+    }
     let me = store.my_id();
     let c = with_badges(store, st, card_for(store, st, user, guild, 80.0, p), false, p, acc);
     let border = c.accent;

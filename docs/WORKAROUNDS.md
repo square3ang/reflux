@@ -95,24 +95,24 @@ Rules:
 
 ## Developer tools menu (`shell/devtools.rs`)
 
-The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Overrides are local and saved in `session.json`. The items that write to the server are the same ones Fluxer's do: backend premium override, premium perks disabled, forget authorized IPs, reset premium state, clear trusted domains, the self-mention setting, the Fluxerbot DM and joining the AFK channel. These items are left out:
+The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Overrides are local and saved in `session.json`. The items that write to the server are the same ones Fluxer's do: backend premium override, premium perks disabled, forget authorized IPs, reset premium state, clear trusted domains, the self-mention setting, the Fluxerbot DM and joining the AFK channel. These items are left out or simplified (Fluxer has no phone or membership-screening gate: `getEffectiveGuildVerificationLevel` caps the level at HIGH):
 
 | Item | Why | Remove when |
 |---|---|---|
-| Bypass / force app loading skeleton, force profile skeletons | Reflux has no skeleton screens; it shows a Connecting screen | skeletons are ported |
 | Force vanity URL disclaimer | the Vanity tab (`social/tabs.rs`) has no disclaimer to force | the disclaimer is ported |
 | Disable translation DOM guard | it patches the DOM against browser translators; there is no DOM | never |
-| Verification and membership barriers | Reflux has no barrier UI | barriers are ported |
-| Force no send messages / no attach files | the composer has no permission gating to force | composer permission gating |
 | Clear attachment mocks | no attachment mock items exist to clear | — |
 | Titlebar platform override | Reflux uses the system titlebar (see Rune) | a custom titlebar |
-| Nagbars: unclaimed account, account limited, desktop notifications, visionary MFA, voice session restore, invites disabled, community MFA | Reflux has no such bars | the bars are ported |
 | Nagbars: desktop download, corrupted installation, domain moved | web-only bars | never |
-| Open claim account modal, trigger React crash | no claim modal; no crash screen | they are ported |
+| Force no send messages / no attach files | the toggles are saved but nothing reads them: Fluxer's forced composer gating (`AnnouncementFollowBarrier`, the attach button) isn't ported | composer permission gating |
+| Trigger React crash | there is no crash screen | a crash screen |
+| Loading skeletons: static, from fixed sizes | no 3.2 s shimmer or profile pulse; the app skeleton doesn't remember the last layout (`SkeletonLayoutMemory`), the message filler only shows before a channel's first page (not above older pages while they load), and `forceLoadingSkeleton` swaps the whole shell for it | a shimmer gradient animation; layout memory |
+| Claim account: the username variant and the email flow only | the legacy `EmailClaimAccountModal` (server reports no tier), the recovery kit after a username claim and `offerAuthenticatorCalmly` aren't ported | they are ported |
+| Voice session restore: Reconnect rejoins the channel only | the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`) | voice restores media |
+| Desktop notification nagbar: forced only | Fluxer never shows it in its desktop app (`isDesktop()`); Enable turns on the `notifications` pref | — |
+| Nagbar dismissals are local (`dismissed_nagbars`, `unclaimed_snoozed_until`) | Fluxer syncs some of them; Reflux keeps them on this device | they're synced |
+| Staff-only community bar, guild membership CTA bar | not ported | they're ported |
 | Staff tools button in the voice call header | not ported; the header menu covers the same items | — |
-| Media gate reason | only forces the blur; Reflux's blur overlay has no per-reason text | per-reason text |
-| Unknown message type | cozy layout only, not compact | — |
-| Sudo test (`<developer-tools>`) | closes on success locally; nothing is verified against the server | — |
 | Nested submenus open to the left | Rune doesn't report which way the parent flipped; only this menu nests, and it sits at the right edge | Rune exposes flip state |
 
 ## Session / tokens
@@ -145,6 +145,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
+- `crates/reflux/src/desktop/top_bars.rs:236` Reconnect rejoins the channel; the camera and screen share aren't restarted (`restoreVideo` / `restoreStream`).
 - `crates/reflux/src/desktop/tts.rs:6` speech goes through the platform's command-line voice (speech-dispatcher's `spd-say`,
 - `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
@@ -167,14 +168,16 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
-- `crates/reflux/src/shell/devtools.rs:595` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
-- `crates/reflux/src/shell/devtools.rs:873` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
+- `crates/reflux/src/shell/devtools.rs:633` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
+- `crates/reflux/src/shell/devtools.rs:940` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:364` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
 - `crates/reflux/src/shell/markdown.rs:395` emoji in one-line previews stay text (Fluxer draws 1.25em images).
+- `crates/reflux/src/shell/mod.rs:698` `forceLoadingSkeleton` swaps the whole shell for the skeleton (Fluxer keeps the app mounted behind it).
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+- `crates/reflux/src/shell/skeleton.rs:10` skeletons are static: no 3.2 s shimmer sweep (Fluxer's reduced-motion look) and no profile pulse.
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:226` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the

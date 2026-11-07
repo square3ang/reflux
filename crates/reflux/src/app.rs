@@ -930,6 +930,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let p = &pal;
     let body = match s.app.route {
         Route::Auth => return crate::login::view(s, cx),
+        // `AppSkeleton` while booting (`isClientBooting`), unless Developer tools bypass it.
+        Route::Connecting if s.app.error.is_none() && !s.app.saved.desktop.dev.bypass_loading_skeleton => return crate::shell::skeleton::app(p),
         Route::Connecting => {
             let mut c = col().gap(16.0).items_center();
             match &s.app.error {

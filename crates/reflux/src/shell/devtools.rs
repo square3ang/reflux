@@ -42,11 +42,14 @@ pub static STAFF_ICON: Icon = Icon {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Options {
+    pub bypass_loading_skeleton: bool,
+    pub force_loading_skeleton: bool,
     pub show_myself_typing: bool,
     pub self_hosted_mode_override: bool,
     pub slow_message_load: bool,
     pub slow_message_send: bool,
     pub slow_profile_load: bool,
+    pub force_profile_skeletons: bool,
     pub force_profile_data_warning: bool,
     pub force_fail_message_sends: bool,
     pub force_fail_message_loads: bool,
@@ -72,6 +75,13 @@ pub struct Options {
     pub force_mature_media: bool,
     #[serde(rename = "mock_in_uk")]
     pub mock_in_uk: bool,
+    /// `none`, `unclaimed_account`, `unverified_email`, `account_too_new`, `not_member_long`,
+    /// `account_limited`, `send_message_disabled`.
+    pub mock_verification_barrier: String,
+    /// ms; `None` = the barrier's default.
+    pub mock_barrier_time_remaining: Option<u64>,
+    pub force_no_send_messages: bool,
+    pub force_no_attach_files: bool,
     pub mock_slowmode_active: bool,
     /// ms.
     pub mock_slowmode_remaining: u64,
@@ -85,11 +95,14 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            bypass_loading_skeleton: false,
+            force_loading_skeleton: false,
             show_myself_typing: false,
             self_hosted_mode_override: false,
             slow_message_load: false,
             slow_message_send: false,
             slow_profile_load: false,
+            force_profile_skeletons: false,
             force_profile_data_warning: false,
             force_fail_message_sends: false,
             force_fail_message_loads: false,
@@ -111,6 +124,10 @@ impl Default for Options {
             mock_mature_media_gate_reason: "none".into(),
             force_mature_media: false,
             mock_in_uk: false,
+            mock_verification_barrier: "none".into(),
+            mock_barrier_time_remaining: None,
+            force_no_send_messages: false,
+            force_no_attach_files: false,
             mock_slowmode_active: false,
             mock_slowmode_remaining: 10_000,
             mock_gift_inventory: None,
@@ -300,6 +317,13 @@ impl Options {
 /// `getDeveloperOptionLabel`.
 fn label(key: &str) -> String {
     let l = match key {
+        "bypass_loading_skeleton" => "Bypass loading skeleton",
+        "force_loading_skeleton" => "Force loading skeleton",
+        "force_profile_skeletons" => "Profile skeletons",
+        "mock_verification_barrier" => "Verification barrier",
+        "mock_barrier_time_remaining" => "Barrier countdown",
+        "force_no_send_messages" => return tf("No {sendMessagesPermission} permission", &[("sendMessagesPermission", "SEND_MESSAGES")]),
+        "force_no_attach_files" => return tf("No {attachFilesPermission} permission", &[("attachFilesPermission", "ATTACH_FILES")]),
         "show_myself_typing" => "Show myself typing",
         "self_hosted_mode_override" => "Self-hosted mode",
         "slow_message_load" => "Slow message load",
@@ -369,6 +393,7 @@ fn value(key: &str, v: &Value) -> String {
         "premium_type_override" => return t(premium_type_label(v.as_u64().map(|n| n as u8))).into(),
         "premium_lifetime_sequence_override" if !v.is_null() => return format!("#{v}"),
         "mock_slowmode_remaining" => return duration(v.as_u64().unwrap_or(0)),
+        "mock_barrier_time_remaining" => return v.as_u64().map_or_else(|| t("Use default").to_string(), duration),
         "premium_since_override" | "premium_until_override" if !v.is_null() => {
             return chrono::DateTime::from_timestamp_millis(v.as_i64().unwrap_or(0))
                 .map(|d| crate::desktop::time::short_date(&d.with_timezone(&chrono::Local), crate::i18n::locale()))
@@ -450,14 +475,21 @@ pub fn unknown_warning(p: &Palette) -> El {
 /// `getNagbarControls`, the bars Reflux has: (key, label, "using actual" status, the
 /// `desktop::Prefs::dismissed_nagbars` entry its "Use actual" clears).
 const NAGBARS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("forceUnclaimedAccount", "Unclaimed account nagbar", "Using actual account state", None),
     ("forceEmailVerification", "Email verification nagbar", "Using actual verification state", None),
+    ("forceAccountLimited", "Messaging paused", "Using actual account state", None),
+    ("forceDesktopNotification", "Desktop notification nagbar", "Currently showing", Some("desktop-notification")),
     ("forcePremiumGracePeriod", "Premium grace period nagbar", "Using actual premium state", None),
     ("forcePremiumExpired", "Premium expired nagbar", "Using actual premium state", None),
     ("forcePremiumOnboarding", "Premium onboarding nagbar", "Using actual premium state", Some("premium-onboarding")),
     ("forceGiftInventory", "Gift inventory nagbar", "Using actual gift inventory state", None),
+    ("forceVisionaryMfa", "Visionary 2FA nagbar", "Using actual state", Some("visionary-mfa")),
     ("forceTermsAcceptance", "Terms acceptance nagbar", "Using actual state", None),
     ("forceScheduledMaintenance", "Scheduled maintenance nagbar", "Using actual state", None),
     ("forceIncident", "Service incident nagbar", "Using actual state", None),
+    ("forceVoiceSessionRestore", "Voice session restore nagbar", "Using actual state", None),
+    ("forceInvitesDisabled", "Invites disabled nagbar", "Using actual state", None),
+    ("forceGuildMfaRequirement", "Community MFA requirement nagbar", "Using actual state", None),
 ];
 
 /// A nagbar's override: `Some(true)` force shown, `Some(false)` force hidden.
@@ -479,6 +511,8 @@ fn nagbar_status(st: &ShellState, n: &(&str, &str, &str, Option<&str>)) -> &'sta
             "Using actual verification state" => "Using actual verification state",
             "Using actual premium state" => "Using actual premium state",
             "Using actual gift inventory state" => "Using actual gift inventory state",
+            "Using actual account state" => "Using actual account state",
+            "Currently showing" => "Currently showing",
             _ => "Using actual state",
         },
     }
@@ -527,6 +561,10 @@ fn now_ms() -> i64 {
 
 fn check<S: 'static>(id: &str, label: &str, on: bool, acc: ShellAccess<S>, f: impl Fn(&mut Options, bool) + 'static) -> MenuEntry<S> {
     MenuEntry::Item(MenuItem::new(id.to_string(), t(label).to_string()).checkbox(on).keep_open().on_select(edit(acc, move |o, _| f(o, !on))))
+}
+
+fn check_label<S: 'static>(id: &str, label: String, on: bool, acc: ShellAccess<S>, f: impl Fn(&mut Options, bool) + 'static) -> MenuEntry<S> {
+    MenuEntry::Item(MenuItem::new(id.to_string(), label).checkbox(on).keep_open().on_select(edit(acc, move |o, _| f(o, !on))))
 }
 
 fn radio<S: 'static>(id: String, label: String, on: bool, acc: ShellAccess<S>, f: impl Fn(&mut Options) + 'static) -> MenuEntry<S> {
@@ -601,6 +639,8 @@ fn premium_perks(sh: &mut ShellState, disabled: bool) {
 fn general<S: 'static>(store: &Store, me: &User, o: &Options, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
     let mut out = vec![
         sub("app-state", "App state", vec![
+            check("bypass-skeleton", "Bypass loading skeleton", o.bypass_loading_skeleton, acc, |o, v| o.bypass_loading_skeleton = v),
+            check("force-skeleton", "Force loading skeleton", o.force_loading_skeleton, acc, |o, v| o.force_loading_skeleton = v),
             check("show-myself-typing", "Show myself typing", o.show_myself_typing, acc, |o, v| o.show_myself_typing = v),
             check("self-hosted", "Self-hosted mode override", o.self_hosted_mode_override, acc, |o, v| o.self_hosted_mode_override = v),
         ]),
@@ -608,6 +648,7 @@ fn general<S: 'static>(store: &Store, me: &User, o: &Options, acc: ShellAccess<S
             check("slow-load", "Slow message load", o.slow_message_load, acc, |o, v| o.slow_message_load = v),
             check("slow-send", "Slow message send", o.slow_message_send, acc, |o, v| o.slow_message_send = v),
             check("slow-profile", "Slow profile load", o.slow_profile_load, acc, |o, v| o.slow_profile_load = v),
+            check("profile-skeletons", "Force profile skeletons", o.force_profile_skeletons, acc, |o, v| o.force_profile_skeletons = v),
             check("profile-warning", "Force profile data warning", o.force_profile_data_warning, acc, |o, v| o.force_profile_data_warning = v),
             check("fail-sends", "Force failed message sends", o.force_fail_message_sends, acc, |o, v| o.force_fail_message_sends = v),
             check("fail-loads", "Force failed message loads", o.force_fail_message_loads, acc, |o, v| o.force_fail_message_loads = v),
@@ -688,7 +729,7 @@ fn account_premium<S: 'static>(me: &User, o: &Options, p: &Palette, acc: ShellAc
     ])
 }
 
-/// `MockingMenu`, minus the barriers and permission overrides Reflux has no surface for.
+/// `MockingMenu`.
 fn mocking<S: 'static>(o: &Options, p: &Palette, acc: ShellAccess<S>) -> MenuEntry<S> {
     let call = |id: &str, label: &str, i: &'static Icon, group: bool| {
         MenuEntry::Item(MenuItem::new(id.to_string(), t(label).to_string()).icon(i).on_select(move |s: &mut S| acc(s).devtools.mock_call = Some(group)))
@@ -724,7 +765,32 @@ fn mocking<S: 'static>(o: &Options, p: &Palette, acc: ShellAccess<S>) -> MenuEnt
         gifts.push(sub("gift-duration", "Gift duration", durations.into_iter().map(|(v, l)| radio(format!("gift-months-{v}"), t(l).into(), cur == v, acc, move |o| o.mock_gift_duration_months = v)).collect()));
         gifts.push(check("gift-redeemed", "Mark as redeemed", o.mock_gift_redeemed == Some(true), acc, |o, v| o.mock_gift_redeemed = v.then_some(true)));
     }
+    const BARRIERS: &[(&str, &str)] = &[
+        ("none", "None (normal behavior)"),
+        ("unclaimed_account", "Unclaimed account"),
+        ("unverified_email", "Unverified email"),
+        ("account_too_new", "Account too new"),
+        ("not_member_long", "Not a member long enough"),
+        ("account_limited", "Messaging paused"),
+        ("send_message_disabled", "Send messages disabled"),
+    ];
+    let mut barriers = gate_radios("barrier", &o.mock_verification_barrier, BARRIERS, |o, v| o.mock_verification_barrier = v.into());
+    if matches!(o.mock_verification_barrier.as_str(), "account_too_new" | "not_member_long") {
+        // `getCountdownTimerOptions`.
+        let cur = o.mock_barrier_time_remaining.unwrap_or(300_000);
+        let timers = [0u64, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000]
+            .into_iter()
+            .map(|ms| radio(format!("barrier-timer-{ms}"), duration(ms), cur == ms, acc, move |o| o.mock_barrier_time_remaining = Some(ms)))
+            .collect();
+        barriers.push(sub("barrier-timer", "Countdown timer", timers));
+    }
+    let perms = vec![
+        check_label("no-send", tf("Force no {permissionName} permission", &[("permissionName", "SEND_MESSAGES")]), o.force_no_send_messages, acc, |o, v| o.force_no_send_messages = v),
+        check_label("no-attach", tf("Force no {permissionName} permission", &[("permissionName", "ATTACH_FILES")]), o.force_no_attach_files, acc, |o, v| o.force_no_attach_files = v),
+    ];
     sub("mocking", "Mocked product flows", vec![
+        sub("barriers", "Verification & membership barriers", barriers),
+        sub("channel-perms", "Channel permission overrides", perms),
         sub("incoming-call", "Mock incoming call", vec![call("call-dm", "Direct message", &icons::PHONE_FILL, false), call("call-group", "Group DM", &icons::USERS_FILL, true)]),
         sub("slowmode", "Slowmode simulation", slow),
         sub("safety", "Content safety gates", safety),
@@ -797,6 +863,7 @@ fn tools<S: 'static>(store: &Store, st: &ShellState, acc: ShellAccess<S>) -> Men
             acc(s).voice.modal = Some(super::voice::Modal::NewDevice(super::voice::NewDevice { name: "Test Audio Device".into(), input: Some("test-device-id".into()), output: None }));
         })),
         MenuEntry::Item(MenuItem::new("keyboard-intro", t("Show keyboard mode intro")).icon(&icons::KEYBOARD_FILL).on_select(move |s: &mut S| acc(s).nav.keyboard_intro = true)),
+        MenuEntry::Item(MenuItem::new("claim-account", t("Open claim account modal")).on_select(move |s: &mut S| acc(s).account_gate.open = Some(None))),
         MenuEntry::Item(MenuItem::new("sudo", t("Open sudo verification modal")).on_select(move |s: &mut S| {
             let sh = acc(s);
             if sh.account.sudo.is_none() {
@@ -952,6 +1019,40 @@ pub fn demo(sh: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "call" => sh.devtools.mock_call = Some(true),
         "confirm" => sh.devtools.confirm = Some(Danger::ForgetAuthorizedIps),
+        "claim" => super::account_gate::open_claim(store, sh, None),
+        "claim-username" => {
+            sh.tiers.username = true;
+            super::account_gate::open_claim(store, sh, None);
+        }
+        "claim-code" => {
+            super::account_gate::open_claim(store, sh, None);
+            if let Some(c) = sh.account_gate.claim.as_mut() {
+                (c.verify, c.email, c.resend_at) = (true, rune::TextEdit::new("ana@example.com"), sh.now_ms + 24_000);
+            }
+        }
+        "help" => sh.account_gate.help = Some(rune::TextEdit::new("South Korea")),
+        "notifications-confirm" => sh.account_gate.bar_confirm = Some(crate::desktop::top_bars::Confirm::DesktopNotifications),
+        "invites-confirm" => sh.account_gate.bar_confirm = sh.guild.map(crate::desktop::top_bars::Confirm::EnableInvites),
+        "skeleton" => sh.prefs.dev.force_loading_skeleton = true,
+        "profile-skeleton" => {
+            sh.prefs.dev.force_profile_skeletons = true;
+            sh.open_profile(Snowflake(1001), sh.guild, String::new(), "member-1001".into(), crate::ui::Placement::LeftStart);
+        }
+        "messages-skeleton" => drop(sh.channel.and_then(|c| store.messages.remove(&c))),
+        "media-details-geo" => sh.media_ui.mature_details = Some(super::attachments::Gate::Geo),
+        "media-details-check" => sh.media_ui.mature_details = Some(super::attachments::Gate::Check),
+        // `--dev=media-gate:geo_restricted`, `--dev=barrier:account_too_new`,
+        // `--dev=force:forceUnclaimedAccount,forceAccountLimited`.
+        s if s.starts_with("media-gate:") => sh.prefs.dev.mock_mature_media_gate_reason = s["media-gate:".len()..].into(),
+        s if s.starts_with("barrier:") => {
+            sh.prefs.dev.mock_verification_barrier = s["barrier:".len()..].into();
+            (sh.account_gate.mock_key, sh.account_gate.mock_since) = (sh.prefs.dev.mock_verification_barrier.clone(), sh.now_ms);
+        }
+        s if s.starts_with("force:") => {
+            for k in s["force:".len()..].split(',') {
+                sh.prefs.dev.nagbars.insert(k.into(), true);
+            }
+        }
         _ => {}
     }
 }

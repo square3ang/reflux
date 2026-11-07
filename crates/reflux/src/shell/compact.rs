@@ -43,8 +43,10 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
     };
 
     // `.compactAuthorPrefix`: [avatar] name ":" then `--message-compact-username-gap`.
+    // `UnknownMessage` (compact): the name prefix without an avatar, the warning, no accessories.
+    let unknown = super::devtools::unknown(store, st, m);
     let mut prefix = row().items_center().shrink().min_w(0.0);
-    if crate::look::with(|l| l.compact_avatars) {
+    if crate::look::with(|l| l.compact_avatars) && !unknown {
         prefix = prefix.child(
             super::avatar_anim(store, st, author, dim::MESSAGE_AVATAR_SIZE_COMPACT, None, p.background_secondary_lighter, st.hover_msg == Some(mid), p)
                 .key(format!("avatar-{mid}"))
@@ -68,12 +70,14 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
         .child(el().w(dim::MESSAGE_COMPACT_USERNAME_GAP));
 
     let mut body = col().grow(1.0).min_w(0.0);
-    if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
+    if unknown {
+        body = body.child(super::devtools::unknown_warning(p));
+    } else if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         body = body.child(editor(edit, m, p, acc));
     } else if !m.content.is_empty() {
         body = body.child(markdown::render(&m.content, md));
     }
-    if m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
+    if !unknown && m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
         body = body.child(text(crate::i18n::t("(edited)")).font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
     }
 
@@ -90,7 +94,7 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
             .child(prefix)
             .child(body),
     );
-    if let Some(a) = accessories(store, st, m, p, acc) {
+    if let Some(a) = accessories(store, st, m, p, acc).filter(|_| !unknown) {
         // `.messageCompact > .container`: at the text start (timestamp + gap + indent).
         root = root.child(row().w_full().child(el().w(body_x + dim::MESSAGE_COMPACT_TEXT_INDENT_FROM_USERNAME)).child(a.shrink().min_w(0.0)));
     }

@@ -55,7 +55,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
             Some(gate) => vec![gate],
             None => {
                 let mut v = vec![messages(store, st, c, p, acc, layer, false)];
-                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![composer(store, st, c, p, acc, Slot::Main)] });
+                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main))] });
                 v
             }
         })
@@ -512,6 +512,10 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         };
         // The channel's start: its welcome section above the first row.
         rows.push(if k == 0 && welcome { col().w_full().key("msgs-start").child(crate::social::welcome(store, st, c, p, acc)).child(row_el) } else { row_el });
+    }
+    // `ScrollFillerSkeleton` until the first page lands.
+    if rows.is_empty() && !store.messages.contains_key(&c.id) {
+        rows.push(super::skeleton::messages(c.id, store.settings.message_display_compact, p));
     }
     if rows.is_empty() && welcome && store.messages.contains_key(&c.id) {
         rows.push(col().w_full().key("msgs-start").child(crate::social::welcome(store, st, c, p, acc)));

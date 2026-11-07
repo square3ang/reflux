@@ -41,13 +41,13 @@ fn kind(store: &Store, st: &ShellState) -> Option<Kind> {
 }
 
 /// The nagbar: `#4338ca` / white (`NagbarToneKind.LEGAL`).
-pub fn nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+pub fn nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<crate::desktop::top_bars::Bar> {
     if crate::shell::devtools::nagbar(st, "forceTermsAcceptance") == Some(false) {
         return None;
     }
     kind(store, st)?;
     let review = Button::new(t("Review")).variant(ButtonVariant::Inverted).size(ButtonSize::SuperCompact).key("nagbar-terms").on_press(move |s: &mut S| acc(s).nav.terms = true).el(p);
-    Some(
+    Some(crate::desktop::top_bars::Bar::new(-5.0, false,
         row()
             .w_full()
             .min_h(36.0)
@@ -59,7 +59,7 @@ pub fn nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
             .child(text(t("We've updated our policies. Review them to continue.")).font(font(14.0, 600.0).lh(20.0)).color(Color::WHITE).wrap().align(rune::Align::Center))
             .child(review)
             .role("status"),
-    )
+    ))
 }
 
 pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
