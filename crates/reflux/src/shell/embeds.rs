@@ -93,6 +93,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, msg: &Message, key: String, 
         mature: flagged(m) && level == 1,
         saved: None,
         deletable: false,
+        menu: Some((msg.id, attachments::MenuMedia::embed(&m.url, m.proxy_url.as_deref(), video, animated(m)))),
     };
     let (it, at) = (item(m, video), (msg.channel_id, msg.id));
     let hovered = st.hover_msg == Some(msg.id);

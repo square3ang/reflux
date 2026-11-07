@@ -972,14 +972,17 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.composer = rune::TextEdit::new("Here are the files");
         }
         "pins" => {
+            // Fluxer's default, so the screenshot shows scaled down to fit the card.
+            store.settings.inline_attachment_media = true;
             st.popups.toggle(super::pins::POPOUT);
             let ms = store.messages(Snowflake(GENERAL));
             let items = [&ms[8], &ms[6]].map(|m| (m.clone(), m.timestamp.clone())).to_vec();
             st.pins.insert(Snowflake(GENERAL), super::pins::Pins { items, ..Default::default() });
         }
         "search" => {
+            store.settings.inline_attachment_media = true;
             st.search.query = rune::TextEdit::new("from:ada ship");
-            let messages = [8, 3].map(|i| store.messages(Snowflake(GENERAL))[i].clone()).to_vec();
+            let messages = [8, 6].map(|i| store.messages(Snowflake(GENERAL))[i].clone()).to_vec();
             st.search.results = Some(super::search::Results::Done { messages, total: 2 });
             st.search.ran = "from:ada ship".into();
         }

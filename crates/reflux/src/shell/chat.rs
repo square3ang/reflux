@@ -117,6 +117,16 @@ pub(super) fn message_preview<S: 'static>(store: &Store, st: &ShellState, m: &Me
     message(store, st, m, true, md, p, acc)
 }
 
+/// [`message_preview`] in a bordered card `card_w` wide, its media scaled down to fit.
+pub(super) fn message_preview_in<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p: &Palette, acc: ShellAccess<S>, card_w: f32) -> El {
+    super::attachments::with_max_w(preview_media_w(card_w), || message(store, st, m, true, md, p, acc))
+}
+
+/// The content width of a group head inside a card `card_w` wide (1px borders).
+fn preview_media_w(card_w: f32) -> f32 {
+    card_w - 2.0 - CONTENT_X - PAD - dim::MESSAGE_ACTION_BAR_OFFSET
+}
+
 fn find(store: &Store, channel: Snowflake, id: Snowflake) -> Option<&Message> {
     let ms = store.messages(channel);
     ms.binary_search_by_key(&id, |m| m.id).ok().map(|i| &ms[i])
@@ -464,6 +474,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                             st.popups.open_at(&format!("msg-menu-{id}"), [at.x, at.y]);
                             st.active_msg = Some(id);
                             st.media_ui.invite_menu = (None, None);
+                            st.media_ui.media_menu = None;
                         });
                     // `messageDoubleClickActions`: edit my own message, else reply.
                     if crate::look::with(|l| l.double_click_actions) && perms.send && is_user_message(m) && m.message_snapshots.is_empty() {
@@ -511,6 +522,13 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             let mut menu = message_menu(store, &open, m, c, perms, st, acc).separator();
             for e in crate::social::message_items(store, st, c, m, acc) {
                 menu = menu.entry(e);
+            }
+            let media = super::attachments::menu_items(st, acc);
+            if !media.is_empty() {
+                menu = menu.separator();
+                for e in media {
+                    menu = menu.entry(e);
+                }
             }
             let invite = super::invite_embed::menu_items(st);
             if !invite.is_empty() {
@@ -771,8 +789,7 @@ fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellStat
 /// `MessageContextMenu`, for a right-click and the action bar's More.
 // Forward, bookmarks, suppress embeds, publish, alt text and report come from
 // `social::message_items`.
-// shortcut: no media items (copy/save image, open link) when the right-click lands on an
-// attachment; they need hooks in `shell/attachments.rs`.
+// Media items (`attachments::menu_items`) follow when the right-click lands on an attachment.
 fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
     let mut menu = Menu::new(menu).placement(Placement::LeftStart);
     let (id, ch) = (m.id, m.channel_id);

@@ -90,8 +90,6 @@ Rules:
 
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
-| Right-clicking an attachment gives the message menu, without copy/save image or open link | the items need hooks in `shell/attachments.rs` | `shell/chat.rs` | add them with the attachment code |
-| Media wider than a pinned / search result card is cropped, not scaled down | media sizing lives in `shell/attachments.rs` and takes no width limit | `shell/pins.rs`, `shell/search.rs` | a max-width input to the attachment layout |
 | Age-gated media shows the region as its ISO code, with no "Learn more" link | not ported | `shell/attachments.rs` | port the region names and link |
 
 ## Not ported yet (no external limit)
@@ -167,18 +165,15 @@ Rules:
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
-- `crates/reflux/src/shell/attachments.rs:136` the region shows as its ISO code, and the age-check texts have no "Learn more" link.
-- `crates/reflux/src/shell/chat.rs:774` no media items (copy/save image, open link) when the right-click lands on an
+- `crates/reflux/src/shell/attachments.rs:206` the region shows as its ISO code, and the age-check texts have no "Learn more" link.
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
-- `crates/reflux/src/shell/embeds.rs:190` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
+- `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
 - `crates/reflux/src/shell/invite_embed.rs:252` the instance's custom guild badges (`badge_ids`) and built-in replacement images
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:331` skin-tone variants and emoji missing from the base sheet fall back to the font
 - `crates/reflux/src/shell/markdown.rs:354` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
 - `crates/reflux/src/shell/markdown.rs:385` emoji in one-line previews stay text (Fluxer draws 1.25em images).
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
-- `crates/reflux/src/shell/pins.rs:245` media wider than the card is cropped, not scaled down to fit.
-- `crates/reflux/src/shell/search.rs:597` media wider than the card is cropped, not scaled down to fit.
 - `crates/reflux/src/shell/search_query.rs:4` no search chips or confusable-skeleton matching.
 - `crates/reflux/src/shell/switcher.rs:3` no message links, other accounts or member search over the network.
 - `crates/reflux/src/shell/system_msg.rs:191` Fluxer mirrors the missed-call phone (`scaleX(-1)`); Rune icons can't flip.

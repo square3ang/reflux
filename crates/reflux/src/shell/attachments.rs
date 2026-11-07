@@ -43,6 +43,8 @@ pub struct MediaUi {
     pub hidden_badges: Vec<String>,
     /// The (guild, channel) of the invite card whose message menu is open.
     pub invite_menu: (Option<Snowflake>, Option<Snowflake>),
+    /// The attachment a message menu was opened on (`MediaMenuData`'s items).
+    pub media_menu: Option<MenuMedia>,
     /// Text previews shown expanded.
     pub expanded: HashSet<String>,
     /// The URL waiting on the external link warning, and its "skip next time" box.
@@ -51,6 +53,74 @@ pub struct MediaUi {
     pub trusted: Vec<String>,
     /// The attachment waiting on "Delete attachment": (channel, message, attachment).
     pub confirm_delete: Option<(Snowflake, Snowflake, Snowflake)>,
+}
+
+/// What the media items of a message menu act on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuMedia {
+    pub url: String,
+    pub proxy: String,
+    pub filename: String,
+    pub kind: MediaKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaKind {
+    Image,
+    Gif,
+    Video,
+}
+
+impl MenuMedia {
+    pub fn of(a: &Attachment) -> Option<Self> {
+        let url = a.url.clone().filter(|_| !a.expired)?;
+        let kind = if a.content_type.starts_with("video/") {
+            MediaKind::Video
+        } else if is_animated(&a.content_type, a.flags) {
+            MediaKind::Gif
+        } else {
+            MediaKind::Image
+        };
+        Some(MenuMedia { proxy: a.proxy_url.clone().unwrap_or_else(|| url.clone()), url, filename: a.filename.clone(), kind })
+    }
+
+    /// An embed's image, GIF or video; the file name is the URL's last segment.
+    pub fn embed(url: &str, proxy: Option<&str>, video: bool, animated: bool) -> Self {
+        let kind = if video { MediaKind::Video } else if animated { MediaKind::Gif } else { MediaKind::Image };
+        let filename = url.split(['?', '#']).next().unwrap_or_default().rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("media").to_owned();
+        MenuMedia { url: url.to_owned(), proxy: proxy.unwrap_or(url).to_owned(), filename, kind }
+    }
+
+    /// (copy, download, copy link, open link) labels by kind (`getCopyLabel` …).
+    fn labels(&self) -> [&'static str; 4] {
+        match self.kind {
+            MediaKind::Image => ["Copy image", "Download image", "Copy image link", "Open image link"],
+            MediaKind::Gif => ["Copy GIF", "Download GIF", "Copy GIF link", "Open GIF link"],
+            MediaKind::Video => ["Copy video", "Download video", "Copy video link", "Open video link"],
+        }
+    }
+}
+
+/// `MediaMenuData`'s last group: copy (pictures only; the clipboard takes no video), download,
+/// copy link, open link.
+pub fn menu_items<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate::ui::MenuEntry<S>> {
+    use crate::ui::{MenuEntry, MenuItem};
+    let Some(m) = st.media_ui.media_menu.clone() else { return Vec::new() };
+    let [copy, download, copy_link, open_link] = m.labels().map(t);
+    let mut out = Vec::new();
+    if m.kind != MediaKind::Video {
+        let png = format!("{}{}format=png", m.proxy, if m.proxy.contains('?') { '&' } else { '?' });
+        out.push(MenuEntry::Item(MenuItem::new("media-copy", copy).icon(&icons::COPY).on_select(move |s: &mut S| acc(s).media.copy_image(png.clone()))));
+    }
+    let (url, name) = (m.url.clone(), m.filename.clone());
+    out.push(MenuEntry::Item(MenuItem::new("media-download", download).icon(&icons::DOWNLOAD_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))));
+    let url = m.url.clone();
+    out.push(MenuEntry::Item(MenuItem::new("media-copy-link", copy_link).icon(&icons::LINK).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(url.clone()))));
+    let url = m.url;
+    out.push(MenuEntry::Item(MenuItem::new("media-open-link", open_link).icon(&icons::ARROW_SQUARE_OUT).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+        let _ = tx.open_url(&url);
+    })));
+    out
 }
 
 // ---- Sensitive media ----------------------------------------------------------------------------
@@ -230,6 +300,25 @@ const GAP: f32 = 4.0;
 /// `getMosaicMediaDimensions().maxWidth`.
 const MOSAIC_W: f32 = 550.0;
 
+thread_local! {
+    /// The width media may take while a narrow card (pins, search) builds its message.
+    static MAX_W: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::INFINITY) };
+}
+
+/// Builds `f` with media scaled down to fit `w` (`max-width: 100%` in a narrow card).
+pub fn with_max_w<R>(w: f32, f: impl FnOnce() -> R) -> R {
+    let old = MAX_W.replace(w.max(1.0));
+    let r = f();
+    MAX_W.set(old);
+    r
+}
+
+/// A drawn size scaled down to the current cap, keeping its ratio.
+fn capped((w, h): (f32, f32)) -> (f32, f32) {
+    let k = (MAX_W.get() / w).min(1.0);
+    ((w * k).round().max(1.0), (h * k).round().max(1.0))
+}
+
 /// `getMosaicTileBox`.
 pub fn tile_box(n: usize, i: usize, width: f32) -> (f32, f32) {
     let (cols, span, aw, ah) = slot(n, i);
@@ -270,6 +359,8 @@ pub struct Tile<'a> {
     pub saved: Option<(Snowflake, Snowflake, &'a Attachment)>,
     /// The hover toolbar offers Delete ([`can_delete_attachment`]).
     pub deletable: bool,
+    /// Right-click opens this message's menu with the media items.
+    pub menu: Option<(Snowflake, MenuMedia)>,
 }
 
 /// The message's media attachments (minus blocked ones) as one picture or the mosaic, then
@@ -286,6 +377,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
     let hovered = st.hover_msg == Some(m.id);
     let deletable = can_delete_attachment(store, m.author.id, m.channel_id);
     let mut out = Vec::new();
+    let mosaic_w = MOSAIC_W.min(MAX_W.get());
     let tile = |i: usize, size: (f32, f32)| {
         let a = media[i];
         let t = Tile {
@@ -300,6 +392,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             mature: flagged(a.nsfw, a.flags) && level == 1,
             saved: Some((m.channel_id, m.id, a)),
             deletable,
+            menu: MenuMedia::of(a).map(|mm| (m.id, mm)),
         };
         let (items, msg) = (items.clone(), (m.channel_id, m.id));
         media_tile(store, st, t, hovered, media.len() > 1, p, acc, Rc::new(move |s: &mut S| lightbox::open(acc(s), (*items).clone(), i, Some(msg))))
@@ -308,11 +401,11 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
         0 => {}
         1 => {
             let (w, h) = (media[0].width.unwrap_or(1), media[0].height.unwrap_or(1));
-            out.push(tile(0, super::chat::media_size(w, h)));
+            out.push(tile(0, capped(super::chat::media_size(w, h))));
         }
         3 => {
-            let side = col().gap(GAP).child(tile(1, tile_box(3, 1, MOSAIC_W))).child(tile(2, tile_box(3, 2, MOSAIC_W)));
-            out.push(row().gap(GAP).items_start().child(tile(0, tile_box(3, 0, MOSAIC_W))).child(side));
+            let side = col().gap(GAP).child(tile(1, tile_box(3, 1, mosaic_w))).child(tile(2, tile_box(3, 2, mosaic_w)));
+            out.push(row().gap(GAP).items_start().child(tile(0, tile_box(3, 0, mosaic_w))).child(side));
         }
         n => {
             let mut grid = col().gap(GAP);
@@ -320,7 +413,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             for per in rows(n) {
                 let mut r = row().gap(GAP);
                 for _ in 0..per.min(n - i) {
-                    r = r.child(tile(i, tile_box(n, i, MOSAIC_W)));
+                    r = r.child(tile(i, tile_box(n, i, mosaic_w)));
                     i += 1;
                 }
                 grid = grid.child(r);
@@ -444,6 +537,16 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     }
     if let Some(bar) = media_tools(st, &t, p, acc) {
         tile = tile.hover_group().child(bar);
+    }
+    // Right-click: the message menu plus the media items.
+    if let Some((msg, media)) = t.menu {
+        tile = tile.on_secondary_press(move |s: &mut S, at, _| {
+            let st = acc(s);
+            st.popups.open_at(&format!("msg-menu-{msg}"), [at.x, at.y]);
+            st.active_msg = Some(msg);
+            st.media_ui.invite_menu = (None, None);
+            st.media_ui.media_menu = Some(media.clone());
+        });
     }
     tile.on_press(move |s: &mut S| open(s))
 }
@@ -893,6 +996,27 @@ fn text_preview<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cards_scale_media_down_to_fit() {
+        assert_eq!(capped((550.0, 309.0)), (550.0, 309.0));
+        assert_eq!(with_max_w(275.0, || capped((550.0, 310.0))), (275.0, 155.0));
+        assert_eq!(with_max_w(275.0, || capped((200.0, 100.0))), (200.0, 100.0));
+        // Restored afterwards.
+        assert_eq!(capped((550.0, 309.0)), (550.0, 309.0));
+    }
+
+    #[test]
+    fn media_menu_kinds_and_expiry() {
+        let a = |ty: &str| Attachment { filename: "f".into(), content_type: ty.into(), url: Some("https://x/f".into()), ..Default::default() };
+        assert_eq!(MenuMedia::of(&a("image/png")).map(|m| m.kind), Some(MediaKind::Image));
+        assert_eq!(MenuMedia::of(&a("image/gif")).map(|m| m.kind), Some(MediaKind::Gif));
+        assert_eq!(MenuMedia::of(&a("video/mp4")).map(|m| m.kind), Some(MediaKind::Video));
+        assert_eq!(MenuMedia::of(&a("image/png")).map(|m| m.proxy), Some("https://x/f".into()));
+        assert_eq!(MenuMedia::of(&Attachment { expired: true, ..a("image/png") }), None);
+        let e = MenuMedia::embed("https://x/y/cat.gif?w=1", None, false, true);
+        assert_eq!((e.filename.as_str(), e.proxy.as_str(), e.kind), ("cat.gif", "https://x/y/cat.gif?w=1", MediaKind::Gif));
+    }
 
     #[test]
     fn mosaic_tiles_follow_fluxer_slots() {

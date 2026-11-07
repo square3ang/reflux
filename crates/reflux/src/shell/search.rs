@@ -594,12 +594,11 @@ fn result<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palette, 
         .mb(8.0)
         .py(8.0)
         .radius(6.0)
-        // shortcut: media wider than the card is cropped, not scaled down to fit.
         .clip_rounded(6.0)
         .fill(p.background_secondary_lighter)
         .border(1.0, p.background_header_secondary)
         .hover_group()
-        .child(col().w_full().inert().child(super::chat::message_preview(store, st, m, &md, p, acc)))
+        .child(col().w_full().inert().child(super::chat::message_preview_in(store, st, m, &md, p, acc, 420.0 - 16.0)))
         .child(jump.pin(None, Some(12.0), Some(12.0), None).group_opacity(0.0, 1.0))
 }
 

@@ -242,11 +242,10 @@ fn card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m: &Message, ca
         .mb(8.0)
         .py(8.0)
         .radius(8.0)
-        // shortcut: media wider than the card is cropped, not scaled down to fit.
         .clip_rounded(8.0)
         .border(1.0, p.background_header_secondary)
         .hover_group()
-        .child(col().w_full().inert().child(super::chat::message_preview(store, st, m, &md, p, acc)))
+        .child(col().w_full().inert().child(super::chat::message_preview_in(store, st, m, &md, p, acc, size(st).0 - 24.0)))
         .child(actions.pin(None, Some(12.0), Some(12.0), None).group_opacity(0.0, 1.0))
 }
 
