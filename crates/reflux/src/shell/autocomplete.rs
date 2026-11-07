@@ -1,6 +1,6 @@
 //! Composer autocomplete (`channel/components/Autocomplete*`): `@` members, `#` channels,
 //! `:` emoji and `/` commands (`devtools/hooks/useCommands.ts`, the text-only ones).
-// shortcut: no role mentions or command option hints; custom emoji come from the open guild only.
+// shortcut: no command option hints; custom emoji come from the open guild only.
 
 use reflux_model::{Channel, ChannelType, Permissions, Snowflake};
 use reflux_store::Store;
@@ -42,6 +42,8 @@ pub enum Glyph {
     Emoji(String),
     CustomEmoji(Snowflake),
     Text(&'static str),
+    /// A role mention: no glyph, the `@name` label in the role colour (0 = none).
+    Role(u32),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,13 +92,28 @@ pub fn completions(store: &Store, c: &Channel, t: &Trigger) -> Vec<Completion> {
                     out.push((r, Completion { glyph: Glyph::User(u), label: shown, detail: username, insert: format!("<@{u}> ") }));
                 }
             }
-            if c.guild_id.is_some() && store.permissions(c.id).contains(Permissions::MENTION_EVERYONE) {
+            // Members first, then @everyone / @here, then roles (`useLexicalAutocomplete`).
+            sort(&mut out);
+            out.truncate(MAX);
+            let everyone = store.permissions(c.id).contains(Permissions::MENTION_EVERYONE);
+            if c.guild_id.is_some() && everyone {
                 for (name, detail) in [("everyone", "Notify everyone who has permission to view this channel."), ("here", "Notify everyone online who has permission to view this channel.")] {
-                    if let Some(r) = rank(name) {
-                        out.push((r, Completion { glyph: Glyph::Text("@"), label: format!("@{name}"), detail: detail.into(), insert: format!("@{name} ") }));
+                    if name.contains(&q) {
+                        out.push((0, Completion { glyph: Glyph::Text("@"), label: format!("@{name}"), detail: crate::i18n::t(detail).into(), insert: format!("@{name} ") }));
                     }
                 }
             }
+            // `filterDisplayRoles` (not @everyone), mentionable unless we may mention everyone,
+            // highest first.
+            if let Some(g) = c.guild_id.and_then(|g| store.guilds.get(&g)) {
+                let mut roles: Vec<_> = g.roles.iter().filter(|r| r.id != g.id && (everyone || r.mentionable) && r.name.to_lowercase().contains(&q)).collect();
+                roles.sort_by_key(|r| std::cmp::Reverse(r.position));
+                for r in roles.into_iter().take(MAX) {
+                    let detail = crate::i18n::t("Notify users with this role who have permission to view this channel.").into();
+                    out.push((0, Completion { glyph: Glyph::Role(r.color), label: r.name.clone(), detail, insert: format!("<@&{}> ", r.id) }));
+                }
+            }
+            return out.into_iter().map(|x| x.1).collect();
         }
         '#' => {
             if let Some(g) = c.guild_id {
@@ -136,8 +153,12 @@ pub fn completions(store: &Store, c: &Channel, t: &Trigger) -> Vec<Completion> {
         }
         _ => {}
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.to_lowercase().cmp(&b.1.label.to_lowercase())));
+    sort(&mut out);
     out.into_iter().take(MAX).map(|x| x.1).collect()
+}
+
+fn sort(out: &mut [(u8, Completion)]) {
+    out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.to_lowercase().cmp(&b.1.label.to_lowercase())));
 }
 
 /// Puts a completion in place of the trigger word.
@@ -178,10 +199,16 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, items: &[Co
                 _ => el().size(20.0, 20.0),
             },
             Glyph::Text(s) => row().size(24.0, 24.0).center().child(text(*s).font(font(16.0, 600.0)).color(p.text_primary_muted)),
+            Glyph::Role(_) => el(),
+        };
+        let (label, color) = match c.glyph {
+            Glyph::Role(rgb) => (format!("@{}", c.label), if rgb == 0 { p.text_primary } else { super::role_color(rgb) }),
+            _ => (c.label.clone(), p.text_primary),
         };
         let (t2, c2) = (t.clone(), c.clone());
         let mut r = row()
             .w_full()
+            .min_h(40.0)
             .padding(8.0)
             .center_y()
             .radius(8.0)
@@ -189,8 +216,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, items: &[Co
             .role("option")
             .key(format!("ac-{i}"))
             .hover(p.background_modifier_hover)
-            .child(row().mr(8.0).child(glyph))
-            .child(text(c.label.clone()).font(font(16.0, 400.0).lh(20.0)).color(p.text_primary).truncate().shrink().min_w(0.0))
+            .children((!matches!(c.glyph, Glyph::Role(_))).then(|| row().mr(8.0).child(glyph)))
+            .child(text(label).font(font(16.0, 400.0).lh(20.0)).color(color).truncate().shrink().min_w(0.0))
             .child(el().grow(1.0))
             .child(text(c.detail.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).truncate().ml(16.0).shrink())
             .on_press(move |s: &mut S| accept(acc(s), &t2, &c2));
@@ -241,6 +268,11 @@ mod tests {
         let c = &d.store.channels[&d.shell.channel.unwrap()];
         let at = completions(&d.store, c, &trigger("@ada", 4).unwrap());
         assert_eq!(at[0].insert, "<@1001> ");
+        let g = &d.store.guilds[&c.guild_id.unwrap()];
+        let role = g.roles.iter().filter(|r| r.id != g.id).max_by_key(|r| r.position).unwrap();
+        let q = format!("@{}", &role.name[..3]);
+        let roles = completions(&d.store, c, &trigger(&q, q.len()).unwrap());
+        assert!(roles.iter().any(|x| x.insert == format!("<@&{}> ", role.id)), "{roles:?}");
         let ch = completions(&d.store, c, &trigger("#off", 4).unwrap());
         assert_eq!(ch[0].insert, "<#2203> ");
         let em = completions(&d.store, c, &trigger(":smile", 6).unwrap());
