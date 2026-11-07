@@ -18,6 +18,14 @@ use crate::{Error, Result, altcha};
 /// `RATE_LIMITED` and `retry_after` so the UI can tell the user.
 const MAX_SILENT_WAIT: Duration = Duration::from_secs(10);
 const MAX_429_RETRIES: u32 = 3;
+/// Transient server errors retried by idempotent requests and sends, like `RestTransport`.
+const RETRY_STATUSES: [u16; 8] = [502, 504, 507, 522, 523, 524, 598, 599];
+const MAX_TRANSIENT_RETRIES: u32 = 2;
+/// Upload parts: 4 attempts, `ChunkedAttachmentUploader`'s `PART_MAX_ATTEMPTS`.
+const MAX_UPLOAD_ATTEMPTS: u32 = 4;
+/// `RETRY_BACKOFF_*`: 1 s doubling to 30 s with ±25% jitter.
+const RETRY_BASE_MS: u64 = 1000;
+const RETRY_CAP_MS: u64 = 30_000;
 /// Like the reference client: a second challenge after a solved one is solved once more.
 const MAX_CAPTCHA_SOLVES: u32 = 2;
 /// Sent by the official client on same-origin requests; the server gates threads on them.
@@ -88,7 +96,7 @@ impl Client {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.request(Method::GET, path, None::<&()>).await
+        self.request_retrying(Method::GET, path, None::<&()>, None, MAX_TRANSIENT_RETRIES).await
     }
 
     /// Sends `method {base}/v1{path}` with an optional JSON body. Waits out known rate limits,
@@ -104,24 +112,42 @@ impl Client {
 
     /// A binary GET (stream previews); `None` on 404.
     pub async fn get_bytes(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        let mut req = self.http.get(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES);
-        if let Some(token) = self.token.read().unwrap().as_deref() {
-            req = req.header(header::AUTHORIZATION, token);
+        let mut failures = 0;
+        loop {
+            let mut req = self.http.get(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES);
+            if let Some(token) = self.token.read().unwrap().as_deref() {
+                req = req.header(header::AUTHORIZATION, token);
+            }
+            if let Some(id) = &self.installation_id {
+                req = req.header("X-Fluxer-Client-Installation-ID", id);
+            }
+            let res = match req.send().await {
+                Ok(res) => res,
+                Err(e) if failures < MAX_TRANSIENT_RETRIES => {
+                    failures += 1;
+                    tokio::time::sleep(retry_delay(failures - 1)).await;
+                    tracing::warn!(path, %e, "binary fetch failed, retrying");
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let status = res.status();
+            if retryable_status(status) && failures < MAX_TRANSIENT_RETRIES {
+                failures += 1;
+                tokio::time::sleep(retry_delay(failures - 1)).await;
+                tracing::warn!(path, %status, "binary fetch got a transient error, retrying");
+                continue;
+            }
+            let bytes = res.bytes().await?;
+            if status == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if !status.is_success() {
+                let error = serde_json::from_slice::<ApiError>(&bytes).unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
+                return Err(Error::Api { status, error: Box::new(error) });
+            }
+            return Ok(Some(bytes.to_vec()));
         }
-        if let Some(id) = &self.installation_id {
-            req = req.header("X-Fluxer-Client-Installation-ID", id);
-        }
-        let res = req.send().await?;
-        let status = res.status();
-        let bytes = res.bytes().await?;
-        if status == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            let error = serde_json::from_slice::<ApiError>(&bytes).unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
-            return Err(Error::Api { status, error: Box::new(error) });
-        }
-        Ok(Some(bytes.to_vec()))
     }
 
     /// [`Self::request`] with an `X-Audit-Log-Reason` (moderation actions).
@@ -132,10 +158,24 @@ impl Client {
         body: Option<&B>,
         reason: Option<&str>,
     ) -> Result<T> {
+        self.request_retrying(method, path, body, reason, 0).await
+    }
+
+    /// The request loop. `transient`: how many 502/504/… and transport failures to retry;
+    /// safe only for GETs and writes the server dedupes (message nonces) or HTTP makes
+    /// idempotent (PUT/DELETE/PATCH).
+    async fn request_retrying<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        reason: Option<&str>,
+        transient: u32,
+    ) -> Result<T> {
         guard(&method, path)?;
         let body = body.map(serde_json::to_vec).transpose()?;
         let key = format!("{method} {}", path.split('?').next().unwrap_or(path));
-        let (mut captcha, mut solves, mut retries) = (None::<String>, 0, 0);
+        let (mut captcha, mut solves, mut retries, mut failures) = (None::<String>, 0, 0, 0);
         loop {
             let wait = self.limits.lock().unwrap().wait(&key, Instant::now());
             if let Some(wait) = wait {
@@ -168,17 +208,45 @@ impl Client {
             if let Some(body) = &body {
                 req = req.header(header::CONTENT_TYPE, "application/json").body(body.clone());
             }
-            let res = req.send().await?;
+            let res = match req.send().await {
+                Ok(res) => res,
+                Err(e) if failures < transient => {
+                    failures += 1;
+                    let wait = retry_delay(failures - 1);
+                    tracing::warn!(%key, %e, ?wait, "request failed, retrying");
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
             let status = res.status();
             let h = res.headers();
             let num = |name: &str| h.get(name).and_then(|v| v.to_str().ok()?.parse::<f64>().ok());
             let (remaining, reset_after, retry_header) =
                 (num("x-ratelimit-remaining"), num("x-ratelimit-reset-after"), num("retry-after"));
-            let global_header = h.get("x-ratelimit-global").is_some_and(|v| v == "true");
+            let global_header = h.get("x-ratelimit-global").is_some_and(|v| v.to_str().is_ok_and(|s| s.eq_ignore_ascii_case("true")))
+                || h.get("x-ratelimit-scope").is_some_and(|v| v.to_str().is_ok_and(|s| s.eq_ignore_ascii_case("global")));
             if let Some(jwt) = h.get("x-fluxer-sudo-mode-jwt").and_then(|v| v.to_str().ok()) {
                 *self.sudo.write().unwrap() = Some(jwt.to_owned());
             }
-            let bytes = res.bytes().await?;
+            let bytes = match res.bytes().await {
+                Ok(bytes) => bytes,
+                Err(e) if failures < transient => {
+                    failures += 1;
+                    let wait = retry_delay(failures - 1);
+                    tracing::warn!(%key, %e, ?wait, "response body failed, retrying");
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if retryable_status(status) && failures < transient {
+                failures += 1;
+                let wait = retry_delay(failures - 1);
+                tracing::warn!(%key, %status, ?wait, "transient server error, retrying");
+                tokio::time::sleep(wait).await;
+                continue;
+            }
 
             if status.is_success() {
                 // Route headers come only for bot tokens: pause before the bucket denies.
@@ -303,9 +371,12 @@ impl Client {
         self.get(&format!("/channels/{channel}/messages?limit={limit}{anchor}")).await
     }
 
-    /// JSON body only; reuse the `nonce` when retrying a send.
+    /// JSON body only; reuse the `nonce` when retrying a send (so a retry is deduped).
     pub async fn send_message(&self, channel: Snowflake, msg: &CreateMessage) -> Result<Message> {
-        self.request(Method::POST, &format!("/channels/{channel}/messages"), Some(msg)).await
+        // Only a send with a nonce is safe to repeat: the server returns the message it already
+        // created instead of posting a duplicate.
+        let retries = if msg.nonce.is_some() { MAX_TRANSIENT_RETRIES } else { 0 };
+        self.request_retrying(Method::POST, &format!("/channels/{channel}/messages"), Some(msg), None, retries).await
     }
 
     /// `multipart/form-data`: `payload_json` plus `files[N]` (`msg.attachments` holds the direct
@@ -317,10 +388,12 @@ impl Client {
         files: Vec<(String, Arc<Vec<u8>>, String)>,
         progress: impl Fn(u64) + Send + Sync + 'static,
     ) -> Result<Message> {
-        self.post_multipart(&format!("/channels/{channel}/messages"), msg, files, progress).await
+        let retries = if msg.nonce.is_some() { MAX_TRANSIENT_RETRIES } else { 0 };
+        self.post_multipart_with(&format!("/channels/{channel}/messages"), msg, files, progress, retries).await
     }
 
-    /// `POST {path}` as `multipart/form-data`: `payload_json` plus `files[N]`.
+    /// `POST {path}` as `multipart/form-data`: `payload_json` plus `files[N]`. Not retried: the
+    /// caller may create something new (a forum post) with no nonce to dedupe.
     pub async fn post_multipart<T: DeserializeOwned, B: Serialize + ?Sized>(
         &self,
         path: &str,
@@ -328,32 +401,73 @@ impl Client {
         files: Vec<(String, Arc<Vec<u8>>, String)>,
         progress: impl Fn(u64) + Send + Sync + 'static,
     ) -> Result<T> {
+        self.post_multipart_with(path, payload, files, progress, 0).await
+    }
+
+    async fn post_multipart_with<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        payload: &B,
+        files: Vec<(String, Arc<Vec<u8>>, String)>,
+        progress: impl Fn(u64) + Send + Sync + 'static,
+        transient: u32,
+    ) -> Result<T> {
         guard(&Method::POST, path)?;
         let progress = Arc::new(progress);
-        let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let mut form = reqwest::multipart::Form::new().text("payload_json", serde_json::to_string(payload)?);
-        for (i, (name, bytes, ctype)) in files.into_iter().enumerate() {
-            let len = bytes.len() as u64;
-            let body = counted(bytes, sent.clone(), progress.clone());
-            let part = reqwest::multipart::Part::stream_with_length(body, len).file_name(name).mime_str(&ctype).map_err(|e| Error::Upload(e.to_string()))?;
-            form = form.part(format!("files[{i}]"), part);
+        let json = serde_json::to_string(payload)?;
+        let (mut failures, mut throttled) = (0, 0);
+        loop {
+            // Rebuilt per attempt: a multipart body stream is consumed by `send`.
+            let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let mut form = reqwest::multipart::Form::new().text("payload_json", json.clone());
+            for (i, (name, bytes, ctype)) in files.iter().enumerate() {
+                let (name, bytes, ctype) = (name.clone(), bytes.clone(), ctype.clone());
+                let len = bytes.len() as u64;
+                let body = counted(bytes, sent.clone(), progress.clone());
+                let part = reqwest::multipart::Part::stream_with_length(body, len).file_name(name).mime_str(&ctype).map_err(|e| Error::Upload(e.to_string()))?;
+                form = form.part(format!("files[{i}]"), part);
+            }
+            let mut req = self.http.post(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES).multipart(form);
+            if let Some(token) = self.token.read().unwrap().as_deref() {
+                req = req.header(header::AUTHORIZATION, token);
+            }
+            if let Some(id) = &self.installation_id {
+                req = req.header("X-Fluxer-Client-Installation-ID", id);
+            }
+            let res = match req.send().await {
+                Ok(res) => res,
+                Err(e) if failures < transient => {
+                    failures += 1;
+                    tokio::time::sleep(retry_delay(failures - 1)).await;
+                    tracing::warn!(path, %e, "upload failed, retrying");
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let status = res.status();
+            let retry_header = res.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<f64>().ok());
+            let bytes = res.bytes().await?;
+            if status == StatusCode::TOO_MANY_REQUESTS && transient > 0 && throttled < MAX_429_RETRIES {
+                let after = bytes_retry_after(&bytes).or(retry_header).unwrap_or(1.0);
+                if secs(after) <= MAX_SILENT_WAIT {
+                    throttled += 1;
+                    tokio::time::sleep(secs(after)).await;
+                    continue;
+                }
+            }
+            if retryable_status(status) && failures < transient {
+                failures += 1;
+                tokio::time::sleep(retry_delay(failures - 1)).await;
+                tracing::warn!(path, %status, "upload got a transient error, retrying");
+                continue;
+            }
+            if status.is_success() {
+                return Ok(serde_json::from_slice(&bytes)?);
+            }
+            let error = serde_json::from_slice::<ApiError>(&bytes)
+                .unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
+            return Err(Error::Api { status, error: Box::new(error) });
         }
-        let mut req = self.http.post(format!("{}{path}", self.base)).header("X-Fluxer-Features", FEATURES).header("X-Fluxer-Capabilities", CAPABILITIES).multipart(form);
-        if let Some(token) = self.token.read().unwrap().as_deref() {
-            req = req.header(header::AUTHORIZATION, token);
-        }
-        if let Some(id) = &self.installation_id {
-            req = req.header("X-Fluxer-Client-Installation-ID", id);
-        }
-        let res = req.send().await?;
-        let status = res.status();
-        let bytes = res.bytes().await?;
-        if status.is_success() {
-            return Ok(serde_json::from_slice(&bytes)?);
-        }
-        let error = serde_json::from_slice::<ApiError>(&bytes)
-            .unwrap_or_else(|_| ApiError { code: status.as_str().to_owned(), message: String::from_utf8_lossy(&bytes).into_owned(), ..Default::default() });
-        Err(Error::Api { status, error: Box::new(error) })
     }
 
     // --- Pre-uploaded attachments (`topics/uploads.md`) ---
@@ -373,23 +487,57 @@ impl Client {
         Ok(r.attachments)
     }
 
-    /// `PUT`s `bytes` to an upload URL exactly as issued, without `Authorization`.
+    /// `PUT`s `bytes` to an upload URL exactly as issued, without `Authorization`. Retries a
+    /// part on 408/425/429/5xx and network errors, like `ChunkedAttachmentUploader`.
     pub async fn put_upload(&self, url: &str, bytes: Arc<Vec<u8>>, range: std::ops::Range<usize>, content_type: Option<&str>, sent: Arc<std::sync::atomic::AtomicU64>, progress: Arc<dyn Fn(u64) + Send + Sync>) -> Result<()> {
         // Upload URLs come only from `upload_plan`, which the guard already scoped to a channel.
         if crate::readonly() && crate::write_channel().is_none() {
             return Err(readonly_error());
         }
         let len = range.len() as u64;
-        let body = counted_range(bytes, range, sent, progress);
-        let mut req = self.http.put(url).header(header::CONTENT_LENGTH, len).body(reqwest::Body::wrap_stream(body));
-        if let Some(t) = content_type {
-            req = req.header(header::CONTENT_TYPE, t);
+        let base = sent.load(std::sync::atomic::Ordering::Relaxed);
+        let mut failures = 0;
+        loop {
+            // A failed attempt may have been read up to the whole part; progress is reported
+            // against `base`, so a retry neither skips nor double-counts bytes.
+            let attempt = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let progress = progress.clone();
+            let report = Arc::new(move |n: u64| progress(base + n));
+            let body = counted_range(bytes.clone(), range.clone(), attempt, report);
+            let mut req = self.http.put(url).header(header::CONTENT_LENGTH, len).body(reqwest::Body::wrap_stream(body));
+            if let Some(t) = content_type {
+                req = req.header(header::CONTENT_TYPE, t);
+            }
+            let res = match req.send().await {
+                Ok(res) => res,
+                Err(e) if failures + 1 < MAX_UPLOAD_ATTEMPTS => {
+                    failures += 1;
+                    let wait = retry_delay(failures - 1);
+                    tracing::warn!(url, %e, ?wait, "upload part failed, retrying");
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(Error::Upload(format!("upload failed: {e}"))),
+            };
+            let status = res.status();
+            let retry_after = res.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<f64>().ok());
+            let bytes = res.bytes().await.unwrap_or_default();
+            if status.is_success() {
+                sent.fetch_max(base + len, std::sync::atomic::Ordering::Relaxed);
+                return Ok(());
+            }
+            let transient = matches!(status.as_u16(), 408 | 425 | 429) || status.is_server_error();
+            if transient && failures + 1 < MAX_UPLOAD_ATTEMPTS {
+                failures += 1;
+                let hint = retry_after.or_else(|| bytes_retry_after(&bytes)).map(secs).unwrap_or_default();
+                // Server hint wins over backoff, but never past the 30 s cap.
+                let wait = hint.max(retry_delay(failures - 1)).min(Duration::from_secs(30));
+                tracing::warn!(url, %status, ?wait, "upload part got a transient error, retrying");
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            return Err(Error::Upload(format!("upload failed ({status})")));
         }
-        let res = req.send().await?;
-        if !res.status().is_success() {
-            return Err(Error::Upload(format!("upload failed ({})", res.status())));
-        }
-        Ok(())
     }
 
     /// `POST /channels/{id}/attachments/complete` for multipart uploads.
@@ -406,7 +554,7 @@ impl Client {
 
     /// `POST /search/messages` with a body built from the search syntax.
     pub async fn search_messages(&self, body: &serde_json::Value) -> Result<SearchResponse> {
-        self.request(Method::POST, "/search/messages", Some(body)).await
+        self.request_retrying(Method::POST, "/search/messages", Some(body), None, MAX_TRANSIENT_RETRIES).await
     }
 
     // --- Message actions (`http-api/messages.mdx`) ---
@@ -414,7 +562,7 @@ impl Client {
     /// Changes only the text; other fields stay.
     pub async fn edit_message(&self, channel: Snowflake, id: Snowflake, content: &str) -> Result<Message> {
         let body = serde_json::json!({ "content": content });
-        self.request(Method::PATCH, &format!("/channels/{channel}/messages/{id}"), Some(&body)).await
+        self.request_retrying(Method::PATCH, &format!("/channels/{channel}/messages/{id}"), Some(&body), None, MAX_TRANSIENT_RETRIES).await
     }
 
     pub async fn delete_message(&self, channel: Snowflake, id: Snowflake) -> Result<()> {
@@ -598,6 +746,23 @@ fn readonly_error() -> Error {
 
 fn secs(s: f64) -> Duration {
     Duration::try_from_secs_f64(s).unwrap_or(Duration::from_secs(1))
+}
+
+/// `RestTransport.RETRYABLE_STATUSES` plus the upload-timeout codes.
+fn retryable_status(status: StatusCode) -> bool {
+    RETRY_STATUSES.contains(&status.as_u16())
+}
+
+/// `retry_after` from a 429 JSON body, when the header is missing or coarser.
+fn bytes_retry_after(bytes: &[u8]) -> Option<f64> {
+    serde_json::from_slice::<ApiError>(bytes).ok()?.retry_after
+}
+
+/// `computeBackoffMs`: 1 s doubling, capped at 30 s, with ±25% jitter.
+fn retry_delay(failure: u32) -> Duration {
+    let base = RETRY_BASE_MS.saturating_mul(1u64 << failure.min(16)).min(RETRY_CAP_MS);
+    let jitter = base / 4;
+    Duration::from_millis(base.saturating_sub(jitter) + fastrand::u64(..=jitter * 2))
 }
 
 fn rate_limited(wait: Duration) -> Error {

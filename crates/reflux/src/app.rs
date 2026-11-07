@@ -6,8 +6,8 @@ use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reflux_model::{
-    AuthResponse, CloseCode, IdentifyProperties, InstanceDiscovery, LoginRequest,
-    RegisterRequest, SessionFlags, Snowflake, TotpLoginRequest, WebAuthnLoginRequest,
+    AuthResponse, CloseCode, GatewayPayload, IdentifyProperties, InitialPresence, InstanceDiscovery, LoginRequest, OpCode,
+    PresenceUpdate, RegisterRequest, SessionFlags, Snowflake, TotpLoginRequest, WebAuthnLoginRequest,
 };
 use reflux_net::{Client, Command, ConnectionState, Gateway, GatewayConfig, GatewayEvent, MessagePage};
 use reflux_store::Store;
@@ -668,7 +668,15 @@ fn connect(s: &mut State) {
             ..Default::default()
         },
         flags: SessionFlags::CHANNEL_THREADS,
-        presence: None,
+        // A reconnect with a fresh session (store already filled by the last READY) keeps the
+        // saved status instead of dropping to online; before the first READY there is nothing
+        // to restore (`Status::default` is Offline, which would hide the user).
+        presence: s.app.store.me.as_ref().map(|_| InitialPresence {
+            status: s.app.store.settings.status,
+            afk: false,
+            mobile: false,
+            custom_status: s.app.store.settings.custom_status.clone(),
+        }),
         compress: true,
     };
     spawn(async move {
@@ -690,6 +698,21 @@ fn connect(s: &mut State) {
             });
         }
     });
+}
+
+/// `GatewaySocket.resendPresence`: a Resume can leave the presence offline (`LocalPresence`),
+/// and a new session learns the saved status only from READY. Re-send the last published
+/// presence (or the saved one) so status, AFK and custom status survive a reconnect.
+fn publish_presence(s: &mut State) {
+    let Some(gw) = &s.app.gateway else { return };
+    if s.app.store.me.is_none() || reflux_net::readonly() {
+        return;
+    }
+    let (status, afk) = s.app.idle.sent.unwrap_or((s.app.store.settings.status, false));
+    let d = PresenceUpdate { status, afk, mobile: false, custom_status: Some(s.app.store.settings.custom_status.clone()) };
+    if gw.send(Command::Send(GatewayPayload::command(OpCode::PRESENCE_UPDATE, d))).is_ok() {
+        s.app.idle.sent = Some((status, afk));
+    }
 }
 
 fn on_gateway(s: &mut State, ev: GatewayEvent) {
@@ -748,6 +771,9 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                 crate::desktop::ready(s);
                 voice::load_rollout(s);
                 voice::watch_devices();
+            }
+            if matches!(&d, reflux_model::DispatchEvent::Ready(_) | reflux_model::DispatchEvent::Resumed(_)) {
+                publish_presence(s);
             }
             crate::desktop::on_dispatch(s, &d);
         }

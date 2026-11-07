@@ -98,7 +98,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
 | Pop-out windows | DONE | (voice pop-outs keyed by call/tile from a pool of 4 windows — Rune can't open windows after start, the oldest gives way; Quick CSS editor pop-out; Fluxer has no chat pop-outs) | PopoutWindow.tsx |
-| Error / rate-limit modals | DONE | DM-restricted/content-blocked texts are the modal body | GenericErrorModal.tsx |
+| Error / rate-limit modals | DONE | DM-restricted/content-blocked texts are the modal body; REST waits out 429s up to 10 s (route and global buckets from the body/`X-RateLimit-*` headers) and retries 502/504/507/522/523/524/598/599 and transport errors twice (sends only with a nonce), then maps what is left through Fluxer's modal texts | GenericErrorModal.tsx |
 
 ### channel/
 | Feature | Status | Missing | Official source |
@@ -137,7 +137,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
-| Offline queue | DONE | failed text sends stay (Retry/Delete), file sends go back to the composer; Fluxer has no queue-while-disconnected either | MessageQueue.tsx |
+| Offline queue | DONE | failed text sends stay (Retry/Delete), file sends go back to the composer; Fluxer has no queue-while-disconnected either; transient REST failures are retried (message sends only with their nonce, upload parts 4× with `Retry-After` honoured) before a send is marked failed | MessageQueue.tsx |
 | Action bar / context menu | DONE | right-clicking attachment or embed media adds copy (not video) / download / copy link / open link (`MediaMenuData`) | MessageContextMenu.tsx, MediaMenuData.tsx |
 | Forward | DONE | | ForwardModal.tsx |
 | Saved messages | DONE | (the inbox's Bookmarks tab, bookmark/unbookmark in the message menu) | SavedMessagesPage.tsx |

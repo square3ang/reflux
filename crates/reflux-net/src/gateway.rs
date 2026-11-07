@@ -22,8 +22,11 @@ use crate::zstd_stream::ZstdStream;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(20);
 const HEARTBEAT_ACK_TIMEOUT: Duration = Duration::from_secs(15);
-/// A session can be resumed this long after its socket closed.
-const RESUME_WINDOW: Duration = Duration::from_secs(60);
+/// RESUMED must arrive within this long.
+const RESUME_TIMEOUT: Duration = Duration::from_secs(15);
+/// A session can be resumed this long after its socket closed. The Gateway keeps it for 60 s;
+/// `GatewaySocket` tries for 180 s, and a late Resume is answered with opcode 9 (Identify).
+const RESUME_WINDOW: Duration = Duration::from_secs(180);
 const MIN_RECONNECT: Duration = Duration::from_secs(1);
 const MAX_RECONNECT: Duration = Duration::from_secs(10);
 const RECONNECT_SPREAD_MS: u64 = 2000;
@@ -81,10 +84,10 @@ pub struct Gateway {
 impl Gateway {
     /// Spawns the connection task on the current Tokio runtime.
     pub fn connect(config: GatewayConfig) -> crate::Result<Self> {
-        let url = gateway_url(&config.url, config.compress)?;
+        gateway_url(&config.url, config.compress)?;
         let (commands, cmd_rx) = mpsc::unbounded_channel();
         let (ev_tx, events) = mpsc::unbounded_channel();
-        let session = Session { config, url, id: None, seq: None, closed_at: None, attempts: 0, events: ev_tx };
+        let session = Session { config, id: None, seq: None, closed_at: None, attempts: 0, events: ev_tx };
         tokio::spawn(session.run(cmd_rx));
         Ok(Self { commands, events })
     }
@@ -116,7 +119,6 @@ enum Exit {
 
 struct Session {
     config: GatewayConfig,
-    url: String,
     id: Option<String>,
     /// Last Dispatch sequence received.
     seq: Option<u64>,
@@ -176,7 +178,15 @@ impl Session {
     }
 
     async fn connection(&mut self, cmds: &mut mpsc::UnboundedReceiver<Command>) -> Exit {
-        let request = match self.url.parse() {
+        // Rebuilt per socket: a compression decode failure turns compression off for good.
+        let url = match gateway_url(&self.config.url, self.config.compress) {
+            Ok(url) => url,
+            Err(e) => {
+                warn!(%e, "invalid gateway url");
+                return Exit::Fatal(CloseCode::DECODE_ERROR);
+            }
+        };
+        let request = match url.parse() {
             Ok(uri) => ClientRequestBuilder::new(uri).with_header("User-Agent", crate::USER_AGENT),
             Err(e) => {
                 warn!(%e, "invalid gateway url");
@@ -211,6 +221,7 @@ impl Session {
             ack_deadline: None,
             identify_at: None,
             hello_deadline: Some(Instant::now() + HELLO_TIMEOUT),
+            resume_deadline: None,
             resuming: false,
         };
         // A disabled `select!` branch still evaluates its future; this is never awaited.
@@ -240,6 +251,12 @@ impl Session {
                 _ = sleep_until(conn.hello_deadline.unwrap_or_else(never)), if conn.hello_deadline.is_some() => {
                     warn!("no HELLO from gateway");
                     conn.close(4000, "Hello timeout").await;
+                    Some(Exit::Reconnect { immediate: false })
+                }
+                _ = sleep_until(conn.resume_deadline.unwrap_or_else(never)), if conn.resume_deadline.is_some() => {
+                    warn!("gateway did not answer RESUME");
+                    conn.s.clear();
+                    conn.close(4000, "Resume timeout").await;
                     Some(Exit::Reconnect { immediate: false })
                 }
                 _ = sleep_until(conn.identify_at.unwrap_or_else(never)), if conn.identify_at.is_some() => {
@@ -295,6 +312,8 @@ struct Conn<'a> {
     ack_deadline: Option<Instant>,
     identify_at: Option<Instant>,
     hello_deadline: Option<Instant>,
+    /// Set while a RESUME waits for READY/RESUMED/INVALID_SESSION.
+    resume_deadline: Option<Instant>,
     resuming: bool,
 }
 
@@ -306,7 +325,7 @@ impl Conn<'_> {
                 Ok(b) => tungstenite::Message::Binary(b.into()),
                 Err(e) => {
                     warn!(%e, "gateway compression failed");
-                    return Some(Exit::Reconnect { immediate: true });
+                    return Some(self.without_compression());
                 }
             },
             None => tungstenite::Message::Text(String::from_utf8(json).expect("JSON is UTF-8").into()),
@@ -357,9 +376,17 @@ impl Conn<'_> {
             Err(e) => {
                 warn!(%e, "gateway zstd decode failed");
                 self.close(4002, "Decompression failed").await;
-                Some(Exit::Reconnect { immediate: false })
+                Some(self.without_compression())
             }
         }
+    }
+
+    /// `GatewaySocket.handleRecoverableCompressionDecodeError`: the codec is unusable, so the
+    /// next socket (same session) runs without compression instead of failing forever.
+    fn without_compression(&mut self) -> Exit {
+        warn!("gateway compression failed; reconnecting without compression");
+        self.s.config.compress = false;
+        Exit::Reconnect { immediate: true }
     }
 
     async fn on_json(&mut self, bytes: &[u8]) -> Option<Exit> {
@@ -393,16 +420,25 @@ impl Conn<'_> {
                 let (Some(id), Some(seq)) = (self.s.id.clone(), self.s.seq) else { return self.identify().await };
                 info!(seq, "gateway RESUME");
                 self.resuming = true;
+                self.resume_deadline = Some(Instant::now() + RESUME_TIMEOUT);
                 let d = Resume { token: self.s.config.token.clone(), session_id: id, seq };
                 return self.send(&GatewayPayload::command(OpCode::RESUME, d)).await;
             }
             OpCode::INVALID_SESSION => {
-                // Always `d: false`; the socket stays open for a new Identify.
+                // Always `d: false` (`handleInvalidSessionPayload`). A rejected Resume still has
+                // its socket: Identify on it after a short spread. Anything else got its session
+                // invalidated: reconnect with backoff instead of hammering Identify.
                 info!("gateway INVALID_SESSION");
                 self.s.clear();
-                self.resuming = false;
-                let spread = Duration::from_millis(fastrand::u64(..INVALID_SESSION_IDENTIFY_SPREAD_MS));
-                self.identify_at = Some(Instant::now() + spread);
+                self.resume_deadline = None;
+                if self.resuming {
+                    self.resuming = false;
+                    let spread = Duration::from_millis(fastrand::u64(..INVALID_SESSION_IDENTIFY_SPREAD_MS));
+                    self.identify_at = Some(Instant::now() + spread);
+                } else {
+                    self.close(4000, "Invalid session").await;
+                    return Some(Exit::Reconnect { immediate: false });
+                }
             }
             OpCode::RECONNECT => {
                 info!("gateway requested reconnect");
@@ -429,6 +465,7 @@ impl Conn<'_> {
             }
             info!(event = %t, "gateway connected");
             self.resuming = false;
+            self.resume_deadline = None;
             self.s.attempts = 0;
             self.s.emit(GatewayEvent::State(ConnectionState::Connected));
         }
@@ -514,24 +551,31 @@ mod tests {
         assert!(heartbeat_delay(Duration::from_millis(100)) >= Duration::from_secs(1));
     }
 
-    /// Mock Gateway: one zstd stream per socket in each direction.
+    /// Mock Gateway: one zstd stream per socket in each direction, or plain JSON text.
     struct Server {
         ws: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-        z: ZstdStream,
+        z: Option<ZstdStream>,
     }
 
     impl Server {
         async fn accept(l: &TcpListener) -> Self {
+            Self::accept_with(l, true).await
+        }
+        async fn accept_with(l: &TcpListener, compress: bool) -> Self {
             let (tcp, _) = l.accept().await.unwrap();
-            Self { ws: tokio_tungstenite::accept_async(tcp).await.unwrap(), z: ZstdStream::new().unwrap() }
+            Self { ws: tokio_tungstenite::accept_async(tcp).await.unwrap(), z: compress.then(|| ZstdStream::new().unwrap()) }
         }
         async fn send(&mut self, v: Value) {
-            let b = self.z.compress(v.to_string().as_bytes()).unwrap();
-            self.ws.send(Ws::Binary(b.into())).await.unwrap();
+            let msg = match &mut self.z {
+                Some(z) => Ws::Binary(z.compress(v.to_string().as_bytes()).unwrap().into()),
+                None => Ws::Text(v.to_string().into()),
+            };
+            self.ws.send(msg).await.unwrap();
         }
         async fn recv(&mut self) -> Value {
             match self.ws.next().await.unwrap().unwrap() {
-                Ws::Binary(b) => self.z.decompress(&b).unwrap().remove(0),
+                Ws::Binary(b) => self.z.as_mut().expect("compressed frame on a plain socket").decompress(&b).unwrap().remove(0),
+                Ws::Text(t) => serde_json::from_str(&t).unwrap(),
                 other => panic!("unexpected {other:?}"),
             }
         }
@@ -541,6 +585,18 @@ mod tests {
         loop {
             if let GatewayEvent::State(s) = gw.events.recv().await.unwrap() {
                 return s;
+            }
+        }
+    }
+
+    /// The next close frame, skipping heartbeats still in flight (`ack_deadline` is 15 s, the
+    /// test interval 1 s).
+    async fn close_code(srv: &mut Server) -> u16 {
+        loop {
+            match srv.ws.next().await {
+                Some(Ok(Ws::Close(Some(f)))) => return u16::from(f.code),
+                Some(Ok(Ws::Binary(_) | Ws::Text(_) | Ws::Ping(_) | Ws::Pong(_))) => {}
+                other => panic!("expected a close frame, got {other:?}"),
             }
         }
     }
@@ -654,5 +710,168 @@ mod tests {
         let mut srv = Server::accept(&l).await;
         srv.send(hello).await;
         assert_eq!(srv.recv().await["op"], 2, "a reset session identifies again");
+    }
+
+    fn test_config(l: &TcpListener, compress: bool) -> GatewayConfig {
+        GatewayConfig {
+            url: format!("ws://{}", l.local_addr().unwrap()),
+            token: "tok".into(),
+            properties: Default::default(),
+            flags: SessionFlags::empty(),
+            presence: None,
+            compress,
+        }
+    }
+
+    /// Paused-clock helper: advance until the Gateway reports `want`, returning what it saw.
+    /// (Without `start_paused` the clock never advances on its own, so this is deterministic.)
+    async fn state_while_paused(gw: &mut Gateway, want: impl Fn(&ConnectionState) -> bool) -> ConnectionState {
+        for _ in 0..80 {
+            while let Ok(ev) = gw.events.try_recv() {
+                if let GatewayEvent::State(s) = ev
+                    && want(&s)
+                {
+                    return s;
+                }
+            }
+            tokio::time::advance(Duration::from_millis(500)).await;
+            tokio::task::yield_now().await;
+        }
+        panic!("gateway never reached the expected state");
+    }
+
+    #[tokio::test]
+    async fn resume_without_an_answer_times_out_and_identifies() {
+        tokio::time::pause();
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(test_config(&l, true)).unwrap();
+        let hello = serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}});
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 1, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connected).await;
+
+        // The socket dies; the next connection resumes, but the server never answers.
+        drop(srv);
+        state_while_paused(&mut gw, |s| matches!(s, ConnectionState::Reconnecting(_))).await;
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connecting).await;
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await, serde_json::json!({"op": 6, "d": {"token": "tok", "session_id": "abc", "seq": 1}}));
+
+        state_while_paused(&mut gw, |s| matches!(s, ConnectionState::Reconnecting(_))).await;
+        assert_eq!(
+            match srv.ws.next().await {
+                Some(Ok(Ws::Close(Some(f)))) => u16::from(f.code),
+                other => panic!("expected a 4000 close, got {other:?}"),
+            },
+            4000
+        );
+        // The session was cleared, so the next socket identifies again.
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connecting).await;
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello).await;
+        assert_eq!(srv.recv().await["op"], 2);
+    }
+
+    #[tokio::test]
+    async fn missing_heartbeat_ack_reconnects() {
+        tokio::time::pause();
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(test_config(&l, true)).unwrap();
+        let hello = serde_json::json!({"op": 10, "d": {"heartbeat_interval": 1000}});
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 2, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connected).await;
+
+        // The scheduled heartbeat goes out; no ACK follows, so the socket is declared dead.
+        // Its timer was registered when HELLO arrived, so advancing the paused clock fires it.
+        tokio::time::advance(Duration::from_millis(1000)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(srv.recv().await, serde_json::json!({"op": 1, "d": 2}));
+        state_while_paused(&mut gw, |s| matches!(s, ConnectionState::Reconnecting(_))).await;
+        assert_eq!(close_code(&mut srv).await, 4000);
+        // The session was still resumable, so the reconnect resumes it.
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connecting).await;
+        let mut srv = Server::accept(&l).await;
+        srv.send(serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}})).await;
+        assert_eq!(srv.recv().await["op"], 6);
+    }
+
+    #[tokio::test]
+    async fn compression_failure_falls_back_to_plain_json() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(test_config(&l, true)).unwrap();
+        let mut srv = Server::accept(&l).await;
+        assert_eq!(next_state(&mut gw).await, ConnectionState::Connecting);
+        srv.send(serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}})).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 4, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        assert_eq!(next_state(&mut gw).await, ConnectionState::Connected);
+        while !matches!(gw.events.recv().await, Some(GatewayEvent::Dispatch(DispatchEvent::Ready(_)))) {}
+
+        // A binary frame that isn't a zstd stream: close 4002, then reconnect without compression.
+        srv.ws.send(Ws::Binary(b"not zstd".to_vec().into())).await.unwrap();
+        assert_eq!(
+            match srv.ws.next().await {
+                Some(Ok(Ws::Close(Some(f)))) => u16::from(f.code),
+                other => panic!("expected a 4002 close, got {other:?}"),
+            },
+            4002
+        );
+        let mut srv = Server::accept_with(&l, false).await;
+        srv.send(serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}})).await;
+        assert_eq!(srv.recv().await, serde_json::json!({"op": 6, "d": {"token": "tok", "session_id": "abc", "seq": 4}}));
+        srv.send(serde_json::json!({"op": 0, "s": 5, "t": "RESUMED", "d": {}})).await;
+        loop {
+            if let GatewayEvent::State(ConnectionState::Connected) = gw.events.recv().await.unwrap() {
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_invalid_session_without_a_resume_reconnects_with_backoff() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(test_config(&l, true)).unwrap();
+        let hello = serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}});
+        let mut srv = Server::accept(&l).await;
+        assert_eq!(next_state(&mut gw).await, ConnectionState::Connecting);
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 1, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        assert_eq!(next_state(&mut gw).await, ConnectionState::Connected);
+        while !matches!(gw.events.recv().await, Some(GatewayEvent::Dispatch(DispatchEvent::Ready(_)))) {}
+
+        srv.send(serde_json::json!({"op": 9, "d": false})).await;
+        assert_eq!(close_code(&mut srv).await, 4000);
+        assert!(matches!(next_state(&mut gw).await, ConnectionState::Reconnecting(_)), "backoff, not another Identify on this socket");
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello).await;
+        assert_eq!(srv.recv().await["op"], 2, "the session is gone: identify again");
+    }
+
+    #[tokio::test]
+    async fn a_session_older_than_the_resume_window_identifies() {
+        tokio::time::pause();
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(test_config(&l, true)).unwrap();
+        let hello = serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}});
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 1, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connected).await;
+        drop(srv);
+        state_while_paused(&mut gw, |s| matches!(s, ConnectionState::Reconnecting(_))).await;
+        // Stay offline past the window, then reconnect.
+        tokio::time::advance(RESUME_WINDOW + Duration::from_secs(1)).await;
+        state_while_paused(&mut gw, |s| *s == ConnectionState::Connecting).await;
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello).await;
+        assert_eq!(srv.recv().await["op"], 2, "no RESUME after the window");
     }
 }

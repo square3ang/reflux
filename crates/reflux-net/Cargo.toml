@@ -24,6 +24,8 @@ base64 = "0.22"
 fastrand = "2"
 
 [dev-dependencies]
+# `tokio::time::pause`/`advance` in the gateway timing tests.
+tokio = { workspace = true, features = ["test-util"] }
 # examples/live_probe.rs
 reflux-store.workspace = true
 keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "tokio", "crypto-rust"] }

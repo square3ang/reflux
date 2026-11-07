@@ -9,6 +9,8 @@ use zstd::stream::raw::{Decoder, Encoder, InBuffer, Operation, OutBuffer};
 
 /// Compression level of the reference client.
 const LEVEL: i32 = 3;
+/// Cap on unterminated JSON held between frames (Fluxer's `MAX_DEFERRED_GATEWAY_EMIT_BYTES`).
+const MAX_PENDING: usize = 16 * 1024 * 1024;
 
 pub(crate) struct ZstdStream {
     dec: Decoder<'static>,
@@ -28,9 +30,12 @@ impl ZstdStream {
         let mut out = Vec::new();
         let mut input = InBuffer::around(msg);
         while input.pos() < msg.len() {
-            let mut o = OutBuffer::around(&mut self.buf[..]);
+            let (before, mut o) = (input.pos(), OutBuffer::around(&mut self.buf[..]));
             self.enc.run(&mut input, &mut o)?;
             out.extend_from_slice(o.as_slice());
+            if input.pos() == before && o.pos() == 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "zstd encoder made no progress"));
+            }
         }
         loop {
             let mut o = OutBuffer::around(&mut self.buf[..]);
@@ -46,12 +51,18 @@ impl ZstdStream {
     pub fn decompress(&mut self, frame: &[u8]) -> io::Result<Vec<Value>> {
         let mut input = InBuffer::around(frame);
         loop {
-            let mut o = OutBuffer::around(&mut self.buf[..]);
+            let (before, mut o) = (input.pos(), OutBuffer::around(&mut self.buf[..]));
             self.dec.run(&mut input, &mut o)?;
             let (n, full) = (o.pos(), o.pos() == o.capacity());
             self.pending.extend_from_slice(&self.buf[..n]);
+            if self.pending.len() > MAX_PENDING {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "zstd stream exceeds the pending buffer"));
+            }
             if input.pos() == frame.len() && !full {
                 break;
+            }
+            if input.pos() == before && n == 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "zstd decoder made no progress"));
             }
         }
         let mut values = Vec::new();
@@ -88,6 +99,15 @@ mod tests {
             assert_eq!(got, want, "cut at {cut}");
             assert!(client.pending.is_empty());
         }
+    }
+
+    #[test]
+    fn garbage_after_a_value_is_an_error_not_a_stall() {
+        let mut server = ZstdStream::new().unwrap();
+        let mut wire = server.compress(br#"{"op":11}"#).unwrap();
+        wire.extend_from_slice(b"not zstd");
+        let mut client = ZstdStream::new().unwrap();
+        assert!(client.decompress(&wire).is_err());
     }
 
     #[test]

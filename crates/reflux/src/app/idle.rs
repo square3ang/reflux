@@ -18,8 +18,8 @@ pub(crate) const IDLE: Duration = Duration::from_secs(10 * 60);
 pub struct Idle {
     /// When the session became ready (stands in for input before the first one).
     since: Option<Instant>,
-    /// The (status, afk) last published this session.
-    sent: Option<(Status, bool)>,
+    /// The (status, afk) last published this session; `app::publish_presence` also updates it.
+    pub(super) sent: Option<(Status, bool)>,
 }
 
 /// What to publish for the saved status after `inactive` without input (`LocalPresence.updatePresence`).
