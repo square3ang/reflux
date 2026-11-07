@@ -427,6 +427,13 @@ pub(crate) fn reopen(s: &mut State) {
 
 /// Every frame: dock badge, tray icon and menu, and the voice sounds that follow state changes.
 pub fn tick(s: &mut State, tx: &mut rune::Tx) {
+    // `SkeletonLayoutMemory`: save the shapes this account is drawing (only when they change).
+    crate::shell::skeleton_memory::capture(
+        &s.app.store,
+        s.app.saved.current.as_ref().map(|a| a.user_id.as_str()),
+        s.app.shell.guild,
+        s.app.shell.channel,
+    );
     window::tick(s, tx);
     streamer::tick(s, tx);
     updater::tick(s);

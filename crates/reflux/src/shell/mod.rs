@@ -40,6 +40,7 @@ pub(crate) mod profile;
 pub mod search;
 pub mod search_providers;
 pub mod skeleton;
+pub mod skeleton_memory;
 mod search_query;
 mod sidebar;
 pub mod status;
@@ -728,7 +729,8 @@ pub const BODY_KEY: &str = "shell-body";
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     if skeleton::forced(&st.prefs.dev) {
-        return skeleton::screen(p);
+        let key = st.account.current.as_ref().map(|a| a.user_id.as_str());
+        return skeleton::screen(p, skeleton_memory::get(key).as_ref());
     }
     // `WatchStreamOverlay` in full-window mode; its menus still float over it.
     if st.voice.stream_fullscreen

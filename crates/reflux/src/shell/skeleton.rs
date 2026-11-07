@@ -194,14 +194,17 @@ pub fn forced(o: &super::devtools::Options) -> bool {
 
 /// The booting screen: only the skeleton (Fluxer doesn't mount the app behind it), which
 /// fades out over the app when it goes (`.containerExiting`, `useLoadingSkeletonRetention`).
-pub fn screen(p: &Palette) -> El {
-    rune_kit::root(el().w_full().h_full().fill(p.background_tertiary), vec![app(p).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).transition(rune::Transition::asymmetric(rune::Transition::none(), rune::Transition::opacity()))])
+pub fn screen(p: &Palette, layout: Option<&super::skeleton_memory::Layout>) -> El {
+    rune_kit::root(el().w_full().h_full().fill(p.background_tertiary), vec![app(p, layout).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).transition(rune::Transition::asymmetric(rune::Transition::none(), rune::Transition::opacity()))])
 }
 
 /// `AppSkeleton`: the rail, a channel sidebar, the chat column and the user area, shown
 /// until the first READY.
-// shortcut: fixed rail / sidebar / member shapes; no `SkeletonLayoutMemory` of the last layout. Port it if the jump on READY matters.
-pub fn app(p: &Palette) -> El {
+// `SkeletonLayoutMemory`: last launch's rail / channel / member shapes (`skeleton_memory`),
+// else a seeded stand-in.
+pub fn app(p: &Palette, layout: Option<&super::skeleton_memory::Layout>) -> El {
+    use super::skeleton_memory::{Layout, Row as MemoryRow};
+    let rail_rows = layout.map_or(7, |l| l.rail.clamp(1, 24));
     let rail = col()
         .w(dim::LAYOUT_GUILD_LIST_WIDTH)
         .h_full()
@@ -210,16 +213,27 @@ pub fn app(p: &Palette) -> El {
         .items_center()
         .child(block(el().size(dim::GUILD_LIST_ITEM_BOX_SIZE, dim::GUILD_LIST_ITEM_BOX_SIZE), 16.0, Emphasis::Strong, p))
         .child(block(el().w(32.0).h(2.0), 1.0, Emphasis::Muted, p))
-        .children((0..7).map(|_| circle(dim::GUILD_LIST_ITEM_BOX_SIZE, p)));
+        .children((0..rail_rows).map(|_| circle(dim::GUILD_LIST_ITEM_BOX_SIZE, p)));
     let mut r = Rng::from_key("app-skeleton");
-    let channels = (0..14).map(|i| {
-        let w = 40.0 + r.next() as f32 * 40.0;
-        if i % 6 == 0 {
-            row().w_full().h(28.0).pt(12.0).px(8.0).center_y().child(line(w * 0.6, 10.0, Emphasis::Muted, p))
-        } else {
-            row().w_full().h(34.0).px(8.0).gap(8.0).center_y().child(block(el().size(20.0, 20.0), 4.0, Emphasis::Muted, p)).child(line(w, 12.0, Emphasis::Default, p))
-        }
+    let default_rows: Vec<MemoryRow> = (0..14)
+        .map(|i| {
+            let w = 40.0 + r.next() as f32 * 40.0;
+            if i % 6 == 0 { MemoryRow::Category { width: w * 0.6 } } else { MemoryRow::Channel { width: w } }
+        })
+        .collect();
+    let rows: &[MemoryRow] = layout.filter(|l| !l.rows.is_empty()).map_or(&default_rows, |l| &l.rows);
+    let channels = rows.iter().map(|r| match r {
+        MemoryRow::Category { width } => row().w_full().h(28.0).pt(12.0).px(8.0).center_y().child(line(*width, 10.0, Emphasis::Muted, p)),
+        MemoryRow::Channel { width } => row()
+            .w_full()
+            .h(34.0)
+            .px(8.0)
+            .gap(8.0)
+            .center_y()
+            .child(block(el().size(20.0, 20.0), 4.0, Emphasis::Muted, p))
+            .child(line(*width, 12.0, Emphasis::Default, p)),
     });
+    let Layout { member_groups, .. } = layout.cloned().unwrap_or_default();
     let user_area = row()
         .w_full()
         .h(dim::LAYOUT_USER_AREA_HEIGHT)
@@ -248,7 +262,22 @@ pub fn app(p: &Palette) -> El {
         .child(el().w_full().h(1.0).fill(p.skeleton_chrome_border_color))
         .child(col().w_full().grow(1.0).min_h(0.0).justify_end().clip_rounded(0.0).child(messages(Snowflake(0), false, p)))
         .child(composer);
-    let members = col().w(dim::LAYOUT_MEMBER_LIST_WIDTH).h_full().fill(p.background_secondary).clip_rounded(0.0).child(crate::nav::skeleton::member_list(p));
+    let member_body = if member_groups.is_empty() {
+        crate::nav::skeleton::member_list(p)
+    } else {
+        let mut out = col().w_full();
+        let mut i = 0;
+        for (g, n) in member_groups.iter().take(8).enumerate() {
+            let heading = [80.0, 100.0, 72.0, 88.0, 64.0, 92.0, 76.0, 84.0][g];
+            out = out.child(row().w_full().h(32.0).pt(12.0).px(dim::MEMBER_LIST_ITEM_PADDING_INLINE).child(line(heading, 10.0, Emphasis::Muted, p)));
+            for _ in 0..(*n).min(50) {
+                out = out.child(crate::nav::skeleton::member_row(i, p));
+                i += 1;
+            }
+        }
+        out
+    };
+    let members = col().w(dim::LAYOUT_MEMBER_LIST_WIDTH).h_full().fill(p.background_secondary).clip_rounded(0.0).child(member_body);
     row().w_full().h_full().fill(p.background_tertiary).key("app-skeleton").role("status").label(crate::i18n::t("Loading")).child(rail).child(sidebar).child(chat).child(members)
 }
 
