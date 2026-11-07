@@ -346,14 +346,17 @@ mod imp {
             path
         }
 
+        /// Frames seen and the last one's width, height and RGBA.
+        type Frames = Arc<Mutex<(u64, u32, u32, Vec<u8>)>>;
+
         struct Run {
             player: VideoPlayer,
-            frames: Arc<Mutex<(u64, u32, u32, Vec<u8>)>>,
+            frames: Frames,
             audio: Arc<AtomicU64>,
         }
 
         fn open(path: &std::path::Path) -> Run {
-            let frames = Arc::new(Mutex::new((0, 0, 0, Vec::new())));
+            let frames = Frames::default();
             let f = frames.clone();
             let player = VideoPlayer::new(&format!("file://{}", path.display()), move |w, h, rgba| {
                 let mut f = f.lock().unwrap();
