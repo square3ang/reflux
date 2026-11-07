@@ -396,3 +396,20 @@ fn forum_new_posts_follow_the_forum_level() {
     apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "channel_overrides": {"130": {"message_notifications": 2}}}));
     assert!(!s.should_notify(&m(131)), "a forum set to nothing stays quiet");
 }
+
+#[test]
+fn mention_order_follows_arrival_and_reads() {
+    let mut s = store();
+    let mention = |id: u64, channel: u64| {
+        let mut v = msg(id, channel, 6);
+        v["mentions"] = json!([{"id": ME.to_string(), "username": "me"}]);
+        v
+    };
+    apply(&mut s, "MESSAGE_CREATE", mention(2000, 102));
+    apply(&mut s, "MESSAGE_CREATE", mention(2001, 101));
+    apply(&mut s, "MESSAGE_CREATE", mention(2002, 102));
+    assert_eq!(s.mention_order, [S(102), S(101)], "a second mention doesn't move the channel");
+    apply(&mut s, "MESSAGE_ACK", json!({"channel_id": "102", "message_id": "2002", "mention_count": 0}));
+    apply(&mut s, "MESSAGE_CREATE", mention(2003, 102));
+    assert_eq!(s.mention_order, [S(101), S(102)], "read, then mentioned again: it moves to the end");
+}

@@ -100,6 +100,8 @@ pub struct Store {
     pub presences: HashMap<Snowflake, Presence>,
     pub sessions: Vec<SessionPresence>,
     pub read_states: HashMap<Snowflake, ReadState>,
+    /// Channels with mentions in the order they got them (fluxer `ReadStates.mentionChannels`).
+    pub mention_order: Vec<Snowflake>,
     pub settings: UserSettings,
     /// Keyed by guild ID; `None` = DM settings.
     pub guild_settings: HashMap<Option<Snowflake>, UserGuildSettings>,
@@ -142,6 +144,7 @@ impl Store {
                 r.presences.iter().for_each(|p| self.presence(p));
                 self.sessions = r.sessions.clone();
                 self.read_states = r.read_states.iter().map(|s| (s.id, s.clone())).collect();
+                self.mention_order = r.read_states.iter().filter(|s| s.mention_count > 0).map(|s| s.id).collect();
                 self.settings = r.user_settings.clone().unwrap_or_default();
                 for s in &r.user_guild_settings {
                     self.guild_settings.insert(s.guild_id, s.clone());
@@ -327,6 +330,7 @@ impl Store {
                     rs.last_message_id = Some(a.message_id);
                     rs.mention_count = a.mention_count;
                 }
+                self.track_mentions(a.channel_id);
             }
             E::MessageReactionAdd(r) => self.reaction(r, true),
             E::MessageReactionRemove(r) => self.reaction(r, false),
@@ -902,6 +906,7 @@ impl Store {
             let rs = self.read_state(m.channel_id);
             rs.last_message_id = rs.last_message_id.max(Some(m.id));
             rs.mention_count = 0;
+            self.track_mentions(m.channel_id);
             return;
         }
         if self.is_blocked(m.author.id) || covered {
@@ -910,6 +915,19 @@ impl Store {
         let acked = self.read_states.get(&m.channel_id).and_then(|r| r.last_message_id).is_some_and(|a| a >= m.id);
         if !acked && self.mentions_me(m) {
             self.read_state(m.channel_id).mention_count += 1;
+            self.track_mentions(m.channel_id);
+        }
+    }
+
+    /// Keeps [`Self::mention_order`]: a channel joins at the end when it gets mentions and leaves
+    /// when they're read.
+    fn track_mentions(&mut self, channel: Snowflake) {
+        let has = self.read_states.get(&channel).is_some_and(|r| r.mention_count > 0);
+        let at = self.mention_order.iter().position(|&c| c == channel);
+        match (has, at) {
+            (true, None) => self.mention_order.push(channel),
+            (false, Some(i)) => drop(self.mention_order.remove(i)),
+            _ => {}
         }
     }
 

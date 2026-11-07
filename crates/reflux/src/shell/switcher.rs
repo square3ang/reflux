@@ -66,7 +66,6 @@ const HISTORY: usize = 8;
 /// `generateDefaultResults`: up to 7 previous channels (3 when other sections follow), then
 /// channels with mentions, then the open community's unread channels; the first 3 previous
 /// ones and the open channel aren't repeated.
-// shortcut: mentions are ordered by newest message, not by when the mention arrived.
 fn default_results(store: &Store, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>) -> Vec<Hit> {
     let me = store.my_id();
     let hit = |c: &reflux_model::Channel, section: &'static str| {
@@ -93,9 +92,9 @@ fn default_results(store: &Store, recent: &[Snowflake], current: Option<Snowflak
     history.truncate(HISTORY - 1);
     let previous = collect(history, &mut Vec::new(), "Previous channels");
     let mut seen: Vec<Snowflake> = previous.iter().take(3).filter_map(|h| if let Target::Channel(_, c, _) = h.target { Some(c) } else { None }).chain(current).collect();
-    let mut mentioned: Vec<&reflux_model::Channel> = store.read_states.keys().filter(|&&c| store.mention_count(c) > 0).filter_map(|c| store.channels.get(c)).collect();
-    mentioned.sort_by_key(|c| std::cmp::Reverse(c.last_message_id));
-    let mut sections = collect(mentioned.iter().map(|c| c.id).collect(), &mut seen, "Mentions");
+    // Newest mention first (`[...mentionChannelIds].reverse()`).
+    let mentioned = store.mention_order.iter().rev().copied().filter(|&c| store.mention_count(c) > 0).collect();
+    let mut sections = collect(mentioned, &mut seen, "Mentions");
     if let Some(g) = guild {
         // `isUnreadInCurrentCommunity`: text and announcement channels, not muted, unread, in a
         // community whose (locked) unread badge level is all messages.
