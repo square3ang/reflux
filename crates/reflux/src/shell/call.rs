@@ -351,6 +351,59 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     Some(strip)
 }
 
+/// `ChannelCompactCallSurface`: the call above a voice channel's text chat — the channel's
+/// participants and a Join button, or, once joined, the tiles with the call controls.
+pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    if c.kind != ChannelType::GUILD_VOICE {
+        return None;
+    }
+    let guild = c.guild_id?;
+    let people = participants(store, Some(guild), c.id);
+    let joined = st.voice.channel == Some((Some(guild), c.id));
+    let ch = c.id;
+    let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
+    if joined {
+        let mut row_tiles = row().w_full().h(112.0).gap(8.0).justify_center();
+        for (u, vs) in &people {
+            row_tiles = row_tiles.child(el().w(200.0).h(112.0).child(tile(store, st, Some(guild), Tile { user: *u, screen: false }, vs, false, p, acc)));
+        }
+        if people.is_empty() {
+            row_tiles = row_tiles.child(
+                row().grow(1.0).center().child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55))),
+            );
+        }
+        let expand = row()
+            .size(44.0, 44.0)
+            .center()
+            .radius(16.0)
+            .fill(rgba(255, 255, 255, 0.05))
+            .hover(rgba(255, 255, 255, 0.12))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(t("Expand call view"))
+            .child(icon(&icons::ARROWS_OUT_SIMPLE_FILL, 22.0).color(rgba(255, 255, 255, 0.9)))
+            .on_press(move |s: &mut S| acc(s).voice.call_view = true);
+        strip = strip.child(row_tiles).child(row().gap(8.0).center_y().child(control_bar(store, st, p, acc)).child(expand));
+    } else {
+        let mut faces = row().gap(6.0).center_y();
+        for (u, _) in people.iter().take(8) {
+            faces = faces.child(avatar(store, st, *u, 32.0, None, surface_3(), p));
+        }
+        let mut left = row().gap(12.0).center_y().child(faces);
+        if !people.is_empty() {
+            left = left.child(text(format!("{} in voice", people.len())).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)));
+        }
+        let join = Button::new(t("Join voice channel"))
+            .icon(&icons::SPEAKER_HIGH_FILL)
+            .key("voice-channel-join")
+            .on_press(move |s: &mut S| acc(s).join_voice(Some(guild), ch))
+            .el(p);
+        strip = strip
+            .child(el().w_full().h(112.0).px(24.0).child(row().w_full().h_full().justify_center().gap(24.0).children([left, el().grow(1.0), join])));
+    }
+    Some(strip)
+}
+
 /// `CallButtons`: start a voice / video call from the DM header (join it when one runs).
 pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, video: bool, el_: El, acc: ShellAccess<S>) -> El {
     let ch = c.id;

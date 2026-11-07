@@ -54,7 +54,10 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .children(match super::attachments::mature_gate(store, st, c, p, acc) {
             Some(gate) => vec![gate],
             None => {
-                let mut v = vec![messages(store, st, c, p, acc, layer, false)];
+                // A voice channel's text chat sits under its compact call surface
+                // (`ChannelCompactCallSurface`).
+                let mut v: Vec<El> = super::call::guild_strip(store, st, c, p, acc).into_iter().collect();
+                v.push(messages(store, st, c, p, acc, layer, false));
                 v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).or_else(|| super::barrier::follow(store, c, p, acc)).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main))] });
                 v
             }

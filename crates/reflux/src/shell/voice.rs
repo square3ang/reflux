@@ -517,11 +517,13 @@ pub enum Op {
 }
 
 impl ShellState {
-    /// Clicking a voice channel: join it (switching from another one).
+    /// Clicking a voice channel: open its text chat and join it (switching from another one),
+    /// like `ChannelItem.handleSelect` (`startVoiceConnection` selects the channel too).
     pub fn join_voice(&mut self, guild: Option<Snowflake>, channel: Snowflake) {
+        if self.channel != Some(channel) {
+            self.select_channel(channel);
+        }
         let v = &mut self.voice;
-        // Clicking the channel we're in opens its call view (`VoiceCallView`).
-        v.call_view = guild.is_some();
         if v.channel == Some((guild, channel)) {
             return;
         }
@@ -900,7 +902,8 @@ mod tests {
         let mut st = ShellState::default();
         st.join_voice(Some(Snowflake(1)), Snowflake(2));
         st.join_voice(Some(Snowflake(1)), Snowflake(2));
-        assert_eq!(st.intents, [Intent::JoinVoice { guild: Some(Snowflake(1)), channel: Snowflake(2) }]);
+        // Clicking a voice channel also opens its text chat (`selectChannel`).
+        assert_eq!(st.intents, [Intent::SelectChannel(Snowflake(2)), Intent::JoinVoice { guild: Some(Snowflake(1)), channel: Snowflake(2) }]);
         st.leave_voice();
         assert_eq!(st.intents.last(), Some(&Intent::LeaveVoice));
     }
