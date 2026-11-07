@@ -105,9 +105,12 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                 .radius(40.0)
                 .fill(p.background_tertiary)
                 .border(1.0, over(p.background_modifier_accent, p.background_tertiary));
-            face = if icon_set {
-                // shortcut: a picked icon shows as a picture glyph, not a preview of the image.
-                face.fill(p.brand_primary).child(icon(&icons::IMAGE_FILL, 32.0).color(p.brand_primary_fill))
+            let picked = st.form.data.get("icon").and_then(Value::as_str).and_then(|u| crate::settings::profile::picked_px(st, u));
+            face = if let Some(px) = picked {
+                // The picked image, cropped to the circle.
+                face.clip_rounded(40.0).child(rune::el().size(80.0, 80.0).pixels_fit(&px, rune::SurfaceFit::Fill))
+            } else if icon_set {
+                face
             } else if !name.trim().is_empty() {
                 let a = crate::shell::acronym(&name);
                 face.child(text(a).font(font(24.0, 500.0)).color(p.text_primary))
