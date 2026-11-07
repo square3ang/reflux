@@ -618,6 +618,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         changed = true;
     }
     changed |= media_poll(store, st, tx);
+    changed |= voice::watch_poll(store, st, tx);
     typing::tick(store, st, tx);
     // A jump to a loaded message only scrolls; the runtime loads the others first.
     st.intents.retain(|i| match i {
@@ -726,11 +727,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     if skeleton::forced(&st.prefs.dev) {
         return skeleton::screen(p);
     }
-    // `WatchStreamOverlay` in full-window mode.
+    // `WatchStreamOverlay` in full-window mode; its menus still float over it.
     if st.voice.stream_fullscreen
         && let Some(v) = voice::viewer(store, st, p, acc)
     {
-        return rune_kit::root(v, Vec::new());
+        let mut layer = Vec::new();
+        voice::layer(store, st, p, acc, &mut layer);
+        return rune_kit::root(v, layer);
     }
     let divider = over(p.user_area_divider_color, p.background_secondary);
     // Personal notes: a channel whose ID is the user's own, which READY may leave out.
@@ -816,6 +819,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(voice_join::modal(store, st, p, acc));
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);
+    voice::layer(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
     voice_message::volume_layer(st, p, acc, &mut layer);
     layer.extend(call::incoming(store, st, p, acc));

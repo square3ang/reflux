@@ -295,9 +295,10 @@ impl Call {
     /// `pick` is a source from [`screen_sources`]; `None` = the system picker / main screen.
     pub async fn start_screen(&self, quality: ScreenQuality, pick: Option<ScreenSource>) -> Result<ScreenShare, Error> {
         let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
         let slot: Arc<Mutex<Option<NativeVideoSource>>> = Arc::default();
         let (first, size) = tokio::sync::oneshot::channel();
-        spawn_capture(stop.clone(), slot.clone(), first, quality, pick);
+        spawn_capture(stop.clone(), ended.clone(), slot.clone(), first, quality, pick);
         let Ok((width, height)) = size.await else {
             return Err(Error::Capture);
         };
@@ -311,7 +312,7 @@ impl Call {
             }
         };
         *slot.lock().unwrap() = Some(source);
-        Ok(ScreenShare { sid, stop })
+        Ok(ScreenShare { sid, stop, ended })
     }
 
     /// Publishes a prepared screen source; [`start_screen`] and the live test share this so both
@@ -636,6 +637,14 @@ impl ScreenQuality {
 pub struct ScreenShare {
     sid: TrackSid,
     stop: Arc<AtomicBool>,
+    /// The capture ended on its own (the source went away), not through [`Call::stop_screen`].
+    ended: Arc<AtomicBool>,
+}
+
+impl ScreenShare {
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for ScreenShare {
@@ -646,7 +655,7 @@ impl Drop for ScreenShare {
 
 /// Captures on its own thread (the capturer is not `Send`) until `stop`; reports the first
 /// frame's size through `first`, or drops it when capture fails or the picker is cancelled.
-fn spawn_capture(stop: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource>>>, first: tokio::sync::oneshot::Sender<(u32, u32)>, quality: ScreenQuality, pick: Option<ScreenSource>) {
+fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource>>>, first: tokio::sync::oneshot::Sender<(u32, u32)>, quality: ScreenQuality, pick: Option<ScreenSource>) {
     std::thread::spawn(move || {
         // Generic = the portal picker (screens and windows) on Wayland/X11 via PipeWire.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -656,7 +665,12 @@ fn spawn_capture(stop: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource
         let kind = pick.as_ref().map_or(default, |p| p.kind());
         let mut options = DesktopCapturerOptions::new(kind);
         options.set_include_cursor(true);
-        let Some(mut capturer) = DesktopCapturer::new(options) else { return };
+        let Some(mut capturer) = DesktopCapturer::new(options) else {
+            if !stop.load(Ordering::Relaxed) {
+                ended.store(true, Ordering::Relaxed);
+            }
+            return;
+        };
         let first = Mutex::new(Some(first));
         let failed = Arc::new(AtomicBool::new(false));
         let mut out = VideoFrame { rotation: VideoRotation::VideoRotation0, timestamp_us: 0, frame_metadata: None, buffer: I420Buffer::new(1, 1) };
@@ -702,6 +716,9 @@ fn spawn_capture(stop: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource
         while !stop.load(Ordering::Relaxed) && !failed.load(Ordering::Relaxed) {
             capturer.capture_frame();
             std::thread::sleep(Duration::from_millis(1000 / quality.fps.clamp(1, 60) as u64));
+        }
+        if !stop.load(Ordering::Relaxed) {
+            ended.store(true, Ordering::Relaxed);
         }
     });
 }

@@ -78,6 +78,7 @@ Rules:
 | A live quality change and "Change stream" stop the share, then publish a new track from the saved source | the Rust SDK doesn't expose a published sender's encoding parameters, and native capture has no in-place source switch | `app/voice.rs` `toggle_screen`, `Op::Settings`/`Op::ChangeScreen` | the SDK exposes `RtpSender` parameters and source switching |
 | "No hardware encoder was found" never shows on the encoder setting | webrtc-sys doesn't expose its encoder factory probe | `settings/advanced.rs` | the SDK exposes the probe |
 | P2P mesh is our own implementation of `VoiceMeshEngine` (op 13, STUN only) | no JS engine to reuse | `reflux-voice/src/mesh.rs`, `app/voice.rs` | — |
+| Screen-share source-ended detection is a flag the capturer thread sets when it stops; only display/window shares report it | libwebrtc's `DesktopCapturer` has no track-ended callback, and `Devices` shares capture through the camera pipeline, which has no end signal | `reflux-voice/src/real.rs` `spawn_capture`, `app/voice.rs` `tick` | the SDK exposes a track `ended` event or a capture-ended callback |
 
 ## Server / instance
 
@@ -141,8 +142,9 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:16` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
-- `crates/reflux/src/app/voice.rs:1054` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1514` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1061` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1529` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1538` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -185,8 +187,9 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
+- `crates/reflux/src/shell/voice.rs:1358` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
-- `crates/reflux/src/ui/menu.rs:195` rune can't tell us which way the parent flipped, so a nested submenu opens to the
+- `crates/reflux/src/ui/menu.rs:216` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it

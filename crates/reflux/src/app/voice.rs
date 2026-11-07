@@ -4,6 +4,7 @@
 //! `shell::voice::Voice` holds what the views show; this holds the call and devices.
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -667,6 +668,12 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                         (RemoteTrack::Video(t), Some(user), TrackSource::Camera) => update(move |s| {
                             if s.app.voice.generation == generation {
                                 render_camera(s, user, t.rtc_track());
+                            }
+                        }),
+                        // The watched stream's publication arrived after the click: start rendering.
+                        (RemoteTrack::Video(_), Some(user), TrackSource::Screenshare) => update(move |s| {
+                            if s.app.voice.generation == generation && s.app.shell.voice.watching == Some(user) {
+                                watch(s, Some(user));
                             }
                         }),
                         (RemoteTrack::Audio(t), _, source) => {
@@ -1379,6 +1386,11 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if let Some(w) = s.app.voice.watch.take() {
         w.abort();
     }
+    match user {
+        Some(u) if s.app.shell.voice.watch_for != Some(u) => s.app.shell.voice.begin_watch(u),
+        None => s.app.shell.voice.end_watch(),
+        _ => {}
+    }
     send_state(s);
     if user.is_none() {
         crate::popout::stream_ended();
@@ -1389,16 +1401,18 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     }
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
     let Some(track) = call.screen_track(user.0) else {
-        // In a P2P call it arrives once the peer starts sending (`Event::Remote` watches again).
-        if call.mesh().is_none() {
-            eprintln!("reflux: no screen share from {user} to watch");
-            s.app.shell.voice.watching = None;
-        }
+        // Publication missing / attaching: `TrackSubscribed` starts the render once the share
+        // arrives, and `watch_step` fails the attempt after 15 s without a frame. In a P2P call
+        // the track also arrives later (`Event::Remote` watches again).
         return;
     };
     let pixels = s.app.shell.voice.stream.clone();
+    let frames = s.app.shell.voice.stream_frames.clone();
     if let Some(b) = super::BRIDGE.get() {
-        let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| pixels.set(w, h, rgba)));
+        let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| {
+            pixels.set(w, h, rgba);
+            frames.fetch_add(1, Ordering::Relaxed);
+        }));
         s.app.voice.watch = Some(task.abort_handle());
     }
 }
@@ -1510,6 +1524,16 @@ fn ensure_mic(s: &mut State) {
 /// refreshes the meter and the recording.
 pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     crate::popout::sync(s);
+    // `ScreenShareEndedModal`: the capture stopped on its own (the portal/window source went
+    // away). Stop the share and tell the user; an intentional stop disarms `ended`.
+    // shortcut: only display/window shares report this; camera-device shares can't tell.
+    if s.app.shell.voice.screen
+        && !s.app.shell.voice.share_ended
+        && s.app.voice.share.as_ref().is_some_and(|share| share.ended())
+    {
+        s.app.shell.voice.share_ended = true;
+        s.app.shell.intents.push(Intent::ToggleScreen);
+    }
     // `DESKTOP_SOURCE_LIST_POLL_INTERVAL_MS`: refresh the picker's thumbnails while it is open.
     // shortcut: 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
     if s.app.shell.voice.modal == Some(Modal::ScreenShare)

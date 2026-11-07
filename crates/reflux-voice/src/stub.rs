@@ -369,6 +369,13 @@ impl Camera {
 /// A running screen share. There are none.
 pub struct ScreenShare;
 
+impl ScreenShare {
+    /// No capture in the stub build, so a share never ends on its own.
+    pub fn ended(&self) -> bool {
+        false
+    }
+}
+
 impl Drop for ScreenShare {
     fn drop(&mut self) {}
 }

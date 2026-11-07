@@ -855,9 +855,69 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
 
 /// A gradient standing in for decoded video frames.
 fn fake_frames(px: &rune::Pixels, tint: u8) {
-    let (w, h) = (320u32, 180u32);
+    fake_video_frames(px, 320, 180, tint);
+}
+
+fn fake_video_frames(px: &rune::Pixels, w: u32, h: u32, tint: u8) {
     let rgba = (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, tint, 255]).collect();
     px.set(w, h, rgba);
+}
+
+/// `--voice=watch*`: the stream viewer's live, buffering, stalled, failed, ended, own-preview and
+/// popup scenes. The viewer state is what `watch_step` would derive; the fixture store already
+/// marks Alan (1004) as streaming in Lounge.
+fn watch_scene(st: &mut ShellState, scene: &str) {
+    use super::voice::WatchState;
+    fn live(st: &mut ShellState) {
+        fake_video_frames(&st.voice.stream, 1280, 720, 160);
+        st.voice.stream_frame();
+        (st.voice.watch_frame, st.voice.watch_fps, st.voice.watch_state) = (1, 30.0, WatchState::Live);
+        st.voice.watch_frame_at = Some(std::time::Instant::now());
+    }
+    if scene == "watch-self" {
+        st.voice.begin_watch(Snowflake(ME));
+        st.voice.screen = true;
+        return;
+    }
+    st.voice.begin_watch(Snowflake(1004));
+    match scene {
+        "watch-buffering" => (),
+        "watch-stalled" => {
+            live(st);
+            st.voice.watch_frame_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(6));
+        }
+        "watch-failed" => st.voice.watch_state = WatchState::Failed(super::voice::FIRST_FRAME_TIMEOUT_CODE),
+        "watch-ended" | "watch-ended-menu" => {
+            live(st);
+            st.voice.watch_state = WatchState::Ended;
+            if scene == "watch-ended-menu" {
+                st.voice.stream_pinned = true;
+                st.popups.open = Some("stream-settings".into());
+            }
+        }
+        "watch-spectators" => {
+            live(st);
+            st.popups.open = Some("stream-spectators-btn".into());
+        }
+        "watch-profile" => {
+            live(st);
+            st.open_profile(Snowflake(1001), Some(Snowflake(HQ)), String::new(), "stream-spectators-btn".into(), crate::ui::Placement::LeftStart);
+        }
+        "watch-menu" => {
+            live(st);
+            st.voice.settings.stream_volumes.insert(1004, 60.0);
+            st.popups.open = Some("stream-settings".into());
+        }
+        _ => {
+            live(st);
+            if matches!(scene, "watch-full" | "watch-full-menu") {
+                st.voice.stream_fullscreen = true;
+                if scene == "watch-full-menu" {
+                    st.popups.open = Some("stream-settings".into());
+                }
+            }
+        }
+    }
 }
 
 /// `--voice[=connecting|failed|watch]`: connected to Lounge (Alan speaking, sharing his screen).
@@ -953,9 +1013,17 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         (st.voice.ping, st.voice.pings) = (Some(42), vec![40, 41, 42]);
         st.voice.speaking.insert(Snowflake(1004));
     }
-    if scene == "watch" {
-        st.voice.watching = Some(Snowflake(1004));
-        fake_frames(&st.voice.stream, 160);
+    if scene.starts_with("watch") {
+        watch_scene(st, scene);
+        if scene == "watch-source-ended" {
+            st.voice.share_ended = true;
+        }
+        if matches!(scene, "watch-spectators" | "watch-profile") {
+            let key = format!("{}:2301:c1004", HQ);
+            for (u, conn) in [(1001u64, "c1001"), (1003, "c1003")] {
+                apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": u.to_string(), "channel_id": "2301", "connection_id": conn, "viewer_stream_keys": [key]}));
+            }
+        }
     }
     if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
