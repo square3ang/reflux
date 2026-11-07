@@ -678,6 +678,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             match &d {
                 reflux_model::DispatchEvent::VoiceServerUpdate(v) => voice::on_server_update(s, v),
                 reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
+                reflux_model::DispatchEvent::EntranceSoundPlay(e) => voice::on_entrance(s, e),
                 _ => {}
             }
             if let reflux_model::DispatchEvent::Ready(_) = &d {
@@ -751,6 +752,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.devices.is_none() && !s.app.voice.devices_loading {
         s.app.voice.devices_loading = true;
         sh.intents.push(crate::shell::Intent::LoadDevices);
+        sh.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::LoadEntrance));
     }
     if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.cameras.is_none() {
         sh.voice.cameras = Some(Vec::new());

@@ -64,6 +64,27 @@ pub fn write_channel() -> Option<&'static str> {
         .as_deref()
 }
 
+/// `REFLUX_VOICE_CHANNEL=<id>`: in read-only mode, Voice State Updates (op 4) that join this
+/// channel or leave voice are let through, for live voice tests in one channel.
+pub fn voice_channel() -> Option<&'static str> {
+    static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ID.get_or_init(|| std::env::var("REFLUX_VOICE_CHANNEL").ok().filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
+        .as_deref()
+}
+
+/// Whether read-only mode lets this op 4 payload through: a leave (`channel_id` null), or the
+/// voice channel.
+pub(crate) fn allows_voice_state(d: &serde_json::Value, voice_channel: Option<&str>) -> bool {
+    let Some(ch) = voice_channel else { return false };
+    match d.get("channel_id") {
+        None => false,
+        Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::String(c)) => c == ch,
+        Some(serde_json::Value::Number(n)) => n.to_string() == ch,
+        _ => false,
+    }
+}
+
 /// Whether read-only mode lets `method path` (an API path, query allowed) through, given the
 /// write channel.
 pub(crate) fn allows(method: &reqwest::Method, path: &str, write_channel: Option<&str>) -> bool {

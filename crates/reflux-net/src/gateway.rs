@@ -238,7 +238,11 @@ impl Session {
                     conn.identify().await
                 }
                 cmd = cmds.recv() => match cmd {
-                    Some(Command::Send(p)) if crate::readonly() && !read_only_op(p.op) => {
+                    Some(Command::Send(p))
+                        if crate::readonly()
+                            && !read_only_op(p.op)
+                            && !(p.op == OpCode::VOICE_STATE_UPDATE && crate::allows_voice_state(&p.d, crate::voice_channel())) =>
+                    {
                         warn!(op = p.op.0, "read-only mode: gateway command dropped");
                         None
                     }
@@ -519,6 +523,17 @@ mod tests {
                 return s;
             }
         }
+    }
+
+    #[test]
+    fn voice_test_channel_only() {
+        use serde_json::json;
+        let ok = |d| crate::allows_voice_state(&d, Some("15"));
+        assert!(ok(json!({"guild_id": "1", "channel_id": "15"})));
+        assert!(ok(json!({"guild_id": "1", "channel_id": null})), "leaving is allowed");
+        assert!(!ok(json!({"guild_id": "1", "channel_id": "16"})));
+        assert!(!ok(json!({"guild_id": "1"})), "a missing channel is not a leave");
+        assert!(!crate::allows_voice_state(&json!({"channel_id": "15"}), None));
     }
 
     #[test]

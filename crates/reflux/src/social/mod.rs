@@ -12,7 +12,7 @@ pub mod demo;
 mod discovery;
 mod dm;
 mod inbox;
-mod moderation;
+pub(crate) mod moderation;
 mod tabs;
 
 use std::collections::{HashMap, HashSet};

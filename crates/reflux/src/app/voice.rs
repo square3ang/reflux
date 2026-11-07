@@ -10,7 +10,7 @@ use std::time::Duration;
 use reflux_model::{GatewayError, GatewayPayload, OpCode, Permissions, Snowflake, UpdateVoiceState, VoiceServerUpdate, VoiceState};
 use reflux_net::Command;
 use reflux_voice::livekit::prelude::{RemoteTrack, RoomEvent, TrackSource};
-use reflux_voice::{Call, Camera, ScreenShare};
+use reflux_voice::{Call, Camera, ScreenShare, StreamAudio};
 use reqwest::Method;
 use serde_json::{Value, json};
 
@@ -51,6 +51,19 @@ pub struct VoiceRt {
     recorded: Option<(Vec<f32>, u32)>,
     /// A join the confirm modal let through.
     confirmed: Option<Snowflake>,
+    /// Remote audio tracks playing into the mixer, by track SID.
+    audio: HashMap<String, tokio::task::AbortHandle>,
+    /// Screen share audio (Linux: a PipeWire application stream) and its capture.
+    stream_audio: Option<(Arc<StreamAudio>, crate::gst::AudioCapture)>,
+}
+
+/// Our voice connection ID (live tests compare the gateway's echo with it).
+pub(super) fn connection_id(s: &State) -> Option<&str> {
+    s.app.voice.connection_id.as_deref()
+}
+
+pub(super) fn call(s: &State) -> Option<Arc<Call>> {
+    s.app.voice.call.clone()
 }
 
 pub(super) fn run(s: &mut State, i: Intent) {
@@ -64,20 +77,15 @@ pub(super) fn run(s: &mut State, i: Intent) {
         Intent::ToggleScreen => toggle_screen(s),
         Intent::Watch(user) => watch(s, user),
         Intent::LoadDevices => spawn(async move {
-            let r = tokio::task::spawn_blocking(reflux_voice::devices).await;
-            update(move |s| match r {
-                Ok(Ok(d)) => s.app.shell.voice.devices = Some(d),
-                Ok(Err(e)) => {
-                    eprintln!("reflux: audio devices: {e}");
-                    s.app.shell.voice.devices = Some(Default::default());
-                }
-                Err(_) => {}
-            });
+            if let Ok(d) = tokio::task::spawn_blocking(reflux_voice::devices).await {
+                update(move |s| s.app.shell.voice.devices = Some(d));
+            }
         }),
         Intent::VoiceDevices => {
             let v = &s.app.shell.voice;
             (s.app.saved.voice_input, s.app.saved.voice_output) = (v.input.clone(), v.output.clone());
             crate::session::save(&s.app.saved);
+            s.app.voice.mic = None; // the next tick reopens it on the new input
             apply_devices(s);
         }
         Intent::Voice(op) => run_op(s, op),
@@ -105,9 +113,7 @@ fn run_op(s: &mut State, op: Op) {
         Op::LocalMute(user, muted) => {
             let v = &mut s.app.shell.voice;
             if muted { v.local_mutes.insert(user) } else { v.local_mutes.remove(&user) };
-            if let Some(call) = &s.app.voice.call {
-                call.set_user_muted(user.0, muted);
-            }
+            apply_self(s);
         }
         Op::StartCall(channel) => start_call(s, channel),
         Op::AcceptCall(channel) => {
@@ -159,7 +165,173 @@ fn run_op(s: &mut State, op: Op) {
         Op::RecordSend => send_voice_message(s),
         Op::PushToTalk(held) => s.app.shell.voice.ptt_held = held,
         Op::ConfirmJoin(guild, channel) => confirm_join(s, guild, channel),
+        Op::LoadEntrance => load_entrance(s),
+        Op::SelectEntrance(scope, sound) => {
+            api_then(s, Method::PUT, "/users/@me/entrance-sound-selections".into(), json!({ "scope_id": scope, "sound_id": sound }), load_entrance);
+        }
+        Op::DeleteEntrance(id) => api_then(s, Method::DELETE, format!("/users/@me/entrance-sounds/{id}"), Value::Null, load_entrance),
+        Op::PreviewEntrance(id) => {
+            let url = s.app.shell.voice.entrance.as_ref().and_then(|l| l.sounds.iter().find(|x| x.id == id)).map(|x| x.url.clone());
+            if let Some(url) = url {
+                spawn(async move {
+                    if let Some(b) = fetch(&url).await {
+                        crate::desktop::sound::play_bytes(b, 1.0);
+                    }
+                });
+            }
+        }
+        Op::PreviewTrim => {
+            if let Some(tr) = &s.app.shell.voice.trim {
+                crate::desktop::sound::play_bytes(crate::voice_input::wav(tr.selection(), reflux_voice::audio::RATE), 1.0);
+            }
+        }
+        Op::UploadTrim => upload_trim(s),
+        Op::PopOut { user, screen, pip } => crate::popout::open(s, user, screen, pip),
+        Op::LoadAudioSources => {
+            if cfg!(target_os = "linux") && crate::gst::available() {
+                spawn(async move {
+                    let apps = tokio::task::spawn_blocking(crate::gst::audio_apps).await.unwrap_or_default();
+                    update(move |s| s.app.shell.voice.audio_sources = Some(apps));
+                });
+            }
+        }
+        Op::LoadScreenSources => {
+            if reflux_voice::can_list_sources() && !rune::is_headless() {
+                s.app.shell.voice.screen_sources = None;
+                spawn(async move {
+                    let list = tokio::task::spawn_blocking(|| reflux_voice::screen_sources(320)).await.unwrap_or_default();
+                    update(move |s| {
+                        s.app.shell.voice.screen_sources = Some(
+                            list.into_iter()
+                                .map(|mut src| {
+                                    let px = rune::Pixels::default();
+                                    if let Some((w, h, rgba)) = src.thumbnail.take() {
+                                        px.set(w, h, rgba);
+                                    }
+                                    (src, px)
+                                })
+                                .collect(),
+                        )
+                    });
+                });
+            }
+        }
     }
+}
+
+/// A REST call, then `then` on the UI thread when it succeeds.
+fn api_then(s: &State, method: Method, path: String, body: Value, then: fn(&mut State)) {
+    let Some(inst) = s.app.instance.clone() else { return };
+    spawn(async move {
+        let body = (!body.is_null()).then_some(body);
+        match inst.rest.request::<Value, Value>(method, &path, body.as_ref()).await {
+            Ok(_) => update(then),
+            Err(e) => eprintln!("reflux: {path}: {e}"),
+        }
+    });
+}
+
+/// GETs a public URL (entrance sound clips live on the CDN, no auth).
+async fn fetch(url: &str) -> Option<Vec<u8>> {
+    let r = async { reflux_net::http_client().get(url).send().await?.error_for_status()?.bytes().await }.await;
+    r.map(|b| b.to_vec()).map_err(|e| eprintln!("reflux: {url}: {e}")).ok()
+}
+
+// ---- Entrance sounds ---------------------------------------------------------------------------
+
+fn load_entrance(s: &mut State) {
+    let Some(inst) = s.app.instance.clone() else { return };
+    spawn(async move {
+        match inst.rest.get::<Value>("/users/@me/entrance-sounds").await {
+            Ok(v) => {
+                let lib = parse_library(&v);
+                update(move |s| s.app.shell.voice.entrance = Some(lib));
+            }
+            Err(e) => eprintln!("reflux: entrance sounds: {e}"),
+        }
+    });
+}
+
+fn parse_library(v: &Value) -> crate::shell::voice::EntranceLibrary {
+    let sounds = serde_json::from_value(v["sounds"].clone()).unwrap_or_default();
+    let selections = v["selections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|x| Some((x["scope_id"].as_str()?.to_string(), x["sound_id"].as_str()?.parse().ok().map(Snowflake)?)))
+        .collect();
+    crate::shell::voice::EntranceLibrary { sounds, selections }
+}
+
+/// `EntranceSoundTrimmerModal` → `POST /users/@me/entrance-sounds` as WAV, then select it for
+/// every scope (`global`) when nothing is selected yet.
+fn upload_trim(s: &mut State) {
+    let Some(inst) = s.app.instance.clone() else { return };
+    let Some(tr) = &mut s.app.shell.voice.trim else { return };
+    let bytes = crate::voice_input::wav(tr.selection(), reflux_voice::audio::RATE);
+    // `ENTRANCE_SOUND_MAX_BYTES`.
+    if bytes.len() > 1_048_576 {
+        tr.error = Some(t("Trimmed clip is over the size limit. Try a shorter selection.").into());
+        return;
+    }
+    (tr.uploading, tr.error) = (true, None);
+    let name: String = tr.name.chars().take(32).collect();
+    let first = s.app.shell.voice.entrance.as_ref().is_none_or(|l| l.selections.is_empty());
+    let body = json!({ "name": if name.trim().is_empty() { "Entrance sound".into() } else { name }, "audio": crate::guild::base64(&bytes) });
+    spawn(async move {
+        let r = inst.rest.request::<Value, Value>(Method::POST, "/users/@me/entrance-sounds", Some(&body)).await;
+        if let (Ok(v), true) = (&r, first)
+            && let Some(id) = v["id"].as_str()
+        {
+            let sel = json!({ "scope_id": "global", "sound_id": id });
+            let _ = inst.rest.request::<Value, Value>(Method::PUT, "/users/@me/entrance-sound-selections", Some(&sel)).await;
+        }
+        update(move |s| match r {
+            Ok(_) => {
+                s.app.shell.voice.trim = None;
+                s.app.shell.voice.modal = None;
+                load_entrance(s);
+            }
+            Err(e) => {
+                if let Some(tr) = &mut s.app.shell.voice.trim {
+                    (tr.uploading, tr.error) = (false, Some(e.to_string()));
+                }
+            }
+        });
+    });
+}
+
+/// After connecting: `POST /voice/channels/{id}/entrance-sound` with the clip that fits.
+fn play_own_entrance(s: &State) {
+    let (Some(inst), Some((guild, channel))) = (s.app.instance.clone(), s.app.shell.voice.channel) else { return };
+    spawn(async move {
+        let Ok(v) = inst.rest.get::<Value>("/users/@me/entrance-sounds").await else { return };
+        let lib = parse_library(&v);
+        if let Some(sound) = lib.resolve(guild) {
+            let path = format!("/voice/channels/{channel}/entrance-sound");
+            if let Err(e) = inst.rest.request::<Value, Value>(Method::POST, &path, Some(&json!({ "sound_id": sound }))).await {
+                eprintln!("reflux: {path}: {e}");
+            }
+        }
+    });
+}
+
+/// ENTRANCE_SOUND_PLAY: someone in our channel joined with a clip; play it through the mix (so
+/// deafen, output device and their entrance volume apply).
+pub(super) fn on_entrance(s: &State, e: &reflux_model::EntranceSoundPlay) {
+    let v = &s.app.shell.voice;
+    let here = v.channel.is_some_and(|(_, c)| c == e.channel_id);
+    let Some(mixer) = s.app.voice.call.as_ref().and_then(|c| c.mixer()) else { return };
+    if !here || e.user_id == s.app.store.my_id() || v.settings.entrance_mutes.contains(&e.user_id.0) {
+        return;
+    }
+    let (url, user) = (e.url.clone(), e.user_id.0);
+    spawn(async move {
+        let Some(bytes) = fetch(&url).await else { return };
+        let Ok(Some(pcm)) = tokio::task::spawn_blocking(move || crate::voice_input::decode(bytes)).await else { return };
+        let src = reflux_voice::Source { kind: reflux_voice::Kind::Entrance, user, conn: String::new() };
+        mixer.lock().unwrap().push(src, &pcm);
+    });
 }
 
 /// A REST call whose effects come back over the gateway; failures are logged.
@@ -277,6 +449,7 @@ pub(super) fn leave(s: &mut State, tell_gateway: bool) {
     v.pings.clear();
     v.videos.clear();
     release_capture(s);
+    crate::popout::close();
 }
 
 fn drop_call(s: &mut State) {
@@ -288,9 +461,10 @@ fn drop_call(s: &mut State) {
     if let Some(w) = rt.watch.take() {
         w.abort();
     }
-    for (_, h) in rt.videos.drain() {
+    for h in rt.videos.drain().map(|(_, h)| h).chain(rt.audio.drain().map(|(_, h)| h)) {
         h.abort();
     }
+    rt.stream_audio = None;
     if let Some(call) = rt.call.take() {
         spawn(async move {
             let _ = call.leave().await;
@@ -344,14 +518,12 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             let (_, room) = c.server_info();
             let v = &mut s.app.shell.voice;
             (v.connected, v.encrypted, v.server) = (true, c.encrypted, Some((host, room)));
-            for u in v.local_mutes.clone() {
-                c.set_user_muted(u.0, true);
-            }
             c.set_mic_gate(false); // the next tick opens it per voice activity / push-to-talk
             s.app.shell.voice.transmitting = false;
             s.app.voice.call = Some(c);
             apply_self(s);
             apply_devices(s);
+            play_own_entrance(s);
             if let Some((channel, users)) = s.app.voice.pending_ring.take().filter(|(ch, _)| s.app.shell.voice.channel.is_some_and(|(_, c)| c == *ch)) {
                 api(s, Method::POST, format!("/channels/{channel}/call/ring"), json!({ "recipients": users }));
                 s.app.voice.rang = Some((channel, users));
@@ -370,15 +542,34 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                     });
                 }
                 RoomEvent::TrackSubscribed { track, publication, participant } => {
-                    call.apply_deaf();
                     let user = reflux_voice::user_of(&participant.identity().0).map(Snowflake);
-                    if let (RemoteTrack::Video(t), Some(user), TrackSource::Camera) = (track, user, publication.source()) {
-                        update(move |s| {
+                    match (track, user, publication.source()) {
+                        (RemoteTrack::Video(t), Some(user), TrackSource::Camera) => update(move |s| {
                             if s.app.voice.generation == generation {
                                 render_camera(s, user, t);
                             }
-                        });
+                        }),
+                        (RemoteTrack::Audio(t), _, source) => {
+                            if let Some(play) = call.play(t, &participant, source)
+                                && let Some(b) = super::BRIDGE.get()
+                            {
+                                let h = b.rt.spawn(play).abort_handle();
+                                let sid = publication.sid().to_string();
+                                update(move |s| {
+                                    if s.app.voice.generation == generation { s.app.voice.audio.insert(sid, h); } else { h.abort() }
+                                });
+                            }
+                        }
+                        _ => {}
                     }
+                }
+                RoomEvent::TrackUnsubscribed { publication, .. } if publication.kind() == reflux_voice::livekit::prelude::TrackKind::Audio => {
+                    let sid = publication.sid().to_string();
+                    update(move |s| {
+                        if let Some(h) = s.app.voice.audio.remove(&sid) {
+                            h.abort();
+                        }
+                    });
                 }
                 RoomEvent::TrackUnsubscribed { publication, participant, .. } if publication.source() == TrackSource::Camera => {
                     if let Some(user) = reflux_voice::user_of(&participant.identity().0).map(Snowflake) {
@@ -486,17 +677,16 @@ fn apply_self(s: &State) {
     let Some(call) = &s.app.voice.call else { return };
     let v = &s.app.shell.voice;
     call.set_mic_muted(v.self_mute || v.self_deaf);
-    call.set_deafened(v.self_deaf);
-    let (ec, ns, agc) = v.settings.processing();
-    call.set_processing(ec, ns, agc);
+    call.set_processing(v.settings.mic_processing());
+    if let Some(m) = call.mixer() {
+        v.settings.apply_mixer(&mut m.lock().unwrap(), &v.local_mutes, v.self_deaf);
+    }
 }
 
 fn apply_devices(s: &State) {
     let Some(call) = &s.app.voice.call else { return };
     let v = &s.app.shell.voice;
-    if let Err(e) = call.set_devices(v.input.as_deref(), v.output.as_deref()) {
-        eprintln!("reflux: audio devices: {e}");
-    }
+    call.set_devices(v.input.as_deref(), v.output.as_deref());
 }
 
 /// The encoder preference: software, or which hardware factory webrtc-sys tries first
@@ -516,9 +706,13 @@ fn toggle_screen(s: &mut State) {
         s.app.shell.voice.screen = false;
         send_state(s);
         crate::desktop::play(s, crate::desktop::Sound::ScreenShareStop);
+        let audio = s.app.voice.stream_audio.take().map(|(a, _capture)| a);
         return spawn(async move {
             if let Err(e) = call.stop_screen(share).await {
                 eprintln!("reflux: stop screen share: {e}");
+            }
+            if let Some(a) = audio {
+                let _ = call.unpublish_stream_audio(&a).await;
             }
         });
     }
@@ -528,11 +722,31 @@ fn toggle_screen(s: &mut State) {
     s.app.shell.voice.screen = true;
     let generation = s.app.voice.generation;
     let quality = s.app.shell.voice.settings.screen_quality();
+    let pick = s.app.shell.voice.screen_pick.take();
+    let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::gst::available());
     spawn(async move {
-        let r = call.start_screen(quality).await;
+        let r = call.start_screen(quality, pick).await;
+        // `AudioSourcePickerLinux`: the chosen application's audio goes with the stream.
+        let audio = match (&r, app_audio) {
+            (Ok(_), Some(node)) => match call.publish_stream_audio().await {
+                Ok(a) => Some((Arc::new(a), node)),
+                Err(e) => {
+                    eprintln!("reflux: stream audio: {e}");
+                    None
+                }
+            },
+            _ => None,
+        };
         update(move |s| match r {
             Ok(share) if s.app.voice.generation == generation && s.app.shell.voice.screen => {
                 s.app.voice.share = Some(share);
+                if let Some((a, node)) = audio {
+                    let sink = a.clone();
+                    match crate::gst::AudioCapture::start(&node, move |pcm| sink.push(pcm)) {
+                        Some(capture) => s.app.voice.stream_audio = Some((a, capture)),
+                        None => eprintln!("reflux: couldn't capture audio from PipeWire node {node}"),
+                    }
+                }
                 crate::desktop::play(s, crate::desktop::Sound::ScreenShareStart);
                 send_state(s);
             }
@@ -550,6 +764,9 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
         w.abort();
     }
     send_state(s);
+    if user.is_none() {
+        crate::popout::stream_ended();
+    }
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
     let Some(track) = call.screen_track(user.0) else {
         eprintln!("reflux: no screen share from {user} to watch");
@@ -651,7 +868,7 @@ fn ensure_mic(s: &mut State) {
         return;
     }
     let vad = s.app.voice.vad.clone();
-    s.app.voice.mic = Mic::start(move |db| {
+    s.app.voice.mic = Mic::start(s.app.shell.voice.input.clone(), move |db| {
         let now = super::now_ms();
         let mut g = vad.lock().unwrap();
         let Some(mode) = g.0 else { return };
@@ -666,6 +883,7 @@ fn ensure_mic(s: &mut State) {
 /// Once a frame: keeps the mic stream open while something needs it, applies the gate, and
 /// refreshes the meter and the recording.
 pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
+    crate::popout::sync(s);
     let now = super::now_ms();
     let v = &s.app.shell.voice;
     let in_call = s.app.voice.call.is_some() && !(v.self_mute || v.self_deaf);

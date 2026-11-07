@@ -16,6 +16,7 @@ use rune::{Image, ImageCache};
 
 use super::{Route, poll};
 
+mod voice;
 mod write;
 use crate::State;
 
@@ -89,7 +90,8 @@ pub fn wait(s: &mut State) {
     // `poll` here scrolls a throwaway `Tx`; [`on_poll`] hands this to the real frames.
     let mut scroll = None;
     let mut run = write::Run::new(scene);
-    let timeout = if run.is_some() { WRITE_TIMEOUT } else { TIMEOUT };
+    let mut voice_run = voice::Run::new(scene);
+    let timeout = if run.is_some() { WRITE_TIMEOUT } else if voice_run.is_some() { voice::TIMEOUT + Duration::from_secs(20) } else { TIMEOUT };
     while start.elapsed() < timeout {
         if let Ok(f) = rx.recv_timeout(Duration::from_millis(50)) {
             f(s);
@@ -99,6 +101,15 @@ pub fn wait(s: &mut State) {
         }
         poll(s, &mut rune::Tx::default());
         if s.app.route != Route::Main {
+            continue;
+        }
+        if let Some(r) = &mut voice_run {
+            if start.elapsed() > voice::TIMEOUT {
+                r.abort(s);
+            }
+            if r.step(s) {
+                break;
+            }
             continue;
         }
         if let Some(r) = &mut run {

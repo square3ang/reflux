@@ -12,6 +12,7 @@ mod login;
 mod media;
 mod nav;
 mod passkey;
+mod popout;
 mod restrict;
 mod session;
 mod settings;
@@ -104,6 +105,7 @@ fn main() {
     .keep_running()
     .on_close(desktop::on_close)
     .on_focus(|s, focused, _| s.desktop.focused = focused);
+    popout::register(&mut app);
     if desktop::autostart::start_hidden(&prefs) && !rune::is_headless() {
         app = app.windowless();
     }

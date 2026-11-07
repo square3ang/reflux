@@ -329,6 +329,10 @@ impl Demo {
                 store.settings.message_display_compact = true;
             } else if a == "--settings" || a.starts_with("--settings=") {
                 shell.open_settings(a.strip_prefix("--settings="));
+                let sound = |id: u64, name: &str| super::voice::EntranceSound { id: Snowflake(id), name: name.into(), url: String::new(), duration_ms: 1240 };
+                let mut lib = super::voice::EntranceLibrary { sounds: vec![sound(1, "airhorn"), sound(2, "door chime")], ..Default::default() };
+                lib.selections.insert("global".into(), Snowflake(1));
+                shell.voice.entrance = Some(lib);
             }
         }
         // `REFLUX_LOOK='{"saturation":0.5}'`: appearance / accessibility preferences for snapshots.
@@ -558,7 +562,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         st.voice.watching = Some(Snowflake(1004));
         fake_frames(&st.voice.stream, 160);
     }
-    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "camera" | "share" | "full" | "refused") {
+    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "camera" | "share" | "share-pick" | "full" | "refused" | "processing" | "trim") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -582,6 +586,40 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             fake_frames(&st.voice.self_view, 220);
         }
         "share" => st.voice.modal = Some(Modal::ScreenShare),
+        // The in-app picker (X11 / Windows) with fixture thumbnails and Linux app audio.
+        "share-pick" => {
+            st.voice.modal = Some(Modal::ScreenShare);
+            let src = |window: bool, id: u64, title: &str, shade: u8| {
+                let px = rune::Pixels::default();
+                px.set(16, 9, (0..16 * 9).flat_map(|i| [shade, (i * 3) as u8, 160, 255]).collect());
+                (reflux_voice::ScreenSource { window, id, title: title.into(), thumbnail: None }, px)
+            };
+            let list = vec![src(false, 1, "Screen 1", 40), src(false, 2, "Screen 2", 90), src(true, 10, "Firefox", 140), src(true, 11, "Terminal", 200)];
+            st.voice.screen_pick = Some(list[2].0.clone());
+            st.voice.screen_sources = Some(list);
+            st.voice.audio_sources = Some(vec![("42".into(), "Firefox — Video".into())]);
+            st.voice.settings.stream_audio = Some("42".into());
+        }
+        "tile-stream" => {
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));
+            st.voice.watching = Some(Snowflake(1004));
+            fake_frames(&st.voice.stream, 160);
+            st.voice.settings.stream_volumes.insert(1004, 60.0);
+            st.popups.open_at(super::call::TILE_MENU, [700.0, 200.0]);
+            st.target = Some(super::Target::User { user: Snowflake(1004), guild: Some(Snowflake(HQ)), dm: None });
+        }
+        "processing" => {
+            st.voice.settings.processing = "custom".into();
+            st.voice.modal = Some(Modal::AudioProcessing);
+        }
+        "trim" => {
+            let samples: Vec<f32> = (0..48_000 * 8).map(|i| (i as f32 * 0.01).sin() * ((i / 4000) % 7) as f32 / 7.0).collect();
+            let mut tr = super::voice::Trim { name: "airhorn".into(), samples: std::sync::Arc::new(samples), ..Default::default() };
+            tr.set(true, 1.0);
+            tr.set(false, 4.5);
+            st.voice.trim = Some(tr);
+            st.voice.modal = Some(Modal::Trim);
+        }
         "full" => st.voice.modal = Some(Modal::ChannelFull),
         "refused" => st.voice.modal = Some(Modal::Refused("This call is peer-to-peer, which Reflux can't join yet.".into())),
         _ => {}

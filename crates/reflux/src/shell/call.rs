@@ -241,7 +241,7 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: Sh
     }
     bar = bar.child(button(&icons::MONITOR_ARROW_UP_FILL, if v.screen { "Stop sharing your screen" } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
         let sh = acc(s);
-        if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { sh.voice.modal = Some(Modal::ScreenShare) }
+        if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { open_screen_picker(sh) }
     })));
     bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())))
 }
@@ -517,6 +517,8 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         }
         Modal::CameraPreview => camera_preview(st, p, acc, close, layer),
         Modal::ScreenShare => screen_picker(st, p, acc, close, layer),
+        Modal::AudioProcessing => audio_processing(st, p, acc, close),
+        Modal::Trim => trimmer(st, p, acc, close),
     };
     let _ = store;
     layer.push(modal.el(p));
@@ -563,12 +565,21 @@ fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>,
         )
 }
 
-/// `ScreenSharePickerModal`: quality and frame rate, then the system picker (the XDG portal on
-/// Linux lists screens and windows with their own thumbnails).
-// shortcut: no in-app source grid with thumbnails; WebRTC's portal capturer can't enumerate
-// sources before the portal dialog. Windows / macOS could list them via DesktopCapturer.
+/// Opens the screen share picker and starts listing what it offers.
+pub fn open_screen_picker(sh: &mut ShellState) {
+    sh.voice.modal = Some(Modal::ScreenShare);
+    sh.voice.screen_pick = None;
+    sh.intents.push(Intent::Voice(Op::LoadScreenSources));
+    sh.intents.push(Intent::Voice(Op::LoadAudioSources));
+}
+
+/// `ScreenSharePickerModal`: screens and windows with thumbnails where the platform lets us
+/// list them (X11, Windows; Wayland and macOS go through the system picker), quality and frame
+/// rate, and on Linux the application whose audio goes with the stream
+/// (`AudioSourcePickerLinux`).
 fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static, layer: &mut Vec<El>) -> crate::ui::Modal<S> {
-    let set = &st.voice.settings;
+    let v = &st.voice;
+    let set = &v.settings;
     let res = [("720", "720p"), ("1080", "1080p"), ("1440", "1440p"), ("source", "Source")];
     let fps = [("15", "15 FPS"), ("30", "30 FPS"), ("60", "60 FPS")];
     let res_v = set.screen_height.map_or("source".to_string(), |h| h.to_string());
@@ -591,24 +602,170 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
             sh.intents.push(Intent::Voice(Op::Settings));
         })
         .el(&st.popups, pops(acc), p, layer);
+    let mut body = col().w_full().gap(16.0);
+    let listed = reflux_voice::can_list_sources() || v.screen_sources.is_some();
+    match &v.screen_sources {
+        _ if !listed => body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p)),
+        None => body = body.child(body_text(t("Loading…"), p)),
+        Some(list) => {
+            let card = |src: &reflux_voice::ScreenSource, px: &Pixels| {
+                let picked = v.screen_pick.as_ref().is_some_and(|x| x.id == src.id && x.window == src.window);
+                let pick = src.clone();
+                col()
+                    .key(format!("share-src-{}-{}", src.window as u8, src.id))
+                    .w(176.0)
+                    .gap(6.0)
+                    .padding(6.0)
+                    .radius(8.0)
+                    .border(2.0, if picked { p.brand_primary } else { Color::TRANSPARENT })
+                    .hover(p.background_modifier_hover)
+                    .cursor(rune::Cursor::Pointer)
+                    .role("radio")
+                    .label(src.title.clone())
+                    .child(el().w(160.0).h(90.0).radius(6.0).clip_rounded(6.0).fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit))
+                    .child(text(src.title.clone()).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary).truncate())
+                    .on_press(move |s: &mut S| acc(s).voice.screen_pick = Some(pick.clone()))
+            };
+            for (window, title) in [(false, t("Screens")), (true, t("Windows"))] {
+                let cards: Vec<El> = list.iter().filter(|(s, _)| s.window == window).map(|(s, px)| card(s, px)).collect();
+                if !cards.is_empty() {
+                    body = body.child(text(title).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary)).child(row().w_full().flex_wrap().gap(8.0).children(cards));
+                }
+            }
+        }
+    }
+    body = body.child(row().w_full().gap(16.0).child(r).child(f));
+    if let Some(apps) = &v.audio_sources {
+        let opts: Vec<(&str, &str)> = std::iter::once(("", "No audio")).chain(apps.iter().map(|(id, name)| (id.as_str(), name.as_str()))).collect();
+        let cur = set.stream_audio.clone().filter(|id| apps.iter().any(|(x, _)| x == id)).unwrap_or_default();
+        body = body.child(
+            crate::ui::Select::new("share-audio", &opts, Some(&cur))
+                .label(t("Shared window audio"))
+                .width(396.0)
+                .on_choose(move |s: &mut S, v| {
+                    let sh = acc(s);
+                    sh.voice.settings.stream_audio = (!v.is_empty()).then(|| v.to_string());
+                    sh.intents.push(Intent::Voice(Op::Settings));
+                })
+                .el(&st.popups, pops(acc), p, layer),
+        );
+    }
+    let ready = !listed || v.screen_pick.is_some();
     crate::ui::Modal::new(t("Share your screen"), close)
-        .body(
-            col()
-                .w_full()
-                .gap(16.0)
-                .child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p))
-                .child(row().w_full().gap(16.0).child(r).child(f)),
-        )
+        .size(if listed { crate::ui::ModalSize::Medium } else { crate::ui::ModalSize::Small })
+        .body(body)
         .footer(
             row()
                 .gap(8.0)
                 .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("share-cancel").on_press(close).el(p))
-                .child(Button::new("Go live").key("share-go").on_press(move |s: &mut S| {
+                .child(Button::new("Go live").key("share-go").disabled(!ready).on_press(move |s: &mut S| {
                     let sh = acc(s);
                     sh.voice.modal = None;
+                    sh.voice.screen_sources = None;
                     sh.intents.push(Intent::ToggleScreen);
                 }).el(p)),
         )
+}
+
+/// `AudioProcessingModal`: the processing profile; Custom shows the individual switches.
+fn audio_processing<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static) -> crate::ui::Modal<S> {
+    let set = &st.voice.settings;
+    let change = move |f: fn(&mut super::voice::Settings)| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            f(&mut sh.voice.settings);
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }
+    };
+    let profiles = [
+        ("voice", "Focused voice", Some(t("Cleans up your mic for clear speech."))),
+        ("studio", "Direct input", Some(t("Sends raw mic audio with no processing."))),
+        ("custom", "Custom", Some(t("Tune the processing yourself."))),
+    ];
+    let mut body = col().w_full().gap(16.0).child(
+        crate::ui::RadioGroup::new(&profiles, Some(set.processing.as_str()))
+            .on_change(move |s: &mut S, val| {
+                let sh = acc(s);
+                sh.voice.settings.processing = val.to_string();
+                sh.intents.push(Intent::Voice(Op::Settings));
+            })
+            .el(p),
+    );
+    if set.processing == "custom" {
+        body = body
+            .child(crate::ui::Switch::new(set.noise_suppression).label(t("Noise suppression")).description("RNNoise").on_toggle(change(|s| s.noise_suppression ^= true)).el(p))
+            .child(crate::ui::Switch::new(set.echo_cancellation).label(t("Echo cancellation")).description(t("Stops your speakers from looping back into your mic.")).on_toggle(change(|s| s.echo_cancellation ^= true)).el(p))
+            .child(crate::ui::Switch::new(set.auto_gain_control).label(t("Automatic gain control")).description(t("Evens out your mic volume so you are not too quiet.")).on_toggle(change(|s| s.auto_gain_control ^= true)).el(p));
+    }
+    crate::ui::Modal::new(t("Audio processing"), close).body(body)
+}
+
+/// `EntranceSoundTrimmerModal`: the waveform, the selected span (at most 5.2 s), play it, then
+/// upload it.
+fn trimmer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static) -> crate::ui::Modal<S> {
+    let Some(tr) = &st.voice.trim else { return crate::ui::Modal::new(t("Trim entrance sound"), close) };
+    let total = tr.secs().max(0.01);
+    // 120 peak bars; the selected ones in the brand colour.
+    let n = 120;
+    let per = (tr.samples.len() / n).max(1);
+    let bars = tr.samples.chunks(per).take(n).enumerate().map(|(i, c)| {
+        let peak = c.iter().fold(0f32, |m, s| m.max(s.abs()));
+        let at = i as f32 * per as f32 / reflux_voice::audio::RATE as f32;
+        let on = at >= tr.start && at <= tr.end;
+        el().grow(1.0).h((peak * 64.0).max(2.0)).radius(1.0).fill(if on { p.brand_primary } else { p.text_tertiary })
+    });
+    let wave = row().w_full().h(72.0).gap(1.0).center_y().padding(4.0).radius(8.0).fill(p.background_tertiary).children(bars);
+    let handle = |key: &'static str, label: &str, value: f32, start: bool| {
+        col().w_full().gap(4.0).child(text(format!("{label}: {value:.2} s")).font(font(12.0, 500.0).lh(16.0)).color(p.text_secondary)).child(
+            crate::ui::Slider::new(key, value, 0.0, total)
+                .step(0.01)
+                .on_change(move |s: &mut S, x| {
+                    if let Some(tr) = &mut acc(s).voice.trim {
+                        tr.set(start, x);
+                    }
+                })
+                .el(p),
+        )
+    };
+    let mut body = col()
+        .w_full()
+        .gap(12.0)
+        .child(body_text(t("Drag the handles to choose up to 5.2 seconds of audio. The selected region is what gets uploaded."), p))
+        .child(wave)
+        .child(handle("trim-start", "Start", tr.start, true))
+        .child(handle("trim-end", "End", tr.end, false));
+    if let Some(e) = &tr.error {
+        body = body.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+    }
+    crate::ui::Modal::new(t("Trim entrance sound"), move |s: &mut S| {
+        acc(s).voice.trim = None;
+        close(s)
+    })
+    .body(body)
+    .footer(
+        row()
+            .gap(8.0)
+            .child(Button::new(t("Play selection")).variant(ButtonVariant::Secondary).key("trim-play").on_press(op(acc, Op::PreviewTrim)).el(p))
+            .child(Button::new(t("Use selection")).key("trim-use").disabled(tr.uploading).on_press(op(acc, Op::UploadTrim)).el(p)),
+    )
+}
+
+/// A labelled slider row in a menu (`MenuSliderType`), 0..200 %.
+fn menu_slider<S: 'static>(key: String, label: &str, value: f32, p: &Palette, on: impl Fn(&mut S, f32) + 'static) -> crate::ui::MenuEntry<S> {
+    crate::ui::MenuEntry::El(Box::new(
+        col()
+            .w_full()
+            .px(8.0)
+            .py(6.0)
+            .gap(4.0)
+            .child(
+                row()
+                    .w_full()
+                    .child(text(label.to_string()).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).grow(1.0))
+                    .child(text(format!("{value:.0}%")).font(font(12.0, 500.0).lh(18.0)).color(p.text_tertiary)),
+            )
+            .child(crate::ui::Slider::new(key, value, 0.0, 200.0).mini().on_change(on).el(p)),
+    ))
 }
 
 // ---- Popouts and menus ---------------------------------------------------------------------------
@@ -678,15 +835,69 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             sh.intents.push(Intent::Watch(Some(user)));
         }));
     }
+    // `VoicePopoutHost`: the participant's camera or stream in its own window.
+    let watching = st.voice.watching == Some(user);
+    if streaming && watching {
+        m = m
+            .item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })))
+            .item(MenuItem::new("pip-stream", "Picture in picture").icon(&icons::PICTURE_IN_PICTURE).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: true })));
+    }
+    if st.voice.videos.contains_key(&user) || (user == me && st.voice.camera) {
+        m = m.item(MenuItem::new("popout-camera", t("Pop out camera")).icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: Some(user), screen: false, pip: false })));
+    }
+    m = m.item(MenuItem::new("popout-call", "Pop out call").icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: None, screen: false, pip: false })));
+    let set = &st.voice.settings;
+    // Settings changes save and reach the mixer through `Op::Settings`.
+    let tweak = move |s: &mut S, f: &dyn Fn(&mut super::voice::Settings)| {
+        let sh = acc(s);
+        f(&mut sh.voice.settings);
+        sh.intents.push(Intent::Voice(Op::Settings));
+    };
+    if streaming && watching && user != me {
+        let vol = set.stream_volumes.get(&user.0).copied().unwrap_or(100.0);
+        let muted = set.stream_mutes.contains(&user.0);
+        m = m
+            .separator()
+            .entry(menu_slider(format!("stream-vol-{user}"), t("Stream volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.stream_volumes.insert(user.0, x); })))
+            .item(MenuItem::new("stream-mute", t("Mute stream")).checkbox(muted).on_select(move |s: &mut S| {
+                tweak(s, &|st| {
+                    if !st.stream_mutes.remove(&user.0) {
+                        st.stream_mutes.insert(user.0);
+                    }
+                })
+            }));
+    }
     if user != me {
         let muted = st.voice.local_mutes.contains(&user);
-        m = m.separator().item(MenuItem::new("local-mute", t("Mute")).checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted))));
+        let vol = set.user_volumes.get(&user.0).copied().unwrap_or(100.0);
+        m = m.separator().entry(menu_slider(format!("user-vol-{user}"), t("User volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.user_volumes.insert(user.0, x); })));
+        m = m.item(MenuItem::new("local-mute", t("Mute")).checkbox(muted).on_select(op(acc, Op::LocalMute(user, !muted))));
+        let (emuted, evol) = (set.entrance_mutes.contains(&user.0), set.entrance_volumes.get(&user.0).copied().unwrap_or(100.0));
+        m = m.submenu(
+            "entrance",
+            t("Entrance sound"),
+            vec![
+                crate::ui::MenuEntry::Item(MenuItem::new("entrance-mute", t("Mute entrance sound")).checkbox(emuted).on_select(move |s: &mut S| {
+                    tweak(s, &|st| {
+                        if !st.entrance_mutes.remove(&user.0) {
+                            st.entrance_mutes.insert(user.0);
+                        }
+                    })
+                })),
+                menu_slider(format!("entrance-vol-{user}"), t("Entrance sound volume"), evol, p, move |s: &mut S, x| tweak(s, &|st| { st.entrance_volumes.insert(user.0, x); })),
+            ],
+        );
         if let Some((None, ch)) = st.voice.channel
             && let Some(call) = store.calls.get(&ch)
             && !store.voice_states.contains_key(&(None, user))
         {
             let ringing = call.ringing.contains(&user);
             m = m.item(MenuItem::new("ring", if ringing { t("Stop ringing") } else { t("Ring") }).icon(&icons::PHONE_FILL).on_select(op(acc, Op::Ring(ch, user, !ringing))));
+        }
+    }
+    if let Some(g) = guild {
+        for e in crate::social::moderation::voice_items(store, g, user, acc) {
+            m = m.entry(e);
         }
     }
     m.el(&st.popups, pops(acc), p, layer);

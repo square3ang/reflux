@@ -1,15 +1,13 @@
 //! The microphone outside the call: the level the mic test meter and the voice-activity gate
 //! read, and voice message recording (`VoiceMessageRecordingUtils.ts`: mono 16-bit WAV plus a
-//! base64 waveform). WebRTC's audio module owns the call's capture; this opens the default input
-//! a second time through cpal, which PipeWire / PulseAudio / WASAPI / CoreAudio allow.
-// shortcut: always the system default input, not the device picked in settings (WebRTC's
-// device names don't match cpal's); upgrade by matching on the PulseAudio description.
+//! base64 waveform). The call's own capture (`reflux_voice::audio`) opens the same selected
+//! input a second time, which PipeWire / PulseAudio / WASAPI / CoreAudio allow.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rodio::cpal;
-use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rodio::cpal::traits::{DeviceTrait, StreamTrait};
 
 /// The quietest level the meter shows (`-100` dB in Fluxer's activity slider).
 pub const FLOOR_DB: f32 = -100.0;
@@ -25,8 +23,9 @@ pub struct Mic {
 }
 
 impl Mic {
-    /// Opens the default input; `on_level` runs on the audio thread after each block.
-    pub fn start(on_level: impl Fn(f32) + Send + 'static) -> Option<Self> {
+    /// Opens the input called `device` (`None` = the default); `on_level` runs on the audio
+    /// thread after each block.
+    pub fn start(device: Option<String>, on_level: impl Fn(f32) + Send + 'static) -> Option<Self> {
         let level = Arc::new(AtomicU32::new(FLOOR_DB.to_bits()));
         let rec: Arc<Mutex<Option<Vec<f32>>>> = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
@@ -34,7 +33,7 @@ impl Mic {
         let (l, r, st) = (level.clone(), rec.clone(), stop.clone());
         // The cpal stream isn't Send everywhere: it lives and dies on this thread.
         std::thread::spawn(move || {
-            let Some((stream, rate)) = open(l, r, on_level) else {
+            let Some((stream, rate)) = open(device.as_deref(), l, r, on_level) else {
                 let _ = tx.send(None);
                 return;
             };
@@ -81,8 +80,8 @@ impl Drop for Mic {
     }
 }
 
-fn open(level: Arc<AtomicU32>, rec: Arc<Mutex<Option<Vec<f32>>>>, on_level: impl Fn(f32) + Send + 'static) -> Option<(cpal::Stream, u32)> {
-    let device = cpal::default_host().default_input_device()?;
+fn open(name: Option<&str>, level: Arc<AtomicU32>, rec: Arc<Mutex<Option<Vec<f32>>>>, on_level: impl Fn(f32) + Send + 'static) -> Option<(cpal::Stream, u32)> {
+    let device = reflux_voice::audio::input_device(name)?;
     let config = device.default_input_config().ok()?;
     let (format, channels, rate) = (config.sample_format(), config.channels() as usize, config.sample_rate());
     let feed = move |mono: &mut dyn Iterator<Item = f32>| {
@@ -192,6 +191,18 @@ pub fn decode_waveform(b64: &str) -> Vec<f32> {
     base64::engine::general_purpose::STANDARD.decode(b64).map(|b| b.into_iter().map(|v| v as f32 / 255.0).collect()).unwrap_or_default()
 }
 
+/// Decodes an audio file (MP3, Ogg Vorbis, WAV, M4A/AAC) into mono samples at 48 kHz.
+pub fn decode(bytes: Vec<u8>) -> Option<Vec<f32>> {
+    use rodio::Source;
+    let d = rodio::Decoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let (ch, rate) = (d.channels().get() as usize, d.sample_rate().get());
+    let all: Vec<f32> = d.collect();
+    let mono: Vec<f32> = all.chunks(ch).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect();
+    let mut out = Vec::with_capacity(mono.len());
+    reflux_voice::audio::Resampler::new(rate, reflux_voice::audio::RATE).process(&mono, &mut out);
+    (!out.is_empty()).then_some(out)
+}
+
 /// Mono 16-bit PCM WAV (`encodeAudioBufferSliceToWav` with `downmixToMono`).
 pub fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     let data = (samples.len() * 2) as u32;
@@ -259,6 +270,14 @@ mod tests {
         assert_eq!(bars.len(), 3);
         assert_eq!((bars[0], bars[1]), (1.0, 0.0));
         assert!((bars[2] - 0.5).abs() < 0.01, "sqrt(0.25) = 0.5");
+    }
+
+    #[test]
+    fn decodes_our_wav() {
+        let tone: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        let back = decode(wav(&tone, 48_000)).expect("decodes");
+        assert_eq!(back.len(), 4800);
+        assert!((back[100] - tone[100]).abs() < 1e-3);
     }
 
     #[test]

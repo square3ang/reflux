@@ -135,9 +135,18 @@ pub fn custom_path(s: Sound) -> Option<std::path::PathBuf> {
     Some(crate::session::path()?.parent()?.join("sounds").join(s.id()))
 }
 
+/// Plays an encoded clip (MP3 / Ogg / WAV) at `volume` without waiting.
+pub fn play_bytes(bytes: Vec<u8>, volume: f32) {
+    send(Sound::Message, volume, Some(bytes));
+}
+
 /// Plays `s` at `volume` (0..=1) without waiting, from `custom` when that file reads. Never
 /// plays headless (snapshots).
 pub fn play(s: Sound, volume: f32, custom: Option<&str>) {
+    send(s, volume, custom.and_then(|p| std::fs::read(p).ok()));
+}
+
+fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
     /// A sound, its volume and a custom file's bytes.
     type Job = (Sound, f32, Option<Vec<u8>>);
     static TX: OnceLock<Option<Sender<Job>>> = OnceLock::new();
@@ -170,7 +179,6 @@ pub fn play(s: Sound, volume: f32, custom: Option<&str>) {
             .ok()?;
         Some(tx)
     });
-    let custom = custom.and_then(|p| std::fs::read(p).ok());
     if let Some(tx) = tx {
         let _ = tx.send((s, volume.clamp(0.0, 1.0), custom));
     }

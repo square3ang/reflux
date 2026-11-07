@@ -32,7 +32,7 @@ image = { version = "0.25", default-features = false, features = ["webp", "gif",
 # Desktop notifications: org.freedesktop.Notifications on Linux, NSUserNotification on macOS, toasts on Windows.
 notify-rust = "4"
 # UI sounds (assets/media/sounds); cpal is already in the tree through other crates.
-rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "vorbis"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "vorbis", "wav", "mp4", "symphonia-aac"] }
 # Code block highlighting: bundled Sublime grammars on pure-Rust regexes (no onig).
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 # Session tokens in the OS keyring (Secret Service over zbus, Keychain, Credential Manager).

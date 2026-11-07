@@ -121,10 +121,18 @@ See `git log` for details. Crates:
   Fluxer waveform, `VOICE_MESSAGE` flag; waveform player). The mic gate enables/disables the
   local track (no mute signalling). Scenes: `--shell-demo --voice=call|focus|details|tile-menu|
   camera|share|full|refused|incoming|dm|voice-message|meter`, `--msg-scene=media-files`.
-  Shortcuts (in code): no per-user/stream/device volume (SDK lacks it), EC/NS/AGC toggles only the
-  hardware processors, P2P calls refused, no portal source thumbnails, no Linux stream audio, no
-  entrance sound, mic test/VAD/recording use the default input. PTT = the in-window key OR
-  `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the desktop). Nothing here was exercised in a real call (no test channel).
+  Audio (`reflux-voice/src/audio.rs`): no LiveKit platform audio; remote tracks →
+  `NativeAudioStream` → our `Mixer` (per-user / stream / entrance volume + mutes, deafen) → cpal on
+  the selected output; mic via cpal on the selected input → gain → WebRTC APM (AEC fed with our
+  mix, AGC, HPF) → RNNoise (`nnnoiseless`) → `NativeAudioSource`. Also: voice moderation (rank /
+  MOVE_MEMBERS gated) in the member and tile menus, entrance sounds (library, trimmer, play on
+  join / ENTRANCE_SOUND_PLAY), the `voice-popout` window (`popout.rs`; call grid, camera, stream,
+  PiP), in-app screen picker (X11/Windows only), Linux stream audio (`gst::audio_apps` +
+  `AudioCapture`). Scenes add `tile-stream|share-pick|processing|trim`.
+  Shortcuts (in code): P2P calls refused, Wayland PiP not on top, linear resampler. PTT = the
+  in-window key OR `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the
+  desktop). Live-verified with `--live=voice` (see Testing); remote playout, AEC and app audio
+  capture were not (no second participant).
 - Look & feel (`look.rs`, `theme/custom.rs`, `settings/look_tabs.rs`, `shell/compact.rs`,
   `desktop/{sound,tts}.rs`): Appearance (font size, group spacing, cozy/dense, hide compact
   avatars, channel-list typing indicator, unread on muted), Chat (inline media/embeds, link
@@ -206,5 +214,15 @@ See `git log` for details. Crates:
   waits for its echo, then reads back from the server), then `--live=cleanup` (deletes the
   `[reflux test` messages and pin notices, then checks none remain). The read-only guard lets
   only `/channels/<that id>/...` writes and their upload PUTs through.
+- Voice, in one channel only: `REFLUX_VOICE_CHANNEL=<voice channel id> REFLUX_TEST_TONE=1
+  [REFLUX_LIVE_ENCODER=nvenc] reflux --live=voice --snap ...`: joins, checks the gateway echo,
+  ping, server-side speaking on our tone, mute/deafen echoes, a test-pattern screen share's
+  `encoderImplementation`, the camera if any, then leaves (< 2 min; ends with "left the channel").
+  The guard lets op 4 through only for that channel and for leaving; settings aren't saved.
+  `REFLUX_TEST_TONE=1` replaces the mic with a generated tone.
+- NVENC needs the gitignored `.cuda` symlink in every worktree *before* the first build; webrtc-sys
+  doesn't notice it appearing later (delete its `target/debug/.fingerprint/webrtc-sys-*` dir of
+  the build whose `output` says "cuda.h not found"). `strings target/debug/reflux | grep "NVIDIA
+  H264 Encoder"` tells.
 - Shared target dir: other worktrees overwrite `target/debug/reflux`; copy the binary right after
   building (cargo's `--message-format=json` `executable`) before running it.

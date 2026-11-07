@@ -22,7 +22,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Themes | PARTIAL | theme library/saved themes and backups; font and non-colour variables can't be overridden; Quick CSS applies only `:root` colour variables (the rest is counted and reported) | F/theme_settings/* |
 | Notifications | PARTIAL | per-sound volume overrides | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
-| Voice & video | PARTIAL | input/output volume stored but not applied (no SDK volume); EC/NS/AGC only switch hardware processors; no entrance sound, no camera effects; mic test/VAD always use the default input | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
+| Voice & video | PARTIAL | no camera background effects; input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | PARTIAL | keyboard mode (so "Escape exits keyboard mode" is stored only); keep-animating-under-reduced-motion flags | tabs/AccessibilityTab.tsx |
 | Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
 | Keybinds | PARTIAL | search box, sync across devices, global custom binds; PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
@@ -93,7 +93,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
-| Pop-out windows | MISSING | | PopoutWindow.tsx |
+| Pop-out windows | PARTIAL | one voice pop-out window (call grid, a camera, or a stream); no chat pop-outs | | PopoutWindow.tsx |
 | Error / rate-limit modals | PARTIAL | | GenericErrorModal.tsx |
 
 ### channel/
@@ -194,26 +194,26 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Timeout | DONE | | TimeoutMemberModal.tsx |
 | Ban details | DONE | | BanDetailsModal.tsx |
 | Report | PARTIAL | untested against a live server | ReportFlowModal.tsx |
-| Voice moderation | MISSING | | VoiceParticipantMenuItems.tsx |
+| Voice moderation | DONE |  | | VoiceParticipantMenuItems.tsx |
 
 ### voice
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Join/leave, panel, mute/deafen, rings, devices, HW encode | DONE | | |
-| Screen share | PARTIAL | no in-app source thumbnails (the system portal picks); no audio | ScreenSharePickerModal.tsx |
-| Watch stream | PARTIAL | no stream volume (SDK has no remote track volume) | WatchStreamOverlay.tsx |
+| Screen share | PARTIAL | in-app thumbnails only on X11/Windows (Wayland keeps the portal); NVENC live-verified | ScreenSharePickerModal.tsx |
+| Watch stream | DONE |  | WatchStreamOverlay.tsx |
 | Camera | PARTIAL | Linux only (GStreamer); no background effects; never tested in a real call | CameraPreviewModal.tsx |
-| Call view grid | PARTIAL | no PiP / pop-out, no tile hover controls | VoiceCallView.tsx |
-| DM calls / ringing / P2P | PARTIAL | P2P calls refused with a notice; untested against a server | IncomingCallUI.tsx |
-| Per-user volume / local mute | PARTIAL | local mute only; no volume slider (SDK) | VoiceParticipantMenuItems.tsx |
-| Noise suppression | MISSING | | AudioProcessingModal.tsx |
+| Call view grid | DONE |  | VoiceCallView.tsx |
+| DM calls / ringing / P2P | PARTIAL | P2P (mesh) calls refused with a notice: Fluxer's mesh engine + op 13 signalling not ported; DM calls untested against a server | IncomingCallUI.tsx |
+| Per-user volume / local mute | DONE |  | VoiceParticipantMenuItems.tsx |
+| Noise suppression | DONE |  | | AudioProcessingModal.tsx |
 | Voice details popout | DONE | | VoiceDetailsPopout.tsx |
-| PiP / pop-out | MISSING | | PiPOverlay.tsx |
+| PiP / pop-out | PARTIAL | PiP = small always-on-top pop-out; Wayland ignores always-on-top | | PiPOverlay.tsx |
 | PTT / VAD | PARTIAL | the recorded key works in-window only; the global key comes from the portal (Linux), none on Windows/macOS | HoldSources.ts |
-| Entrance sounds | MISSING | | EntranceSoundTrimmerModal.tsx |
+| Entrance sounds | PARTIAL | upload / trim / select (global scope) / play both ways; no per-guild scope picker; upload untested live (read-only) | | EntranceSoundTrimmerModal.tsx |
 | Moderator move / reconnect | DONE | | VoiceReconnectionManager.tsx |
-| E2EE indicator | PARTIAL | frame encryption with the grant's `e2ee_key` untested against Fluxer's web client | VoiceE2EEIndicator.tsx |
-| Stream audio (Linux) | MISSING | | AudioSourcePickerLinux.tsx |
+| E2EE indicator | PARTIAL | key derivation matched to livekit-client (PBKDF2, ratchet window 0); the test server grants no e2ee_key, so untested live | VoiceE2EEIndicator.tsx |
+| Stream audio (Linux) | PARTIAL | PipeWire app capture (pw-dump + pipewiresrc) never exercised in a real call | | AudioSourcePickerLinux.tsx |
 | Join confirm / channel full | DONE | | VoiceConnectionConfirmModal.tsx |
 | Voice messages | PARTIAL | WAV like Fluxer; no hold-to-record, trimming or playback speed | VoiceMessageComposerModal.tsx |
 

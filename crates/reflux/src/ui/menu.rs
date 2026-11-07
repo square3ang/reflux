@@ -66,6 +66,8 @@ pub enum MenuEntry<S: 'static> {
     Group(String),
     /// (id, label, entries). One level deep.
     Submenu(String, String, Vec<MenuEntry<S>>),
+    /// Any element, e.g. a labelled slider (`MenuSliderType`).
+    El(Box<El>),
 }
 
 pub struct Menu<S: 'static> {
@@ -142,6 +144,7 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
                 .pb(2.0)
                 .mt(2.0),
             MenuEntry::Item(it) => item(menu, it, access, p, top),
+            MenuEntry::El(e) => *e,
             MenuEntry::Submenu(id, label, entries) => {
                 let key = format!("{menu}-sub-{id}");
                 let open = popups.sub.as_deref() == Some(id.as_str());

@@ -21,6 +21,33 @@ fn tight(data: &[u8], w: usize, h: usize, stride: usize) -> Vec<u8> {
     out
 }
 
+/// Applications playing audio, from `pw-dump`'s JSON: (`object.serial`, name), without our
+/// own process (its audio is the call).
+#[cfg_attr(not(all(feature = "gst", target_os = "linux")), allow(dead_code))]
+fn parse_apps(json: &str, own_pid: u32) -> Vec<(String, String)> {
+    let Ok(serde_json::Value::Array(objects)) = serde_json::from_str(json) else { return Vec::new() };
+    let mut out: Vec<(String, String)> = objects
+        .iter()
+        .filter_map(|o| {
+            let props = &o["info"]["props"];
+            (props["media.class"] == "Stream/Output/Audio").then_some(())?;
+            if props["application.process.id"].as_u64() == Some(own_pid as u64) || props["application.process.id"].as_str() == Some(&own_pid.to_string()) {
+                return None;
+            }
+            let serial = match &props["object.serial"] {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => return None,
+            };
+            let app = props["application.name"].as_str().or(props["node.name"].as_str()).unwrap_or("Unknown app");
+            let title = props["media.name"].as_str().filter(|m| !m.is_empty() && *m != app);
+            Some((serial, title.map_or(app.to_string(), |t| format!("{app} — {t}"))))
+        })
+        .collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
 /// Mirrors an RGBA image left to right (the camera self-view, `mirrorCamera`).
 pub fn mirror(rgba: &mut [u8], w: usize) {
     for row in rgba.chunks_exact_mut(w * 4) {
@@ -201,6 +228,59 @@ mod imp {
             let _ = self.pipeline.set_state(gst::State::Null);
         }
     }
+
+    /// The applications playing audio right now (PipeWire), for screen share audio.
+    pub fn audio_apps() -> Vec<(String, String)> {
+        let out = std::process::Command::new("pw-dump").output();
+        match out {
+            Ok(o) if o.status.success() => super::parse_apps(&String::from_utf8_lossy(&o.stdout), std::process::id()),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Captures one PipeWire node's audio as interleaved stereo f32 at 48 kHz.
+    pub struct AudioCapture {
+        pipeline: gst::Pipeline,
+    }
+
+    impl AudioCapture {
+        /// `node`: an `object.serial` from [`audio_apps`].
+        pub fn start(node: &str, mut sink: impl FnMut(&[f32]) + Send + 'static) -> Option<Self> {
+            if !init() {
+                return None;
+            }
+            let src = gst::ElementFactory::make("pipewiresrc").property_from_str("target-object", node).build().ok()?;
+            let convert = gst::ElementFactory::make("audioconvert").build().ok()?;
+            let resample = gst::ElementFactory::make("audioresample").build().ok()?;
+            let caps = gst::Caps::builder("audio/x-raw").field("format", "F32LE").field("rate", 48_000i32).field("channels", 2i32).field("layout", "interleaved").build();
+            let appsink = gst_app::AppSink::builder()
+                .caps(&caps)
+                .callbacks(
+                    gst_app::AppSinkCallbacks::builder()
+                        .new_sample(move |s| {
+                            let sample = s.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                            if let Some(map) = sample.buffer().and_then(|b| b.map_readable().ok()) {
+                                let pcm: Vec<f32> = map.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+                                sink(&pcm);
+                            }
+                            Ok(gst::FlowSuccess::Ok)
+                        })
+                        .build(),
+                )
+                .build();
+            let pipeline = gst::Pipeline::new();
+            pipeline.add_many([&src, &convert, &resample, appsink.upcast_ref()]).ok()?;
+            gst::Element::link_many([&src, &convert, &resample, appsink.upcast_ref()]).ok()?;
+            pipeline.set_state(gst::State::Playing).map_err(|e| eprintln!("reflux: stream audio: {e}")).ok()?;
+            Some(Self { pipeline })
+        }
+    }
+
+    impl Drop for AudioCapture {
+        fn drop(&mut self) {
+            let _ = self.pipeline.set_state(gst::State::Null);
+        }
+    }
 }
 
 #[cfg(not(all(feature = "gst", target_os = "linux")))]
@@ -244,10 +324,33 @@ mod stub {
             None
         }
     }
+
+    pub fn audio_apps() -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    pub struct AudioCapture;
+
+    impl AudioCapture {
+        pub fn start(_node: &str, _sink: impl FnMut(&[f32]) + Send + 'static) -> Option<Self> {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lists_audio_apps_but_not_ours() {
+        let json = r#"[
+            {"info":{"props":{"media.class":"Stream/Output/Audio","object.serial":42,"application.name":"Firefox","media.name":"Video","application.process.id":10}}},
+            {"info":{"props":{"media.class":"Stream/Output/Audio","object.serial":43,"application.name":"reflux","application.process.id":7}}},
+            {"info":{"props":{"media.class":"Audio/Sink","object.serial":1}}},
+            {"type":"PipeWire:Interface:Client"}
+        ]"#;
+        assert_eq!(super::parse_apps(json, 7), vec![("42".to_string(), "Firefox — Video".to_string())]);
+    }
+
     #[test]
     fn tight_and_mirror() {
         // 2×2 with 4 bytes of row padding.

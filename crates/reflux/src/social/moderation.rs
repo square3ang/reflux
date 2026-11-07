@@ -115,15 +115,18 @@ pub fn open_report(st: &mut ShellState, m: Modal) {
 pub fn voice_items<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
     let Some(vs) = store.voice_states.get(&(Some(g), u)).filter(|v| v.channel_id.is_some()) else { return Vec::new() };
     let have = store.guild_permissions(g);
+    let me = store.my_id();
+    // `canManageTarget`: yourself, or someone below your highest role.
+    let manage = u == me || rank(store, g, me) > rank(store, g, u);
     let patch = move |b: Value| move |s: &mut S| acc(s).social(Method::PATCH, format!("/guilds/{g}/members/{u}"), Some(b.clone()), Done::Nothing);
     let mut out = vec![MenuEntry::Separator];
-    if have.contains(P::MUTE_MEMBERS) {
-        out.push(MenuEntry::Item(MenuItem::new("server-mute", "Community mute").checkbox(vs.mute).on_select(patch(json!({ "mute": !vs.mute })))));
+    if have.contains(P::MUTE_MEMBERS) && manage {
+        out.push(MenuEntry::Item(MenuItem::new("server-mute", t("Community mute")).checkbox(vs.mute).on_select(patch(json!({ "mute": !vs.mute })))));
     }
-    if have.contains(P::DEAFEN_MEMBERS) {
-        out.push(MenuEntry::Item(MenuItem::new("server-deafen", "Community deafen").checkbox(vs.deaf).on_select(patch(json!({ "deaf": !vs.deaf })))));
+    if have.contains(P::DEAFEN_MEMBERS) && manage {
+        out.push(MenuEntry::Item(MenuItem::new("server-deafen", t("Community deafen")).checkbox(vs.deaf).on_select(patch(json!({ "deaf": !vs.deaf })))));
     }
-    if have.contains(P::MOVE_MEMBERS) {
+    if can_moderate(store, g, u, P::MOVE_MEMBERS) {
         let mut chans: Vec<_> = store.channels.values().filter(|c| c.guild_id == Some(g) && c.kind == ChannelType::GUILD_VOICE && Some(c.id) != vs.channel_id && store.permissions(c.id).contains(P::CONNECT)).collect();
         chans.sort_by_key(|c| (c.position, c.id));
         let moves: Vec<MenuEntry<S>> = chans
@@ -131,9 +134,10 @@ pub fn voice_items<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: S
             .map(|c| MenuEntry::Item(MenuItem::new(format!("move-{}", c.id), c.name.clone().unwrap_or_default()).icon(crate::shell::channel_icon(c.kind)).on_select(patch(json!({ "channel_id": c.id })))))
             .collect();
         if !moves.is_empty() {
-            out.push(MenuEntry::Submenu("move".into(), "Move to…".into(), moves));
+            out.push(MenuEntry::Submenu("move".into(), t("Move to…").into(), moves));
         }
-        out.push(MenuEntry::Item(MenuItem::new("disconnect", "Disconnect").icon(&icons::PHONE_X_FILL).danger().on_select(patch(json!({ "channel_id": null })))));
+        let conn = vs.connection_id.clone();
+        out.push(MenuEntry::Item(MenuItem::new("disconnect", t("Disconnect")).icon(&icons::PHONE_X_FILL).danger().on_select(patch(json!({ "channel_id": null, "connection_id": conn })))));
     }
     if out.len() == 1 { Vec::new() } else { out }
 }

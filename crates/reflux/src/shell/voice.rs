@@ -85,6 +85,14 @@ pub struct Voice {
     pub dismissed_calls: HashSet<Snowflake>,
     /// The watched stream fills the window.
     pub stream_fullscreen: bool,
+    pub entrance: Option<EntranceLibrary>,
+    pub trim: Option<Trim>,
+    /// The in-app screen picker's screens and windows (X11 / Windows), with thumbnails, and the
+    /// one picked (`None` = the system picker).
+    pub screen_sources: Option<Vec<(reflux_voice::ScreenSource, Pixels)>>,
+    pub screen_pick: Option<reflux_voice::ScreenSource>,
+    /// Linux screen share audio: (PipeWire `object.serial`, application name).
+    pub audio_sources: Option<Vec<(String, String)>>,
 }
 
 /// Voice & video settings (`VoiceSettings.ts`, `Keybind` transmit mode) kept on disk.
@@ -117,6 +125,17 @@ pub struct Settings {
     pub screen_bitrate: Option<u64>,
     /// `auto`, `nvenc`, `vaapi` or `software`.
     pub encoder: String,
+    /// `ParticipantVolume`: per-user volume (0..200 %).
+    pub user_volumes: HashMap<u64, f32>,
+    /// `StreamAudioPrefs`: per-streamer volume (0..200 %) and mutes.
+    pub stream_volumes: HashMap<u64, f32>,
+    pub stream_mutes: HashSet<u64>,
+    /// `EntranceSoundListenerPrefs`: per-user entrance sound mutes and volume (0..200 %).
+    pub entrance_mutes: HashSet<u64>,
+    pub entrance_volumes: HashMap<u64, f32>,
+    /// Linux: the PipeWire application node (its `object.serial`) a screen share sends audio
+    /// from; `None` = no audio.
+    pub stream_audio: Option<String>,
 }
 
 impl Default for Settings {
@@ -142,6 +161,12 @@ impl Default for Settings {
             screen_fps: 30,
             screen_bitrate: None,
             encoder: "auto".into(),
+            user_volumes: HashMap::new(),
+            stream_volumes: HashMap::new(),
+            stream_mutes: HashSet::new(),
+            entrance_mutes: HashSet::new(),
+            entrance_volumes: HashMap::new(),
+            stream_audio: None,
         }
     }
 }
@@ -154,6 +179,23 @@ impl Settings {
             "custom" => (self.echo_cancellation, self.noise_suppression, self.auto_gain_control),
             _ => (true, true, self.auto_gain_control),
         }
+    }
+
+    /// What the mic path runs (RNNoise = noise suppression) at the input volume.
+    pub fn mic_processing(&self) -> reflux_voice::Processing {
+        let (echo_cancellation, noise_suppression, auto_gain_control) = self.processing();
+        reflux_voice::Processing { echo_cancellation, noise_suppression, auto_gain_control, input_gain: self.input_volume / 100.0 }
+    }
+
+    /// Copies the playback preferences into the call's mixer.
+    pub fn apply_mixer(&self, m: &mut reflux_voice::Mixer, local_mutes: &HashSet<Snowflake>, deaf: bool) {
+        m.output = self.output_volume / 100.0;
+        m.deaf = deaf;
+        m.user_volume = self.user_volumes.iter().map(|(u, v)| (*u, v / 100.0)).collect();
+        m.stream_volume = self.stream_volumes.iter().map(|(u, v)| (*u, v / 100.0)).collect();
+        m.entrance_volume = self.entrance_volumes.iter().map(|(u, v)| (*u, v / 100.0)).collect();
+        m.muted_users = local_mutes.iter().map(|u| u.0).collect();
+        m.muted_streams = self.stream_mutes.clone();
     }
 
     /// Push-to-talk applies outside direct input only.
@@ -191,6 +233,77 @@ pub enum Modal {
     NotRingable,
     /// `requestStartCall`'s confirm, with "Confirm before starting calls" on.
     StartCall { channel: Snowflake, video: bool },
+    /// `AudioProcessingModal`: the processing profile and its custom toggles.
+    AudioProcessing,
+    /// `EntranceSoundTrimmerModal`.
+    Trim,
+}
+
+/// One clip in the entrance sound library (`EntranceSoundLibrary`).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct EntranceSound {
+    pub id: Snowflake,
+    pub name: String,
+    pub url: String,
+    pub duration_ms: u32,
+}
+
+/// The library and its scope selections (`GET /users/@me/entrance-sounds`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EntranceLibrary {
+    pub sounds: Vec<EntranceSound>,
+    /// scope → sound.
+    pub selections: HashMap<String, Snowflake>,
+}
+
+impl EntranceLibrary {
+    /// `resolveForScope`: `guild:{id}`, then `guilds` or `dms`, then `global`.
+    pub fn resolve(&self, guild: Option<Snowflake>) -> Option<Snowflake> {
+        let scopes = match guild {
+            Some(g) => vec![format!("guild:{g}"), "guilds".into(), "global".into()],
+            None => vec!["dms".into(), "global".into()],
+        };
+        scopes.iter().find_map(|s| self.selections.get(s).copied())
+    }
+}
+
+/// A file being trimmed for upload: mono samples at 48 kHz and the chosen span in seconds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Trim {
+    pub name: String,
+    pub samples: std::sync::Arc<Vec<f32>>,
+    pub start: f32,
+    pub end: f32,
+    pub uploading: bool,
+    pub error: Option<String>,
+}
+
+impl Trim {
+    pub const MAX_SECS: f32 = 5.2;
+    pub const MIN_SECS: f32 = 0.1;
+
+    pub fn secs(&self) -> f32 {
+        self.samples.len() as f32 / reflux_voice::audio::RATE as f32
+    }
+
+    /// Moves one handle, keeping the span within 0.1..=5.2 s by pulling the other along.
+    pub fn set(&mut self, start: bool, at: f32) {
+        let total = self.secs();
+        let at = at.clamp(0.0, total);
+        if start {
+            self.start = at.min((total - Self::MIN_SECS).max(0.0));
+            self.end = self.end.clamp(self.start + Self::MIN_SECS, self.start + Self::MAX_SECS).min(total);
+        } else {
+            self.end = at.max(Self::MIN_SECS.min(total));
+            self.start = self.start.clamp((self.end - Self::MAX_SECS).max(0.0), (self.end - Self::MIN_SECS).max(0.0));
+        }
+    }
+
+    pub fn selection(&self) -> &[f32] {
+        let r = reflux_voice::audio::RATE as f32;
+        let (a, b) = ((self.start * r) as usize, (self.end * r) as usize);
+        &self.samples[a.min(self.samples.len())..b.min(self.samples.len())]
+    }
 }
 
 /// The voice message being recorded or reviewed (`VoiceMessageComposerModal`).
@@ -234,6 +347,23 @@ pub enum Op {
     PushToTalk(bool),
     /// "Join" in the already-in-voice confirmation.
     ConfirmJoin(Option<Snowflake>, Snowflake),
+    /// Load the entrance sound library.
+    LoadEntrance,
+    /// Assign a clip to a scope (`None` clears it).
+    SelectEntrance(String, Option<Snowflake>),
+    DeleteEntrance(Snowflake),
+    /// Play a clip from the library, or the trimmer's selection.
+    PreviewEntrance(Snowflake),
+    PreviewTrim,
+    /// Upload the trimmer's selection.
+    UploadTrim,
+    /// Pop the call view, a participant's camera or stream into its own window; `pip` keeps
+    /// a small one on top.
+    PopOut { user: Option<Snowflake>, screen: bool, pip: bool },
+    /// Linux: list the PipeWire application streams for screen share audio.
+    LoadAudioSources,
+    /// List screens and windows with thumbnails for the in-app picker.
+    LoadScreenSources,
 }
 
 impl ShellState {
@@ -439,13 +569,15 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         status_row = status_row.child(signal_icon(v, p));
     }
     // The status opens `VoiceDetailsPopout`; the lock is `VoiceE2EEIndicator`.
-    // shortcut: no noise-suppression quick toggle; it lives in the Voice & video tab.
     let details = status(label, color).key(super::call::DETAILS).cursor(rune::Cursor::Pointer).role("button").on_press(move |s: &mut S| acc(s).popups.toggle(super::call::DETAILS));
     status_row = status_row.child(details);
     if v.encrypted {
         status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted"));
     }
-    status_row = status_row.child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()));
+    // `AudioProcessingButton`: opens `AudioProcessingModal`.
+    status_row = status_row
+        .child(control_button(&icons::WAVEFORM_BOLD, t("Audio processing"), p, move |s: &mut S| acc(s).voice.modal = Some(Modal::AudioProcessing)))
+        .child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()));
     let channel_name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
     let source = match guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()) {
         Some(g) => format!("{channel_name} / {}", g.name),
@@ -490,7 +622,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         }))
         .child(media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, !v.connected || !can_stream, p, move |s: &mut S| {
             let sh = acc(s);
-            if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { sh.voice.modal = Some(Modal::ScreenShare) }
+            if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { super::call::open_screen_picker(sh) }
         }));
     Some(shell.child(status_row).child(source_row).child(media).child(divider))
 }
@@ -572,6 +704,29 @@ mod tests {
         st.toggle_mute();
         assert!(!st.voice.self_deaf && !st.voice.self_mute, "unmuting while deafened undeafens");
         assert_eq!(st.intents.iter().filter(|i| **i == Intent::VoiceSelf).count(), 7);
+    }
+
+    #[test]
+    fn trim_keeps_0_1_to_5_2_seconds() {
+        let mut t = Trim { samples: std::sync::Arc::new(vec![0.0; 48_000 * 10]), ..Default::default() };
+        t.set(false, 9.0);
+        assert_eq!((t.start, t.end), (9.0 - Trim::MAX_SECS, 9.0), "the start follows a far end");
+        t.set(true, 8.95);
+        assert!((t.end - (8.95 + Trim::MIN_SECS)).abs() < 1e-4, "the end stays 0.1 s after the start");
+        t.set(true, 0.0);
+        assert_eq!((t.start, t.end), (0.0, Trim::MAX_SECS));
+        assert_eq!(t.selection().len(), (Trim::MAX_SECS * 48_000.0) as usize);
+    }
+
+    #[test]
+    fn entrance_scope_falls_back_to_global() {
+        let mut lib = EntranceLibrary::default();
+        lib.selections.insert("global".into(), Snowflake(1));
+        lib.selections.insert("guilds".into(), Snowflake(2));
+        lib.selections.insert("guild:7".into(), Snowflake(3));
+        assert_eq!(lib.resolve(Some(Snowflake(7))), Some(Snowflake(3)));
+        assert_eq!(lib.resolve(Some(Snowflake(8))), Some(Snowflake(2)));
+        assert_eq!(lib.resolve(None), Some(Snowflake(1)), "no dms selection: global");
     }
 
     #[test]

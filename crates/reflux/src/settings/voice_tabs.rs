@@ -60,9 +60,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
     };
     let mut out = col().w_full().child(section(t("Devices"), devices, true, p));
 
-    // ---- Volume
-    // shortcut: input/output volume are stored but not applied (the Rust SDK has no device
-    // volume control); they need webrtc-sys's AudioDeviceModule SetSpeakerVolume / gain.
+    // ---- Volume (applied by our own mic path and mixer, `reflux_voice::audio`)
     let vol = |key: &'static str, name: &str, value: f32, input: bool| {
         col().w_full().gap(8.0).child(label(name, p)).child(
             Slider::new(key, value, 0.0, 200.0)
@@ -170,7 +168,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         false,
         p,
     ));
-    // shortcut: no entrance sound; it needs the premium sound upload and trimmer.
+    out = out.child(section(t("Entrance sound"), entrance(st, p, acc, layer), false, p));
 
     // ---- Voice channels
     out = out.child(section(
@@ -281,6 +279,62 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         p,
     ));
     out
+}
+
+/// `EntranceSoundSection`: the clip for every voice channel and call (the `global` scope), the
+/// library with preview / delete, and upload through the trimmer.
+fn entrance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let Some(lib) = &st.voice.entrance else {
+        return col().w_full().gap(8.0).child(desc(t("Loading…"), p)).child(
+            Button::new(t("Load")).variant(ButtonVariant::Secondary).key("entrance-load").on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::LoadEntrance))).el(p),
+        );
+    };
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    let ids: Vec<String> = lib.sounds.iter().map(|x| x.id.to_string()).collect();
+    let opts: Vec<(&str, &str)> = std::iter::once(("", t("None"))).chain(lib.sounds.iter().zip(&ids).map(|(x, id)| (id.as_str(), x.name.as_str()))).collect();
+    let cur = lib.selections.get("global").map(|x| x.to_string()).unwrap_or_default();
+    let pick = Select::new("entrance-global", &opts, Some(&cur))
+        .label(t("Entrance sound"))
+        .width(340.0)
+        .on_choose(move |s: &mut S, v| acc(s).intents.push(Intent::Voice(Op::SelectEntrance("global".into(), v.parse().ok().map(reflux_model::Snowflake)))))
+        .el(&st.popups, pops, p, layer);
+    let mut c = col().w_full().gap(12.0).child(desc(t("Plays for everyone else in the voice channel when you join."), p)).child(pick);
+    for x in &lib.sounds {
+        let id = x.id;
+        c = c.child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(text(format!("{} · {:.1} s", x.name, x.duration_ms as f32 / 1000.0)).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0).truncate())
+                .child(Button::new(t("Play")).variant(ButtonVariant::Secondary).key(format!("entrance-play-{id}")).on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::PreviewEntrance(id)))).el(p))
+                .child(Button::new(t("Delete")).variant(ButtonVariant::Danger).key(format!("entrance-del-{id}")).on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::DeleteEntrance(id)))).el(p)),
+        );
+    }
+    // `ENTRANCE_SOUND_MAX_PER_USER`.
+    let full = lib.sounds.len() >= 8;
+    let upload = Button::new(t("Upload")).key("entrance-upload").disabled(full).on_press_tx(move |_: &mut S, tx: &mut rune::Tx| {
+        let options = rune::FileDialogOptions { title: t("Upload").into(), ..Default::default() }.filter(t("Audio"), &["mp3", "ogg", "wav", "m4a"]);
+        tx.open_file(options, move |s: &mut S, r, _| {
+            let Ok(Some(path)) = r else { return };
+            let sh = acc(s);
+            let name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("Entrance sound").chars().take(32).collect();
+            match std::fs::read(&path).ok().and_then(crate::voice_input::decode) {
+                Some(pcm) => {
+                    let mut trim = crate::shell::voice::Trim { name, samples: std::sync::Arc::new(pcm), ..Default::default() };
+                    trim.set(false, crate::shell::voice::Trim::MAX_SECS);
+                    sh.voice.trim = Some(trim);
+                    sh.voice.modal = Some(Modal::Trim);
+                }
+                None => sh.notice = Some((t("Entrance sound").into(), t("Could not decode this audio file.").into())),
+            }
+        });
+    });
+    c = c.child(row().child(upload.el(p)));
+    if full {
+        c = c.child(desc(t("Library full (8 sounds max). Delete one before adding another."), p));
+    }
+    c
 }
 
 /// The mic level bar (-100..0 dB), with the activity threshold marked.
