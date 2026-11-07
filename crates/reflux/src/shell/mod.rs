@@ -21,6 +21,7 @@ pub mod lightbox;
 mod links;
 pub mod demo;
 pub(crate) mod emoji;
+mod emoticons;
 pub(crate) mod role_icon;
 pub mod expr;
 pub(crate) mod friends;

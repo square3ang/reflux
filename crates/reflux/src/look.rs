@@ -1,7 +1,6 @@
 //! Appearance, accessibility, chat input and notification preferences that Fluxer keeps per device
 //! (`Accessibility`, `ChatInputSettings`, `Notification`, `Sound` stores and the quick CSS). They
 //! live in session.json (`desktop::Prefs::look`) and the views read the current copy with [`get`].
-// shortcut: emoticons are matched as whole space-separated words from a short list.
 // shortcut: Fluxer also syncs some of these through `synced_preferences` (a protobuf in the
 // account settings); Reflux keeps them on this device only.
 
@@ -211,71 +210,10 @@ pub fn set_reduced_motion(on: bool) {
     REDUCED.store(on, Ordering::Relaxed);
 }
 
-/// `EMOTICON_MAP`-style text smileys turned into emoji when sent (`convertEmoticons`).
-const EMOTICONS: &[(&str, &str)] = &[
-    (":)", "🙂"),
-    (":-)", "🙂"),
-    (":(", "🙁"),
-    (":-(", "🙁"),
-    (":D", "😄"),
-    (":-D", "😄"),
-    (";)", "😉"),
-    (";-)", "😉"),
-    (":P", "😛"),
-    (":-P", "😛"),
-    (":p", "😛"),
-    (":O", "😮"),
-    (":o", "😮"),
-    (":'(", "😢"),
-    (":|", "😐"),
-    ("<3", "❤️"),
-    ("</3", "💔"),
-    ("B)", "😎"),
-    (":*", "😘"),
-    ("XD", "😆"),
-    (">:(", "😠"),
-];
-
-/// Replaces whole-word emoticons outside code spans.
-pub fn convert_emoticons(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut in_code = false;
-    for (i, part) in text.split('`').enumerate() {
-        if i > 0 {
-            out.push('`');
-            in_code = !in_code;
-        }
-        if in_code {
-            out.push_str(part);
-            continue;
-        }
-        let words: Vec<String> = part
-            .split(' ')
-            .map(|w| {
-                let (core, nl) = match w.strip_suffix('\n') {
-                    Some(c) => (c, "\n"),
-                    None => (w, ""),
-                };
-                match EMOTICONS.iter().find(|(e, _)| *e == core) {
-                    Some((_, emoji)) => format!("{emoji}{nl}"),
-                    None => w.to_string(),
-                }
-            })
-            .collect();
-        out.push_str(&words.join(" "));
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn emoticons_convert_whole_words_outside_code() {
-        assert_eq!(convert_emoticons("hi :) <3"), "hi 🙂 ❤️");
-        assert_eq!(convert_emoticons("a:)b `:)` :D"), "a:)b `:)` 😄");
-    }
 
     #[test]
     fn sound_defaults_and_motion() {

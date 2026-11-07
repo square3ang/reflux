@@ -25,11 +25,29 @@ pub const CATEGORIES: [(&str, &str); 8] = [
     ("flags", "Flags"),
 ];
 
+const DATA_JSON: &str = include_str!("../../../../assets/media/data/emojis.json");
+
+/// `emojiData.shortcuts` (emoticon → emoji name) resolved to glyphs, longest emoticon first.
+pub fn shortcuts() -> &'static [(String, String)] {
+    static DATA: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    DATA.get_or_init(|| {
+        let v: serde_json::Value = serde_json::from_str(DATA_JSON).unwrap_or_default();
+        let mut out: Vec<(String, String)> = v["shortcuts"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, n)| Some((k.clone(), by_name(n.as_str()?)?.glyph.clone())))
+            .collect();
+        out.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+        out
+    })
+}
+
 /// (category label, emoji), in Fluxer's order.
 pub fn all() -> &'static [(&'static str, Vec<Emoji>)] {
     static DATA: OnceLock<Vec<(&'static str, Vec<Emoji>)>> = OnceLock::new();
     DATA.get_or_init(|| {
-        let v: serde_json::Value = serde_json::from_str(include_str!("../../../../assets/media/data/emojis.json")).unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(DATA_JSON).unwrap_or_default();
         let strs = |v: &serde_json::Value| -> Vec<String> {
             v.as_array().into_iter().flatten().filter_map(|s| s.as_str().map(str::to_owned)).collect()
         };

@@ -1584,7 +1584,7 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
     }
     let mut content = autocomplete::apply_command(text.trim());
     if crate::look::with(|l| l.convert_emoticons) {
-        content = crate::look::convert_emoticons(&content);
+        content = super::emoticons::convert(&content);
     }
     let sticker = st.pending_sticker.is_some_and(|(c, _)| c == channel);
     if (content.is_empty() && st.uploads.is_empty() && !sticker) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
