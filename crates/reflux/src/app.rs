@@ -21,6 +21,7 @@ use crate::{State, session};
 
 mod account;
 mod actions;
+pub(crate) mod accounts;
 pub(crate) mod cache;
 mod chat;
 mod commands;
@@ -151,6 +152,12 @@ pub struct App {
     /// Why the saved session couldn't connect (shown on the connecting screen).
     pub error: Option<String>,
     gateway: Option<UnboundedSender<Command>>,
+    /// The foreground gateway's [`accounts::next_conn`] id (`None` while connecting or signed out).
+    gateway_id: Option<u64>,
+    /// Other signed-in accounts, kept connected in the background (`AccountEngineHost`).
+    pub accounts: accounts::Engines,
+    /// A channel to open once the account switch that was just requested finishes.
+    pub pending_channel: Option<(Option<Snowflake>, Snowflake)>,
     /// Bumped per gateway connection, so events of a closed one are dropped.
     generation: u64,
     acks: actions::PendingAcks,
@@ -218,6 +225,7 @@ fn boot(s: &mut State) {
         s.app.route = Route::Connecting;
         cache::restore(s);
     }
+    accounts::start_all(s);
     discover(s);
 }
 
@@ -570,6 +578,9 @@ pub fn import_session(s: &mut State) {
             s.login = crate::login::Login { instance: TextEdit::new(saved.instance.clone()), ..Default::default() };
             s.app.saved = saved;
             s.app.route = Route::Connecting;
+            s.app.pending_channel = None;
+            accounts::stop_all(s);
+            accounts::start_all(s);
             discover(s); // the instance and installation ID may have changed
         }
         Err(e) => s.login.errors.form = Some(e),
@@ -583,7 +594,7 @@ fn restore_voice_devices(s: &mut State) {
     voice::apply_encoder(&v.settings);
 }
 
-/// Leaves voice and closes the gateway (`cleanupRuntimeStateOnCrash` too).
+/// Leaves voice and closes every gateway (`cleanupRuntimeStateOnCrash` too).
 pub fn stop_for_crash(s: &mut State) {
     voice::leave(s, true);
     if let Some(h) = s.app.voice.rollout.take() {
@@ -592,11 +603,20 @@ pub fn stop_for_crash(s: &mut State) {
     if let Some(gw) = s.app.gateway.take() {
         let _ = gw.send(Command::Close);
     }
+    accounts::stop_all(s);
 }
 
-/// Drops the connection and everything loaded for it.
-fn reset(s: &mut State) {
-    stop_for_crash(s);
+/// Drops the foreground connection and everything loaded for it. Background accounts keep
+/// running: switching accounts is [`accounts::demote`]/[`accounts::promote`].
+fn reset_view(s: &mut State) {
+    voice::leave(s, true);
+    if let Some(h) = s.app.voice.rollout.take() {
+        h.abort();
+    }
+    if let Some(gw) = s.app.gateway.take() {
+        let _ = gw.send(Command::Close);
+    }
+    s.app.gateway_id = None;
     s.app.generation += 1;
     s.app.store = Store::default();
     s.app.connection = None;
@@ -614,14 +634,19 @@ fn reset(s: &mut State) {
 /// Forgets the session locally; `message` is shown on the login screen. Another account saved on
 /// this device takes over instead, like Fluxer's switcher after a logout.
 fn sign_out(s: &mut State, message: Option<String>) {
-    reset(s);
+    reset_view(s);
+    s.app.pending_channel = None;
     if let Some(a) = &s.app.saved.current {
         cache::forget(a);
+        accounts::stop(s, &a.slot());
     }
     s.app.saved.token = None;
     s.app.saved.current = None;
     if s.app.saved.switch_to(0) {
         session::save(&s.app.saved);
+        if accounts::promote(s) {
+            return;
+        }
         s.app.route = Route::Connecting;
         cache::restore(s);
         return discover(s);
@@ -632,6 +657,13 @@ fn sign_out(s: &mut State, message: Option<String>) {
     s.login.errors.form = message;
     if s.app.instance.is_none() && !s.login.discovering {
         discover(s);
+    }
+}
+
+/// A channel a notification or the other-accounts inbox asked to open after switching.
+pub fn open_pending_channel(s: &mut State) {
+    if let Some((guild, channel)) = s.app.pending_channel.take() {
+        s.app.shell.select_guild(guild, Some(channel));
     }
 }
 
@@ -654,19 +686,12 @@ fn connect(s: &mut State) {
     }
     s.app.generation += 1;
     s.app.error = None;
-    let generation = s.app.generation;
+    let id = accounts::next_conn();
+    s.app.gateway_id = Some(id);
     let config = GatewayConfig {
         url: inst.discovery.endpoints.gateway.clone(),
         token,
-        properties: IdentifyProperties {
-            os: os_name().into(),
-            browser: "Reflux".into(),
-            device: std::env::consts::ARCH.into(),
-            // Fluxer's `isLiveKitE2EECapable()`: without it the gateway never grants an
-            // `e2ee_key` and refuses encrypted channels with VOICE_E2EE_REQUIRED.
-            e2ee_capable: true,
-            ..Default::default()
-        },
+        properties: identify_properties(),
         flags: SessionFlags::CHANNEL_THREADS,
         // A reconnect with a fresh session (store already filled by the last READY) keeps the
         // saved status instead of dropping to online; before the first READY there is nothing
@@ -686,18 +711,36 @@ fn connect(s: &mut State) {
         };
         let commands = gw.commands.clone();
         update(move |s| {
-            if s.app.generation == generation {
+            if s.app.gateway_id == Some(id) {
                 s.app.gateway = Some(commands);
             }
         });
         while let Some(ev) = gw.events.recv().await {
-            update(move |s| {
-                if s.app.generation == generation {
-                    on_gateway(s, ev);
-                }
-            });
+            update(move |s| on_connection(s, id, ev));
         }
     });
+}
+
+/// The Identify properties of both the foreground and the background gateways.
+pub(super) fn identify_properties() -> IdentifyProperties {
+    IdentifyProperties {
+        os: os_name().into(),
+        browser: "Reflux".into(),
+        device: std::env::consts::ARCH.into(),
+        // Fluxer's `isLiveKitE2EECapable()`: without it the gateway never grants an
+        // `e2ee_key` and refuses encrypted channels with VOICE_E2EE_REQUIRED.
+        e2ee_capable: true,
+        ..Default::default()
+    }
+}
+
+/// Sends a gateway event to its owner: the foreground or a background account.
+fn on_connection(s: &mut State, id: u64, ev: GatewayEvent) {
+    if s.app.gateway_id == Some(id) {
+        on_gateway(s, ev);
+    } else {
+        accounts::on_event(s, id, ev);
+    }
 }
 
 /// `GatewaySocket.resendPresence`: a Resume can leave the presence offline (`LocalPresence`),
@@ -769,6 +812,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                     crate::desktop::spell::configure(&s.app.saved.desktop); // the locale's dictionary
                 }
                 crate::desktop::ready(s);
+                open_pending_channel(s);
                 voice::load_rollout(s);
                 voice::watch_devices();
             }

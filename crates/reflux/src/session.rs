@@ -61,7 +61,8 @@ pub struct Account {
 }
 
 impl Account {
-    fn slot(&self) -> String {
+    /// Key of this account across the saved list and the background engines.
+    pub fn slot(&self) -> String {
         format!("account:{}:{}", self.instance, self.user_id)
     }
 }

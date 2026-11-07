@@ -87,6 +87,8 @@ pub struct AccountUi {
     /// Mirrors of the saved session for the switcher: the active account and the others.
     pub current: Option<crate::session::Account>,
     pub accounts: Vec<crate::session::Account>,
+    /// What the background engines report for the saved accounts (mentions/unread/state).
+    pub activity: Vec<crate::app::accounts::AccountActivity>,
     /// The signed-in user's ID.
     pub me: Snowflake,
     /// Adding a passkey: the key asked for its PIN (reply, the last one was wrong).
@@ -108,6 +110,8 @@ pub enum ShellModal {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
     SwitchAccount(usize),
+    /// Switch, then open a channel on the account that becomes foreground.
+    SwitchAccountTo { index: usize, guild: Option<Snowflake>, channel: Snowflake },
     AddAccount,
     RemoveAccount(usize),
     /// `GET /users/{user}/profile` into [`AccountUi::profiles`].

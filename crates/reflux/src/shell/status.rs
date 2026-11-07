@@ -267,12 +267,38 @@ pub fn accounts_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
     let mut list = col().w_full().gap(8.0);
     if let Some(c) = &st.account.current {
         let face = super::avatar(store, st, me, 40.0, None, p.background_tertiary, p);
-        let active = text(t("Active")).font(font(12.0, 600.0).lh(16.0)).color(p.status_online);
+        let mentions: u32 = store
+            .channels
+            .values()
+            .filter(|c| c.kind != reflux_model::ChannelType::GUILD_CATEGORY)
+            .map(|c| store.mention_count(c.id))
+            .sum();
+        let active = row()
+            .gap(8.0)
+            .children(crate::ui::mention_badge(mentions as u64, true, p))
+            .child(text(t("Active")).font(font(12.0, 600.0).lh(16.0)).color(p.status_online));
         list = list.child(entry(&c.display_name, format!("{} · {}", c.username, host(&c.instance)), face, active));
     }
     for (i, a) in st.account.accounts.iter().enumerate() {
-        let actions = row()
-            .gap(8.0)
+        let act = st.account.activity.iter().find(|x| x.slot == a.slot());
+        let mentions = act.map_or(0, |x| x.summary.mentions);
+        let unread = act.is_some_and(|x| x.summary.unread > 0);
+        let state = match act.map(|x| x.state) {
+            Some(crate::app::accounts::EngineState::Reconnecting) => Some(t("Reconnecting")),
+            Some(crate::app::accounts::EngineState::Offline) => Some(t("Offline")),
+            _ => None,
+        };
+        let sub = match state {
+            Some(s) => format!("{} · {} · {s}", a.username, host(&a.instance)),
+            None => format!("{} · {}", a.username, host(&a.instance)),
+        };
+        let mut actions = row().gap(8.0);
+        if let Some(b) = crate::ui::mention_badge(mentions as u64, true, p) {
+            actions = actions.child(b);
+        } else if unread {
+            actions = actions.child(row().size(16.0, 16.0).center().child(rune::el().size(8.0, 8.0).radius(4.0).fill(p.text_primary_muted)).label(t("Unread messages")));
+        }
+        actions = actions
             .child(Button::new(t("Switch")).key(format!("switch-{i}")).on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::SwitchAccount(i)))).el(p))
             .child(
                 Button::new(t("Remove"))
@@ -281,7 +307,7 @@ pub fn accounts_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
                     .on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::RemoveAccount(i))))
                     .el(p),
             );
-        list = list.child(entry(&a.display_name, format!("{} · {}", a.username, host(&a.instance)), letter(&a.display_name), actions));
+        list = list.child(entry(&a.display_name, sub, letter(&a.display_name), actions));
     }
     if st.account.accounts.is_empty() {
         list = list.child(text(t("No other accounts on this device.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));

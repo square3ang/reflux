@@ -452,8 +452,9 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     }
     let main = s.app.route == Route::Main;
     let store = &s.app.store;
-    // `UnreadBadge`: total mentions across guilds and DMs, plus unread DMs.
-    let mentions: u32 = if main {
+    // `UnreadBadge`: total mentions across guilds and DMs, plus unread DMs, plus what the other
+    // signed-in accounts' background engines report (`AppBadgeCount.ts` + `otherAccounts*`).
+    let mut mentions: u32 = if main {
         store
             .channels
             .values()
@@ -463,7 +464,9 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     } else {
         0
     };
-    let unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
+    let mut unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
+    mentions = mentions.saturating_add(s.app.accounts.mentions());
+    unread |= s.app.accounts.any_unread();
     let requests = if main { store.relationships.values().filter(|r| r.kind == reflux_model::RelationshipType::INCOMING_REQUEST).count() as u32 } else { 0 };
     let badge = (badge::compute(mentions, requests, unread, s.app.saved.desktop.look.unread_badge), mentions > 0 && !s.desktop.focused);
     if s.desktop.badge != Some(badge) {

@@ -10,11 +10,12 @@ use rune::{El, Icon, ScrollSpec, col, icon, row, text};
 use serde_json::{Value, json};
 
 use super::{Done, Modal, body, close, desc, error, field, footer};
+use crate::app::accounts::{AccountActivity, EngineState};
 use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::overlay::popout_shadow;
-use crate::ui::{Checkbox, MenuEntry, MenuItem, Modal as Dialog, Select, over, popup_access, scroller, spinner};
+use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, MenuEntry, MenuItem, Modal as Dialog, Select, over, popup_access, scroller, spinner};
 use crate::i18n::t;
 
 pub const INBOX: &str = "header-inbox";
@@ -80,6 +81,167 @@ pub fn inbox_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
 
 fn messages_of(v: Option<&Value>) -> Option<Vec<Message>> {
     v.and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// `OtherAccountsInboxSection`: what the background accounts report, above the inbox's tabs.
+/// Rows switch to that account and open the channel (through `Op::SwitchAccountTo`); marking
+/// other accounts' channels read is a write, so it isn't offered here.
+fn other_accounts_section<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let activities: Vec<&AccountActivity> = st
+        .account
+        .activity
+        .iter()
+        .filter(|a| a.summary.mentions > 0 || a.summary.unread > 0 || !a.summary.recent_mentions.is_empty())
+        .collect();
+    if activities.is_empty() {
+        return None;
+    }
+    let mentions: u32 = activities.iter().map(|a| a.summary.mentions).sum();
+    let with_mentions = activities.iter().filter(|a| a.summary.mentions > 0).count();
+    let summary = if mentions > 0 {
+        crate::i18n::tf(
+            "{mentionCount, plural, one {# mention} other {# mentions}} on {accountCount, plural, one {# other account} other {# other accounts}}",
+            &[("mentionCount", &mentions.to_string()), ("accountCount", &with_mentions.to_string())],
+        )
+    } else {
+        crate::i18n::tf(
+            "Unread messages on {accountCount, plural, one {# other account} other {# other accounts}}",
+            &[("accountCount", &activities.len().to_string())],
+        )
+    };
+    let collapsed = st.social.other_accounts_collapsed;
+    let toggle = row()
+        .w_full()
+        .px(12.0)
+        .py(10.0)
+        .gap(8.0)
+        .center_y()
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(t("Other accounts"))
+        .key("inbox-other-toggle")
+        .child(icon(if collapsed { &icons::CARET_RIGHT_BOLD } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_primary_muted))
+        .child(text(summary.clone()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .on_press(move |s: &mut S| acc(s).social.other_accounts_collapsed ^= true);
+    let section = col().w_full().child(toggle);
+    if collapsed {
+        return Some(section);
+    }
+    let mut groups = col().w_full().gap(2.0);
+    let host = |instance: &str| instance.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string();
+    let several_hosts = {
+        let mut hosts: Vec<String> = st.account.accounts.iter().chain(st.account.current.iter()).map(|a| host(&a.instance)).collect();
+        hosts.sort();
+        hosts.dedup();
+        hosts.len() > 1
+    };
+    for a in activities {
+        let Some(index) = st.account.accounts.iter().position(|x| x.slot() == a.slot) else { continue };
+        let account = &st.account.accounts[index];
+        let name = if account.display_name.is_empty() { account.username.clone() } else { account.display_name.clone() };
+        let letter = row()
+            .size(24.0, 24.0)
+            .center()
+            .radius(12.0)
+            .fill(p.brand_primary)
+            .child(text(name.chars().next().unwrap_or('?').to_uppercase().to_string()).font(font(12.0, 600.0)).color(p.brand_primary_fill));
+        let mut sub = name.clone();
+        if several_hosts {
+            sub = format!("{name} · {}", host(&account.instance));
+        }
+        if a.state == EngineState::Reconnecting || a.state == EngineState::Offline {
+            sub = format!("{sub} · {}", t(if a.state == EngineState::Reconnecting { "Reconnecting" } else { "Offline" }));
+        }
+        let switch = Button::new(t("Switch"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Compact)
+            .key(format!("inbox-other-switch-{index}"))
+            .on_press(move |s: &mut S| {
+                let st = acc(s);
+                st.social.inbox_open = false;
+                st.intents.push(Intent::Account(crate::settings::Op::SwitchAccount(index)));
+            })
+            .el(p);
+        let mut head = row().w_full().px(12.0).py(8.0).gap(8.0).center_y().child(letter).child(text(sub).font(font(13.0, 600.0)).color(p.text_primary).truncate().shrink());
+        if let Some(b) = crate::ui::mention_badge(a.summary.mentions as u64, true, p) {
+            head = head.child(b);
+        }
+        let mut group = col().w_full().gap(2.0).child(head.child(rune::el().grow(1.0)).child(switch));
+        for c in &a.summary.channels {
+            let (guild, channel_id) = (c.guild, c.channel);
+            let open = move |s: &mut S| {
+                let st = acc(s);
+                st.social.inbox_open = false;
+                st.intents.push(Intent::Account(crate::settings::Op::SwitchAccountTo { index, guild, channel: channel_id }));
+            };
+            let mut line = row()
+                .w_full()
+                .px(12.0)
+                .py(5.0)
+                .gap(8.0)
+                .center_y()
+                .radius(4.0)
+                .hover(p.background_modifier_hover)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .key(format!("inbox-other-{}-{}", a.slot, c.channel))
+                .child(icon(crate::shell::channel_icon(c.kind), 14.0).color(p.text_primary_muted))
+                .child(
+                    text(match (&c.guild_name, c.kind.is_private()) {
+                        (_, true) | (None, _) => c.name.clone(),
+                        (Some(g), false) => format!("#{} · {g}", c.name),
+                    })
+                    .font(font(13.0, 500.0))
+                    .color(p.text_primary)
+                    .truncate()
+                    .shrink(),
+                )
+                .on_press(open);
+            if c.mentions > 0 {
+                if let Some(b) = crate::ui::mention_badge(c.mentions as u64, true, p) {
+                    line = line.child(b);
+                }
+            } else if c.unread {
+                line = line.child(rune::el().size(8.0, 8.0).radius(4.0).fill(p.text_primary));
+            }
+            group = group.child(line);
+        }
+        if !a.summary.recent_mentions.is_empty() {
+            group = group.child(row().w_full().px(12.0).pt(6.0).child(text(t("Recent mentions")).font(font(11.0, 600.0)).color(p.text_primary_muted)));
+            for m in &a.summary.recent_mentions {
+                let (guild, channel_id) = (m.guild, m.channel);
+                let open = move |s: &mut S| {
+                    let st = acc(s);
+                    st.social.inbox_open = false;
+                    st.intents.push(Intent::Account(crate::settings::Op::SwitchAccountTo { index, guild, channel: channel_id }));
+                };
+                group = group.child(
+                    row()
+                        .w_full()
+                        .px(12.0)
+                        .py(5.0)
+                        .gap(8.0)
+                        .center_y()
+                        .radius(4.0)
+                        .hover(p.background_modifier_hover)
+                        .cursor(rune::Cursor::Pointer)
+                        .role("button")
+                        .key(format!("inbox-other-mention-{}-{}", a.slot, m.message))
+                        .child(icon(&icons::AT_BOLD, 14.0).color(p.text_primary_muted))
+                        .child(
+                            col()
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .child(text(format!("{} · {}", m.author, m.channel_name)).font(font(12.0, 600.0)).color(p.text_primary).truncate())
+                                .child(text(m.preview.clone()).font(font(12.0, 400.0)).color(p.text_primary_muted).truncate()),
+                        )
+                        .on_press(open),
+                );
+            }
+        }
+        groups = groups.child(group);
+    }
+    Some(section.child(col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(groups)))
 }
 
 pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
@@ -153,7 +315,11 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         1 => bookmark_list(store, st, p, acc),
         _ => mention_list(store, st, p, acc),
     };
-    let content = col().grow(1.0).min_w(0.0).h_full().child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
+    let mut content = col().grow(1.0).min_w(0.0).h_full();
+    if let Some(others) = other_accounts_section(st, p, acc) {
+        content = content.child(others);
+    }
+    let content = content.child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
     let surface = row()
         .pin(None, Some(56.0), Some(16.0), Some(8.0))
         .w(600.0)

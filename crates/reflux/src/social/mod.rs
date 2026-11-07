@@ -48,6 +48,8 @@ pub struct Social {
     pub inbox_tab: u8,
     /// Unread tab sections folded shut.
     pub inbox_collapsed: std::collections::HashSet<Snowflake>,
+    /// The inbox's "Other accounts" section is folded shut (`UI_INBOX_OTHER_ACCOUNTS_COLLAPSED`).
+    pub other_accounts_collapsed: bool,
     /// Recent mention filters: (role mentions, @everyone/@here, all communities).
     pub mention_filter: [bool; 3],
     /// Bookmarked message IDs known this session (the menu's Bookmark / Remove bookmark).

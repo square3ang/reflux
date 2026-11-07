@@ -59,7 +59,7 @@ pub mod voice_message;
 pub mod system_msg;
 pub mod queue;
 pub mod typing;
-mod unread_badges;
+pub(crate) mod unread_badges;
 pub(crate) mod badges;
 
 pub use friends::FriendsTab;

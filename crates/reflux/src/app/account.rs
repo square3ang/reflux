@@ -5,7 +5,7 @@ use reflux_model::WebAuthnAuthenticationOptions;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use super::{Route, discover, reset, session, spawn, update};
+use super::{Route, accounts, discover, reset_view, session, spawn, update};
 use crate::State;
 use crate::guild::describe;
 use crate::settings::Op;
@@ -13,24 +13,27 @@ use crate::settings::sudo::{self, Passkey};
 
 pub(super) fn run(s: &mut State, op: Op) {
     match op {
-        Op::SwitchAccount(i) => {
-            if s.app.saved.switch_to(i) {
-                session::save(&s.app.saved);
-                reset(s);
-                s.app.route = Route::Connecting;
-                super::cache::restore(s);
-                discover(s); // the instance may differ; connects once discovered
+        Op::SwitchAccount(i) => switch(s, i),
+        Op::SwitchAccountTo { index, guild, channel } => {
+            if index < s.app.saved.accounts.len() {
+                s.app.pending_channel = Some((guild, channel));
+                switch(s, index);
             }
         }
         Op::AddAccount => {
+            accounts::demote(s);
             s.app.saved.stash_current();
             session::save(&s.app.saved);
-            reset(s);
+            reset_view(s);
+            s.app.pending_channel = None;
             s.app.route = Route::Auth;
             s.login = crate::login::Login { instance: rune::TextEdit::new(s.app.saved.instance.clone()), ..Default::default() };
             discover(s);
         }
         Op::RemoveAccount(i) => {
+            if let Some(a) = s.app.saved.accounts.get(i) {
+                accounts::stop(s, &a.slot());
+            }
             s.app.saved.remove_account(i);
             session::save(&s.app.saved);
         }
@@ -146,6 +149,26 @@ pub(super) fn run(s: &mut State, op: Op) {
     }
 }
 
+/// Switches to `saved.accounts[i]`: the foreground becomes a background engine and the target
+/// takes over its live gateway when it has one, else it reconnects.
+fn switch(s: &mut State, i: usize) {
+    if i >= s.app.saved.accounts.len() {
+        return;
+    }
+    accounts::demote(s);
+    if !s.app.saved.switch_to(i) {
+        return;
+    }
+    session::save(&s.app.saved);
+    reset_view(s);
+    if accounts::promote(s) {
+        return;
+    }
+    s.app.route = Route::Connecting;
+    super::cache::restore(s);
+    discover(s); // the instance may differ; connects once discovered
+}
+
 fn set(s: &mut State, f: impl FnOnce(&mut sudo::Sudo)) {
     if let Some(x) = s.app.shell.account.sudo.as_mut() {
         f(x);
@@ -188,7 +211,8 @@ pub(super) fn remember_me(s: &mut State) {
     }
 }
 
-/// Copies the saved accounts into the shell for the switcher.
+/// Copies the saved accounts and the background engines' activity into the shell for the
+/// switcher and the inbox.
 pub(super) fn mirror(s: &mut State) {
     let a = &mut s.app.shell.account;
     if a.current != s.app.saved.current {
@@ -196,6 +220,10 @@ pub(super) fn mirror(s: &mut State) {
     }
     if a.accounts != s.app.saved.accounts {
         a.accounts = s.app.saved.accounts.clone();
+    }
+    let activity = s.app.accounts.activities();
+    if a.activity != activity {
+        a.activity = activity;
     }
     a.me = s.app.store.my_id();
 }

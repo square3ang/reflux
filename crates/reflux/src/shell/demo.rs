@@ -478,6 +478,47 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
     });
     sh.account.accounts =
         vec![crate::session::Account { instance: "chat.example.org".into(), user_id: "77".into(), username: "ada_work".into(), display_name: "Ada (work)".into(), ..Default::default() }];
+    sh.account.activity = vec![crate::app::accounts::AccountActivity {
+        slot: sh.account.accounts[0].slot(),
+        state: crate::app::accounts::EngineState::Live,
+        summary: crate::app::accounts::Summary {
+            mentions: 2,
+            unread: 3,
+            last_activity: now,
+            channels: vec![
+                crate::app::accounts::ChannelActivity {
+                    channel: reflux_model::Snowflake(9101),
+                    guild: Some(reflux_model::Snowflake(9100)),
+                    kind: reflux_model::ChannelType::GUILD_TEXT,
+                    name: "release-notes".into(),
+                    guild_name: Some("Acme".into()),
+                    mentions: 2,
+                    unread: true,
+                    last_message: Some(reflux_model::Snowflake::default()),
+                },
+                crate::app::accounts::ChannelActivity {
+                    channel: reflux_model::Snowflake(9102),
+                    guild: None,
+                    kind: reflux_model::ChannelType::DM,
+                    name: "Mina".into(),
+                    guild_name: None,
+                    mentions: 0,
+                    unread: true,
+                    last_message: Some(reflux_model::Snowflake::default()),
+                },
+            ],
+            recent_mentions: vec![crate::app::accounts::MentionActivity {
+                message: reflux_model::Snowflake::default(),
+                channel: reflux_model::Snowflake(9101),
+                guild: Some(reflux_model::Snowflake(9100)),
+                channel_name: "#release-notes".into(),
+                guild_name: Some("Acme".into()),
+                author: "Mina".into(),
+                preview: "Can you check the deploy notes?".into(),
+                timestamp: now,
+            }],
+        },
+    }];
     let day = |d: u64| iso(now - d * 86_400_000);
     for (k, v) in [
         ("passkeys", json!([{"id": "pk1", "name": "YubiKey 5C", "created_at": day(90), "last_used_at": day(2)}])),
