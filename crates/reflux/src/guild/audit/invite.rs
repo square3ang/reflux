@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::{E, Ph, Presented, Row, Sentence, Tone, boolean, channel, number, row, s, snowflake, string, timestamp, with_rows};
 
 fn side<'a>(e: &E<'a>, key: &str, new: bool) -> &'a Value {
-    if new { e.new(key) } else { e.old(key) }
+    if new { e.newer(key) } else { e.old(key) }
 }
 
 fn count(v: &Value) -> Option<f64> {
@@ -118,7 +118,7 @@ pub fn webhook_create(e: &E) -> Presented {
 
 pub fn webhook_update(e: &E) -> Presented {
     let actor = e.actor();
-    let (old, new) = (string(e.old("name")), string(e.new("name")));
+    let (old, new) = (string(e.old("name")), string(e.newer("name")));
     let rename = match (&old, &new) {
         (Some(o), Some(n)) if o != n => Some(vec![("oldName", Ph::Name(o.clone())), ("newName", Ph::Name(n.clone()))]),
         _ => None,
@@ -127,7 +127,7 @@ pub fn webhook_update(e: &E) -> Presented {
     if let Some(r) = &rename {
         rows.push(row("name", Tone::Neutral, "Changed the name from {oldName} to {newName}", r.clone()));
     }
-    if let (Some(o), Some(n)) = (snowflake(e.old("channel_id")), snowflake(e.new("channel_id")))
+    if let (Some(o), Some(n)) = (snowflake(e.old("channel_id")), snowflake(e.newer("channel_id")))
         && o != n
     {
         rows.push(row("channel_id", Tone::Neutral, "Moved from {oldChannel} to {newChannel}", vec![("oldChannel", channel(o)), ("newChannel", channel(n))]));

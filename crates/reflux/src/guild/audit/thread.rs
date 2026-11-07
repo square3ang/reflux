@@ -81,7 +81,7 @@ pub(super) fn parent_rows(e: &E) -> Vec<Row> {
 }
 
 fn thread(e: &E, new: bool) -> Ph {
-    Ph::Channel(e.target().unwrap_or_default(), string(if new { e.new("name") } else { e.old("name") }), false)
+    Ph::Channel(e.target().unwrap_or_default(), string(if new { e.newer("name") } else { e.old("name") }), false)
 }
 
 pub fn create(e: &E) -> Presented {
@@ -90,7 +90,7 @@ pub fn create(e: &E) -> Presented {
 
 pub fn update(e: &E) -> Presented {
     let mut rows = Vec::new();
-    if let (Some(b), Some(a)) = (string(e.old("name")), string(e.new("name")))
+    if let (Some(b), Some(a)) = (string(e.old("name")), string(e.newer("name")))
         && b != a
     {
         rows.push(row("name", Tone::Neutral, "Changed the name from {oldName} to {newName}", vec![("oldName", Ph::Name(b)), ("newName", Ph::Name(a))]));

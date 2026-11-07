@@ -494,10 +494,10 @@ fn bot_tag<S: 'static>(st: &ShellState, acc: ShellAccess<S>, bot: &Value, p: &Pa
         .child(text(bot["discriminator"].as_str().unwrap_or_default().to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary));
     let tag = row().w_full().gap(8.0).items_end().child(super::input(st, acc, "dev.bot_name", bot["username"].as_str().unwrap_or_default(), t("Username"), "BotName", false, p).grow(1.0).min_w(0.0)).child(disc);
     let mut c = col().w_full().gap(12.0).child(tag);
-    if st.form.data.contains_key("dev.bot_name_checked") {
-        if let Some(e) = username_error(&name) {
-            c = c.child(text(e).font(font(15.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
-        }
+    if st.form.data.contains_key("dev.bot_name_checked")
+        && let Some(e) = username_error(&name)
+    {
+        c = c.child(text(e).font(font(15.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
     }
     let trimmed = name.trim();
     let len = (1..=32).contains(&trimmed.chars().count());

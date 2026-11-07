@@ -3,13 +3,13 @@
 use super::{E, Ph, Presented, Row, Tone, channel, number, only, row, s, snowflake, string, with_rows};
 
 fn name_change(e: &E) -> Option<(String, String)> {
-    let (o, n) = (string(e.old("name"))?, string(e.new("name"))?);
+    let (o, n) = (string(e.old("name"))?, string(e.newer("name"))?);
     (o != n).then_some((o, n))
 }
 
 /// `readCurrentName`: the recorded name, else what the app knows by ID.
 fn current_name(e: &E, kind: &str) -> Option<String> {
-    string(e.new("name")).or_else(|| e.target().and_then(|id| (e.known)(kind, &id)).and_then(|n| string(&serde_json::Value::String(n))))
+    string(e.newer("name")).or_else(|| e.target().and_then(|id| (e.known)(kind, &id)).and_then(|n| string(&serde_json::Value::String(n))))
 }
 
 fn uploader(e: &E, msg: &'static str) -> Vec<Row> {
@@ -24,7 +24,7 @@ fn in_channel(e: &E, with: &'static str, without: &'static str) -> Presented {
 }
 
 pub fn emoji_create(e: &E) -> Presented {
-    only(match string(e.new("name")) {
+    only(match string(e.newer("name")) {
         None => s("{actor} added an emoji", vec![("actor", e.actor())]),
         Some(n) => s("{actor} added the emoji {emoji}", vec![("actor", e.actor()), ("emoji", Ph::Emoji(e.target(), n))]),
     })
@@ -50,18 +50,18 @@ pub fn emoji_delete(e: &E) -> Presented {
 }
 
 pub fn sticker_create(e: &E) -> Presented {
-    let summary = match string(e.new("name")) {
+    let summary = match string(e.newer("name")) {
         None => s("{actor} added a sticker", vec![("actor", e.actor())]),
         Some(n) => s("{actor} added the sticker {name}", vec![("actor", e.actor()), ("name", Ph::Name(n))]),
     };
-    let rows = string(e.new("description")).map(|d| row("description", Tone::Neutral, "Set the description to {text}", vec![("text", Ph::Text(d))])).into_iter().collect();
+    let rows = string(e.newer("description")).map(|d| row("description", Tone::Neutral, "Set the description to {text}", vec![("text", Ph::Text(d))])).into_iter().collect();
     with_rows(summary, rows)
 }
 
 pub fn sticker_update(e: &E) -> Presented {
     let actor = e.actor();
     let name = name_change(e);
-    let desc = match (string(e.old("description")), string(e.new("description"))) {
+    let desc = match (string(e.old("description")), string(e.newer("description"))) {
         (None, None) => None,
         (None, Some(n)) => Some(row("description", Tone::Add, "Set the description to {text}", vec![("text", Ph::Text(n))])),
         (Some(o), None) => Some(row("description", Tone::Remove, "Removed the description {text}", vec![("text", Ph::Text(o))])),

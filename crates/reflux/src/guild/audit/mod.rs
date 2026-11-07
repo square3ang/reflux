@@ -106,7 +106,7 @@ impl<'a> E<'a> {
     fn old(&self, key: &str) -> &'a Value {
         self.change(key).map_or(&NULL, |c| c.0)
     }
-    fn new(&self, key: &str) -> &'a Value {
+    fn newer(&self, key: &str) -> &'a Value {
         self.change(key).map_or(&NULL, |c| c.1)
     }
     fn option(&self, key: &str) -> &'a Value {
@@ -379,7 +379,10 @@ fn placeholder(p: &Ph, n: &Names) -> (String, bool, Option<Color>) {
 
 /// The sentence as text plus its styled spans: plurals resolved from `count`, then every other
 /// `{name}` replaced with its placeholder in bold (text as inline code, colours with a dot).
-pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<(std::ops::Range<usize>, bool, Option<Color>)>) {
+/// A styled range of a composed sentence: (bytes, reads as code, dot colour).
+pub type Styled = (std::ops::Range<usize>, bool, Option<Color>);
+
+pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
     let count = st.vals.iter().find_map(|(k, v)| match v {
         Ph::Num(c) if *k == "count" => Some(number_text(*c)),
         _ => None,
@@ -433,12 +436,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn names() -> (impl Fn(&str) -> Option<String>, impl Fn(&str) -> Option<(String, bool)>, impl Fn(&str) -> Option<String>) {
-        (|id: &str| (id == "7").then(|| "Ana".to_string()), |id: &str| (id == "9").then(|| ("general".to_string(), true)), |_: &str| None)
-    }
-
     fn line(v: Value) -> (String, Vec<String>) {
-        let (u, c, r) = names();
+        let u = |id: &str| (id == "7").then(|| "Ana".to_string());
+        let c = |id: &str| (id == "9").then(|| ("general".to_string(), true));
+        let r = |_: &str| None;
         let n = Names { user: &u, channel: &c, role: &r, guild: Snowflake(1) };
         let p = present(&E { v: &v, guild: Snowflake(1), known: &|_, _| None });
         (compose(&p.summary, &n).0, p.rows.iter().map(|r| compose(&r.s, &n).0).collect())

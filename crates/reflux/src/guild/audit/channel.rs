@@ -124,47 +124,47 @@ fn added_warning(text: Option<String>) -> Row {
 }
 
 pub fn create(e: &E) -> Presented {
-    let n = noun(number(e.new("type")).or_else(|| number(e.option("type"))));
+    let n = noun(number(e.newer("type")).or_else(|| number(e.option("type"))));
     let actor = e.actor();
-    let channel = chan(e.target(), string(e.new("name")), n);
-    let summary = match snowflake(e.new("parent_id")).filter(|_| n != CATEGORY) {
+    let channel = chan(e.target(), string(e.newer("name")), n);
+    let summary = match snowflake(e.newer("parent_id")).filter(|_| n != CATEGORY) {
         None => s(CREATE[n], vec![("actor", actor), ("channel", channel)]),
         Some(c) => s(CREATE_IN[n], vec![("actor", actor), ("channel", channel), ("category", category(c))]),
     };
     let (voice, text_like, forum) = (n == 2, n <= 1, n == 5 || n == 6);
     let mut rows = Vec::new();
     if n == 3
-        && let Some(u) = string(e.new("url"))
+        && let Some(u) = string(e.newer("url"))
     {
         rows.push(row("url", Tone::Neutral, "Set the link to {url}", vec![("url", Ph::Text(u))]));
     }
     if (text_like || voice || n == 3 || forum)
-        && let Some(t) = string(e.new("topic"))
+        && let Some(t) = string(e.newer("topic"))
     {
         rows.push(row("topic", Tone::Neutral, "Set the topic to {text}", vec![("text", Ph::Text(t))]));
     }
-    if let Some(nsfw) = boolean(e.new("nsfw")) {
+    if let Some(nsfw) = boolean(e.newer("nsfw")) {
         rows.push(maturity(nsfw));
     }
-    if n != CATEGORY && number(e.new("content_warning_level")) == Some(WARNING_ON) {
-        rows.push(added_warning(string(e.new("content_warning_text"))));
+    if n != CATEGORY && number(e.newer("content_warning_level")) == Some(WARNING_ON) {
+        rows.push(added_warning(string(e.newer("content_warning_text"))));
     }
     if (text_like || voice || forum)
-        && let Some(sm) = number(e.new("rate_limit_per_user")).filter(|v| *v > 0.0)
+        && let Some(sm) = number(e.newer("rate_limit_per_user")).filter(|v| *v > 0.0)
     {
         rows.push(row("rate_limit_per_user", Tone::Neutral, "Set slowmode to {duration}", vec![("duration", Ph::Duration(sm))]));
     }
     if voice {
-        if let Some(b) = number(e.new("bitrate")).filter(|b| *b > 0.0 && *b != BITRATE_DEFAULT) {
+        if let Some(b) = number(e.newer("bitrate")).filter(|b| *b > 0.0 && *b != BITRATE_DEFAULT) {
             rows.push(row("bitrate", Tone::Neutral, "Set the audio quality to {kbps} kbps", vec![("kbps", Ph::Num(b / 1000.0))]));
         }
-        if let Some(l) = number(e.new("user_limit")).filter(|l| *l > 0.0) {
+        if let Some(l) = number(e.newer("user_limit")).filter(|l| *l > 0.0) {
             rows.push(row("user_limit", Tone::Neutral, "Limited the channel to {count, plural, one {# user} other {# users}}", vec![("count", Ph::Num(l))]));
         }
-        if let Some(l) = number(e.new("voice_connection_limit")).filter(|l| *l != CONNECTION_LIMIT_DEFAULT) {
+        if let Some(l) = number(e.newer("voice_connection_limit")).filter(|l| *l != CONNECTION_LIMIT_DEFAULT) {
             rows.push(row("voice_connection_limit", Tone::Neutral, "Allowed up to {count, plural, one {# connection} other {# connections}} per member", vec![("count", Ph::Num(l))]));
         }
-        if let Some(r) = string(e.new("rtc_region")) {
+        if let Some(r) = string(e.newer("rtc_region")) {
             rows.push(row("rtc_region", Tone::Neutral, "Set the voice region to {region}", vec![("region", Ph::Name(r))]));
         }
     }
@@ -208,9 +208,9 @@ fn update_rows(e: &E, name: &Option<Tr<String>>) -> Vec<Row> {
             });
         }
     }
-    let (lb, la) = (number(e.old("content_warning_level")), number(e.new("content_warning_level")));
+    let (lb, la) = (number(e.old("content_warning_level")), number(e.newer("content_warning_level")));
     if la == Some(WARNING_ON) && lb != Some(WARNING_ON) {
-        rows.push(added_warning(string(e.new("content_warning_text"))));
+        rows.push(added_warning(string(e.newer("content_warning_text"))));
     } else if lb == Some(WARNING_ON) && la != Some(WARNING_ON) {
         rows.push(row("content_warning", Tone::Remove, "Removed the content warning", vec![]));
     } else if let Some(t) = transition(e, "content_warning_text", string) {
@@ -265,7 +265,7 @@ pub fn update(e: &E) -> Presented {
     {
         return with_rows(s(RENAME[n], vec![("actor", actor), ("oldName", Ph::Name(b.clone())), ("newName", Ph::Name(a.clone()))]), vec![]);
     }
-    let channel = chan(e.target(), string(e.new("name")), n);
+    let channel = chan(e.target(), string(e.newer("name")), n);
     if rows.is_empty() && overrides {
         return with_rows(s(OVERRIDES[n], vec![("actor", actor), ("channel", channel)]), vec![]);
     }
@@ -282,7 +282,7 @@ fn overwrite_summary(e: &E, msgs: [&'static str; 3]) -> Sentence {
     let actor = e.actor();
     let target = e.target().unwrap_or_default();
     let channel = Ph::Channel(snowflake(e.option("channel_id")).unwrap_or_default(), None, false);
-    let kind = number(e.option("type")).or_else(|| number(e.new("type"))).or_else(|| number(e.old("type")));
+    let kind = number(e.option("type")).or_else(|| number(e.newer("type"))).or_else(|| number(e.old("type")));
     if kind == Some(1.0) {
         s(msgs[1], vec![("actor", actor), ("user", Ph::User(target)), ("channel", channel)])
     } else if e.v["target_id"].as_str() == Some(e.guild.to_string().as_str()) {
@@ -303,12 +303,12 @@ fn perms_row(id: &str, tone: Tone, msg: &'static str, flags: Vec<u64>) -> Option
 
 pub fn overwrite_create(e: &E) -> Presented {
     let flags = |v: &Value| mask(v).map(flags_in).unwrap_or_default();
-    let rows = [perms_row("allow", Tone::Add, "Allowed {permissions}", flags(e.new("allow"))), perms_row("deny", Tone::Remove, "Denied {permissions}", flags(e.new("deny")))];
+    let rows = [perms_row("allow", Tone::Add, "Allowed {permissions}", flags(e.newer("allow"))), perms_row("deny", Tone::Remove, "Denied {permissions}", flags(e.newer("deny")))];
     with_rows(overwrite_summary(e, OW_CREATE), rows.into_iter().flatten().collect())
 }
 
 pub fn overwrite_update(e: &E) -> Presented {
-    let masks = (mask(e.old("allow")), mask(e.old("deny")), mask(e.new("allow")), mask(e.new("deny")));
+    let masks = (mask(e.old("allow")), mask(e.old("deny")), mask(e.newer("allow")), mask(e.newer("deny")));
     let rows = match masks {
         (Some(pa), Some(pd), Some(na), Some(nd)) => {
             let all = flags_in(u64::MAX);

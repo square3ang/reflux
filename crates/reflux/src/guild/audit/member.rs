@@ -37,7 +37,7 @@ fn toggle(e: &E, key: &str) -> Option<bool> {
 
 /// `readRoleChanges`: (added, removed) role IDs.
 fn role_changes(e: &E) -> (Vec<String>, Vec<String>) {
-    let (Some(prev), Some(next)) = (strings(e.old("roles")), strings(e.new("roles"))) else { return Default::default() };
+    let (Some(prev), Some(next)) = (strings(e.old("roles")), strings(e.newer("roles"))) else { return Default::default() };
     let ok = |id: &String| snowflake(&serde_json::Value::String(id.clone())).is_some();
     let mut added: Vec<String> = next.iter().filter(|i| !prev.contains(i) && ok(i)).cloned().collect();
     let mut removed: Vec<String> = prev.iter().filter(|i| !next.contains(i) && ok(i)).cloned().collect();
@@ -237,13 +237,13 @@ pub fn prune(e: &E) -> Presented {
 
 pub fn ban_add(e: &E) -> Presented {
     let (a, t, _) = subject(e);
-    let duration = timestamp(e.new("expires_at")).and_then(|exp| {
-        let at = timestamp(e.new("banned_at")).unwrap_or_else(|| e.time());
+    let duration = timestamp(e.newer("expires_at")).and_then(|exp| {
+        let at = timestamp(e.newer("banned_at")).unwrap_or_else(|| e.time());
         let secs = ((exp - at) as f64 / 1000.0).round();
         (secs > 0.0).then_some(secs)
     });
     let deleted = number(e.option("delete_message_seconds")).filter(|s| *s > 0.0).or_else(|| number(e.option("delete_member_days")).filter(|d| d.fract() == 0.0 && *d > 0.0).map(|d| d * 86_400.0));
-    let ban_reason = reason(e.new("reason"));
+    let ban_reason = reason(e.newer("reason"));
     Presented {
         summary: match duration {
             None => s("{actor} banned {target}", vec![("actor", a), ("target", t)]),
@@ -323,7 +323,7 @@ pub fn role_update(e: &E) -> Presented {
 pub fn moved(e: &E) -> Presented {
     let (a, t, me) = subject(e);
     let old = snowflake(e.old("channel_id"));
-    let Some(new) = snowflake(e.new("channel_id")).or_else(|| snowflake(e.option("channel_id"))) else {
+    let Some(new) = snowflake(e.newer("channel_id")).or_else(|| snowflake(e.option("channel_id"))) else {
         return only(if me { s("{actor} moved to a different voice channel", vec![("actor", a)]) } else { s("{actor} moved {target} to a different voice channel", vec![("actor", a), ("target", t)]) });
     };
     only(match (old, me) {

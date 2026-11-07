@@ -22,7 +22,7 @@ fn permission_changes(e: &E) -> Option<(Vec<u64>, Vec<u64>)> {
             (flags_in(n & !o), flags_in(o & !n))
         }
         None => {
-            let d = e.new("permissions_diff");
+            let d = e.newer("permissions_diff");
             if !d.is_object() {
                 return None;
             }
@@ -70,27 +70,27 @@ fn member_list_position(e: &E) -> Option<&'static str> {
 }
 
 pub fn create(e: &E) -> Presented {
-    let perms = flags_in(bitfield(e.new("permissions")).unwrap_or(0));
+    let perms = flags_in(bitfield(e.newer("permissions")).unwrap_or(0));
     let mut rows = Vec::new();
     if !perms.is_empty() {
         rows.push(row("permissions-granted", Tone::Add, "Granted {permissions}", vec![("permissions", Ph::Perms(perms))]));
     }
-    if let Some(c) = color(e.new("color")).filter(|c| *c > 0) {
+    if let Some(c) = color(e.newer("color")).filter(|c| *c > 0) {
         rows.push(row("color", Tone::Neutral, "Set the role color to {color}", vec![("color", Ph::Color(c))]));
     }
-    if boolean(e.new("hoist")) == Some(true) {
+    if boolean(e.newer("hoist")) == Some(true) {
         rows.push(row("hoist", Tone::Add, "Showed members with this role in their own section in the member list", vec![]));
     }
-    if boolean(e.new("mentionable")) == Some(true) {
+    if boolean(e.newer("mentionable")) == Some(true) {
         rows.push(row("mentionable", Tone::Add, "Allowed all members to mention this role", vec![]));
     }
-    if let Some(em) = string(e.new("unicode_emoji")) {
+    if let Some(em) = string(e.newer("unicode_emoji")) {
         rows.push(row("unicode-emoji", Tone::Add, "Set the role icon to {emoji}", vec![("emoji", Ph::Name(em))]));
     }
-    if string(e.new("icon_hash")).is_some() {
+    if string(e.newer("icon_hash")).is_some() {
         rows.push(row("icon-hash", Tone::Add, "Set a custom role icon", vec![]));
     }
-    with_rows(s("{actor} created the role {role}", vec![("actor", e.actor()), ("role", role(e, string(e.new("name"))))]), rows)
+    with_rows(s("{actor} created the role {role}", vec![("actor", e.actor()), ("role", role(e, string(e.newer("name"))))]), rows)
 }
 
 pub fn update(e: &E) -> Presented {
@@ -104,7 +104,7 @@ pub fn update(e: &E) -> Presented {
     let list_move = both(e, "position", number).map(|(b, a)| direction(b, a));
     let member_pos = member_list_position(e);
     let actor = e.actor();
-    let r = role(e, string(e.new("name")).or_else(|| string(e.option("role_name"))));
+    let r = role(e, string(e.newer("name")).or_else(|| string(e.option("role_name"))));
     let count = [name.is_some(), perms.is_some(), col.is_some(), hoist.is_some(), mentionable.is_some(), emoji.is_some(), icon.is_some(), list_move.is_some(), member_pos.is_some()].iter().filter(|x| **x).count();
     if count == 1 {
         if let Some(d) = list_move {
