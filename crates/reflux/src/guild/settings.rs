@@ -17,7 +17,7 @@ use crate::settings::{colors, frame, nav_group, nav_item};
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::{Button, ButtonSize, ButtonVariant, RadioGroup, Select, Switch, over, popup_access};
-use crate::i18n::t;
+use crate::i18n::{t, tf};
 
 /// (id, category, label, icon, any of these permissions).
 type TabDef = (&'static str, &'static str, &'static str, &'static Icon, P);
@@ -567,6 +567,66 @@ pub fn emoji_name(path: &std::path::Path) -> String {
     n
 }
 
+/// `filteredEmojis`: `matchSorter(emojis, searchQuery, {keys: ['name']})`.
+fn emoji_search_matches(name: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty() || name.to_lowercase().contains(&query)
+}
+
+fn emoji_row<S: 'static>(st: &ShellState, e: &Emoji, g: Snowflake, manage: bool, me: Snowflake, editing: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let id = e.id;
+    let img = crate::shell::picture(st.media.asset(|b, _| media::emoji_url(b, &id.to_string())), 32.0, 32.0, 4.0, p);
+    let by = e.user.as_ref().map(user_name).unwrap_or_default();
+    let mine = manage || e.user.as_ref().is_some_and(|u| u.id == me);
+    if editing == Some(id) {
+        return row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(field(st, acc, "emoji-rename", &e.name, "", "", p))).child(
+            Button::<S>::new(t("Save")).size(ButtonSize::Small).key("emoji-save").el(p).on_press(move |s: &mut S| {
+                let sh = acc(s);
+                // `handleSave`: strip what the API refuses, then 2-32 characters.
+                let name: String = sh.form.value("emoji-rename", "").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                match name.len() {
+                    0..2 => sh.form.error = Some(t("Emoji name must be at least 2 characters.").into()),
+                    33.. => sh.form.error = Some(t("Emoji name must be at most 32 characters.").into()),
+                    _ => {
+                        sh.form.data.remove("emoji-edit");
+                        sh.form.text.remove("emoji-rename");
+                        sh.api(Method::PATCH, format!("/guilds/{g}/emojis/{id}"), Some(json!({ "name": name })), Then::Nothing);
+                    }
+                }
+            }),
+        ).child(Button::<S>::new(t("Cancel")).size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
+            let f = &mut acc(s).form;
+            f.data.remove("emoji-edit");
+            f.text.remove("emoji-rename");
+        }));
+    }
+    let mut name = title(format!(":{}:", e.name), p);
+    if mine {
+        name = name.cursor(rune::Cursor::Text).on_press(move |s: &mut S| {
+            let f = &mut acc(s).form;
+            f.data.insert("emoji-edit".into(), json!(id.to_string()));
+            f.text.remove("emoji-rename");
+        });
+    }
+    let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(name).child(small(by, p)));
+    if mine {
+        line = line.child(
+            row()
+                .size(28.0, 28.0)
+                .center()
+                .radius(6.0)
+                .hover(p.background_modifier_hover)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Delete emoji"))
+                .on_press(move |s: &mut S| acc(s).api(Method::DELETE, format!("/guilds/{g}/emojis/{id}"), None, Then::Nothing))
+                .child(icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted)),
+        );
+    }
+    line
+}
+
+/// `GuildEmojiTab`: search by name, then the non-animated and animated sections.
 fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let list: Vec<&Emoji> = store.guilds.get(&g).map(|gs| gs.emojis.iter().collect()).unwrap_or_default();
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
@@ -579,65 +639,38 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
         });
     });
     let editing = st.form.data.get("emoji-edit").and_then(Value::as_str).and_then(|s| s.parse::<Snowflake>().ok());
-    let rows: Vec<El> = list
-        .iter()
-        .map(|e| {
-            let id = e.id;
-            let img = crate::shell::picture(st.media.asset(|b, _| media::emoji_url(b, &id.to_string())), 32.0, 32.0, 4.0, p);
-            let by = e.user.as_ref().map(user_name).unwrap_or_default();
-            let mine = manage || e.user.as_ref().is_some_and(|u| u.id == me);
-            if editing == Some(id) {
-                return row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(field(st, acc, "emoji-rename", &e.name, "", "", p))).child(
-                    Button::<S>::new(t("Save")).size(ButtonSize::Small).key("emoji-save").el(p).on_press(move |s: &mut S| {
-                        let sh = acc(s);
-                        // `handleSave`: strip what the API refuses, then 2-32 characters.
-                        let name: String = sh.form.value("emoji-rename", "").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-                        match name.len() {
-                            0..2 => sh.form.error = Some(t("Emoji name must be at least 2 characters.").into()),
-                            33.. => sh.form.error = Some(t("Emoji name must be at most 32 characters.").into()),
-                            _ => {
-                                sh.form.data.remove("emoji-edit");
-                                sh.form.text.remove("emoji-rename");
-                                sh.api(Method::PATCH, format!("/guilds/{g}/emojis/{id}"), Some(json!({ "name": name })), Then::Nothing);
-                            }
-                        }
-                    }),
-                ).child(Button::<S>::new(t("Cancel")).size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
-                    let f = &mut acc(s).form;
-                    f.data.remove("emoji-edit");
-                    f.text.remove("emoji-rename");
-                }));
-            }
-            let mut name = title(format!(":{}:", e.name), p);
-            if mine {
-                name = name.cursor(rune::Cursor::Text).on_press(move |s: &mut S| {
-                    let f = &mut acc(s).form;
-                    f.data.insert("emoji-edit".into(), json!(id.to_string()));
-                    f.text.remove("emoji-rename");
-                });
-            }
-            let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(name).child(small(by, p)));
-            if mine {
-                line = line.child(
-                    row()
-                        .size(28.0, 28.0)
-                        .center()
-                        .radius(6.0)
-                        .hover(p.background_modifier_hover)
-                        .cursor(rune::Cursor::Pointer)
-                        .role("button")
-                        .label(t("Delete emoji"))
-                        .on_press(move |s: &mut S| acc(s).api(Method::DELETE, format!("/guilds/{g}/emojis/{id}"), None, Then::Nothing))
-                        .child(icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted)),
-                );
-            }
-            line
-        })
-        .collect();
+    let q = st.form.value("emoji-search", "");
+    let found: Vec<&Emoji> = list.iter().copied().filter(|e| emoji_search_matches(&e.name, &q)).collect();
+    let rows = |items: &[&Emoji]| -> Vec<El> { items.iter().map(|e| emoji_row(st, e, g, manage, me, editing, p, acc)).collect() };
+    let still: Vec<&Emoji> = found.iter().copied().filter(|e| !e.animated).collect();
+    let animated: Vec<&Emoji> = found.iter().copied().filter(|e| e.animated).collect();
+    let heading = |label: String, p: &Palette| text(label).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary);
+    let mut groups = col().w_full().gap(24.0);
+    if !still.is_empty() {
+        groups = groups.child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(heading(tf("Non-animated emoji ({emojiCount})", &[("emojiCount", &still.len().to_string())]), p))
+                .child(card(rows(&still), p)),
+        );
+    }
+    if !animated.is_empty() {
+        groups = groups.child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .child(heading(tf("Animated emoji ({emojiCount})", &[("emojiCount", &animated.len().to_string())]), p))
+                .child(card(rows(&animated), p)),
+        );
+    }
     let mut content = col()
         .w_full()
         .gap(16.0)
-        .child(row().w_full().justify_between().center_y().gap(12.0).child(small("Names come from the file name: letters, digits and underscores. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap().shrink()).child(upload));
+        .child(row().w_full().center_y().gap(12.0).child(field(st, acc, "emoji-search", "", "", t("Search emojis"), p).w(280.0)).child(el().grow(1.0)).child(upload));
+    if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
+        content = content.child(small("Names come from the file name: letters, digits and underscores. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap());
+    }
     if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
         content = content.child(super::expr_upload::drop_zone(st, t("Drag and drop emoji files here"), true, p, acc, move |sh, files| super::expr_upload::upload_emojis(sh, g, files)));
     }
@@ -648,7 +681,11 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     if !failed.is_empty() {
         content = content.child(col().w_full().gap(4.0).child(title(t("Some emojis could not be added"), p)).children(failed.into_iter().map(|(n, e)| small(format!("{n}: {e}"), p).wrap())));
     }
-    content = content.child(if rows.is_empty() { empty("No emoji yet.", p) } else { card(rows, p) });
+    content = content.child(if found.is_empty() {
+        empty(if q.is_empty() { "No emoji yet." } else { "No emojis found matching your search." }, p)
+    } else {
+        groups
+    });
     section(&format!("Emoji — {}", list.len()), content, true, p)
 }
 
@@ -992,6 +1029,14 @@ mod tests {
         assert_eq!(emoji_name(std::path::Path::new("/x/party parrot!.gif")), "party_parrot_");
         assert_eq!(emoji_name(std::path::Path::new("a.png")), "a_");
         assert_eq!(emoji_name(std::path::Path::new(&"x".repeat(40))).len(), 32);
+    }
+
+    #[test]
+    fn emoji_search_matches_names() {
+        assert!(emoji_search_matches("PartyParrot", "parrot"));
+        assert!(emoji_search_matches("party_parrot", "PAR"));
+        assert!(emoji_search_matches("party_parrot", ""));
+        assert!(!emoji_search_matches("party_parrot", "cat"));
     }
 
     #[test]

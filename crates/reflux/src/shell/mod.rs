@@ -10,6 +10,7 @@ pub mod active_now;
 pub mod attachments;
 pub mod barrier;
 mod birthday;
+pub(crate) mod bounced;
 mod autocomplete;
 mod guild_banner;
 mod command_hints;
@@ -28,7 +29,7 @@ mod emoticons;
 pub(crate) mod role_icon;
 pub mod expr;
 pub(crate) mod friends;
-mod guilds;
+pub(crate) mod guilds;
 pub(crate) mod markdown;
 mod members;
 pub mod members_page;
@@ -201,7 +202,13 @@ pub(crate) fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Pale
     }
     let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
     let (message, button) = if me.email_bounced {
-        (crate::i18n::tf("Hey {displayName}, we can't deliver email to your address. Add a working email to verify your account.", &[("displayName", &name.to_string())]), None)
+        let b = crate::ui::Button::new(t("Add a working email"))
+            .variant(crate::ui::ButtonVariant::Inverted)
+            .size(crate::ui::ButtonSize::SuperCompact)
+            .key("nagbar-bounced-email")
+            .on_press(move |s: &mut S| bounced::open(acc(s)))
+            .el(p);
+        (crate::i18n::tf("Hey {displayName}, we can't deliver email to your address. Add a working email to verify your account.", &[("displayName", &name.to_string())]), Some(b))
     } else {
         let label = if st.verify_sent { "Email sent" } else { t("Resend email") };
         let b = crate::ui::Button::new(label)
@@ -345,6 +352,8 @@ pub struct ShellState {
     pub username_sign_in: bool,
     /// `services.bluesky_enabled`.
     pub bluesky: bool,
+    /// `community.direct_messages_disabled` (hides the privacy review).
+    pub dms_disabled: bool,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
     /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
@@ -465,6 +474,7 @@ impl Default for ShellState {
             static_base: String::new(),
             username_sign_in: false,
             bluesky: false,
+            dms_disabled: false,
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),
@@ -598,6 +608,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= crate::settings::search::poll(store, st, tx);
     changed |= crate::settings::dev::poll(st);
     changed |= account_gate::poll(store, st);
+    changed |= bounced::poll(st);
     changed |= account_gate::poll_kit(st);
     changed |= barrier::poll(store, st, tx);
     changed |= crate::desktop::top_bars::poll(store, st);
@@ -796,6 +807,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(debug::modal(store, st, p, acc));
     layer.extend(devtools::modal(st, p, acc));
     layer.extend(account_gate::claim_modal(st, p, acc));
+    layer.extend(bounced::modal(st, p, acc));
     layer.extend(account_gate::recovery_kit(store, st, p, acc));
     layer.extend(account_gate::offer_modal(st, p, acc));
     layer.extend(account_gate::help_modal(store, st, p, acc));

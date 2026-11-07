@@ -679,6 +679,8 @@ pub struct Ui {
     pub recovery_kit: bool,
     /// `AuthenticatorOfferModal` is up.
     pub offer: bool,
+    /// `BouncedEmailChangeModal`'s fields, while it's open.
+    pub bounced: Option<crate::shell::bounced::Ui>,
 }
 
 #[cfg(test)]

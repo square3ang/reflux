@@ -440,7 +440,7 @@ impl Demo {
             {
                 me.date_of_birth_required = true;
             }
-            account_scene(&mut shell, sc);
+            account_scene(&mut shell, &mut store, sc);
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--guild-ui=")) {
             guild_scene(&mut shell, sc);
@@ -499,10 +499,34 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
 
 /// `--account-ui=<scene>`: `menu` (user area), `status`, `status-emoji` (with a draft and the picker), `crop` / `crop-banner` / `crop-guild-banner` (the crop modal), `timezone`, `accounts`, `nickname`, `sudo`,
 /// `ris` / `ris-add`, `search-engines` / `translators` (Advanced's provider settings), `encoder`,
-/// `profile` (the full profile modal).
-fn account_scene(sh: &mut ShellState, scene: &str) {
+/// `profile` (the full profile modal), `privacy-review` (the privacy setup modal),
+/// `bounced-email` / `bounced-email-code` (the bounced-address modal).
+fn account_scene(sh: &mut ShellState, store: &mut Store, scene: &str) {
     use crate::settings::ShellModal;
     match scene {
+        "privacy-review" | "privacy-review-alert" => {
+            sh.open_settings(Some("privacy_safety"));
+            if scene == "privacy-review"
+                && let Some(u) = sh.settings.as_mut()
+            {
+                u.privacy_review = Some(crate::settings::privacy::Review::new(store));
+            }
+        }
+        "bounced-email" | "bounced-email-code" => {
+            if let Some(me) = store.me.as_mut() {
+                me.email_bounced = true;
+                me.verified = false;
+            }
+            crate::shell::bounced::open(sh);
+            if let Some(u) = sh.account_gate.bounced.as_mut() {
+                if scene == "bounced-email-code" {
+                    (u.ticket, u.code) = (Some("fixture-ticket".into()), rune::TextEdit::new("1234 5678"));
+                    u.code.focused = true;
+                } else {
+                    u.email = rune::TextEdit::new("ada@example.com");
+                }
+            }
+        }
         "menu" => sh.popups.open = Some(super::status::MENU.into()),
         "birthday" | "birthday-logout" => {
             sh.marketing_base = Some("https://fluxer.app".into());
@@ -1288,8 +1312,9 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
 
 /// `--msg-scene=media-<scene>`: attachments and embeds. `mosaic` (several images, a spoiler,
 /// alt text), `files` (video, audio, text preview, file card), `embeds` (rich, YouTube, gifv),
-/// `invite`, `viewer` (the lightbox), `link` (external link warning), `nsfw` (the channel gate),
-/// `blur` (flagged media under the guild filter), `system` (system messages).
+/// `invite`, `viewer` (the lightbox), `viewer-rotate` (turned 90°), `link` (external link
+/// warning), `nsfw` (the channel gate), `blur` (flagged media under the guild filter),
+/// `system` (system messages).
 fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     let t = |m| at(0, 12, m);
     let att = |id: u64, name: &str, ty: &str, w: u32, h: u32, extra: Value| {
@@ -1436,11 +1461,16 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             Err(e) => panic!("media scene: {e}"),
         }
     }
-    if scene == "viewer" {
+    if scene == "viewer" || scene == "viewer-rotate" {
         let ms = store.messages(Snowflake(GENERAL));
         let m = ms.last().expect("message");
         let items = m.attachments.iter().map(super::attachments::item).collect();
         super::lightbox::open(st, items, 0, Some((m.channel_id, m.id)));
+        if scene == "viewer-rotate"
+            && let Some(v) = st.media_ui.viewer.as_mut()
+        {
+            v.rotation = 90;
+        }
     }
 }
 

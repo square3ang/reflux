@@ -1,8 +1,9 @@
 //! The media viewer (`messaging/components/modals/MediaModal.tsx`, `media_modal/*`): the
 //! picture fitted to the window over a dimmed, blurred backdrop; click or the buttons to zoom
-//! (fit ↔ 250%, steps of 125% up to 500%), drag or wheel to pan, previous/next and a thumbnail
-//! strip across the message's media, and the HUD (close, open in browser, copy link, copy
-//! image, download, reset, zoom, reply) with the name, size and zoom on the right.
+//! (fit ↔ 250%, steps of 125% up to 500%), drag or wheel to pan, rotate it in 90° steps,
+//! previous/next and a thumbnail strip across the message's media, and the HUD (close, open in
+//! browser, copy link, copy image, download, rotate, reset, zoom, reply) with the name, size and
+//! zoom on the right.
 
 use reflux_model::Snowflake;
 use rune::{Color, El, Icon, KeyEvent, PlayerState, Tx, col, el, icon, row, text};
@@ -40,6 +41,8 @@ pub struct Viewer {
     pub index: usize,
     pub zoom: f32,
     pub pan: (f32, f32),
+    /// Clockwise degrees, always 0, 90, 180 or 270 (`MediaModal`'s `rotation`).
+    pub rotation: u16,
     /// The pan when the current drag started.
     drag_from: (f32, f32),
     /// The message the media belongs to (reply), as (channel, message).
@@ -57,7 +60,7 @@ pub fn open(st: &mut ShellState, items: Vec<Item>, index: usize, message: Option
     }
     let index = index.min(items.len() - 1);
     st.popups.close();
-    st.media_ui.viewer = Some(Viewer { items, index, zoom: 1.0, pan: (0.0, 0.0), drag_from: (0.0, 0.0), message });
+    st.media_ui.viewer = Some(Viewer { items, index, zoom: 1.0, pan: (0.0, 0.0), rotation: 0, drag_from: (0.0, 0.0), message });
 }
 
 fn close(st: &mut ShellState) {
@@ -80,7 +83,7 @@ fn go(st: &mut ShellState, delta: isize) {
     if let Some(v) = &mut st.media_ui.viewer {
         let n = v.items.len() as isize;
         v.index = (v.index as isize + delta).rem_euclid(n) as usize;
-        (v.zoom, v.pan) = (1.0, (0.0, 0.0));
+        (v.zoom, v.pan, v.rotation) = (1.0, (0.0, 0.0), 0);
     }
 }
 
@@ -89,6 +92,23 @@ fn zoom_to(v: &mut Viewer, z: f32) {
     if v.zoom <= 1.0 + 0.015 {
         (v.zoom, v.pan) = (1.0, (0.0, 0.0));
     }
+}
+
+/// `rotateClockwiseDegrees` / `rotateAnticlockwiseDegrees`: 90° steps, normalized.
+fn rotate(v: &mut Viewer, clockwise: bool) {
+    let step = if clockwise { 90 } else { 270 };
+    v.rotation = (v.rotation + step) % 360;
+}
+
+/// `handleResetMedia`: fit again and turn the picture upright.
+fn reset(v: &mut Viewer) {
+    v.rotation = 0;
+    zoom_to(v, 1.0);
+}
+
+/// `isSidewaysRotationDegrees`: the fit box's sides swap at 90° and 270°.
+fn sideways(rotation: u16) -> bool {
+    rotation == 90 || rotation == 270
 }
 
 /// Window keys while the viewer is open: Escape closes, the arrows step through the media.
@@ -147,6 +167,11 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     let it = v.items.get(v.index)?;
     let n = v.items.len();
     let ratio = it.w.max(1) as f32 / it.h.max(1) as f32;
+    // `data-rotation-swapped` on `.mediaContainer`: a sideways picture lays out with the fit
+    // box's sides exchanged so it still fits once turned.
+    let swapped = sideways(v.rotation);
+    let fit_ratio = if swapped { 1.0 / ratio } else { ratio };
+    let (max_w, max_h) = if swapped { (it.h.max(1) as f32, it.w.max(1) as f32) } else { (it.w.max(1) as f32, it.h.max(1) as f32) };
     let fill = || el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
     let key = format!("viewer-{}", v.index);
     let clip = st.media_ui.playing.as_ref().filter(|(k, _)| *k == key).map(|(_, c)| c.clone());
@@ -156,11 +181,11 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     let media = match (&clip, it.video) {
         (None, true) if gst.is_some_and(|c| !c.failed) => {
             let k = key.clone();
-            el().aspect_fit(ratio).max_w(it.w as f32).max_h(it.h as f32).pixels_fit(&gst.unwrap().pixels, rune::SurfaceFit::Fit).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::clip::toggle(acc, &k, s))
+            el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).pixels_fit(&gst.unwrap().pixels, rune::SurfaceFit::Fit).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::clip::toggle(acc, &k, s))
         }
-        (Some(c), true) if !matches!(c.state(), PlayerState::Failed(_)) => el().aspect_fit(ratio).max_w(it.w as f32).max_h(it.h as f32).video(c, rune::SurfaceFit::Fit),
+        (Some(c), true) if !matches!(c.state(), PlayerState::Failed(_)) => el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).video(c, rune::SurfaceFit::Fit),
         _ => {
-            let pic = el().aspect_fit(ratio).max_w(it.w.max(1) as f32).max_h(it.h.max(1) as f32).label(it.alt.clone().unwrap_or_else(|| it.name.clone()));
+            let pic = el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).label(it.alt.clone().unwrap_or_else(|| it.name.clone()));
             let pic = match st.media.get(&full_url(it, st.media.scale())) {
                 Load::Ready(px) => pic.pixels_fit(&px, rune::SurfaceFit::Fit),
                 Load::Pending => pic.child(fill().center().child(crate::ui::spinner(Color::WHITE))),
@@ -191,6 +216,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     };
     let zoomable = !it.video;
     let media = media
+        .rotate(f32::from(v.rotation) * std::f32::consts::PI / 180.0)
         .scale(v.zoom)
         .offset(v.pan.0, v.pan.1)
         .on_press(move |s: &mut S| {
@@ -228,7 +254,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
 
     // HUD: actions bottom-left, details bottom-right.
     let (url, proxy, name) = (it.url.clone(), it.proxy.clone(), it.name.clone());
-    let z = v.zoom;
+    let (z, rot) = (v.zoom, v.rotation);
     let gap = |w: f32| el().w(w);
     let mut actions = row()
         .pin(Some(16.0), None, None, Some(18.0))
@@ -249,9 +275,19 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     if zoomable {
         actions = actions
             .child(gap(6.0))
-            .child(control(&icons::ARROWS_IN_SIMPLE_BOLD, t("Reset"), z > 1.0, move |s: &mut S, _| {
+            .child(control(&icons::ARROW_COUNTER_CLOCKWISE_BOLD, t("Rotate counterclockwise"), true, move |s: &mut S, _| {
                 if let Some(v) = &mut acc(s).media_ui.viewer {
-                    zoom_to(v, 1.0)
+                    rotate(v, false)
+                }
+            }))
+            .child(control(&icons::ARROW_CLOCKWISE_BOLD, t("Rotate clockwise"), true, move |s: &mut S, _| {
+                if let Some(v) = &mut acc(s).media_ui.viewer {
+                    rotate(v, true)
+                }
+            }))
+            .child(control(&icons::ARROWS_IN_SIMPLE_BOLD, t("Reset"), z > 1.0 || rot != 0, move |s: &mut S, _| {
+                if let Some(v) = &mut acc(s).media_ui.viewer {
+                    reset(v)
                 }
             }))
             .child(control(&icons::MAGNIFYING_GLASS_PLUS_BOLD, t("Zoom in"), z * STEP <= MAX_ZOOM + 0.01, move |s: &mut S, _| {
@@ -350,5 +386,31 @@ mod tests {
         assert!(on_key(&mut st, &KeyEvent { key: rune::Key::Escape, mods: Default::default() }));
         assert!(st.media_ui.viewer.is_none());
         assert!(!on_key(&mut st, &KeyEvent { key: rune::Key::Escape, mods: Default::default() }));
+    }
+
+    #[test]
+    fn rotation_steps_turn_and_reset() {
+        let mut st = ShellState::default();
+        open(&mut st, vec![Item { name: "a".into(), w: 10, h: 10, ..Default::default() }], 0, None);
+        let v = st.media_ui.viewer.as_mut().unwrap();
+        rotate(v, true);
+        assert_eq!(v.rotation, 90);
+        assert!(sideways(v.rotation));
+        rotate(v, true);
+        assert_eq!(v.rotation, 180);
+        assert!(!sideways(v.rotation));
+        rotate(v, false);
+        assert_eq!(v.rotation, 90, "counterclockwise steps back");
+        rotate(v, true);
+        rotate(v, true);
+        assert_eq!(v.rotation, 270);
+        rotate(v, true);
+        assert_eq!(v.rotation, 0, "a full turn is upright again");
+        v.zoom = 2.5;
+        rotate(v, false);
+        reset(v);
+        assert_eq!((v.rotation, v.zoom, v.pan), (0, 1.0, (0.0, 0.0)));
+        go(&mut st, 1);
+        assert_eq!(st.media_ui.viewer.as_ref().unwrap().rotation, 0, "another item starts upright");
     }
 }

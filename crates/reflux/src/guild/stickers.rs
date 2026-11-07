@@ -57,8 +57,17 @@ fn post(sh: &mut ShellState, g: Snowflake, path: &std::path::Path) {
     }
 }
 
+/// `filteredStickers`: `matchSorter(stickers, searchQuery, {keys: [(s) => s.name]})`.
+fn sticker_search_matches(name: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty() || name.to_lowercase().contains(&query)
+}
+
 pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
-    let list: Vec<&Sticker> = store.guilds.get(&g).map(|gs| gs.stickers.iter().collect()).unwrap_or_default();
+    let all: Vec<&Sticker> = store.guilds.get(&g).map(|gs| gs.stickers.iter().collect()).unwrap_or_default();
+    let total = all.len();
+    let q = st.form.value("sticker-search", "");
+    let list: Vec<&Sticker> = all.into_iter().filter(|x| sticker_search_matches(&x.name, &q)).collect();
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
     let me = store.my_id();
     let upload = Button::<S>::new(t("Upload sticker")).size(ButtonSize::Small).key("upload-sticker").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
@@ -120,15 +129,22 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     let mut content = col()
         .w_full()
         .gap(16.0)
-        .child(row().w_full().justify_between().center_y().gap(12.0).child(small("Names come from the file name; edit them after uploading. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap().shrink()).child(upload));
+        .child(row().w_full().center_y().gap(12.0).child(field(st, acc, "sticker-search", "", "", t("Search stickers"), p).w(280.0)).child(el().grow(1.0)).child(upload));
+    if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
+        content = content.child(small("Names come from the file name; edit them after uploading. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap());
+    }
     if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
         content = content.child(super::expr_upload::drop_zone(st, t("Drag and drop a sticker file here (one at a time)"), false, p, acc, move |sh, files| post(sh, g, &files[0])));
     }
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    content = content.child(if rows.is_empty() { empty("No stickers yet.", p) } else { card(rows, p) });
-    section(&format!("Stickers — {}", list.len()), content, true, p)
+    content = content.child(if rows.is_empty() {
+        empty(if q.trim().is_empty() { "No stickers yet." } else { "No stickers found matching your search." }, p)
+    } else {
+        card(rows, p)
+    });
+    section(&format!("Stickers — {total}"), content, true, p)
 }
 
 #[cfg(test)]
@@ -138,5 +154,13 @@ mod tests {
         assert_eq!(super::sticker_name(std::path::Path::new("/x/a.png")), "a_");
         assert_eq!(super::sticker_name(std::path::Path::new("/x/ship it.webp")), "ship it");
         assert_eq!(super::tags(" crab, ,rust "), ["crab", "rust"]);
+    }
+
+    #[test]
+    fn search_matches_names() {
+        assert!(super::sticker_search_matches("Ship It", "it"));
+        assert!(super::sticker_search_matches("Ship It", "SHIP"));
+        assert!(super::sticker_search_matches("Ship It", " "));
+        assert!(!super::sticker_search_matches("Ship It", "crab"));
     }
 }

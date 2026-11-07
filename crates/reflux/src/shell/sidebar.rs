@@ -521,6 +521,9 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         _ => (Status::Online, t("Online")),
     };
     let surface = p.panel_control_bg;
+    // `openUserSettingsModal`: until the privacy setup is reviewed, settings opens there and
+    // the gear is labelled and dotted.
+    let review = crate::settings::privacy::review_pending(store, st);
     // `.controlButton`; `.active` (muted / deafened) turns it danger-red, `.disabled` halves it.
     let control = |i: &'static rune::Icon, label: &str, active: bool, disabled: bool| {
         let (fg, hover_fg) = if active || disabled {
@@ -604,13 +607,18 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
                         .mt(-1.0),
                 ),
         );
+    let settings_label = if review { t("User settings, privacy review needed") } else { t("User Settings") };
+    let mut gear = control(&icons::GEAR, &settings_label, false, false).on_press(move |s: &mut S| acc(s).open_settings(review.then_some("privacy_safety")));
+    if review {
+        gear = gear.child(el().pin(Some(21.0), Some(5.0), None, None).size(8.0, 8.0).radius(4.0).fill(p.status_danger).border(2.0, surface));
+    }
     let controls = row()
         .gap(dim::SPACING_1)
         .pl(dim::SPACING_3)
         .center_y()
         .child(mic)
         .child(speaker)
-        .child(control(&icons::GEAR, "User Settings", false, false).on_press(move |s: &mut S| acc(s).open_settings(None)));
+        .child(gear);
     // --user-area-avatar-lead = max(8, 72/2 - 6 - 32/2) = 14.
     let lead = (dim::LAYOUT_GUILD_LIST_WIDTH / 2.0 - dim::FOOTER_BOX_INSET - 16.0).max(dim::FOOTER_BOX_INNER_INSET);
     let user_row = row()

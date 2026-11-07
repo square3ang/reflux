@@ -1,10 +1,10 @@
 //! Privacy (`tabs/privacy_safety_tab/*`), Devices (`DevicesTab`), Authorized apps
 //! (`AuthorizedAppsTab`) and Connections (`LinkedAccountsTab`), and their dialogs.
 
-use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags};
+use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, el, row};
+use rune::{El, col, el, icon, row};
 use crate::ui::mark::marked as text;
 use serde_json::{Value, json};
 
@@ -12,10 +12,10 @@ use super::account::{AccountModal, card, card_row, day, muted, open, small_butto
 use super::tabs::section;
 use super::input;
 use crate::guild::Then;
-use crate::i18n::t;
+use crate::i18n::{t, tf};
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
-use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, Modal, RadioGroup, Select, Switch, mix};
+use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, Modal, RadioGroup, Select, Switch, mix, radio_dot};
 
 fn patch<S: 'static>(acc: ShellAccess<S>, v: Value) -> impl Fn(&mut S) + 'static {
     move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(v.clone()))
@@ -99,6 +99,263 @@ fn sub(title: &str, desc: &str, content: El, p: &Palette) -> El {
     col().w_full().gap(8.0).child(text(title.to_string()).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary)).child(muted(desc, p)).child(content)
 }
 
+// ---- Privacy review ----------------------------------------------------------------------------
+
+/// `PRIVACY_SETUP_VERSION`.
+pub const REVIEW_VERSION: u32 = 1;
+
+/// `UserSettings.isPrivacySetupPending`: reviewed before the current version, unless this
+/// instance has direct messages off.
+pub fn review_pending(store: &Store, st: &ShellState) -> bool {
+    !st.dms_disabled && store.settings.privacy_setup_version < REVIEW_VERSION
+}
+
+/// The open `PrivacySetupModal`'s draft.
+pub struct Review {
+    /// `true` = friends only; the current default seeds it.
+    pub friends: bool,
+    /// "Also change the communities below to match".
+    pub apply: bool,
+}
+
+impl Review {
+    pub fn new(store: &Store) -> Self {
+        Self { friends: store.settings.default_guilds_restricted, apply: false }
+    }
+}
+
+/// The community list's order, folders flattened.
+fn guild_ids(store: &Store) -> Vec<Snowflake> {
+    store
+        .guild_list()
+        .into_iter()
+        .flat_map(|i| match i {
+            reflux_store::GuildListItem::Guild(g) => vec![g],
+            reflux_store::GuildListItem::Folder { guilds, .. } => guilds,
+        })
+        .collect()
+}
+
+/// `overrides` / `affected`: the communities whose own setting differs from `default`.
+fn differing(guilds: &[Snowflake], restricted: &[Snowflake], default: bool) -> Vec<Snowflake> {
+    guilds.iter().copied().filter(|g| restricted.contains(g) != default).collect()
+}
+
+/// `UserSettingsCommands.update` body. `applying` also replaces every current community's
+/// setting; otherwise only the default for communities joined later changes.
+fn review_patch(friends: bool, applying: bool, guilds: &[Snowflake]) -> Value {
+    let mut v = json!({ "default_guilds_restricted": friends, "privacy_setup_version": REVIEW_VERSION });
+    if applying {
+        v["restricted_guilds"] = json!(if friends { guilds } else { &[] });
+    }
+    v
+}
+
+/// `PrivacyReviewAlert`: the warning above the direct-message switches.
+fn review_alert<S: 'static>(default_friends: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let c = p.alert_warning_color;
+    row()
+        .w_full()
+        .gap(8.0)
+        .items_start()
+        .py(6.0)
+        .pl(16.0)
+        .pr(12.0)
+        .role("alert")
+        .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(4.0).radius(4.0).fill(c))
+        .child(icon(&icons::WARNING_FILL, 16.0).color(c).mt(2.0))
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(2.0)
+                .child(text(t("Review who can message you")).font(font(13.0, 600.0).lh(18.2)).color(p.text_primary))
+                .child(text(t("Choose whether people who share a community with you can send you direct messages without being friends first.")).font(font(13.0, 400.0).lh(18.2)).color(p.text_primary).wrap())
+                .child(
+                    row().gap(8.0).mt(4.0).child(
+                        Button::new(t("Review privacy settings"))
+                            .size(ButtonSize::Small)
+                            .key("privacy-review-open")
+                            .on_press(move |s: &mut S| {
+                                if let Some(u) = acc(s).settings.as_mut() {
+                                    u.privacy_review = Some(Review { friends: default_friends, apply: false });
+                                }
+                            })
+                            .el(p),
+                    ),
+                ),
+        )
+}
+
+/// A `GuildIcon` at 20 px beside the community's name and its state (`renderGuildRow`).
+fn review_guild<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, restricted: bool, p: &Palette) -> El {
+    let name = store.guilds.get(&g).and_then(|x| x.info.as_ref()).map_or(String::new(), |i| i.name.clone());
+    row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(crate::shell::guilds::guild_face(store, st, g, 20.0, false, p))
+        .child(text(name).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary).truncate().grow(1.0).shrink())
+        .child(
+            text(if restricted { t("Friends only") } else { t("Can message you") })
+                .font(font(12.0, 400.0).lh(16.0))
+                .color(p.text_secondary),
+        )
+}
+
+/// The `RadioGroup` option with the "Current" tag (`currentTag`).
+fn review_option<S: 'static>(on: bool, friends: bool, label: &str, desc: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let mut name = row().gap(8.0).center_y().child(text(label.to_string()).font(font(15.0, 500.0).lh(21.0)).color(p.text_primary));
+    if on {
+        name = name.child(
+            row()
+                .px(6.0)
+                .py(1.0)
+                .radius(999.0)
+                .fill(p.background_modifier_accent)
+                .child(text(t("Current")).font(font(11.0, 600.0).lh(14.0)).color(p.text_secondary)),
+        );
+    }
+    let words = col()
+        .gap(4.0)
+        .shrink()
+        .child(name)
+        .child(text(desc.to_string()).font(font(14.0, 400.0).lh(19.6)).color(p.text_secondary).wrap());
+    row()
+        .w_full()
+        .py(4.0)
+        .gap(8.0)
+        .items_start()
+        .child(radio_dot(on, p).mt(2.0))
+        .child(words)
+        .role("radio")
+        .label(label.to_string())
+        .checked(on)
+        .focusable(true)
+        .cursor(rune::Cursor::Pointer)
+        .on_press(move |s: &mut S| {
+            if let Some(r) = acc(s).settings.as_mut().and_then(|u| u.privacy_review.as_mut()) {
+                r.friends = friends;
+            }
+        })
+}
+
+/// `PrivacySetupModal`: who can message you, the current state, each community's override and
+/// what saving changes.
+pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &Review, p: &Palette, acc: ShellAccess<S>) -> El {
+    let close = move |s: &mut S| {
+        if let Some(u) = acc(s).settings.as_mut() {
+            u.privacy_review = None;
+        }
+    };
+    let all = guild_ids(store);
+    let restricted = &store.settings.restricted_guilds;
+    let current = store.settings.default_guilds_restricted;
+    let overrides = differing(&all, restricted, current);
+    let affected = differing(&all, restricted, review.friends);
+    let changed = review.friends != current;
+    let applying = changed && review.apply && !affected.is_empty();
+    let desc = |s: &str| text(s.to_string()).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap();
+    let heading = |s: &str| text(s.to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_secondary);
+
+    let mut now = col()
+        .w_full()
+        .gap(8.0)
+        .p(12.0)
+        .radius(8.0)
+        .border(1.0, p.background_header_secondary)
+        .fill(p.background_tertiary)
+        .child(heading(&t("Right now").to_uppercase()))
+        .child(
+            text(if current {
+                t("People in your communities need to be your friend before they can message you.").to_string()
+            } else {
+                t("People in your communities can message you without being friends.").to_string()
+            })
+            .font(font(14.0, 400.0).lh(18.9))
+            .color(p.text_primary)
+            .wrap(),
+        )
+        .child(text(t("Friends can always message you.")).font(font(14.0, 400.0).lh(18.9)).color(p.text_primary).wrap());
+    if !overrides.is_empty() {
+        now = now.child(
+            col()
+                .w_full()
+                .gap(6.0)
+                .child(
+                    text(tf("{count, plural, one {# community has its own setting} other {# communities have their own setting}}", &[("count", &overrides.len().to_string())]))
+                        .font(font(14.0, 600.0).lh(20.0))
+                        .color(p.text_primary),
+                )
+                .children(overrides.iter().map(|g| review_guild(store, st, *g, restricted.contains(g), p))),
+        );
+    }
+
+    let mut body = col()
+        .w_full()
+        .gap(16.0)
+        .child(desc(t("Take a moment to check who can message you. Nothing changes unless you choose to.")))
+        .child(now)
+        .child(
+            col()
+                .w_full()
+                .gap(6.0)
+                .role("radiogroup")
+                .label(t("Who can message you"))
+                .child(review_option(!review.friends, false, t("Anyone in my communities"), t("People who share a community with you can message you directly."), p, acc))
+                .child(review_option(review.friends, true, t("Friends only"), t("People need to be your friend before they can message you. They can still send you a friend request."), p, acc)),
+        );
+    if changed && !affected.is_empty() {
+        body = body.child(
+            col()
+                .w_full()
+                .gap(8.0)
+                .p(12.0)
+                .radius(8.0)
+                .border(1.0, p.background_header_secondary)
+                .fill(p.background_tertiary)
+                .child(
+                    Checkbox::new(review.apply)
+                        .size(18.0)
+                        .label(t("Also change the communities below to match"))
+                        .on_toggle(move |s: &mut S| {
+                            if let Some(r) = acc(s).settings.as_mut().and_then(|u| u.privacy_review.as_mut()) {
+                                r.apply = !r.apply;
+                            }
+                        })
+                        .el(p),
+                )
+                .children(affected.iter().map(|g| review_guild(store, st, *g, restricted.contains(g), p))),
+        );
+    }
+    let summary = if !changed {
+        t("Nothing will change. This just confirms your settings.")
+    } else if applying {
+        t("Communities you join from now on will use this, and the communities below change to match.")
+    } else if !affected.is_empty() {
+        t("Communities you join from now on will use this. Your current communities keep their settings.")
+    } else {
+        t("Communities you join from now on will use this.")
+    };
+    body = body
+        .child(text(summary).font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).wrap())
+        .child(desc(t("You can change this anytime in your privacy settings, including for each community.")));
+
+    let patch = review_patch(review.friends, applying, &all);
+    let save = move |s: &mut S| {
+        let sh = acc(s);
+        sh.intents.push(Intent::PatchSettings(patch.clone()));
+        if let Some(u) = sh.settings.as_mut() {
+            u.privacy_review = None;
+        }
+    };
+    let footer = row()
+        .gap(8.0)
+        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
+        .child(Button::new(if changed { t("Save changes") } else { t("Keep my current settings") }).key("privacy-review-save").on_press(save).el(p));
+    Modal::new(t("Who can message you?"), close).body(body).footer(footer).el(p)
+}
+
 // ---- Privacy -----------------------------------------------------------------------------------
 
 pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
@@ -179,11 +436,15 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
         acc,
         layer,
     );
-    let communication = col()
+    let mut communication = col()
         .w_full()
         .gap(24.0)
-        .child(sub(t("Friend requests"), t("Choose who can send you a friend request."), friends, p))
-        .child(sub(t("Direct messages"), t("Review who can message you"), dms, p))
+        .child(sub(t("Friend requests"), t("Choose who can send you a friend request."), friends, p));
+    if review_pending(store, st) {
+        communication = communication.child(review_alert(s.default_guilds_restricted, p, acc));
+    }
+    communication = communication
+        .child(sub(t("Direct messages"), t("Friends can always message you. These settings cover people and bots you only share a community with."), dms, p))
         .child(sub(t("Incoming calls"), t("Choose who can start a call with you."), calls, p))
         .child(sub(t("Group chats"), t("Choose who can add you to a group chat without asking first."), groups, p));
 
@@ -520,5 +781,36 @@ mod tests {
         assert_eq!(toggle_custom(1, 2, true, bits), 3);
         assert_eq!(toggle_custom(1, 1, false, bits), 8, "nothing left falls back to friends only");
         assert_eq!(toggle_custom(8 | 1 | 32, 2, true, bits), 1 | 2 | 32, "base bits drop, others stay");
+    }
+
+    #[test]
+    fn privacy_review_differs_and_saves_like_fluxer() {
+        let guilds = [Snowflake(1), Snowflake(2), Snowflake(3)];
+        let restricted = [Snowflake(2)];
+        assert_eq!(differing(&guilds, &restricted, false), vec![Snowflake(2)], "only the restricted one differs from open");
+        assert_eq!(differing(&guilds, &restricted, true), vec![Snowflake(1), Snowflake(3)], "only the open ones differ from friends only");
+        assert_eq!(
+            review_patch(true, false, &guilds),
+            json!({"default_guilds_restricted": true, "privacy_setup_version": REVIEW_VERSION}),
+            "future communities only"
+        );
+        assert_eq!(
+            review_patch(true, true, &guilds),
+            json!({"default_guilds_restricted": true, "restricted_guilds": ["1", "2", "3"], "privacy_setup_version": REVIEW_VERSION})
+        );
+        assert_eq!(
+            review_patch(false, true, &guilds),
+            json!({"default_guilds_restricted": false, "restricted_guilds": [], "privacy_setup_version": REVIEW_VERSION})
+        );
+        assert!(review_patch(false, false, &guilds).get("restricted_guilds").is_none(), "the untouched communities keep their settings");
+    }
+
+    #[test]
+    fn privacy_review_pends_until_the_version_is_saved() {
+        let store = Store::default();
+        let mut st = ShellState::default();
+        assert!(review_pending(&store, &st), "a new account reviewed version 0");
+        st.dms_disabled = true;
+        assert!(!review_pending(&store, &st), "nothing to review when direct messages are off");
     }
 }

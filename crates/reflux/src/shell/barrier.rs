@@ -183,7 +183,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
             // (bounced) changes the address.
             type Open<S> = Box<dyn Fn(&mut S)>;
             let (label, open): (&str, Open<S>) = match need {
-                Need::ConfirmEmail if me.as_ref().is_some_and(|m| m.email_bounced) => ("Verify email", Box::new(move |s: &mut S| acc(s).open_settings(Some("account_security")))),
+                Need::ConfirmEmail if me.as_ref().is_some_and(|m| m.email_bounced) => ("Verify email", Box::new(move |s: &mut S| super::bounced::open(acc(s)))),
                 Need::ConfirmEmail if me.as_ref().is_some_and(|m| m.account_tier.is_some() || m.claimed.is_some()) && me.as_ref().is_some_and(|m| account_gate::tier(m, &st.tiers) == account_gate::Tier::Unverified) => {
                     ("Enter code", Box::new(move |s: &mut S| acc(s).account_gate.open = Some(None)))
                 }

@@ -62,13 +62,15 @@ pub struct SettingsUi {
     /// The typed query waiting out the 300 ms debounce, and since when.
     pub typed: Option<(String, std::time::Instant)>,
     pub collapsed: Vec<&'static str>,
+    /// The `PrivacySetupModal`, while it's open.
+    pub privacy_review: Option<privacy::Review>,
 }
 
 impl SettingsUi {
     /// Opens on `tab` (a [`TABS`] id), or on the first tab like Fluxer.
     pub fn new(tab: Option<&str>) -> Self {
         let tab = TABS.iter().find(|t| Some(t.id) == tab).map_or("my_profile", |t| t.id);
-        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), typed: None, collapsed: Vec::new() }
+        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), typed: None, collapsed: Vec::new(), privacy_review: None }
     }
 }
 
@@ -348,6 +350,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     }
     layer.push(modal);
     layer.extend(popups);
+    if let Some(review) = &ui.privacy_review {
+        layer.push(privacy::review_modal(store, st, review, p, acc));
+    }
     if st.nav.timezone {
         layer.push(timezone::modal(store, st, p, acc));
     }
@@ -484,7 +489,7 @@ impl ShellState {
 /// Shows tab `id` with a fresh form, loading what it lists.
 pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
     let Some(u) = sh.settings.as_mut() else { return };
-    (u.tab, u.modal) = (id, None);
+    (u.tab, u.modal, u.privacy_review) = (id, None, None);
     sh.form = Default::default();
     load_tab(sh, id);
 }
