@@ -16,7 +16,7 @@ use crate::icons;
 use crate::media::Load;
 use crate::theme::{Palette, dim, font};
 use crate::ui::{over, rgba};
-use crate::i18n::t;
+use crate::i18n::{t, tf};
 
 /// Media UI state: the lightbox, revealed spoilers, the clip playing inline, invite previews.
 #[derive(Default)]
@@ -28,10 +28,18 @@ pub struct MediaUi {
     pub playing: Option<(String, Player)>,
     /// The same through GStreamer, where Rune's player can't decode (`clip::native`).
     pub gst: Option<super::clip::GstClip>,
+    /// gifv embeds playing in place.
+    pub gifv: super::gifv::Gifv,
     /// Invite previews by code (`InviteEmbed`).
     pub invites: HashMap<String, super::invite_embed::Preview>,
     /// Mature channels the user chose to see this session (`MatureContentChannelGate`).
     pub mature_ok: HashSet<Snowflake>,
+    /// Discovery's `age_policy` regions (country, optional region).
+    pub age_geos: Vec<(String, Option<String>)>,
+    /// Discovery's `hidden_built_in_guild_badges`.
+    pub hidden_badges: Vec<String>,
+    /// The (guild, channel) of the invite card whose message menu is open.
+    pub invite_menu: (Option<Snowflake>, Option<Snowflake>),
     /// Text previews shown expanded.
     pub expanded: HashSet<String>,
     /// The URL waiting on the external link warning, and its "skip next time" box.
@@ -75,38 +83,93 @@ fn flagged(nsfw: bool, flags: AttachmentFlags) -> bool {
     nsfw || flags.contains(AttachmentFlags::CONTAINS_EXPLICIT_MEDIA)
 }
 
-/// `MatureContentChannelGate` for a mature channel the user hasn't agreed to see (`None`
-/// otherwise): title, the scope's warning, and a danger "Proceed".
-// shortcut: agreement lasts the session (Fluxer persists it per guild, category or channel).
-pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    if c.guild_id.is_none() || !channel_mature(store, c) || st.media_ui.mature_ok.contains(&c.id) {
+/// `GuildMatureContentAgree.getGateReason` for a mature channel the user can't see yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gate {
+    /// The user's region checks age and they haven't (`GEO_RESTRICTED`).
+    Geo,
+    /// The account may not see mature content (`MATURE_CONTENT_CHECK_REQUIRED`).
+    Check,
+    /// They haven't agreed to this scope yet (`CONSENT_REQUIRED`).
+    Consent,
+}
+
+/// The gate for `c`, if any: the geo and account checks first, then an agreement to the
+/// channel, its category or the guild (kept per account, like Fluxer's synced agreements).
+pub fn gate_reason(store: &Store, st: &ShellState, c: &Channel) -> Option<Gate> {
+    let g = c.guild_id?;
+    if !channel_mature(store, c) {
         return None;
     }
+    let me = store.me.as_ref();
+    if let Some((country, region)) = geo(st)
+        && st.media_ui.age_geos.iter().any(|(cc, rc)| *cc == country && rc.as_ref().is_none_or(|r| Some(r) == region.as_ref()))
+        && !me.is_some_and(|u| u.age_verified_adult)
+    {
+        return Some(Gate::Geo);
+    }
+    if me.is_some_and(|u| !u.nsfw_allowed) {
+        return Some(Gate::Check);
+    }
+    let agreed = crate::nav::mine(st).mature_agreed;
+    let ok = |id: Snowflake| st.media_ui.mature_ok.contains(&id) || agreed.contains(&id);
+    (!(ok(c.id) || c.parent_id.is_some_and(ok) || ok(g))).then_some(Gate::Consent)
+}
+
+/// The client's `GET /ip` country and region (`GeoIP`), once loaded.
+fn geo(st: &ShellState) -> Option<(String, Option<String>)> {
+    let Some(super::expr::Fetched::Done(v)) = st.expr.fetched.get(GEO) else { return None };
+    let s = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    Some((s("countryCode")?, s("regionCode")))
+}
+
+/// `expr.fetched` key of the `/ip` lookup.
+pub const GEO: &str = "geoip";
+
+/// `MatureContentChannelGate`: the reason's title and text; for consent, the scope's warning
+/// and a danger "Proceed" that remembers the agreement.
+// shortcut: the region shows as its ISO code, and the age-check texts have no "Learn more" link.
+pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let reason = gate_reason(store, st, c)?;
     let parent = c.parent_id.and_then(|p| store.channels.get(&p)).filter(|p| p.kind == ChannelType::GUILD_CATEGORY);
-    let scope = if c.nsfw_override.is_some() {
-        "channel"
-    } else if parent.is_some_and(|p| p.nsfw_override.is_some()) {
-        "category"
+    let (scope, scope_id) = if c.nsfw_override.is_some() {
+        ("channel", c.id)
+    } else if let Some(cat) = parent.filter(|p| p.nsfw_override.is_some()) {
+        ("category", cat.id)
     } else {
-        "community"
+        ("community", c.guild_id.unwrap_or(c.id))
     };
-    let id = c.id;
-    let proceed = crate::ui::Button::new(t("Proceed"))
-        .variant(crate::ui::ButtonVariant::Danger)
-        .key("mature-proceed")
-        .on_press(move |s: &mut S| {
-            acc(s).media_ui.mature_ok.insert(id);
-        })
-        .el(p);
-    let body = format!("This {scope} is marked for mature content and may contain material that may be inappropriate for some users.");
+    let (title, body, button) = match reason {
+        Gate::Geo => {
+            let region = geo(st).map(|(c, r)| r.map_or(c.clone(), |r| format!("{r}, {c}"))).unwrap_or_default();
+            (t("Mature content").to_string(), tf("Due to mature content laws in {regionName}, mature content is not available from here.", &[("regionName", &region)]), None)
+        }
+        Gate::Check => match scope {
+            "community" => (t("Mature community").into(), t("This mature community is not available to your account.").into(), None),
+            "category" => (t("Mature category").into(), t("This mature category is not available to your account.").into(), None),
+            _ => (t("Mature channel").into(), t("This mature channel is not available to your account.").into(), None),
+        },
+        Gate::Consent => {
+            let proceed = crate::ui::Button::new(t("Proceed"))
+                .variant(crate::ui::ButtonVariant::Danger)
+                .key("mature-proceed")
+                .on_press(move |s: &mut S| {
+                    let st = acc(s);
+                    st.media_ui.mature_ok.insert(scope_id);
+                    crate::nav::update_mine(st, |a| a.mature_agreed.push(scope_id));
+                })
+                .el(p);
+            (t("Mature content").into(), format!("This {scope} is marked for mature content and may contain material that may be inappropriate for some users."), Some(proceed))
+        }
+    };
     Some(
         row().w_full().grow(1.0).min_h(0.0).center().fill(p.background_secondary_lighter).child(
             col()
                 .padding(32.0)
                 .items_center()
-                .child(text(t("Mature content")).font(font(24.0, 600.0).lh(32.0)).color(p.text_primary).mb(12.0))
+                .child(text(title).font(font(24.0, 600.0).lh(32.0)).color(p.text_primary).mb(12.0))
                 .child(text(body).font(font(16.0, 400.0).lh(24.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center).max_w(448.0).mb(16.0))
-                .child(proceed),
+                .children(button),
         ),
     )
 }

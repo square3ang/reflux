@@ -40,7 +40,10 @@ pub mod upload;
 pub mod voice;
 pub mod call;
 pub mod clip;
+pub mod gifv;
 pub mod voice_message;
+pub mod system_msg;
+pub mod queue;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
@@ -67,6 +70,9 @@ pub enum Intent {
     SelectChannel(Snowflake),
     /// `reply`: the message replied to and whether to ping its author.
     SendMessage { channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>, attachments: Vec<upload::Upload> },
+    /// Send a failed message again / drop it (`MessageRetryUtils`, `deleteLocal`).
+    RetrySend { channel: Snowflake, nonce: Snowflake },
+    DropLocal { channel: Snowflake, nonce: Snowflake },
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
     /// The list reached its newest loaded message while in history: fetch the page after it.
@@ -290,11 +296,15 @@ pub struct ShellState {
     pub desktop: crate::desktop::ShellView,
     /// Files waiting in the composer's tray, and the last tray ID given out.
     pub uploads: Vec<upload::Upload>,
+    /// `ChannelSticker.pendingSticker`: (channel, sticker) staged to go with the next message.
+    pub pending_sticker: Option<(Snowflake, Snowflake)>,
     pub upload_seq: u64,
     /// The tray file whose alt text is being edited.
     pub upload_edit: Option<(u64, TextEdit)>,
     /// Upload progress (0..1) of optimistic messages, by their nonce ID.
     pub progress: std::collections::HashMap<Snowflake, f32>,
+    /// Text sends that failed, by their nonce ID (drawn red with Retry / Delete).
+    pub failed: std::collections::HashMap<Snowflake, queue::Failed>,
     /// An error dialog: (title, body).
     pub notice: Option<(String, String)>,
     /// The account's resolved instance limits.
@@ -386,9 +396,11 @@ impl Default for ShellState {
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),
+            pending_sticker: None,
             upload_seq: 0,
             upload_edit: None,
             progress: Default::default(),
+            failed: Default::default(),
             notice: None,
             limits: Default::default(),
             drop_hover: false,
@@ -543,6 +555,7 @@ fn media_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     }
     let mut changed = invite_embed::request(store, st);
     changed |= clip::poll(st, tx);
+    changed |= gifv::poll(st, tx);
     if let Some(d) = st.media.take_next_frame() {
         tx.wake_after(d);
         changed = true;
@@ -646,7 +659,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(guilds::rail(store, st, p, acc))
         .child(frame)
         .child(sidebar::user_area(store, st, p, acc));
-    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
+    let body = col().w_full().h_full().children(crate::desktop::nagbar::bars(st, p, acc)).children(crate::nav::terms::nagbar(store, st, p, acc)).children(crate::desktop::notices::instance(st, p, acc)).children(verify_nagbar(store, st, p, acc)).children(crate::desktop::notices::premium(store, st, p, acc)).children(crate::social::preview_nagbar(store, st, p, acc)).child(body);
+    crate::compose::floating_toolbar(st, p, acc, &mut layer);
     menus::layer(store, st, p, acc, &mut layer);
     status::menu(store, st, p, acc, &mut layer);
     expr::layer(store, st, p, acc, &mut layer);

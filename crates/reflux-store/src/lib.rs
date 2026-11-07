@@ -474,14 +474,16 @@ impl Store {
         rest.iter().rev().map(|g| GuildListItem::Guild(g.id)).chain(out).collect()
     }
 
-    /// DMs and group DMs, most recent activity first (fluxer `sortDMs`).
+    /// DMs and group DMs: pinned ones in pin order, then most recent activity first
+    /// (fluxer `getSortedDmChannels`).
     pub fn private_channels(&self) -> Vec<&Channel> {
         let mut v: Vec<_> = self
             .channels
             .values()
             .filter(|c| matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM))
             .collect();
-        v.sort_by_key(|c| std::cmp::Reverse((c.last_message_id.unwrap_or(c.id), c.id)));
+        let pin = |c: &Channel| self.pinned_dms.iter().position(|p| *p == c.id).unwrap_or(usize::MAX);
+        v.sort_by_key(|c| (pin(c), std::cmp::Reverse((c.last_message_id.unwrap_or(c.id), c.id))));
         v
     }
 

@@ -1,6 +1,7 @@
 mod app;
 mod compose;
 mod desktop;
+mod file_picker;
 mod guild;
 mod gst;
 mod handoff;
@@ -58,6 +59,9 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(d) = &s.shell_demo {
         d.shell.media.set_scale(scale);
     }
+    let sh = s.shell_demo.as_ref().map_or(&s.app.shell, |d| &d.shell);
+    let (a, b) = sh.composer.range();
+    compose::CARET.set(if sh.composer.focused && a != b { cx.caret("composer") } else { None });
     let content = match (&s.gallery, &s.shell_demo) {
         (Some(g), _) => ui::gallery::view(g, cx),
         (_, Some(d)) => shell::demo::view(d),

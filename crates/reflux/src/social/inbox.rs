@@ -2,8 +2,6 @@
 //! `ForwardModal`, the publish confirmation, `ChannelFollowModal`, and the message menu's
 //! social items (`MessageContextMenu`: forward, bookmark, suppress embeds, publish, remove all
 //! reactions, report).
-// shortcut: lists load once per open (no paging past the first 25); the unread tab lists
-// channels rather than their unread messages.
 
 use reflux_model::{Channel, ChannelType, Message, MessageFlags, Permissions as P, Snowflake};
 use reflux_store::Store;
@@ -35,15 +33,25 @@ fn mentions_path(f: [bool; 3]) -> String {
     format!("/users/@me/mentions?limit=25&roles={}&everyone={}&guilds={}", f[0], f[1], f[2])
 }
 
+/// `UNREAD_PREVIEW_MESSAGE_LIMIT` / `BULK_PREVIEW_CHANNEL_BATCH_SIZE`.
+const PREVIEW_LIMIT: usize = 25;
+const BULK_BATCH: usize = 5;
+const BULK: &str = "inbox-bulk:";
+
 /// Loads the tab's list.
 fn load(st: &mut ShellState, tab: u8) {
     match tab {
         1 => st.social(Method::GET, "/users/@me/saved-messages", None, Done::Data("bookmarks".into())),
         2 => {
+            // `RecentMentionCommands`: pages of 25, each before the last one shown.
+            st.social.data.retain(|k, _| !k.starts_with("mentions"));
             let path = mentions_path(st.social.mention_filter);
-            st.social(Method::GET, path, None, Done::Data("mentions".into()));
+            st.social(Method::GET, path, None, Done::Append("mentions".into(), 25));
         }
-        _ => {}
+        _ => {
+            // Previews are fetched again as sections show.
+            st.expr.fetched.retain(|k, _| !k.starts_with(BULK));
+        }
     }
 }
 
@@ -194,34 +202,117 @@ fn where_of(store: &Store, c: Snowflake) -> String {
     }
 }
 
-fn unread_list<S: 'static>(store: &Store, _st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+/// `UnreadChannelsContent`: a section per unread channel (collapse caret, its name, mentions,
+/// notification settings, mark as read) with its first unread messages, fetched through
+/// `POST /channels/messages/bulk` five channels at a time as sections scroll into view.
+fn unread_list<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let chans = unread_channels(store);
     if chans.is_empty() {
         return empty(&icons::CHECK_CIRCLE_FILL, "You're all caught up", "New messages show up here.", p);
     }
-    col().w_full().gap(2.0).children(chans.into_iter().map(|c| {
-        let (id, g) = (c.id, c.guild_id);
-        let mentions = store.mention_count(id);
-        row()
-            .w_full()
-            .h(40.0)
-            .px(8.0)
-            .gap(8.0)
-            .center_y()
-            .radius(6.0)
-            .hover(p.background_modifier_hover)
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .key(format!("inbox-unread-{id}"))
-            .child(icon(crate::shell::channel_icon(c.kind), 18.0).color(p.text_primary_muted))
-            .child(text(where_of(store, id)).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
-            .children((mentions > 0).then(|| row().min_w(16.0).h(16.0).px(4.0).center().radius(8.0).fill(p.status_danger).child(text(mentions.to_string()).font(font(12.0, 700.0).lh(16.0)).color(rune::Color::WHITE))))
-            .on_press(move |s: &mut S| {
-                let st = acc(s);
-                st.popups.close();
-                st.select_guild(g, Some(id));
-            })
-    }))
+    let previews = previews(st);
+    // (channel, its bulk request) for the sections, in order.
+    let requests: Vec<(Snowflake, Value)> = chans
+        .iter()
+        .map(|c| {
+            let req = match store.read_states.get(&c.id).and_then(|r| r.last_message_id) {
+                Some(ack) => json!({ "channel_id": c.id, "limit": PREVIEW_LIMIT, "after": ack }),
+                None => json!({ "channel_id": c.id, "limit": PREVIEW_LIMIT }),
+            };
+            (c.id, req)
+        })
+        .collect();
+    let asked: std::collections::HashSet<Snowflake> = st.expr.fetched.keys().filter_map(|k| k.strip_prefix(BULK)).flat_map(|ids| ids.split(',').filter_map(|i| i.parse().ok()).map(Snowflake)).collect();
+    let sections = chans.into_iter().map(|c| section(store, st, c, previews.get(&c.id), p, acc));
+    col().w_full().gap(8.0).growth(rune::GrowthSpec::default()).virtualize(160.0).children(sections.collect::<Vec<_>>()).on_visible_rows(move |s: &mut S, r| {
+        let want: Vec<&(Snowflake, Value)> = requests.get(r.start..r.end.min(requests.len())).unwrap_or_default().iter().filter(|(c, _)| !asked.contains(c)).collect();
+        for batch in want.chunks(BULK_BATCH) {
+            let ids = batch.iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>().join(",");
+            let body = json!({ "requests": batch.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>() });
+            let st = acc(s);
+            st.expr.fetched.insert(format!("{BULK}{ids}"), crate::shell::expr::Fetched::Loading);
+            st.intents.push(Intent::Fetch { key: format!("{BULK}{ids}"), method: Method::POST, path: "/channels/messages/bulk".into(), body: Some(body) });
+        }
+        !want.is_empty()
+    })
+}
+
+/// Bulk-fetched previews by channel: the oldest unread first, at most 25.
+fn previews(st: &ShellState) -> std::collections::HashMap<Snowflake, Vec<Message>> {
+    let mut out = std::collections::HashMap::new();
+    for (k, v) in &st.expr.fetched {
+        let (Some(_), crate::shell::expr::Fetched::Done(v)) = (k.strip_prefix(BULK), v) else { continue };
+        for e in v["channels"].as_array().into_iter().flatten() {
+            let Some(id) = e["channel_id"].as_str().and_then(|i| i.parse().ok()).map(Snowflake) else { continue };
+            let mut ms: Vec<Message> = serde_json::from_value(e["messages"].clone()).unwrap_or_default();
+            ms.sort_by_key(|m| m.id);
+            let skip = ms.len().saturating_sub(PREVIEW_LIMIT);
+            out.insert(id, ms.split_off(skip));
+        }
+    }
+    out
+}
+
+fn section<S: 'static>(store: &Store, st: &ShellState, c: &Channel, msgs: Option<&Vec<Message>>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let (id, g) = (c.id, c.guild_id);
+    let mentions = store.mention_count(id);
+    let collapsed = st.social.inbox_collapsed.contains(&id);
+    let head_button = |glyph: &'static Icon, label: &str, key: String| {
+        row().size(24.0, 24.0).center().radius(4.0).cursor(rune::Cursor::Pointer).role("button").label(label.to_string()).hover_group().hover(p.background_modifier_hover).key(key).child(icon(glyph, 16.0).color(p.text_primary_muted).group_color(p.text_primary))
+    };
+    let caret = head_button(if collapsed { &icons::CARET_RIGHT_BOLD } else { &icons::CARET_DOWN_BOLD }, if collapsed { t("Expand") } else { t("Collapse") }, format!("inbox-fold-{id}")).on_press(move |s: &mut S| {
+        let st = acc(s);
+        if !st.social.inbox_collapsed.remove(&id) {
+            st.social.inbox_collapsed.insert(id);
+        }
+    });
+    let bell = head_button(if store.is_muted(c) { &icons::BELL_SLASH_FILL } else { &icons::BELL_FILL }, t("Notification settings"), format!("inbox-bell-{id}")).on_press(move |s: &mut S| {
+        let st = acc(s);
+        st.social.inbox_open = false;
+        st.select_guild(g, Some(id));
+        st.popups.open = Some(super::channel::BELL.into());
+    });
+    let last = c.last_message_id;
+    let read = head_button(&icons::CHECK_BOLD, t("Mark as read"), format!("inbox-read-{id}")).on_press(move |s: &mut S| {
+        if let Some(m) = last {
+            acc(s).intents.push(Intent::MarkRead(vec![(id, m)]));
+        }
+    });
+    let open = move |s: &mut S| {
+        let st = acc(s);
+        st.social.inbox_open = false;
+        st.select_guild(g, Some(id));
+    };
+    let mut head = row()
+        .w_full()
+        .h(32.0)
+        .gap(6.0)
+        .center_y()
+        .child(caret)
+        .child(icon(crate::shell::channel_icon(c.kind), 16.0).color(p.text_primary_muted))
+        .child(text(where_of(store, id)).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).truncate().shrink().cursor(rune::Cursor::Pointer).on_press(open))
+        .child(rune::el().grow(1.0));
+    if mentions > 0 {
+        head = head.child(row().min_w(16.0).h(16.0).px(4.0).center().radius(8.0).fill(p.status_danger).child(text(mentions.to_string()).font(font(12.0, 700.0).lh(16.0)).color(rune::Color::WHITE)));
+    }
+    let mut out = col().w_full().key(format!("inbox-unread-{id}")).child(head.child(bell).child(read));
+    if collapsed {
+        return out;
+    }
+    let body = match msgs {
+        None => row().w_full().h(64.0).center().child(spinner(p.text_primary_muted)),
+        Some(ms) if ms.is_empty() => row().w_full().h(40.0).center().child(text(t("No unread messages")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        Some(ms) => {
+            let mut b = col().w_full().children(ms.iter().map(|m| col().w_full().inert().child(crate::shell::preview(store, st, m, format!("inbox-u{}", m.id), p, acc))));
+            // `hasMoreUnreadThanShown`.
+            if ms.len() >= PREVIEW_LIMIT && ms.last().map(|m| m.id) != last {
+                b = b.child(row().w_full().h(32.0).center().cursor(rune::Cursor::Pointer).role("button").key(format!("inbox-all-{id}")).child(text(t("View all unread")).font(font(14.0, 500.0)).color(p.text_link)).on_press(open));
+            }
+            b
+        }
+    };
+    out = out.child(col().w_full().py(8.0).radius(8.0).clip_rounded(8.0).border(1.0, p.background_header_secondary).child(body));
+    out
 }
 
 /// One message with its channel above, Jump and an optional remove button on hover.
@@ -262,6 +353,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, m: &Message, remove: Option<
     }
     col()
         .w_full()
+        .key(format!("inbox-card-{id}"))
         .mb(8.0)
         .gap(4.0)
         .child(row().gap(6.0).center_y().px(4.0).child(icon(&icons::HASH_BOLD, 14.0).color(p.text_tertiary)).child(text(where_of(store, ch)).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).truncate()))
@@ -285,13 +377,38 @@ fn loading_or(st: &ShellState, key: &str, p: &Palette, f: impl FnOnce(&Value) ->
     }
 }
 
+/// `RecentMentionsContent`: the next page loads when the list's end scrolls into view; past the
+/// last one, "You're at the end".
 fn mention_list<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let end = st.social.data.get("mentions:end").and_then(Value::as_bool).unwrap_or(false);
     loading_or(st, "mentions", p, |v| {
         let ms = messages_of(Some(v)).unwrap_or_default();
         if ms.is_empty() {
             return empty(&icons::AT_BOLD, t("No mentions yet"), "Messages that mention you show up here.", p);
         }
-        col().w_full().children(ms.iter().map(|m| card(store, st, m, Some(("Remove mention", Method::DELETE, format!("/users/@me/mentions/{}", m.id))), p, acc)))
+        let n = ms.len();
+        let before = ms.last().map(|m| m.id);
+        let mut rows: Vec<El> = ms.iter().map(|m| card(store, st, m, Some(("Remove mention", Method::DELETE, format!("/users/@me/mentions/{}", m.id))), p, acc)).collect();
+        rows.push(if end {
+            col().w_full().py(24.0).gap(8.0).items_center().key("mentions-end")
+                .child(icon(&icons::FLAG_CHECKERED_FILL, 32.0).color(p.text_primary_muted))
+                .child(text(t("You're at the end")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
+                .child(text(t("You've seen all your recent mentions. More will appear here soon.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
+        } else {
+            row().w_full().h(48.0).center().key("mentions-more").child(spinner(p.text_primary_muted))
+        });
+        let filter = st.social.mention_filter;
+        col().w_full().growth(rune::GrowthSpec::default()).virtualize(140.0).children(rows).on_visible_rows(move |s: &mut S, r| {
+            let st = acc(s);
+            let key = format!("mentions:before:{}", before.unwrap_or_default());
+            if end || r.end <= n || st.social.data.contains_key(&key) {
+                return false;
+            }
+            st.social.data.insert(key, Value::Null);
+            let path = format!("{}&before={}", mentions_path(filter), before.unwrap_or_default());
+            st.social(Method::GET, path, None, Done::Append("mentions".into(), 25));
+            false
+        })
     })
 }
 

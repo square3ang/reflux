@@ -128,7 +128,7 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
         }
     }
     if let Some(c) = dm {
-        m = m.separator().item(MenuItem::new("close-dm", t("Close DM")).icon(&icons::X_BOLD).on_select(move |s: &mut S| close_dm(acc(s), c)));
+        m = m.separator().item(pin_dm(store, c, false, acc)).item(MenuItem::new("close-dm", t("Close DM")).icon(&icons::X_BOLD).on_select(move |s: &mut S| close_dm(acc(s), c)));
     }
     if store.settings.developer_mode {
         m = m.separator().item(copy_id(t("Copy user ID"), user));
@@ -277,7 +277,8 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
         m = m
             .separator()
             .item(MenuItem::new("edit-group", t("Edit group")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::EditGroup(c))))
-            .item(MenuItem::new("add-to-group", t("Add friends to group")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::AddToGroup(c))));
+            .item(MenuItem::new("add-to-group", t("Add friends to group")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::AddToGroup(c))))
+            .item(pin_dm(store, c, true, acc));
         m = m.separator().item(MenuItem::new("leave-group", t("Leave group")).icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| close_dm(acc(s), c)));
     }
     if store.settings.developer_mode {
@@ -285,6 +286,20 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
         m = m.item(super::debug::item("debug-channel", t("Debug channel"), super::debug::Subject::Channel(c), acc));
     }
     m
+}
+
+/// `DMMenuData` Pin / Unpin: `PUT|DELETE /users/@me/channels/{id}/pin`, then a toast.
+fn pin_dm<S: 'static>(store: &Store, c: Snowflake, group: bool, acc: ShellAccess<S>) -> MenuItem<S> {
+    use crate::social::Done;
+    let pinned = store.pinned_dms.contains(&c);
+    let (label, toast) = match (pinned, group) {
+        (true, true) => (t("Unpin group DM"), t("Unpinned group DM")),
+        (true, false) => (t("Unpin DM"), t("Unpinned DM")),
+        (false, true) => (t("Pin group DM"), t("Pinned group DM")),
+        (false, false) => (t("Pin DM"), t("Pinned DM")),
+    };
+    let method = if pinned { reqwest::Method::DELETE } else { reqwest::Method::PUT };
+    MenuItem::new("pin-dm", label).icon(&icons::PUSH_PIN_FILL).on_select(move |s: &mut S| acc(s).social(method.clone(), format!("/users/@me/channels/{c}/pin"), None, Done::Toast(toast.into())))
 }
 
 fn leave_modal<S: 'static>(g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {

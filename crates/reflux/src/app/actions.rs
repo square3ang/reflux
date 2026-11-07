@@ -229,8 +229,8 @@ fn ack_locally(s: &mut State, channel: Snowflake, message: Snowflake, manual: bo
 
 /// Every frame: acks the open channel while its newest message is on screen (locally at once,
 /// on the server after [`ACK_DELAY_MS`]), and sends acks that are due. True when the store
-/// changed.
-// shortcut: acks even while the window is unfocused; Fluxer waits for focus.
+/// changed. `canAutoAck`: only while the window is focused (headless runs count as focused) and
+/// the media viewer is closed.
 pub(super) fn tick(s: &mut State) -> bool {
     if s.app.route != Route::Main {
         s.app.acks.clear();
@@ -244,6 +244,9 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.media.set_base(&inst.discovery.endpoints.media);
         s.app.shell.invite_base = inst.discovery.endpoints.invite.clone();
         s.app.shell.gift_base = inst.discovery.endpoints.gift.clone();
+        s.app.shell.media_ui.age_geos = inst.discovery.age_policy.geos.iter().map(|g| (g.country_code.clone(), g.region_code.clone())).collect();
+        crate::shell::expr::fetch(&mut s.app.shell, crate::shell::attachments::GEO, "/ip");
+        s.app.shell.media_ui.hidden_badges = inst.discovery.hidden_built_in_guild_badges.clone();
         let gif = &inst.discovery.gif;
         // Picker frecency, favorites and skin tone, once per sign-in.
         if !s.app.shell.expr.persist {
@@ -263,7 +266,8 @@ pub(super) fn tick(s: &mut State) -> bool {
     }
     let now = now_ms();
     let sh = &s.app.shell;
-    if let Some(ch) = sh.channel.filter(|&c| sh.at_bottom && sh.hold_ack != Some(c) && s.app.store.has_unread(c)) {
+    let can_ack = (s.desktop.focused || rune::is_headless()) && sh.media_ui.viewer.is_none();
+    if let Some(ch) = sh.channel.filter(|&c| can_ack && sh.at_bottom && sh.hold_ack != Some(c) && s.app.store.has_unread(c)) {
         let store = &s.app.store;
         let last = store.channels.get(&ch).and_then(|c| c.last_message_id);
         let loaded = store.messages(ch).last().map(|m| m.id);
@@ -337,10 +341,15 @@ mod tests {
         let ch = demo.shell.channel.expect("demo opens #general");
         (s.app.store, s.app.route) = (demo.store, Route::Main);
         s.app.shell.channel = Some(ch);
+        s.desktop.focused = true;
         assert!(s.app.store.has_unread(ch));
 
         s.app.shell.at_bottom = false;
         assert!(!tick(&mut s) && s.app.store.has_unread(ch), "scrolled up: no ack");
+        s.desktop.focused = false;
+        s.app.shell.at_bottom = true;
+        assert!(!tick(&mut s) && s.app.store.has_unread(ch), "window unfocused: no ack");
+        s.desktop.focused = true;
 
         s.app.shell.at_bottom = true;
         assert!(tick(&mut s));

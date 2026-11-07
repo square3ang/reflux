@@ -109,7 +109,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
         "audit_log" => audit_log(store, st, guild, p, acc, &mut popups),
         _ => crate::social::guild_tab(store, st, guild, tab, p, acc, &mut popups).unwrap_or_else(|| not_available(p)),
     };
-    popups.extend(super::overview_extra::threshold_modal(st, guild, info, p, acc));
+    super::overview_extra::threshold_modal(st, guild, info, p, acc, &mut popups);
     let mut modal = frame(t("Community settings"), label, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {
         modal = modal.child(confirm(store, st, cf, p, acc));
@@ -547,15 +547,10 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
     let me = store.my_id();
     let upload = Button::<S>::new(t("Upload emoji")).size(ButtonSize::Small).key("upload-emoji").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
-        // shortcut: one file per dialog (Rune's dialog picks one path); drop several on the zone.
-        let options = rune::FileDialogOptions { title: "Upload emoji".into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
-        tx.open_file(options, move |s: &mut S, r, _| {
-            let sh = acc(s);
-            match r {
-                Ok(Some(path)) => super::expr_upload::upload_emojis(sh, g, &[path]),
-                Ok(None) => {}
-                Err(e) => sh.form.error = Some(e.to_string()),
-            }
+        crate::file_picker::open_files(tx, "Upload emoji", Some((t("Images"), &["png", "jpg", "jpeg", "gif", "webp", "avif"])), acc, move |sh, r| match r {
+            Ok(paths) if !paths.is_empty() => super::expr_upload::upload_emojis(sh, g, &paths),
+            Ok(_) => {}
+            Err(e) => sh.form.error = Some(e),
         });
     });
     let editing = st.form.data.get("emoji-edit").and_then(Value::as_str).and_then(|s| s.parse::<Snowflake>().ok());

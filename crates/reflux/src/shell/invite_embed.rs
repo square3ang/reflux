@@ -1,6 +1,6 @@
 //! Invite links in a message as cards (`channel/components/InviteEmbed.tsx` on `EmbedCard`).
 
-use reflux_model::{Invite, Message};
+use reflux_model::{Invite, Message, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, col, el, icon, row, text};
@@ -80,14 +80,44 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
             Some(Preview::Unknown) => unknown(p),
             Some(Preview::Ready(inv)) => ready(store, st, inv, p, acc),
         })
+        .map(|card| menu_on(card, m.id, find_ids(st, &m.content), acc))
         .collect()
 }
 
-/// `EmbedCard`: icon slot and header, then the full-width button under a divider.
-fn card(icon_el: El, header: El, footer: Option<El>, p: &Palette) -> El {
+/// The (guild, channel) of the first loaded invite in `content`, for the card's menu.
+fn find_ids(st: &ShellState, content: &str) -> (Option<Snowflake>, Option<Snowflake>) {
+    find_codes(content, &st.invite_base, &st.web_base)
+        .iter()
+        .find_map(|c| match st.media_ui.invites.get(c) {
+            Some(Preview::Ready(inv)) => Some((inv.guild.as_ref().map(|g| g.id), inv.channel.as_ref().map(|c| c.id).or(inv.channel_id))),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// `InviteEmbedContextMenu`: the message's menu plus "Copy community ID" / "Copy channel ID".
+fn menu_on<S: 'static>(card: El, msg: Snowflake, ids: (Option<Snowflake>, Option<Snowflake>), acc: ShellAccess<S>) -> El {
+    card.on_secondary_press(move |s: &mut S, at, _| {
+        let st = acc(s);
+        st.popups.open_at(&format!("msg-menu-{msg}"), [at.x, at.y]);
+        st.active_msg = Some(msg);
+        st.media_ui.invite_menu = ids;
+    })
+}
+
+/// The invite items of the message menu opened on a card.
+pub fn menu_items<S: 'static>(st: &ShellState) -> Vec<crate::ui::MenuEntry<S>> {
+    let copy = |key: &str, label: &str, id: Snowflake| crate::ui::MenuEntry::Item(crate::ui::MenuItem::new(key.to_string(), label).icon(&icons::SNOWFLAKE).on_select_tx(move |_: &mut S, tx: &mut rune::Tx| tx.copy(id.to_string())));
+    let (g, c) = st.media_ui.invite_menu;
+    g.map(|g| copy("invite-copy-guild", t("Copy community ID"), g)).into_iter().chain(c.map(|c| copy("invite-copy-channel", t("Copy channel ID"), c))).collect()
+}
+
+/// `EmbedCard`: an optional splash (60 tall, or the image's clamped 16:9…16:18 ratio), icon slot
+/// and header, then the full-width button under a divider.
+fn card(splash: Option<El>, icon_el: El, header: El, footer: Option<El>, p: &Palette) -> El {
     let border = over(p.background_modifier_accent, p.background_secondary);
     let grid = row().w_full().padding(13.6).gap(14.4).center_y().child(row().w(56.0).center().child(icon_el)).child(col().grow(1.0).min_w(0.0).gap(2.4).child(header));
-    let mut c = col().w_full().max_w(360.0).radius(12.0).clip_rounded(12.0).fill(p.background_secondary).border(1.0, border).child(grid);
+    let mut c = col().w_full().max_w(360.0).radius(12.0).clip_rounded(12.0).fill(p.background_secondary).border(1.0, border).children(splash).child(grid);
     if let Some(f) = footer {
         c = c.child(el().w_full().h(1.0).fill(border)).child(el().w_full().padding(13.6).child(f));
     }
@@ -114,7 +144,7 @@ fn skeleton(w: f32, h: f32, r: f32, p: &Palette) -> El {
 /// `InviteLoadingState`.
 fn loading(p: &Palette) -> El {
     let stats = row().gap(9.6).child(row().gap(4.8).center_y().child(skeleton(8.0, 8.0, 4.0, p)).child(skeleton(64.0, 12.0, 4.0, p))).child(row().gap(4.8).center_y().child(skeleton(8.0, 8.0, 4.0, p)).child(skeleton(96.0, 12.0, 4.0, p)));
-    card(skeleton(48.0, 48.0, 24.0, p), col().gap(6.4).child(skeleton(160.0, 18.0, 4.0, p)).child(stats), Some(skeleton(330.0, 40.0, 8.0, p).w_full()), p)
+    card(None, skeleton(48.0, 48.0, 24.0, p), col().gap(6.4).child(skeleton(160.0, 18.0, 4.0, p)).child(stats), Some(skeleton(330.0, 40.0, 8.0, p).w_full()), p)
 }
 
 /// `InviteNotFoundError`.
@@ -122,7 +152,7 @@ fn unknown(p: &Palette) -> El {
     let face = row().size(48.0, 48.0).center().radius(24.0).fill(p.background_tertiary).child(icon(&icons::QUESTION, 28.0).color(p.text_tertiary));
     let header = col().gap(2.4).child(title(t("Unknown invite"), p.status_danger)).child(text(t("Try asking for a new invite.")).font(font(12.8, 400.0).lh(15.36)).color(p.text_tertiary));
     let button = Button::<()>::new(t("Invite unavailable")).fit_container().disabled(true).el(p);
-    card(face, header, Some(button), p)
+    card(None, face, header, Some(button), p)
 }
 
 fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -137,7 +167,10 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
             o
         })
     };
-    let (face, name, stats, label, joined) = match &inv.guild {
+    let mut splash = None;
+    let mut badge = None;
+    let mut paused = None;
+    let (face, name, stats, label, disabled) = match &inv.guild {
         Some(g) => {
             let load = g.icon.as_deref().map(|h| st.media.asset(|b, s| media::guild_icon_url(b, g.id, h, 48.0, s)));
             let face = match load {
@@ -145,13 +178,39 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
                 Some(Load::Pending) => el().size(48.0, 48.0).radius(24.0).fill(p.background_tertiary),
                 _ => super::guilds::acronym_face(&g.name, 48.0, false, p),
             };
+            if let Some(h) = g.embed_splash.as_deref() {
+                // `clampWideAssetAspectRatio`: 16:9 between half and full height.
+                let ratio = match (g.embed_splash_width, g.embed_splash_height) {
+                    (Some(w), Some(h)) if w > 0 && h > 0 => Some((w as f32 / h as f32).clamp(16.0 / 9.0, 32.0 / 9.0)),
+                    _ => None,
+                };
+                let height = ratio.map_or(60.0, |r| (358.0 / r).max(60.0));
+                let s = el().w_full().h(height).fill(p.background_tertiary);
+                splash = Some(match st.media.asset(|b, sc| media::guild_wide_url(b, "embed-splashes", g.id, h, sc)) {
+                    Load::Ready(px) => s.pixels_fit(&px, rune::SurfaceFit::Fill),
+                    _ => s,
+                });
+            }
+            badge = guild_badge(&g.features, st, p);
             let members = inv.member_count.unwrap_or(0);
             let stats = row()
                 .gap(9.6)
                 .child(stat(Some(p.status_online), crate::i18n::tf("{onlineCount} online", &[("onlineCount", &(count(inv.presence_count.unwrap_or(0))).to_string())]), p))
                 .child(stat(Some(p.text_tertiary_secondary), format!("{} {}", count(members), if members == 1 { "member" } else { "members" }), p));
-            let joined = store.guilds.contains_key(&g.id);
-            (face, g.name.clone(), stats, if joined { t("Go to community") } else { t("Join community") }, joined)
+            // `getGuildInvitePrimaryAction`.
+            let member = store.guilds.get(&g.id).is_some_and(|gs| !gs.visiting);
+            let has = |f: &str| g.features.iter().any(|x| x == f);
+            let label = if has("INVITES_DISABLED") && !member {
+                paused = Some(if has("RAID_DETECTED") { crate::i18n::tf("{productName} detected a potential raid, so new users can't join right now.", &[("productName", "Fluxer")]) } else { t("Invites are paused for this community.").to_string() });
+                t("Invites disabled")
+            } else if member {
+                t("Go to community")
+            } else if g.visits_enabled == Some(true) {
+                t("Preview community")
+            } else {
+                t("Join community")
+            };
+            (face, g.name.clone(), stats, label, paused.is_some())
         }
         None => {
             // A group DM invite: the inviter's face and the group's name.
@@ -171,17 +230,45 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
         }
     };
     let (code, guild, channel) = (inv.code.clone(), inv.guild.as_ref().map(|g| g.id), inv.channel.as_ref().map(|c| c.id));
+    let member = guild.and_then(|g| store.guilds.get(&g)).is_some_and(|gs| !gs.visiting);
     let go = move |s: &mut S| {
         let sh = acc(s);
         match guild {
-            Some(g) if joined => sh.select_guild(Some(g), channel),
+            Some(g) if member => sh.select_guild(Some(g), channel),
             _ => sh.api(Method::POST, format!("/invites/{code}"), None, crate::guild::Then::Enter),
         }
     };
-    let button = Button::new(label).fit_container().disabled(joined && guild.is_none()).key(format!("invite-{}", inv.code)).on_press(go).el(p);
-    let header = col().gap(4.0).child(title(&name, p.text_primary)).child(stats);
-    card(face, header, Some(button), p)
+    let button = Button::new(label).fit_container().disabled(disabled).key(format!("invite-{}", inv.code)).on_press(go).el(p);
+    let mut stats = col().gap(4.0).child(stats);
+    if let Some(msg) = paused {
+        stats = stats.child(text(msg).font(font(13.12, 400.0).lh(16.0)).color(p.text_tertiary).wrap());
+    }
+    let header = col().gap(4.0).child(row().gap(4.0).center_y().child(title(&name, p.text_primary).shrink()).children(badge)).child(stats);
+    card(splash, face, header, Some(button), p)
 }
+
+/// The two-tone seal and glyph of a 24px built-in guild badge (`GuildBadge` `large`):
+/// partnered over verified over discoverable.
+// shortcut: the instance's custom guild badges (`badge_ids`) and built-in replacement images
+// aren't drawn, and the badge has no tooltip.
+pub fn guild_badge(features: &[String], st: &ShellState, p: &Palette) -> Option<El> {
+    let has = |f: &str| features.iter().any(|x| x == f) && !st.media_ui.hidden_badges.iter().any(|h| h == &f.to_ascii_lowercase());
+    let glyph = if has("PARTNERED") {
+        &PARTNERED
+    } else if has("VERIFIED") {
+        &VERIFIED
+    } else if has("DISCOVERABLE") {
+        &DISCOVERABLE
+    } else {
+        return None;
+    };
+    Some(el().size(24.0, 24.0).child(icon(&SEAL, 24.0).color(p.brand_primary_fill)).child(icon(glyph, 24.0).color(p.brand_primary).absolute(0.0, 0.0)))
+}
+
+static SEAL: rune::Icon = rune::Icon { name: "guild-badge-seal", view: 256.0, body: r#"<path d="M240 128C240 138.44 232.49 146.27 225.86 153.18C222.09 157.12 218.19 161.18 216.72 164.75C215.36 168.02 215.28 173.44 215.2 178.69C215.05 188.45 214.89 199.51 207.2 207.2C199.51 214.89 188.45 215.05 178.69 215.2C173.44 215.28 168.02 215.36 164.75 216.72C161.18 218.19 157.12 222.09 153.18 225.86C146.27 232.49 138.44 240 128 240C117.56 240 109.73 232.49 102.82 225.86C98.88 222.09 94.82 218.19 91.25 216.72C87.98 215.36 82.56 215.28 77.31 215.2C67.55 215.05 56.49 214.89 48.8 207.2C41.11 199.51 40.95 188.45 40.8 178.69C40.72 173.44 40.64 168.02 39.28 164.75C37.81 161.18 33.91 157.12 30.14 153.18C23.51 146.27 16 138.44 16 128C16 117.56 23.51 109.73 30.14 102.82C33.91 98.88 37.81 94.82 39.28 91.25C40.64 87.98 40.72 82.56 40.8 77.31C40.95 67.55 41.11 56.49 48.8 48.8C56.49 41.11 67.55 40.95 77.31 40.8C82.56 40.72 87.98 40.64 91.25 39.28C94.82 37.81 98.88 33.91 102.82 30.14C109.73 23.51 117.56 16 128 16C138.44 16 146.27 23.51 153.18 30.14C157.12 33.91 161.18 37.81 164.75 39.28C168.02 40.64 173.44 40.72 178.69 40.8C188.45 40.95 199.51 41.11 207.2 48.8C214.89 56.49 215.05 67.55 215.2 77.31C215.28 82.56 215.36 87.98 216.72 91.25C218.19 94.82 222.09 98.88 225.86 102.82C232.49 109.73 240 117.56 240 128Z"/>"# };
+static VERIFIED: rune::Icon = rune::Icon { name: "guild-badge-verified", view: 256.0, body: r#"<path d="M185.655 109.455L121.455 173.655C119.955 175.154 117.921 175.996 115.8 175.996C113.679 175.996 111.645 175.154 110.145 173.655L74.3349 137.655C72.8373 136.155 71.9961 134.122 71.9961 132.003C71.9961 129.883 72.8373 127.85 74.3349 126.35L84.3349 116.35C85.8342 114.857 87.864 114.019 89.9799 114.019C92.0958 114.019 94.1256 114.857 95.6249 116.35L116 136.11L164.38 88.325C165.879 86.8304 167.91 85.9912 170.027 85.9912C172.145 85.9912 174.175 86.8304 175.675 88.325L185.65 98.095C186.4 98.8384 186.996 99.7229 187.402 100.698C187.809 101.672 188.018 102.718 188.019 103.774C188.019 104.83 187.811 105.876 187.405 106.851C186.999 107.826 186.404 108.711 185.655 109.455Z"/>"# };
+static PARTNERED: rune::Icon = rune::Icon { name: "guild-badge-partnered", view: 256.0, body: r#"<path d="M112.732 144.785L110.823 146.945C106.987 150.791 102.1 153.41 96.7796 154.471C91.4591 155.533 85.9441 154.988 80.9322 152.907C75.9203 150.826 71.6365 147.301 68.6226 142.778C65.6087 138.256 64 132.939 64 127.5C64 122.061 65.6087 116.744 68.6226 112.222C71.6365 107.699 75.9203 104.175 80.9322 102.093C85.9441 100.012 91.4591 99.4673 96.7796 100.529C102.1 101.59 106.987 104.209 110.823 108.055L145.177 146.945C149.013 150.791 153.9 153.41 159.22 154.471C164.541 155.533 170.056 154.988 175.068 152.907C180.08 150.826 184.363 147.301 187.377 142.778C190.391 138.256 192 132.939 192 127.5C192 122.061 190.391 116.744 187.377 112.222C184.363 107.699 180.08 104.175 175.068 102.093C170.056 100.012 164.541 99.4673 159.22 100.529C153.9 101.59 149.013 104.209 145.177 108.055L143.268 110.215" fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>"# };
+static DISCOVERABLE: rune::Icon = rune::Icon { name: "guild-badge-discoverable", view: 256.0, body: r#"<path d="M184 168H176V132L177.17 133.17C177.922 133.921 178.941 134.342 180.004 134.341C181.066 134.34 182.084 133.917 182.835 133.165C183.586 132.413 184.007 131.394 184.006 130.332C184.005 129.269 183.582 128.251 182.83 127.5L133.655 78.3401C132.155 76.8409 130.121 75.9988 128 75.9988C125.879 75.9988 123.845 76.8409 122.345 78.3401L73.17 127.5C72.4201 128.251 71.9991 129.268 71.9995 130.329C72 131.39 72.4219 132.408 73.1725 133.158C73.9231 133.907 74.9408 134.328 76.0018 134.328C77.0628 134.328 78.0801 133.906 78.83 133.155L80 132V168H72C70.9391 168 69.9217 168.421 69.1716 169.172C68.4214 169.922 68 170.939 68 172C68 173.061 68.4214 174.078 69.1716 174.828C69.9217 175.579 70.9391 176 72 176H184C185.061 176 186.078 175.579 186.828 174.828C187.579 174.078 188 173.061 188 172C188 170.939 187.579 169.922 186.828 169.172C186.078 168.421 185.061 168 184 168ZM140 168H116V144C116 143.47 116.211 142.961 116.586 142.586C116.961 142.211 117.47 142 118 142H138C138.53 142 139.039 142.211 139.414 142.586C139.789 142.961 140 143.47 140 144V168Z"/>"# };
 
 /// Fetches the invites linked in the open channel's loaded messages once each.
 pub fn request(store: &Store, st: &mut ShellState) -> bool {

@@ -111,7 +111,9 @@ pub(super) fn run(s: &mut State, i: Intent) {
 /// progress on the optimistic message. A failed send puts the text and files back.
 pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Option<(Snowflake, bool)>, files: Vec<Upload>) {
     let (Some(inst), Some(me)) = (s.app.instance.clone(), s.app.store.me.as_ref()) else { return };
-    if content.trim().is_empty() && files.is_empty() {
+    // The staged sticker rides along (`useTextareaSubmit`'s `stickerItems`).
+    let sticker = s.app.shell.pending_sticker.take_if(|(c, _)| *c == channel).map(|(_, id)| id);
+    if content.trim().is_empty() && files.is_empty() && sticker.is_none() {
         return;
     }
     let now = now_ms();
@@ -162,41 +164,71 @@ pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Op
         message_reference: reference,
         allowed_mentions,
         flags: if voice { reflux_model::MessageFlags::VOICE_MESSAGE } else { Default::default() },
+        sticker_ids: sticker.into_iter().collect(),
         ..Default::default()
     };
     let presigned = inst.discovery.features.presigned_attachment_uploads;
     let back = files.clone();
     spawn(async move {
-        let r = if files.is_empty() { inst.rest.send_message(channel, &body).await.map(drop) } else { upload_and_send(&inst, channel, body, files, nonce, presigned).await };
+        // `MessageQueue`: text messages go out one at a time, in order; files at once.
+        static QUEUE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let r = if files.is_empty() {
+            let _turn = QUEUE.lock().await;
+            inst.rest.send_message(channel, &body).await.map(drop)
+        } else {
+            upload_and_send(&inst, channel, body, files, nonce, presigned).await
+        };
         let Err(e) = r else {
             return update(move |s| {
                 s.app.shell.progress.remove(&nonce);
             });
         };
         eprintln!("reflux: send to {channel}: {e}");
-        update(move |s| failed(s, channel, nonce, content, back, e));
+        update(move |s| failed(s, channel, nonce, content, reply, back, e));
     });
 }
 
-/// Drops the optimistic message and gives its text and files back to an empty composer.
-fn failed(s: &mut State, channel: Snowflake, nonce: Snowflake, content: String, files: Vec<Upload>, e: Error) {
+/// `MessageQueue.handleSendError`: a text message stays, marked failed (Retry / Delete); one with
+/// files is dropped and its text and files go back to an empty composer. Then Fluxer's modal.
+fn failed(s: &mut State, channel: Snowflake, nonce: Snowflake, content: String, reply: Option<(Snowflake, bool)>, files: Vec<Upload>, e: Error) {
+    let kind = s.app.store.channels.get(&channel).map_or(0, |c| c.kind.0);
+    let sh = &mut s.app.shell;
+    sh.progress.remove(&nonce);
+    if files.is_empty() {
+        sh.failed.insert(nonce, crate::shell::queue::Failed { channel, reply });
+    } else {
+        drop_local(s, channel, nonce);
+        let sh = &mut s.app.shell;
+        if sh.channel == Some(channel) && sh.composer.text.is_empty() && sh.uploads.is_empty() {
+            sh.composer = rune::TextEdit::new(content);
+            sh.uploads = files.clone();
+        }
+    }
+    let sh = &mut s.app.shell;
+    if let Error::Api { error, .. } = &e
+        && error.code == "SLOWMODE_RATE_LIMITED"
+    {
+        let wait = (error.retry_after.unwrap_or(0.0) * 1000.0) as u64;
+        sh.cooldowns.insert(channel, now_ms() + wait);
+    }
+    sh.notice = Some(crate::shell::queue::send_error(&e, !files.is_empty(), kind));
+}
+
+/// `deleteLocal`: forget an optimistic message.
+pub(super) fn drop_local(s: &mut State, channel: Snowflake, nonce: Snowflake) {
     if let Some(w) = s.app.store.messages.get_mut(&channel) {
         w.messages.retain(|m| m.id != nonce);
     }
-    let sh = &mut s.app.shell;
-    sh.progress.remove(&nonce);
-    if sh.channel == Some(channel) && sh.composer.text.is_empty() && sh.uploads.is_empty() {
-        sh.composer = rune::TextEdit::new(content);
-        sh.uploads = files.clone();
-    }
-    match e {
-        Error::Api { error, .. } if error.code == "SLOWMODE_RATE_LIMITED" => {
-            let wait = (error.retry_after.unwrap_or(0.0) * 1000.0) as u64;
-            sh.cooldowns.insert(channel, now_ms() + wait);
-        }
-        e if !files.is_empty() => sh.notice = Some(("Upload failed".into(), e.to_string())),
-        _ => {}
-    }
+    s.app.shell.failed.remove(&nonce);
+}
+
+/// `retryFailedMessage`: send a failed message's text again.
+pub(super) fn retry(s: &mut State, channel: Snowflake, nonce: Snowflake) {
+    let Some(f) = s.app.shell.failed.get(&nonce).cloned() else { return };
+    let Some(m) = s.app.store.messages(channel).iter().find(|m| m.id == nonce) else { return };
+    let content = m.content.clone();
+    drop_local(s, channel, nonce);
+    send(s, channel, content, f.reply, Vec::new());
 }
 
 /// Uploads the files and sends the message referencing them: pre-signed URLs when the instance

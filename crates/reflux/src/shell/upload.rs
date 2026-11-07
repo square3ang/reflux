@@ -193,16 +193,14 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
 }
 
 /// The composer's "+" (`TextareaPlusMenu`): Upload file, Send voice message.
-// shortcut: the dialog picks one file at a time; no "upload as file" or gift items.
+// shortcut: no "upload as file" or gift items.
 pub fn plus_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     Menu::new("composer-plus")
         .placement(Placement::Top)
         .item(MenuItem::new("upload", t("Upload file")).icon(&icons::UPLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
-            let options = rune::FileDialogOptions { title: "Upload file".into(), ..Default::default() };
-            tx.open_file(options, move |s: &mut S, r, _| match r {
-                Ok(Some(path)) => add_paths(acc(s), &[path]),
-                Ok(None) => {}
-                Err(e) => acc(s).notice = Some(("Upload failed".into(), e.to_string())),
+            crate::file_picker::open_files(tx, "Upload file", None, acc, |sh, r| match r {
+                Ok(paths) => add_paths(sh, &paths),
+                Err(e) => sh.notice = Some(("Upload failed".into(), e)),
             });
         }))
         .item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).disabled(st.channel.is_none()).on_select(move |s: &mut S| {
@@ -362,14 +360,13 @@ pub fn edit_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
     )
 }
 
-/// `GenericErrorModal` for upload and send errors.
+/// `GenericErrorModal` (a `ConfirmModal` with no actions: desktop has no footer, only the X).
 pub fn notice_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (title, body) = st.notice.as_ref()?;
     let close = move |s: &mut S| acc(s).notice = None;
     Some(
         Modal::new(title.clone(), close)
             .body(text(body.clone()).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
-            .footer(Button::new(t("Okay")).key("notice-ok").on_press(close).el(p))
             .el(p),
     )
 }

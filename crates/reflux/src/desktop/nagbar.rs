@@ -27,7 +27,7 @@ pub struct Toast {
 /// and a close button when dismissible.
 type Handler<S> = Box<dyn Fn(&mut S)>;
 
-fn bar<S: 'static>(key: &str, bg: Color, message: String, actions: Vec<El>, dismiss: Option<Handler<S>>) -> El {
+pub(super) fn bar<S: 'static>(key: &str, bg: Color, message: String, actions: Vec<El>, dismiss: Option<Handler<S>>) -> El {
     let mut r = row()
         .key(key.to_string())
         .w_full()
@@ -57,7 +57,7 @@ fn bar<S: 'static>(key: &str, bg: Color, message: String, actions: Vec<El>, dism
     r
 }
 
-fn button<S: 'static>(key: &str, label: &str, p: &Palette, f: impl Fn(&mut S) + 'static) -> El {
+pub(super) fn button<S: 'static>(key: &str, label: &str, p: &Palette, f: impl Fn(&mut S) + 'static) -> El {
     Button::new(label.to_string()).variant(ButtonVariant::Inverted).size(ButtonSize::SuperCompact).key(key.to_string()).on_press(f).el(p)
 }
 

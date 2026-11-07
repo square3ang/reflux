@@ -9,7 +9,7 @@ use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
 use serde_json::{Map, Value, json};
 
-const KNOWN_KEYS: [&str; 26] = [
+pub const KNOWN_KEYS: [&str; 26] = [
     "from", "mentions", "in", "before", "during", "on", "after", "has", "pinned", "author-type", "sort", "order", "mature",
     "embed-type", "embed-provider", "link", "filename", "ext", "last", "beforeid", "afterid", "any", "scope", "-from", "-in", "-has",
 ];

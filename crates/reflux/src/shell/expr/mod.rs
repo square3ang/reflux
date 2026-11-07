@@ -14,6 +14,7 @@ mod info;
 mod memes;
 mod reactions;
 mod sticker;
+pub use sticker::pending as pending_sticker;
 
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
@@ -205,6 +206,14 @@ pub struct Expr {
     pub join: Option<(Snowflake, String, Option<String>, String, bool)>,
     /// Meme filter: 0 all, 1 images, 2 videos.
     pub meme_filter: u8,
+    /// The right-click menu over a picker cell (its own popup state, so the picker stays open)
+    /// and the item it's for.
+    pub menu: crate::ui::Popups,
+    pub menu_item: Option<Item>,
+    /// The favorite GIF import modal, while open or running.
+    pub gif_import: Option<gif::GifImport>,
+    /// Saved media waiting on its delete confirmation: (id, name).
+    pub confirm_meme: Option<(String, String)>,
 }
 
 
@@ -356,6 +365,7 @@ pub fn poll(store: &Store, st: &mut ShellState, tx: &mut Tx) -> bool {
     if st.expr.target.is_some() && st.expr.tab == Tab::Gifs {
         changed |= gif::poll(st, tx);
     }
+    changed |= gif::poll_import(st);
     changed
 }
 
@@ -368,6 +378,9 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         let e = popout(store, st, t, p, acc).modal(true, move |s: &mut S| close(acc(s)));
         layer.push(e.anchored_fit("composer-expr", Side::Top, Align::End, 8.0));
     }
+    menu_layer(st, p, acc, layer);
+    gif::import_layer(st, p, acc, layer);
+    memes::confirm_layer(st, p, acc, layer);
     reactions::layer(store, st, p, acc, layer);
     info::layer(store, st, p, acc, layer);
 }
@@ -865,6 +878,63 @@ fn inspector(store: &Store, item: Option<(&Item, El)>, p: &Palette) -> El {
 }
 
 /// The picked item's row/column hover handler: shows it in the inspector.
+/// Right-click opens `ExpressionContextMenuItems` for `item`.
+fn with_menu<S: 'static>(e: El, item: &Item, acc: ShellAccess<S>) -> El {
+    let it = item.clone();
+    e.on_secondary_press(move |s: &mut S, at, _| {
+        let x = &mut acc(s).expr;
+        x.menu_item = Some(it.clone());
+        x.menu.open_at("expr-menu", [at.x, at.y]);
+    })
+}
+
+/// `ExpressionContextMenuItems`: Favorite, Copy ID, then the image's Copy URL / Open in browser.
+// shortcut: no "Clone emoji to..." submenu here (the info card clones) and no reverse image search.
+fn menu_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let Some(item) = &st.expr.menu_item else { return };
+    let sticker = matches!(item, Item::Sticker { .. });
+    let key = item.key();
+    let fav = st.expr.is_favorite(&key);
+    let base = st.media.base();
+    let (id, url) = match item {
+        Item::Unicode(_) => (None, None),
+        Item::Emoji { id, animated, .. } => (Some(*id), Some(if *animated { crate::media::emoji_url_animated(&base, &id.to_string()) } else { crate::media::emoji_url(&base, &id.to_string()) })),
+        Item::Sticker { id, .. } => (Some(*id), Some(crate::media::sticker_url(&base, *id, false))),
+    };
+    let label = |e: &'static str, s: &'static str| t(if sticker { s } else { e });
+    let close = move |s: &mut S| acc(s).expr.menu.close();
+    let mut m = crate::ui::Menu::new("expr-menu");
+    {
+        // Picker items are unicode or from communities you're in, so all can be favourites.
+        let (k, ic) = (key.clone(), if fav { &icons::STAR_FILL } else { &icons::STAR_BOLD });
+        m = m.item(crate::ui::MenuItem::new("expr-fav", if fav { label("Unfavorite emoji", "Unfavorite sticker") } else { label("Favorite emoji", "Favorite sticker") }).icon(ic).on_select(move |s: &mut S| {
+            acc(s).expr.toggle_favorite(&k);
+            close(s);
+        }));
+    }
+    if let Some(id) = id {
+        m = m.item(crate::ui::MenuItem::new("expr-copy-id", label("Copy emoji ID", "Copy sticker ID")).icon(&icons::CLIPBOARD_TEXT).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+            tx.copy(id.to_string());
+            close(s);
+        }));
+    }
+    if let Some(url) = url {
+        let u = url.clone();
+        m = m
+            .separator()
+            .item(crate::ui::MenuItem::new("expr-copy-url", label("Copy emoji URL", "Copy sticker URL")).icon(&icons::LINK).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+                tx.copy(u.clone());
+                crate::desktop::toast(&mut acc(s).desktop, "Link copied to clipboard", true);
+                close(s);
+            }))
+            .item(crate::ui::MenuItem::new("expr-open", label("Open emoji in browser", "Open sticker in browser")).icon(&icons::ARROW_SQUARE_OUT).on_select(move |s: &mut S| {
+                crate::settings::privacy::open_url(&url);
+                close(s);
+            }));
+    }
+    m.el(&st.expr.menu, crate::ui::popup_access(move |s: &mut S| &mut acc(s).expr.menu), p, layer);
+}
+
 fn hover_cell<S: 'static>(e: El, key: String, acc: ShellAccess<S>) -> El {
     e.on_hover_change(move |s: &mut S, inside, _| {
         let x = &mut acc(s).expr;

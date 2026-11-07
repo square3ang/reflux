@@ -74,6 +74,13 @@ pub fn update(f: impl FnOnce(&mut State) + Send + 'static) {
     }
 }
 
+/// [`update`] with the frame's `Tx` (to open a dialog). Does nothing headless.
+pub fn update_tx(f: impl FnOnce(&mut State, &mut rune::Tx) + Send + 'static) {
+    if let Some(b) = BRIDGE.get() {
+        b.ui.update(f);
+    }
+}
+
 fn window() -> Option<&'static AppHandle<State>> {
     BRIDGE.get().map(|b| &b.ui)
 }
@@ -796,6 +803,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::SelectChannel(c) if jumps.contains(&c) => s.app.selected_channel = Some(c),
             Intent::SelectChannel(c) => act(s, Action::SelectChannel(c)),
             Intent::SendMessage { channel, content, reply, attachments } => act(s, Action::SendMessage { channel, content, reply, attachments }),
+            Intent::RetrySend { channel, nonce } => chat::retry(s, channel, nonce),
+            Intent::DropLocal { channel, nonce } => chat::drop_local(s, channel, nonce),
             i @ (Intent::LoadNewer { .. } | Intent::JumpTo { .. } | Intent::JumpToPresent(_) | Intent::LoadPins { .. } | Intent::Search(_)) => chat::run(s, i),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),

@@ -389,7 +389,7 @@ pub(super) fn tick(s: &mut State) -> bool {
         changed = true;
     }
     // The panel's thread is read while its newest message shows (like the open channel).
-    if let Some(t) = panel {
+    if let Some(t) = panel.filter(|_| s.desktop.focused || rune::is_headless()) {
         let store = &s.app.store;
         let last = store.channels.get(&t).and_then(|c| c.last_message_id);
         let loaded = store.messages(t).last().map(|m| m.id);

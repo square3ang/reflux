@@ -5,6 +5,7 @@
 pub mod avatar;
 pub mod button;
 pub mod controls;
+pub mod datepicker;
 pub mod gallery;
 pub mod input;
 pub mod menu;
@@ -18,6 +19,7 @@ use rune::color::{srgb_decode, srgb_encode};
 
 pub use avatar::{Avatar, Status};
 pub use button::{Button, ButtonSize, ButtonVariant, spinner};
+pub use datepicker::DatePicker;
 pub use controls::{Checkbox, RadioGroup, Slider, Switch, radio_dot};
 pub use input::Input;
 pub use menu::{Menu, MenuEntry, MenuItem};

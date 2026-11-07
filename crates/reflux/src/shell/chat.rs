@@ -463,6 +463,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                             let st = acc(s);
                             st.popups.open_at(&format!("msg-menu-{id}"), [at.x, at.y]);
                             st.active_msg = Some(id);
+                            st.media_ui.invite_menu = (None, None);
                         });
                     // `messageDoubleClickActions`: edit my own message, else reply.
                     if crate::look::with(|l| l.double_click_actions) && perms.send && is_user_message(m) && m.message_snapshots.is_empty() {
@@ -479,6 +480,19 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                     if !editing && (st.hover_msg == Some(id) || active == Some(id)) {
                         let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(id).is_none()), ..perms };
                         body = body.child(action_bar(m, c, perms, st, p, acc, layer));
+                    }
+                } else if st.failed.contains_key(&m.id) {
+                    let id = m.id;
+                    body = body.on_hover_change(move |s: &mut S, inside, _| {
+                        let st = acc(s);
+                        if inside {
+                            st.hover_msg = Some(id);
+                        } else if st.hover_msg == Some(id) {
+                            st.hover_msg = None;
+                        }
+                    });
+                    if st.hover_msg == Some(id) {
+                        body = body.child(super::queue::bar(m, st, p, acc, layer));
                     }
                 }
                 r.child(body).key(format!("msg-{}", m.id))
@@ -497,6 +511,13 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             let mut menu = message_menu(store, &open, m, c, perms, st, acc).separator();
             for e in crate::social::message_items(store, st, c, m, acc) {
                 menu = menu.entry(e);
+            }
+            let invite = super::invite_embed::menu_items(st);
+            if !invite.is_empty() {
+                menu = menu.separator();
+                for e in invite {
+                    menu = menu.entry(e);
+                }
             }
             menu.el(&st.popups, pops(acc), p, layer);
         } else if open == format!("emoji-{}", m.id) {
@@ -643,8 +664,8 @@ fn message_link(st: &ShellState, c: &Channel, m: &Message) -> String {
     format!("{}/channels/{g}/{}/{}", st.web_base.trim_end_matches('/'), c.id, m.id)
 }
 
-/// `MessageActionBar` (default layout): quick reactions, add reaction, edit (own) or reply,
-/// and More. 28px items in a 2px-padded toolbar, its bottom 10px into the message.
+/// `MessageActionBar`: quick reactions, add reaction, edit (own) or reply, forward, thread and
+/// More; with Shift held, the full layout. 28px items in a 2px-padded toolbar, its bottom 10px into the message.
 // shortcut: the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
 // those stay in More.
 fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
@@ -908,8 +929,17 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
         return super::threads::starter_message(store, st, m, p, acc);
     }
     if !is_user_message(m) {
-        return system_message(store, m, md, p);
+        return super::system_msg::view(store, st, m, p, acc);
     }
+    // `.messageFailed`: text, links and mentions in the danger colour.
+    let (red, md_red);
+    let (md, p) = if st.failed.contains_key(&m.id) {
+        red = Palette { text_chat: p.status_danger, text_link: p.status_danger, markup_mention_text: p.status_danger, ..*p };
+        md_red = Md::new(store, md.media, md.guild, &red, "").body(format!("m{}", m.id), md.copy);
+        (&md_red, &red)
+    } else {
+        (md, p)
+    };
     if store.settings.message_display_compact {
         return super::compact::message(store, st, m, md, p, acc);
     }
@@ -1171,41 +1201,6 @@ pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Mess
         }
     }
     row().w_full().h(h + dim::MESSAGE_REPLY_SPACING).items_start().child(spine).child(el().w(content)).child(line.shrink())
-}
-
-/// System messages: an icon in the avatar column and one line of muted text.
-// shortcut: covers joins, pins and recipient changes with generic wording and icons.
-fn system_message(store: &Store, m: &Message, _md: &Md, p: &Palette) -> El {
-    let name = author_name(store, m);
-    let (glyph, color, body) = match m.kind {
-        MessageType::USER_JOIN => (&icons::ARROW_RIGHT_BOLD, p.status_online, format!("{name} joined the community.")),
-        MessageType::CHANNEL_PINNED_MESSAGE => (&icons::PUSH_PIN_FILL, p.text_primary_muted, crate::i18n::tf("{username} pinned a message to this channel.", &[("username", &name.to_string())])),
-        MessageType::RECIPIENT_ADD => (&icons::ARROW_RIGHT_BOLD, p.status_online, crate::i18n::tf("{username} added someone to the group.", &[("username", &name.to_string())])),
-        MessageType::RECIPIENT_REMOVE => (&icons::ARROW_LEFT_BOLD, p.status_danger, format!("{name} left the group.")),
-        MessageType::CHANNEL_NAME_CHANGE => (&icons::PENCIL_SIMPLE_BOLD, p.text_primary_muted, format!("{name} changed the channel name: {}", m.content)),
-        MessageType::CALL => {
-            let (body, missed) = call_text(store, m, &name);
-            (&icons::PHONE_FILL, if missed { p.status_danger } else { p.status_online }, body)
-        }
-        _ => (&icons::INFO_BOLD, p.text_primary_muted, if m.content.is_empty() { format!("{name} did something.") } else { m.content.clone() }),
-    };
-    row()
-        .w_full()
-        .pr(PAD + dim::MESSAGE_ACTION_BAR_OFFSET)
-        .py(dim::MESSAGE_SPACING_Y)
-        .items_start()
-        .hover(p.background_modifier_hover)
-        .child(el().w(PAD))
-        .child(row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().child(icon(glyph, dim::SYSTEM_MESSAGE_ICON_SIZE).color(color).opacity(0.6 + 0.4 * (color != p.text_primary_muted) as u8 as f32)))
-        .child(el().w(dim::MESSAGE_GUTTER))
-        .child(
-            text(body)
-                .font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT))
-                .color(p.text_chat_muted)
-                .wrap()
-                .grow(1.0)
-                .shrink(),
-        )
 }
 
 /// `.container`: invites, stickers, attachments, embeds, reactions; row-gap 4, padding-block 2.
@@ -1512,6 +1507,9 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     if let Some(tray) = super::upload::tray(st, p, acc).filter(|_| slot == Slot::Main) {
         boxed = boxed.child(tray);
     }
+    if let Some(sticker) = super::expr::pending_sticker(store, st, cid, p, acc).filter(|_| slot == Slot::Main) {
+        boxed = boxed.child(sticker);
+    }
     boxed = boxed.child(input_row);
     // `CharacterCounter`: from 80% of the limit; red under 50 left.
     let len = draft.text.chars().count();
@@ -1527,10 +1525,6 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     }
     let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
     // The autocomplete list hangs above the box, as wide as it.
-    let (sel_a, sel_b) = draft.range();
-    if ac.is_none() && slot == Slot::Main && draft.focused && sel_a != sel_b {
-        out = out.child(el().w_full().h(0.0).child(crate::compose::toolbar(draft, p, acc).pin(Some(dim::MESSAGE_GUTTER + 40.0), None, None, Some(8.0))));
-    }
     if let Some((t, items)) = &ac {
         // shortcut: in the thread panels the list is keyboard-only (its clicks edit the main draft).
         let list = autocomplete::view(store, st, t, items, p, acc).pin(Some(0.0), None, Some(0.0), Some(8.0));
@@ -1585,7 +1579,8 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
     if crate::look::with(|l| l.convert_emoticons) {
         content = crate::look::convert_emoticons(&content);
     }
-    if (content.is_empty() && st.uploads.is_empty()) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
+    let sticker = st.pending_sticker.is_some_and(|(c, _)| c == channel);
+    if (content.is_empty() && st.uploads.is_empty() && !sticker) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
         return;
     }
     let len = content.chars().count();
@@ -1882,58 +1877,13 @@ mod tests {
     }
 }
 
-/// `CallMessage`: ongoing, missed, or ended with its length; true when missed.
-// shortcut: no inline "Join the call" link; the call strip above the chat has Join.
-fn call_text(store: &Store, m: &Message, name: &str) -> (String, bool) {
-    let Some(call) = &m.call else { return (format!("{name} started a call."), false) };
-    let Some(ended) = &call.ended_timestamp else { return (format!("{name} started a call."), false) };
-    let me = store.my_id();
-    let start = DateTime::parse_from_rfc3339(&m.timestamp).map_or(0, |d| d.timestamp());
-    let end = DateTime::parse_from_rfc3339(ended).map_or(start, |d| d.timestamp());
-    let length = call_duration((end - start).max(0) as u64);
-    if !call.participants.contains(&me) && m.author.id != me {
-        (format!("You missed a call from {name} that lasted {length}."), true)
-    } else {
-        (format!("{name} started a call that lasted {length}."), false)
-    }
-}
-
-/// `formatCallDuration`: "a few seconds" under a minute, else whole units rounded up to minutes.
-fn call_duration(secs: u64) -> String {
-    if secs < 60 {
-        return "a few seconds".into();
-    }
-    let units = [("year", 525_600), ("month", 43_800), ("week", 10_080), ("day", 1_440), ("hour", 60), ("minute", 1)];
-    let mut left = secs.div_ceil(60).max(1);
-    let mut parts = Vec::new();
-    for (unit, minutes) in units {
-        if left >= minutes {
-            let n = left / minutes;
-            left -= n * minutes;
-            parts.push(match (n, unit) {
-                (1, "minute") => "a minute".to_string(),
-                (1, u) => format!("1 {u}"),
-                (n, u) => format!("{n} {u}s"),
-            });
-        }
-    }
-    match parts.len() {
-        1 => parts.remove(0),
-        2 => parts.join(" and "),
-        _ => {
-            let last = parts.pop().unwrap_or_default();
-            format!("{}, and {last}", parts.join(", "))
-        }
-    }
-}
-
 #[cfg(test)]
 mod call_tests {
     #[test]
     fn call_durations_read_like_fluxer() {
-        assert_eq!(super::call_duration(30), "a few seconds");
-        assert_eq!(super::call_duration(60), "a minute");
-        assert_eq!(super::call_duration(3600 + 120), "1 hour and 2 minutes");
-        assert_eq!(super::call_duration(86_400 + 3600 + 60), "1 day, 1 hour, and a minute");
+        assert_eq!(super::super::system_msg::call_duration(30), "a few seconds");
+        assert_eq!(super::super::system_msg::call_duration(60), "a minute");
+        assert_eq!(super::super::system_msg::call_duration(3600 + 120), "1 hour and 2 minutes");
+        assert_eq!(super::super::system_msg::call_duration(86_400 + 3600 + 60), "1 day, 1 hour, and a minute");
     }
 }

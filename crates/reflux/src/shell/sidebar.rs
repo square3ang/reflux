@@ -285,7 +285,6 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
 }
 
 /// Home: the DM list (`DirectMessageList`, `DMListItem`).
-// shortcut: pinned DMs and message previews aren't done.
 pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     // `.dmListHeader`: the quick switcher button with its keybind hint.
     let kbd = |k: &str| {
@@ -402,17 +401,25 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         _ => group_avatar(store, st, c, 32.0, surface, p),
     };
     let sub_c = mix(if selected { p.surface_interactive_selected_color } else { p.text_primary_muted }, Color::TRANSPARENT, 85.0);
-    let subtext = if group {
-        let n = c.recipients.len() + 1;
-        Some(crate::i18n::tp("{count, plural, one {# member} other {# members}}", n as i64, &[]))
-    } else {
-        dm_preview(store, c, unread).or_else(|| other.and_then(|u| store.presences.get(&u)?.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty()))
-    };
-    let mut info = col().grow(1.0).min_w(0.0).gap(1.0).child(
-        text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate(),
-    );
+    let sub_style = font(11.0, 500.0).lh(if group { 14.0 } else { 16.0 });
+    let preview = if group { None } else { dm_preview(store, st, c, unread, sub_style, sub_c, p) };
+    let subtext = preview.or_else(|| {
+        let s = if group {
+            crate::i18n::tp("{count, plural, one {# member} other {# members}}", (c.recipients.len() + 1) as i64, &[])
+        } else {
+            other.and_then(|u| store.presences.get(&u)?.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty())?
+        };
+        Some(text(s).font(sub_style).color(sub_c).truncate())
+    });
+    // `.dmItemName`: the pin icon (14px) 0.15rem before the name.
+    let mut name_row = row().min_w(0.0).gap(2.4).center_y();
+    if store.pinned_dms.contains(&id) {
+        name_row = name_row.child(icon(&icons::PUSH_PIN_FILL, 14.0).color(fg).group_color(if selected { fg } else { p.text_primary }));
+    }
+    let name_row = name_row.child(text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate().shrink());
+    let mut info = col().grow(1.0).min_w(0.0).gap(1.0).child(name_row);
     if let Some(t) = subtext {
-        info = info.child(text(t).font(font(11.0, 500.0).lh(if group { 14.0 } else { 16.0 })).color(sub_c).truncate().mt(if group { -2.0 } else { -1.0 }));
+        info = info.child(t.mt(if group { -2.0 } else { -1.0 }));
     }
     let close = row()
         .size(24.0, 24.0)
@@ -604,26 +611,27 @@ fn typing_dots(c: Color) -> El {
     row().gap(2.0).center_y().children((0..3).map(|i| el().size(4.0, 4.0).radius(2.0).fill(c).looping(rune::LoopSpec::opacity(1.0, 0.25 * i as f64, 0.0, 1.0))))
 }
 
-/// `DMListItem` `getMessagePreview`, per "DM message previews" (0 all, 1 unread, 2 none):
-/// "Name: text" or "You: Sent an attachment" from the cached last message.
-// shortcut: plain text (markdown isn't rendered, the attachment line isn't italic) and system
-// messages give no preview.
-fn dm_preview(store: &Store, c: &Channel, unread: bool) -> Option<String> {
+/// `DMListItem` `getMessagePreview`, per "DM message previews" (0 all, 1 unread, 2 none): a
+/// system message's text, or "Name: " and the restricted-inline markdown, or an italic
+/// "Sent an attachment".
+fn dm_preview(store: &Store, st: &ShellState, c: &Channel, unread: bool, style: rune::tok::TextStyle, color: Color, p: &Palette) -> Option<El> {
     let mode = crate::look::with(|l| l.dm_previews);
     if mode == 2 || (mode == 1 && !unread) {
         return None;
     }
     let m = store.messages.get(&c.id)?.messages.last()?;
     if !matches!(m.kind, reflux_model::MessageType::DEFAULT | reflux_model::MessageType::REPLY) {
-        return None;
+        let s = super::system_msg::stringify(store, m)?;
+        return Some(text(s.strip_suffix('.').unwrap_or(&s).to_string()).font(style).color(color).truncate());
     }
     let who = if m.author.id == store.my_id() { crate::i18n::t("You").to_string() } else { store.display_name(None, m.author.id) };
     let body = if !m.content.is_empty() {
-        m.content.replace('\n', " ")
+        let md = super::markdown::Md::new(store, &st.media, None, p, format!("dm-preview-{}", c.id));
+        super::markdown::inline_text(&m.content, &md, style, color)
     } else if !m.attachments.is_empty() {
-        crate::i18n::t("Sent an attachment").to_string()
+        text(crate::i18n::t("Sent an attachment")).font(style.italic()).color(mix(color, Color::TRANSPARENT, 70.0)).truncate()
     } else {
         return None;
     };
-    Some(format!("{who}: {body}"))
+    Some(row().min_w(0.0).child(text(format!("{who}: ")).font(style).color(color)).child(body.shrink().min_w(0.0)))
 }

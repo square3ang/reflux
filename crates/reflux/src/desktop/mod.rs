@@ -7,6 +7,7 @@ pub mod autostart;
 pub mod link;
 pub mod menu;
 pub mod nagbar;
+pub mod notices;
 pub mod notify;
 pub mod os_idle;
 pub mod shortcuts;
@@ -69,6 +70,8 @@ pub struct Prefs {
     /// background check).
     pub skipped_update: Option<String>,
     pub no_auto_update: bool,
+    /// Nagbars closed for good: `notice:{id}`, `maintenance:{id}:{status}`, `premium-*`.
+    pub dismissed_nagbars: Vec<String>,
     /// Per-account preferences (favorites, keybinds), by user ID.
     pub accounts: std::collections::HashMap<String, crate::nav::AccountPrefs>,
     /// Channels opened, newest first (`SelectedChannel.recentVisits`, the quick switcher's
@@ -105,6 +108,7 @@ impl Default for Prefs {
             look: Default::default(),
             skipped_update: None,
             no_auto_update: false,
+            dismissed_nagbars: Vec::new(),
             accounts: Default::default(),
             recent: Vec::new(),
             search_history: Default::default(),
@@ -124,6 +128,9 @@ pub struct ShellView {
     /// Streaming privacy is on (manually or detected).
     pub streamer: bool,
     pub toasts: Vec<nagbar::Toast>,
+    /// Discovery's instance notice, and the status page's maintenance.
+    pub notice: Option<reflux_model::InstanceNotice>,
+    pub maintenance: Option<notices::Maintenance>,
     /// The misspelling the composer's context menu is about: (byte range, word).
     pub spell_menu: Option<(std::ops::Range<usize>, String)>,
     /// The window's width (0 before the first layout).
@@ -196,6 +203,8 @@ pub struct Desktop {
     pub capture_app: bool,
     streamer_polled: Option<std::time::Instant>,
     pub update_checked: Option<std::time::Instant>,
+    pub maintenance: Option<notices::Maintenance>,
+    pub status_polled: Option<std::time::Instant>,
 }
 
 /// `Sound.playSound`: unless all sounds, this sound or streaming privacy mutes it; the user's
@@ -367,6 +376,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     streamer::tick(s, tx);
     updater::tick(s);
     tts::on_channel(s.app.shell.channel);
+    notices::tick(s);
     let prefs = &mut s.app.saved.desktop;
     let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
     if s.app.route == Route::Main && here.is_some() && prefs.last != here && !rune::is_headless() {
@@ -383,6 +393,8 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     v.offline = s.app.route == Route::Main && matches!(s.app.connection, Some(reflux_net::ConnectionState::Reconnecting(_) | reflux_net::ConnectionState::Connecting));
     v.update = s.desktop.update.clone().filter(|u| s.app.saved.desktop.skipped_update.as_ref() != Some(&u.version));
     v.width = s.desktop.size[0];
+    v.notice = s.app.instance.as_ref().and_then(|i| i.discovery.notice.clone());
+    v.maintenance = s.desktop.maintenance.clone();
     v.streamer = streamer::enabled(&s.app.saved.desktop.streamer, s.desktop.capture_app);
     v.toasts.retain(|t| t.at.elapsed() < nagbar::TOAST_TIME);
     if !v.toasts.is_empty() {

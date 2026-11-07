@@ -16,7 +16,7 @@ use super::markdown::{self, Md};
 use super::{ShellAccess, ShellState, role_color};
 use crate::icons;
 use crate::media::Load;
-use crate::theme::{Palette, font};
+use crate::theme::{Palette, dim, font};
 use crate::ui::{over, rgba};
 use crate::i18n::t;
 
@@ -124,11 +124,19 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
             } else if let (Some(v), "video") = (blocked(&e.video, level), e.kind.as_str()) {
                 Some(if is_youtube(e) { youtube(st, e, v, p, acc) } else { video(store, st, m, &key, v, thumb, p, acc) })
             } else if let (Some(t), "gifv") = (thumb, e.kind.as_str()) {
-                // shortcut: gifv plays its still thumbnail (a looping muted video in Fluxer; Rune
-                // has no Linux/Windows player yet).
-                let (w, h) = blocked(&e.video, level).map_or(dims(t), dims);
+                // The muted looping video over the still while GIFs autoplay (or it's hovered).
+                // shortcut: on macOS and Windows (no GStreamer) the still stays.
+                let v = blocked(&e.video, level);
+                let (w, h) = v.map_or(dims(t), dims);
+                let size = super::chat::fit(w, h, (EMBED_W, EMBED_H));
+                let auto = (store.settings.gif_auto_play && !crate::look::reduced_motion()) || st.hover_msg == Some(m.id);
+                let frames = v.filter(|_| auto).and_then(|v| super::gifv::want(st, &key, v.proxy_url.as_deref().unwrap_or(&v.url)));
                 let gif = EmbedMedia { content_type: Some("image/gif".into()), ..t.clone() };
-                Some(tile(store, st, m, key, &gif, super::chat::fit(w, h, (EMBED_W, EMBED_H)), false, p, acc))
+                let still = tile(store, st, m, key, &gif, size, false, p, acc);
+                Some(match frames {
+                    Some(px) => still.child(super::gifv::frame(&px, size).absolute(0.0, 0.0).radius(dim::MEDIA_BORDER_RADIUS).clip_rounded(dim::MEDIA_BORDER_RADIUS).inert()),
+                    None => still,
+                })
             } else {
                 thumb.map(|t| {
                     let (w, h) = dims(t);
@@ -290,6 +298,7 @@ fn rich<S: 'static>(store: &Store, st: &ShellState, m: &Message, i: usize, e: &E
         push(if rich_md { markdown::render(d, &md).font(font(14.0, 400.0).lh(18.0)) } else { text(d.to_owned()).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary).wrap() });
     }
     let groups = group_fields(&e.fields);
+    let fit = groups.is_empty() && !has_media;
     if !groups.is_empty() {
         let mut grid = col().w_full().gap(8.0).mt(8.0);
         for g in groups {
@@ -339,7 +348,7 @@ fn rich<S: 'static>(store: &Store, st: &ShellState, m: &Message, i: usize, e: &E
         }
         push(line);
     }
-    let mut grid = row().w_full().items_start().pt(12.0).pr(12.0).pb(14.0).pl(12.0).child(content);
+    let mut grid = if fit { row() } else { row().w_full() }.items_start().pt(12.0).pr(12.0).pb(14.0).pl(12.0).child(content);
     if inline_thumb && let Some(t) = thumb {
         // `.embedThumbnail`: up to 80×80, 16 from the text, 8 down.
         let (w, h) = dims(t);
@@ -348,15 +357,15 @@ fn rich<S: 'static>(store: &Store, st: &ShellState, m: &Message, i: usize, e: &E
     }
     // `.embed.embedFull`: `background-primary`, 1px accent border, a 4px colour bar, radius 8.
     let bg = p.background_primary;
-    // shortcut: fills up to its max width; Fluxer's grid shrinks short text-only embeds to fit.
-    row()
-        .w_full()
-        .max_w(outer_w)
+    // `inline-grid`: as wide as its content, up to the max (fields keep the full width).
+    let r = row();
+    let r = if fit { r } else { r.w_full() };
+    r.max_w(outer_w)
         .radius(8.0)
         .clip_rounded(8.0)
         .fill(over(p.background_modifier_accent, bg))
         .child(el().w(4.0).self_stretch().fill(bar))
-        .child(col().grow(1.0).min_w(0.0).my(1.0).mr(1.0).corners([0.0, 7.0, 7.0, 0.0]).fill(bg).child(grid))
+        .child(if fit { col().shrink() } else { col().grow(1.0).min_w(0.0) }.my(1.0).mr(1.0).corners([0.0, 7.0, 7.0, 0.0]).fill(bg).child(grid))
 }
 
 /// A rich embed's gallery as the attachment mosaic, opening the viewer across it.

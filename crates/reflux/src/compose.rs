@@ -127,10 +127,24 @@ pub fn toggle(edit: &mut TextEdit, w: &str) {
     });
 }
 
+thread_local! {
+    /// The composer's caret line `[x, y, w, h]` (window points) while it has a selection, read
+    /// from `Cx::caret` by the root view; the format toolbar floats above it.
+    pub static CARET: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) };
+}
+
+/// The format toolbar over the composer's selection (`FormattingToolbar`), in the root layer.
+pub fn floating_toolbar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let Some(c) = CARET.get() else { return };
+    let [x, y] = crate::desktop::window::unzoom([c[0], c[1]]);
+    layer.push(rune::el().key("format-caret").absolute(x, y).size(1.0, 1.0));
+    layer.push(toolbar(&st.composer, p, acc).anchored("format-caret", rune::Side::Top, rune::Align::Center, 8.0));
+}
+
 /// `.toolbar`: 3 padding, 2 gap, radius 8, 1px border, 0 4 12 shadow; 28px buttons with an
 /// 18px icon, radius 5. Pressing keeps the composer focused.
-// shortcut: Rune can't read the selection's rect, so the bar sits above the composer's left
-// edge instead of over the selected text; no Alt+F10 roving.
+// shortcut: Rune exposes the caret's rect, not the selection's, so the bar centres over the
+// caret end of the selection; no Alt+F10 roving.
 pub fn toolbar<S: 'static>(edit: &TextEdit, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut bar = row()
         .key("format-toolbar")

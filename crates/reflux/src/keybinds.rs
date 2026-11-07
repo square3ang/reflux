@@ -163,11 +163,6 @@ impl Combo {
 
 /// `AppSpec::on_key`: keys nothing focused took (or the focused control passed on).
 pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
-    if let Key::Modifier { .. } = k.key {
-        let sh = s.shell_demo.as_mut().map_or(&mut s.app.shell, |d| &mut d.shell);
-        sh.shift_held = k.mods.shift;
-        return true;
-    }
     // `escapeExitsKeyboardMode`: Escape also drops the keyboard focus (and its ring); the key
     // still does what it otherwise would.
     if k.key == Key::Escape && k.mods == rune::Mods::default() && crate::look::with(|l| l.escape_exits_keyboard) {
@@ -178,6 +173,12 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         None if s.app.route == Route::Main => Some(&mut s.app.shell),
         None => None,
     };
+    // Shift on its own: the message action bar's full layout (`MessageActionBar` showFullActions).
+    if let Key::Modifier { .. } = k.key {
+        let Some(sh) = sh else { return false };
+        sh.shift_held = k.mods.shift;
+        return false;
+    }
     if sh.is_some_and(|sh| crate::shell::lightbox::on_key(sh, k) || push_to_talk(sh, k) || crate::nav::keys::on_key(sh, k)) {
         return true;
     }

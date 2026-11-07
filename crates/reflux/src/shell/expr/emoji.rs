@@ -7,7 +7,7 @@ use reflux_model::{Channel, Permissions, ReactionEmoji};
 use reflux_store::Store;
 use rune::{El, Tx, col, el, row, text};
 
-use super::{CellCx, For, Grid, Item, Row, Section, ShellAccess, ShellState, close, grid_key, grid_list, hover_cell, inspector, rail, search_bar};
+use super::{CellCx, For, Grid, Item, Row, Section, ShellAccess, ShellState, close, grid_key, grid_list, hover_cell, inspector, with_menu, rail, search_bar};
 use crate::icons;
 use crate::media::Load;
 use crate::shell::Intent;
@@ -143,7 +143,6 @@ fn cell<S: 'static>(cx: &CellCx, item: &Item, g: Grid, selected: bool, acc: Shel
         .label(item.names())
         .child(glyph(&cx.media, item, cx.tone, size))
         // Alt toggles the favorite; Shift keeps the picker open.
-        // shortcut: no right-click Favorite/Copy menu (the picker owns the one open popup).
         .on_press_tx(move |s: &mut S, tx| {
             let m = tx.mods();
             let st = acc(s);
@@ -154,7 +153,7 @@ fn cell<S: 'static>(cx: &CellCx, item: &Item, g: Grid, selected: bool, acc: Shel
             }
         });
     c = if selected { c.fill(cx.p.background_modifier_selected) } else { c.hover(cx.p.background_modifier_selected) };
-    hover_cell(c, item.key(), acc)
+    with_menu(hover_cell(c, item.key(), acc), item, acc)
 }
 
 /// The clap at the current tone and, when open, every tone (current first) in a column.

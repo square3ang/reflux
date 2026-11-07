@@ -3,7 +3,7 @@
 //! Arrow keys move through the open popout's rows and Enter picks one
 //! (`useMessageSearchAutocomplete`): value lists start on their first row, the filter and
 //! history list only once an arrow was pressed.
-// shortcut: no scope menu, search chips or date pickers for before:/during:/after:.
+// shortcut: tokens whose value doesn't resolve aren't marked "unapplied" (wavy warning).
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -44,6 +44,71 @@ pub struct Search {
     pub ran: String,
     /// The popout row the arrow keys moved to, with the query it was for.
     pub nav: Option<(String, usize)>,
+    /// `ChannelSearch.scope`: `current` unless the scope menu picked another.
+    pub scope: &'static str,
+}
+
+/// `getScopeOptionsForChannel`: (value, label, icon) for a DM or a community.
+fn scopes(dm: bool) -> Vec<(&'static str, &'static str, &'static rune::Icon)> {
+    if dm {
+        vec![
+            ("current", t("Current DM"), &icons::HASH_BOLD),
+            ("all_dms", t("All DMs"), &icons::CHAT_CIRCLE_BOLD),
+            ("open_dms", t("Open DMs"), &icons::CHAT_CENTERED_DOTS_BOLD),
+            ("all", t("All DMs + communities"), &icons::USERS_BOLD),
+            ("open_dms_and_all_guilds", t("Open DMs + communities"), &icons::USERS_BOLD),
+        ]
+    } else {
+        vec![
+            ("current", t("Current community"), &icons::HASH_BOLD),
+            ("all_guilds", t("All communities"), &icons::GLOBE_BOLD),
+            ("all_dms", t("All DMs only"), &icons::CHAT_CIRCLE_BOLD),
+            ("open_dms", t("Open DMs only"), &icons::CHAT_CENTERED_DOTS_BOLD),
+        ]
+    }
+}
+
+/// `SearchTokenNode`: each recognised `key:value` reads as a chip (a bold key and its value on
+/// `background-modifier-selected`; excluded ones on the danger fill).
+pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for word in q.split(' ') {
+        let start = at;
+        at += word.len() + 1;
+        let Some((key, _)) = word.split_once(':') else { continue };
+        let neg = key.starts_with('-');
+        if !search_query::KNOWN_KEYS.contains(&key.trim_start_matches('-')) {
+            continue;
+        }
+        let (bg, fg) = if neg { (p.button_danger_fill, p.button_danger_text) } else { (p.background_modifier_selected, p.text_primary) };
+        let colon = start + key.len() + 1;
+        out.push(rune::Span::new(start, colon).bold().bg(bg, 2.0).color(fg));
+        if colon < start + word.len() {
+            out.push(rune::Span::new(colon, start + word.len()).bg(bg, 2.0).color(fg));
+        }
+    }
+    out
+}
+
+/// `getSearchDateWords` / `matchSearchDateWords`: exact, then prefixed, then scattered matches.
+fn date_words(term: &str, now: chrono::DateTime<chrono::Local>) -> Vec<String> {
+    use chrono::Datelike;
+    let rel = ["today", "yesterday", "week", "month", "year"].map(String::from);
+    let years = (2015..=now.year()).rev().map(|y| y.to_string());
+    let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"].map(String::from);
+    let days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(String::from);
+    let needle = term.to_lowercase();
+    let scattered = |c: &str| {
+        let mut it = c.chars();
+        needle.chars().all(|n| it.any(|x| x == n))
+    };
+    let all: Vec<String> = rel.into_iter().chain(years).chain(months).chain(days).collect();
+    let mut out: Vec<String> = all.iter().filter(|w| **w == needle).cloned().collect();
+    out.extend(all.iter().filter(|w| **w != needle && w.starts_with(&needle)).cloned());
+    out.extend(all.iter().filter(|w| !w.starts_with(&needle) && scattered(w)).cloned());
+    out.truncate(10);
+    out
 }
 
 /// A row of the bar's popout.
@@ -111,6 +176,10 @@ pub fn run(store: &Store, st: &mut ShellState, page: u32) {
         Some(g) => body.insert("context_guild_id".into(), json!(g)),
         None => body.insert("context_channel_id".into(), json!(ch)),
     };
+    let scope = st.search.scope;
+    if !scope.is_empty() && scope != "current" && !body.contains_key("scope") {
+        body.insert("scope".into(), json!(scope));
+    }
     if st.search.oldest && !body.contains_key("sort_order") {
         body.insert("sort_order".into(), json!("asc"));
     }
@@ -170,6 +239,20 @@ pub fn suggest(store: &Store, guild: Option<reflux_model::Snowflake>, query: &st
         }
         "has" => ("Values", ["link", "embed", "file", "image", "video", "sound", "sticker", "poll", "forward"].iter().filter(|v| v.starts_with(&partial)).map(|v| value("has", v)).collect()),
         "pinned" => ("Values", ["true", "false"].iter().filter(|v| v.starts_with(&partial)).map(|v| value("pinned", v)).collect()),
+        k @ ("before" | "after" | "during" | "on") => {
+            let now = chrono::Local::now();
+            let list = if partial.is_empty() {
+                // Today, Yesterday and now, as dates (`DateSection`).
+                vec![
+                    (t("Today").to_string(), now.format("%Y-%m-%d").to_string()),
+                    (t("Yesterday").to_string(), (now - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()),
+                    (t("now").to_string(), now.format("%Y-%m-%dT%H:%M").to_string()),
+                ]
+            } else {
+                date_words(&partial, now).into_iter().map(|w| (w.clone(), w)).collect()
+            };
+            ("Date options", list.into_iter().map(|(label, v)| Suggestion { label, meta: v.clone(), user: None, token: format!("{neg}{k}:{v}") }).collect())
+        }
         _ => return None,
     };
     out.truncate(10);
@@ -198,11 +281,13 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
     let field = text_input(&s.query, font(14.0, 400.0).lh(20.0))
         .key("search-field")
         .grow(1.0)
+        .min_w(0.0)
         .single_line()
         .color(p.text_primary)
         .placeholder(t("Search"), p.text_tertiary)
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).search.query })
+        .decorations(token_spans(&s.query.text, p))
         .on_input_key(move |s: &mut S, k, _| {
             let st = acc(s);
             match k.key {
@@ -261,6 +346,36 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
                     st.search.results = None;
                 }),
         );
+    }
+    // The scope button and its radio menu (`handleScopeMenuOpen`).
+    let dm = st.guild.is_none();
+    let opts = scopes(dm);
+    let current = opts.iter().find(|o| o.0 == s.scope).unwrap_or(&opts[0]);
+    b = b.child(
+        row()
+            .size(20.0, 20.0)
+            .center()
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(crate::i18n::tf("Search scope: {label}", &[("label", current.1)]))
+            .key("search-scope")
+            .hover_group()
+            .child(icon(current.2, 16.0).color(p.text_tertiary).group_color(p.text_primary))
+            .on_press(move |s: &mut S| acc(s).popups.toggle("search-scope")),
+    );
+    if st.popups.is_open("search-scope") {
+        let mut m = crate::ui::Menu::new("search-scope").placement(crate::ui::Placement::BottomEnd);
+        for (v, label, ic) in opts.iter().copied() {
+            m = m.item(crate::ui::MenuItem::new(format!("scope-{v}"), label).icon(ic).radio(current.0 == v).on_select(move |s: &mut S| {
+                let st = acc(s);
+                st.search.scope = v;
+                st.popups.close();
+                if st.search.results.is_some() {
+                    st.search_requested = true;
+                }
+            }));
+        }
+        m.el(&st.popups, super::pops(acc), p, layer);
     }
     b
 }
@@ -517,6 +632,11 @@ mod tests {
         let (_, has) = suggest(&d.store, g, "has:").unwrap();
         assert!(has.iter().any(|v| v.token == "has:image"));
         assert!(suggest(&d.store, g, "plain words").is_none());
-        assert!(suggest(&d.store, g, "before:").is_none(), "dates have no list");
+        let (title, dates) = suggest(&d.store, g, "before:").unwrap();
+        assert_eq!((title, dates.len()), ("Date options", 3));
+        let (_, words) = suggest(&d.store, g, "during:jan").unwrap();
+        assert_eq!(words[0].token, "during:january");
+        let spans = token_spans("hi from:ada -has:link", crate::theme::palette(crate::theme::Kind::Dark));
+        assert_eq!(spans.len(), 4, "a key and a value span per token");
     }
 }

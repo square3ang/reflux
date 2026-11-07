@@ -91,10 +91,43 @@ fn open(st: &mut ShellState, channel: Snowflake, message: Snowflake, e: &Reactio
     fetch_reactors(st, channel, message, e, 100);
 }
 
+/// A page's reactors: `ReactionUsersPageResponse.items`, or a bare array.
+fn items(v: &Value) -> Option<&Vec<Value>> {
+    v.as_array().or_else(|| v["items"].as_array())
+}
+
 fn users<'a>(st: &'a ShellState, message: Snowflake, key: &str, limit: u32) -> Option<&'a Vec<Value>> {
     match st.expr.fetched.get(&reactors_key(message, key, limit)) {
-        Some(Fetched::Done(v)) => v.as_array(),
+        Some(Fetched::Done(v)) => items(v),
         _ => None,
+    }
+}
+
+/// Every loaded page of the modal's reactors (100 each, chained by `after`), and the cursor
+/// of the next page while `has_more`.
+fn all_users(st: &ShellState, message: Snowflake, key: &str) -> Option<(Vec<Value>, Option<String>)> {
+    let base = reactors_key(message, key, 100);
+    let mut k = base.clone();
+    let mut out = Vec::new();
+    loop {
+        let v = match st.expr.fetched.get(&k) {
+            Some(Fetched::Done(v)) => v,
+            _ if out.is_empty() => return None,
+            _ => return Some((out, None)),
+        };
+        let page = items(v).cloned().unwrap_or_default();
+        let more = v["has_more"].as_bool().unwrap_or(page.len() >= 100);
+        let next = v["next_after"].as_str().map(str::to_string).or_else(|| page.last().and_then(|u| u["id"].as_str()).map(str::to_string));
+        out.extend(page);
+        match next.filter(|_| more) {
+            Some(n) => {
+                k = format!("{base}:after:{n}");
+                if !st.expr.fetched.contains_key(&k) {
+                    return Some((out, Some(n)));
+                }
+            }
+            None => return Some((out, None)),
+        }
     }
 }
 
@@ -222,10 +255,10 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
         filters = filters.child(b);
     }
     let selected = reaction(m, sel).map(|r| r.emoji.clone());
-    let list = match (users(st, mid, sel, 100), selected) {
-        (Some(us), Some(e)) => {
-            let mut l = col().w_full().gap(2.0);
-            for u in us {
+    let list = match (all_users(st, mid, sel), selected) {
+        (Some((us, next)), Some(e)) => {
+            let mut rows = Vec::new();
+            for u in &us {
                 let uid: Snowflake = u["id"].as_str().and_then(|s| s.parse().ok()).unwrap_or_default();
                 let mut r = row()
                     .w_full()
@@ -236,6 +269,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                     .radius(6.0)
                     .hover(p.background_modifier_hover)
                     .hover_group()
+                    .key(format!("reactor-{uid}"))
                     .child(user_avatar(st, u, 24.0, p))
                     .child(
                         row()
@@ -261,8 +295,21 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                             .on_press(move |s: &mut S| remove(acc(s), c, mid, &e, &sel, uid, me)),
                     );
                 }
-                l = l.child(r);
+                rows.push(r);
             }
+            let n = rows.len();
+            if next.is_some() {
+                rows.push(row().w_full().h(44.0).center().key(format!("reactors-more-{mid}")).child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)));
+            }
+            // `MessageReactionsReactorsList` loads the next page when its end scrolls into view.
+            let sel = sel.to_string();
+            let l = col().w_full().gap(2.0).growth(rune::GrowthSpec::default()).virtualize(46.0).children(rows).on_visible_rows(move |s: &mut S, r| {
+                if let Some(after) = next.as_ref().filter(|_| r.end > n) {
+                    let path = format!("/channels/{c}/messages/{mid}/reactions/{}?limit=100&after={after}", segment(&e));
+                    super::fetch(acc(s), &format!("{}:after:{after}", reactors_key(mid, &sel, 100)), &path);
+                }
+                false
+            });
             scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(l), false, p)
         }
         _ => col().w_full().h_full().center().child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
@@ -282,8 +329,13 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
 fn remove(st: &mut ShellState, c: Snowflake, m: Snowflake, e: &ReactionEmoji, key: &str, user: Snowflake, me: Snowflake) {
     let who = if user == me { "@me".to_string() } else { user.to_string() };
     send(st, reqwest::Method::DELETE, format!("/channels/{c}/messages/{m}/reactions/{}/{who}", segment(e)), None);
-    if let Some(Fetched::Done(Value::Array(us))) = st.expr.fetched.get_mut(&reactors_key(m, key, 100)) {
-        us.retain(|u| u["id"].as_str() != Some(&user.to_string()));
+    let base = reactors_key(m, key, 100);
+    for (_, f) in st.expr.fetched.iter_mut().filter(|(k, _)| k.starts_with(&base)) {
+        if let Fetched::Done(v) = f
+            && let Some(us) = if v.is_array() { v.as_array_mut() } else { v["items"].as_array_mut() }
+        {
+            us.retain(|u| u["id"].as_str() != Some(&user.to_string()));
+        }
     }
 }
 
@@ -351,5 +403,18 @@ mod tests {
         let c = ReactionEmoji { id: Some(Snowflake(7)), name: "party".into(), animated: None };
         assert_eq!(reacted_by(&c, &n(&["A", "B"]), 2), ":party: reacted by A and B");
         assert_eq!(segment(&c), "party%3A7");
+    }
+
+    #[test]
+    fn modal_pages_chain_by_after() {
+        let mut st = ShellState::default();
+        let m = Snowflake(1);
+        let page = |a: u64, b: u64| (a..b).map(|i| serde_json::json!({ "id": i.to_string() })).collect::<Vec<_>>();
+        st.expr.fetched.insert(reactors_key(m, "x", 100), Fetched::Done(serde_json::json!({ "items": page(0, 100), "has_more": true, "next_after": "99" })));
+        let (us, next) = all_users(&st, m, "x").unwrap();
+        assert_eq!((us.len(), next.as_deref()), (100, Some("99")));
+        st.expr.fetched.insert(format!("{}:after:99", reactors_key(m, "x", 100)), Fetched::Done(Value::Array(page(100, 130))));
+        let (us, next) = all_users(&st, m, "x").unwrap();
+        assert_eq!((us.len(), next), (130, None));
     }
 }

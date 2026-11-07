@@ -9,7 +9,7 @@ use rune::{El, col, el, icon, row, text};
 use serde_json::{Map, Value, json};
 
 use super::settings::{image_field, small, title};
-use super::{Then, error, field};
+use super::{Then, error};
 use crate::i18n::t;
 use crate::icons;
 use crate::media::{self, Load};
@@ -158,17 +158,15 @@ pub fn advanced<S: 'static>(st: &ShellState, info: &Guild, p: &Palette, acc: She
 
 // ---- Message history threshold ---------------------------------------------------------------
 
-/// A `YYYY-MM-DD` threshold as RFC 3339, or why it's refused (before the community or future).
-pub fn threshold(input: &str, created_ms: u64, now_ms: u64) -> Result<String, &'static str> {
-    let d = chrono::NaiveDate::parse_from_str(input.trim(), "%Y-%m-%d").map_err(|_| "Enter a date as YYYY-MM-DD.")?;
-    let at = d.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc();
-    let ms = at.timestamp_millis().max(0) as u64;
-    if ms + 86_400_000 <= created_ms {
+/// A threshold (ms) as RFC 3339, or why it's refused (before the community or in the future).
+pub fn threshold(ms: i64, created_ms: u64, now_ms: u64) -> Result<String, &'static str> {
+    if ms < created_ms as i64 {
         return Err("Threshold date cannot be before community creation");
     }
-    if ms > now_ms {
+    if ms > now_ms as i64 {
         return Err("Threshold date cannot be in the future");
     }
+    let at = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
     Ok(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
@@ -183,7 +181,8 @@ pub fn threshold_button<S: 'static>(store: &Store, g: Snowflake, p: &Palette, ac
                     let f = &mut acc(s).form;
                     f.data.insert("mht".into(), json!(true));
                     f.data.remove("mht-on");
-                    f.text.remove("mht-date");
+                    f.data.remove("mht-day");
+                    f.text.remove("mht-time");
                     f.error = None;
                 })
                 .el(p),
@@ -192,11 +191,19 @@ pub fn threshold_button<S: 'static>(store: &Store, g: Snowflake, p: &Palette, ac
 }
 
 /// `MessageHistoryThresholdModal`.
-pub fn threshold_modal<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    st.form.data.get("mht")?;
+pub fn threshold_modal<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    if !st.form.data.contains_key("mht") {
+        return;
+    }
     let cur = info.message_history_cutoff.clone();
     let on = st.form.data.get("mht-on").and_then(Value::as_bool).unwrap_or(cur.is_some());
-    let initial = cur.as_deref().and_then(|c| c.get(..10)).unwrap_or("").to_string();
+    // The current cutoff, else the community's creation (as Fluxer fills it when switched on).
+    let created = g.timestamp_ms();
+    let at = cur.as_deref().and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok()).map_or(created as i64, |d| d.timestamp_millis());
+    let at = chrono::DateTime::from_timestamp_millis(at).unwrap_or_default().with_timezone(&chrono::Local);
+    let day = st.form.data.get("mht-day").and_then(Value::as_str).and_then(|d| d.parse().ok()).unwrap_or(at.date_naive());
+    let initial = at.format("%H:%M").to_string();
+    let time = st.form.text.get("mht-time").map_or(initial.clone(), |e| e.text.clone());
     let close = move |s: &mut S| {
         acc(s).form.data.remove("mht");
     };
@@ -213,18 +220,35 @@ pub fn threshold_modal<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, 
                 })
                 .el(p),
         );
+    let mut cal = Vec::new();
     if on {
-        // shortcut: a typed date; reflux has no date picker.
-        body = body.child(field(st, acc, "mht-date", &initial, t("Threshold date"), "YYYY-MM-DD", p)).child(small(t("Members without the Read message history permission can view messages sent after this date."), p).wrap());
+        let edit = st.form.text.get("mht-time").cloned().unwrap_or_else(|| rune::TextEdit::new(initial.clone()));
+        let today = chrono::Local::now().date_naive();
+        let created_day = chrono::DateTime::from_timestamp_millis(created as i64).unwrap_or_default().with_timezone(&chrono::Local).date_naive();
+        let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+        body = body.child(
+            crate::ui::DatePicker::new("mht-date", Some(day))
+                .label(t("Threshold date"))
+                .description(t("Members without the Read message history permission can view messages sent after this date."))
+                .min(Some(created_day))
+                .max(Some(today))
+                .time(&edit, move |s: &mut S| {
+                    acc(s).form.text.entry("mht-time".into()).or_insert_with(|| rune::TextEdit::new(initial.clone()))
+                })
+                .on_pick(move |s: &mut S, d| {
+                    acc(s).form.data.insert("mht-day".into(), json!(d.to_string()));
+                })
+                .el(&st.popups, pops, p, &mut cal),
+        );
     }
     if let Some(e) = error(st, p) {
         body = body.child(e);
     }
-    let created = g.timestamp_ms();
     let save = move |s: &mut S| {
         let sh = acc(s);
         let cutoff = if on {
-            match threshold(&sh.form.value("mht-date", &initial), created, crate::app::now_ms()) {
+            let local = crate::ui::datepicker::with_time(day, &time).and_local_timezone(chrono::Local).earliest();
+            match threshold(local.map_or(0, |d| d.timestamp_millis()), created, crate::app::now_ms()) {
                 Ok(c) => json!(c),
                 Err(e) => return sh.form.error = Some(t(e).into()),
             }
@@ -235,7 +259,8 @@ pub fn threshold_modal<S: 'static>(st: &ShellState, g: Snowflake, info: &Guild, 
         sh.api(Method::PATCH, format!("/guilds/{g}"), Some(json!({ "message_history_cutoff": cutoff })), Then::Toast("Message history threshold updated", "Failed to update message history threshold"));
     };
     let footer = row().gap(8.0).child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p)).child(Button::new(t("Save")).submitting(st.form.busy).on_press(save).el(p));
-    Some(Modal::new(t("Message history threshold"), close).body(body).footer(footer).el(p))
+    layer.push(Modal::new(t("Message history threshold"), close).body(body).footer(footer).el(p));
+    layer.extend(cal);
 }
 
 #[cfg(test)]
@@ -246,10 +271,9 @@ mod tests {
     fn threshold_dates_stay_in_range() {
         let created = 1_704_067_200_000; // 2024-01-01
         let now = 1_767_225_600_000; // 2026-01-01
-        assert_eq!(threshold("2025-06-01", created, now).unwrap(), "2025-06-01T00:00:00.000Z");
-        assert_eq!(threshold("2024-01-01", created, now).unwrap(), "2024-01-01T00:00:00.000Z");
-        assert!(threshold("2023-12-30", created, now).is_err());
-        assert!(threshold("2027-01-01", created, now).is_err());
-        assert!(threshold("June", created, now).is_err());
+        assert_eq!(threshold(1_748_736_000_000, created, now).unwrap(), "2025-06-01T00:00:00.000Z");
+        assert_eq!(threshold(created as i64, created, now).unwrap(), "2024-01-01T00:00:00.000Z");
+        assert!(threshold(created as i64 - 1, created, now).is_err());
+        assert!(threshold(now as i64 + 1, created, now).is_err());
     }
 }

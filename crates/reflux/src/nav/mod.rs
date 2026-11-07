@@ -96,6 +96,8 @@ pub struct AccountPrefs {
     pub keyboard_intro_seen: bool,
     /// "Sync keybinds".
     pub sync_keybinds: bool,
+    /// Mature channels, categories and guilds agreed to (`GuildMatureContentAgree`).
+    pub mature_agreed: Vec<reflux_model::Snowflake>,
 }
 
 /// This account's preferences.

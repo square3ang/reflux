@@ -4,7 +4,7 @@
 //! profile; right-click is the usual member menu (roles, nickname, kick, ban…).
 //! Search debounces 300 ms; the header's funnels filter by member since, account age, join method
 //! and roles; rows per page is 12/25/50/100; while the server is indexing it asks again every 5 s.
-// shortcut: no "Custom range…" date filter (no date picker); presets only.
+//! "Custom range..." opens `GuildMembersDateRangeModal` (after / before date pickers).
 
 use reflux_model::{Permissions as P, Snowflake};
 use reflux_store::Store;
@@ -55,6 +55,9 @@ pub struct MembersPage {
     /// Date filters: a window back from now in ms (member since, joined Fluxer).
     pub since: Option<u64>,
     pub created: Option<u64>,
+    /// A custom range instead (`gte`, `lte` in seconds).
+    pub since_range: Option<(Option<i64>, Option<i64>)>,
+    pub created_range: Option<(Option<i64>, Option<i64>)>,
     /// Join method: an invite code (the vanity code for "Vanity URL").
     pub invite: Option<String>,
     pub roles: Vec<Snowflake>,
@@ -83,6 +86,13 @@ impl MembersPage {
         }
         if let Some(w) = self.created {
             body["user_created_at_gte"] = json!(now_s.saturating_sub(w / 1000));
+        }
+        for (key, r) in [("joined_at", self.since_range), ("user_created_at", self.created_range)] {
+            for (end, v) in [("gte", r.and_then(|r| r.0)), ("lte", r.and_then(|r| r.1))] {
+                if let Some(v) = v {
+                    body[format!("{key}_{end}")] = json!(v);
+                }
+            }
         }
         if let Some(c) = &self.invite {
             body["source_invite_code"] = json!([c]);
@@ -311,8 +321,20 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         }
         menu
     };
-    let since_menu = presets("members-filter-since", m.since, |m, v| m.since = v);
-    let created_menu = presets("members-filter-created", m.created, |m, v| m.created = v);
+    // "Custom range...": the range modal, filled from the current range.
+    let custom = |menu: Menu<S>, id: &'static str, which: &'static str, cur: Option<(Option<i64>, Option<i64>)>| {
+        menu.item(MenuItem::new(format!("{id}-custom"), t("Custom range...")).radio(cur.is_some()).on_select(move |s: &mut S| {
+            let f = &mut acc(s).form;
+            f.data.insert("mrange".into(), json!(which));
+            for (k, v) in [("after", cur.and_then(|c| c.0)), ("before", cur.and_then(|c| c.1))] {
+                let at = v.and_then(|v| chrono::DateTime::from_timestamp(v, 0)).map(|d| d.with_timezone(&chrono::Local));
+                f.data.insert(format!("mrange-{k}"), at.map_or(serde_json::Value::Null, |d| json!(d.date_naive().to_string())));
+                f.text.insert(format!("mrange-{k}-time"), TextEdit::new(at.map_or("00:00".into(), |d| d.format("%H:%M").to_string())));
+            }
+        }))
+    };
+    let since_menu = custom(presets("members-filter-since", m.since.filter(|_| m.since_range.is_none()), |m, v| (m.since, m.since_range) = (v, None)), "members-filter-since", "since", m.since_range);
+    let created_menu = custom(presets("members-filter-created", m.created.filter(|_| m.created_range.is_none()), |m, v| (m.created, m.created_range) = (v, None)), "members-filter-created", "created", m.created_range);
     // Join method: all, the vanity URL, and the invite codes on this page.
     let vanity = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()?.vanity_url_code.clone());
     let mut codes: Vec<String> = res.as_ref().map(|r| r.members.iter().filter_map(|x| x.supplemental.source_invite_code.clone()).collect()).unwrap_or_default();
@@ -349,8 +371,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .w_full()
         .py(5.0)
         .child(cell(0, head(t("Name"))))
-        .child(cell(1, with(t("Member since"), funnel("members-filter-since", t("Filter by member since"), m.since.is_some(), since_menu, layer))))
-        .child(cell(2, with(&joined, funnel("members-filter-created", t("Filter by account creation date"), m.created.is_some(), created_menu, layer))))
+        .child(cell(1, with(t("Member since"), funnel("members-filter-since", t("Filter by member since"), m.since.is_some() || m.since_range.is_some(), since_menu, layer))))
+        .child(cell(2, with(&joined, funnel("members-filter-created", t("Filter by account creation date"), m.created.is_some() || m.created_range.is_some(), created_menu, layer))))
         .child(cell(3, with(t("Join method"), funnel("members-filter-join", t("Filter by join method"), m.invite.is_some(), join_menu, layer))))
         .child(cell(4, with(t("Roles"), funnel("members-filter-roles", t("Filter by roles"), !m.roles.is_empty(), roles_menu, layer))))
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary));
@@ -480,6 +502,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(head_row)
         .child(body)
         .child(footer);
+    range_modal(st, p, acc, layer);
     Some(
         col()
             .grow(1.0)
@@ -489,6 +512,58 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(header)
             .child(col().w_full().grow(1.0).min_h(0.0).py(16.0).px(20.0).gap(12.0).child(toolbar).child(table)),
     )
+}
+
+/// `GuildMembersDateRangeModal`: after / before pickers (each bounding the other), Clear / Apply.
+fn range_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let Some(which) = st.form.data.get("mrange").and_then(serde_json::Value::as_str) else { return };
+    let created = which == "created";
+    let day = |k: &str| st.form.data.get(&format!("mrange-{k}")).and_then(serde_json::Value::as_str).and_then(|d| d.parse::<chrono::NaiveDate>().ok());
+    let (after, before) = (day("after"), day("before"));
+    let time = |k: &str| st.form.text.get(&format!("mrange-{k}-time")).map_or("00:00".to_string(), |e| e.text.clone());
+    // Seconds of a picked day at its typed time.
+    let secs = |d: Option<chrono::NaiveDate>, k: &str| d.and_then(|d| crate::ui::datepicker::with_time(d, &time(k)).and_local_timezone(chrono::Local).earliest()).map(|d| d.timestamp());
+    let range = (secs(after, "after"), secs(before, "before"));
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    let close = move |s: &mut S| {
+        acc(s).form.data.remove("mrange");
+    };
+    let apply = move |r: Option<(Option<i64>, Option<i64>)>| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            sh.form.data.remove("mrange");
+            if let Some(m) = &mut sh.social.members {
+                let r = r.filter(|r| r.0.is_some() || r.1.is_some());
+                if created { (m.created, m.created_range) = (None, r) } else { (m.since, m.since_range) = (None, r) }
+                (m.page, m.due) = (1, None);
+            }
+            sh.search_members();
+        }
+    };
+    let mut cal = Vec::new();
+    let empty = TextEdit::new("00:00");
+    let mut body = col().w_full().gap(16.0);
+    for (k, label, value, min, max) in [("after", t("After date"), after, None, before), ("before", t("Before date"), before, after, None)] {
+        let (id, tk) = (if k == "after" { "mrange-after" } else { "mrange-before" }, format!("mrange-{k}-time"));
+        let edit = st.form.text.get(&tk).unwrap_or(&empty);
+        body = body.child(
+            crate::ui::DatePicker::new(id, value)
+                .label(label)
+                .min(min)
+                .max(max)
+                .time(edit, move |s: &mut S| acc(s).form.text.entry(tk.clone()).or_insert_with(|| TextEdit::new("00:00")))
+                .on_pick(move |s: &mut S, d| {
+                    acc(s).form.data.insert(id.into(), json!(d.to_string()));
+                })
+                .el(&st.popups, pops, p, &mut cal),
+        );
+    }
+    let footer = row()
+        .gap(8.0)
+        .child(Button::new(t("Clear")).variant(ButtonVariant::Secondary).on_press(apply(None)).el(p))
+        .child(Button::new(t("Apply")).on_press(apply(Some(range))).el(p));
+    layer.push(crate::ui::Modal::new(t("Custom date range"), close).body(body).footer(footer).el(p));
+    layer.extend(cal);
 }
 
 fn empty(msg: &str, p: &Palette) -> El {

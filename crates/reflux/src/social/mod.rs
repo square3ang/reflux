@@ -44,6 +44,8 @@ pub struct Social {
     /// The inbox popout is open, and its tab: 0 unread, 1 bookmarks, 2 mentions.
     pub inbox_open: bool,
     pub inbox_tab: u8,
+    /// Unread tab sections folded shut.
+    pub inbox_collapsed: std::collections::HashSet<Snowflake>,
     /// Recent mention filters: (role mentions, @everyone/@here, all communities).
     pub mention_filter: [bool; 3],
     /// Bookmarked message IDs known this session (the menu's Bookmark / Remove bookmark).
@@ -144,6 +146,9 @@ pub enum Done {
     ChannelTab(Snowflake, &'static str),
     /// Close the dialog and show a success toast.
     Toast(String),
+    /// Append the response (an array) to `social.data[key]`; `key + ":end"` is set when it was
+    /// shorter than the page size given.
+    Append(String, usize),
 }
 
 impl ShellState {
@@ -187,8 +192,11 @@ pub fn run(s: &mut crate::State, r: Req) {
                         sh.social(reqwest::Method::GET, format!("/reports/flows/{target}?surface=in_app"), None, Done::Form("flow".into()));
                         return;
                     }
-                    if same {
+                    if same && from.is_some() {
                         sh.form.error = Some(crate::guild::describe(&e));
+                    } else if same {
+                        // No dialog to show it in: `showGenericErrorModal`.
+                        sh.notice = Some((crate::i18n::t("Something went wrong").into(), crate::guild::describe(&e)));
                     }
                     return;
                 }
@@ -214,6 +222,16 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
             list.extend(v.get("guilds").and_then(Value::as_array).into_iter().flatten().cloned());
             if let Some(total) = v.get("total") {
                 kept["total"] = total.clone();
+            }
+        }
+        Done::Append(k, page) => {
+            let new = v.as_array().cloned().unwrap_or_default();
+            sh.social.data.insert(format!("{k}:end"), Value::Bool(new.len() < page));
+            match sh.social.data.get_mut(&k) {
+                Some(Value::Array(a)) => a.extend(new),
+                _ => {
+                    sh.social.data.insert(k, Value::Array(new));
+                }
             }
         }
         Done::Reload(k, _) if same => match reload {

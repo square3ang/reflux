@@ -75,8 +75,13 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             data(st, "guild", json!("2000"));
         }
         "topic" => st.open_social(Modal::Topic(s(GENERAL))),
-        "members-page" | "members-filter" => {
+        "members-page" | "members-filter" | "members-range" => {
             st.open_members_page(g);
+            if scene == "members-range" {
+                st.form.data.insert("mrange".into(), json!("since"));
+                st.form.data.insert("mrange-after".into(), json!("2026-01-03"));
+                st.popups.open = Some("mrange-before@2026-01".into());
+            }
             if scene == "members-filter" {
                 if let Some(m) = &mut st.social.members {
                     m.roles = vec![s(2012)];
@@ -135,6 +140,9 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 _ => 2,
             };
             st.social.data.insert("mentions".into(), json!([ms[8].clone(), ms[7].clone()]));
+            st.social.data.insert("mentions:end".into(), json!(true));
+            let bulk = json!({"channels": [{"channel_id": GENERAL.to_string(), "messages": [ms[9].clone(), ms[8].clone()]}]});
+            st.expr.fetched.insert(format!("inbox-bulk:{GENERAL}"), crate::shell::expr::Fetched::Done(bulk));
             st.social.data.insert("bookmarks".into(), json!([{"id": ms[6]["id"], "channel_id": GENERAL.to_string(), "message_id": ms[6]["id"], "status": "available", "message": ms[6].clone()}]));
         }
         "bell" => st.popups.toggle(super::channel::BELL),

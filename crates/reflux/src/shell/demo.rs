@@ -354,6 +354,32 @@ impl Demo {
         for a in rune::extra_args() {
             if a == "--shell-home" {
                 (shell.guild, shell.channel) = (None, Some(Snowflake(8001)));
+                // A pinned DM, previews (markdown, an attachment, a system message) and a call
+                // running in Ada's DM with its "Join the call" link.
+                store.pinned_dms = vec![Snowflake(8002)];
+                let dm = |ch: u64, ms: u64, author: u64, content: &str, extra: Value| {
+                    let mut m = message(ms, 0, author, content, extra);
+                    m["channel_id"] = json!(ch.to_string());
+                    m.as_object_mut().map(|o| o.remove("guild_id"));
+                    m
+                };
+                let t = |m| at(0, 15, m);
+                let mut msgs = vec![
+                    dm(8001, t(1), 1001, "did you see **the new** `gateway` build? <:fluxer:77>", json!({})),
+                    dm(8001, t(2), 1001, "", json!({"type": 3, "call": {"participants": ["1001"]}})),
+                    dm(8002, t(3), 1003, "", json!({"attachments": [{"id": "9501", "filename": "a.png", "content_type": "image/png", "size": 10}]})),
+                    dm(8003, t(4), 1002, "", json!({"type": 1, "mentions": [user(1006, "ken", "Ken Thompson")]})),
+                ];
+                msgs.push(json!({"channel_id": "8001", "message_id": "1", "region": null, "ringing": [], "voice_states": [], "recipients": ["1001", ME.to_string()]}));
+                for (i, m) in msgs.into_iter().enumerate() {
+                    let kind = if i == 4 { "CALL_CREATE" } else { "MESSAGE_CREATE" };
+                    if let Ok(ev) = DispatchEvent::parse(kind, &m) {
+                        if let DispatchEvent::MessageCreate(m) = &ev {
+                            store.messages.entry(m.channel_id).or_default();
+                        }
+                        store.apply(&ev, now);
+                    }
+                }
             } else if let Some(tab) = a.strip_prefix("--friends").map(|t| t.trim_start_matches('=')) {
                 (shell.guild, shell.channel) = (None, None);
                 shell.friends_tab = match tab {
@@ -549,9 +575,12 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
                 st.dialog = Some(Dialog::Guild { guild: g, tab: "roles", role: None });
                 data(st, "role-drag", json!([0, 2]));
             }
-            if s == "gs-threshold" {
+            if s.starts_with("gs-threshold") {
                 data(st, "mht", json!(true));
                 data(st, "mht-on", json!(true));
+            }
+            if s == "gs-threshold-cal" {
+                st.popups.open = Some(format!("mht-date@{}", chrono::Local::now().format("%Y-%m")));
             }
             data(st, "emoji-failed", json!([{"name": "huge.png", "error": "Image is too large to process (9000x9000)"}]));
             let mut role = e(2, ME, 31, "2011");
@@ -731,7 +760,7 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
     let tab = match scene {
         "picker-sticker" => Tab::Stickers,
         "picker-gif" | "picker-gif-search" => Tab::Gifs,
-        "picker-memes" => Tab::Memes,
+        "picker-memes" | "meme-delete" => Tab::Memes,
         _ => Tab::Emojis,
     };
     st.limits.global_expressions = true;
@@ -760,6 +789,19 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
         st.expr.gif = super::expr::GifView::Search("dance".into());
         st.expr.fetched.insert("gif:search:dance".into(), Fetched::Done(Value::Array(gifs)));
     }
+    if scene == "meme-delete" {
+        st.expr.confirm_meme = Some(("501".into(), "meme 1".into()));
+    }
+    if scene == "gif-import" {
+        let mut imp = super::expr::gif::GifImport::default();
+        imp.text = rune::TextEdit::new("https://klipy.com/gifs/dance-1\nhttps://klipy.com/gifs/cat-2");
+        st.expr.gif_import = Some(imp);
+    }
+    if scene == "picker-menu" {
+        st.expr.menu_item = Some(super::expr::Item::Emoji { guild: Snowflake(HQ), id: Snowflake(77), name: "party".into(), animated: false });
+        st.expr.menu.open = Some("expr-menu".into());
+        st.expr.menu.at = Some([1000.0, 400.0]);
+    }
     let meme = |i: u32, ct: &str| json!({"id": (500 + i).to_string(), "name": format!("meme {i}"), "content_type": ct, "tags": [],
         "url": format!("https://media.fluxer.app/attachments/memes/{i}.png"), "width": 400, "height": ([300, 400, 520][i as usize % 3])});
     st.expr.fetched.insert("memes".into(), Fetched::Done(json!([meme(1, "image/png"), meme(2, "image/png"), meme(3, "image/gif"), meme(4, "image/png"), meme(5, "image/png")])));
@@ -768,7 +810,7 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
     }
 }
 
-/// `--msg-scene=hover|menu|more|emoji|reply|edit|delete`: message actions mid-use;
+/// `--msg-scene=hover|shift|failed|send-error|menu|more|emoji|reply|edit|delete`: message actions mid-use;
 /// `uploads|pins|search|search-options|switcher|autocomplete|jump|present|slowmode|counter`: the
 /// composer and navigation tools.
 /// `picker-emoji|picker-sticker|picker-gif|picker-gif-search|picker-memes|react-picker|
@@ -778,6 +820,31 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
     let (shot, mine, ada) = (ids[6], ids[7], ids[8]);
     match scene {
         "hover" => st.hover_msg = Some(ada),
+        "nagbars" => {
+            st.desktop.notice = Some(reflux_model::InstanceNotice { id: "n1".into(), message: "Voice is moving to the new region tonight.".into(), url: Some("https://example.com".into()), ..Default::default() });
+            st.desktop.maintenance = Some(crate::desktop::notices::Maintenance { id: "m1".into(), status: crate::desktop::notices::Status::Scheduled, start: "2026-11-08T03:00:00Z".into(), minutes: 120, url: "https://status.example.com".into() });
+            st.premium = true;
+            if let Some(me) = store.me.as_mut() {
+                (me.premium_type, me.premium_until, me.premium_billing_cycle) = (Some(reflux_model::PremiumType::SUBSCRIPTION), Some("2026-12-07T00:00:00Z".into()), Some("monthly".into()));
+                (me.has_unread_gift_inventory, me.unread_gift_inventory_count) = (true, 2);
+            }
+        }
+        "shift" => {
+            st.hover_msg = store.messages(Snowflake(GENERAL)).last().map(|m| m.id);
+            st.shift_held = true;
+        }
+        "failed" | "send-error" => {
+            let nonce = Snowflake::from_timestamp_ms(st.now_ms);
+            let mut m: reflux_model::Message = serde_json::from_value(message(st.now_ms, 0, ME, "this one **didn't** make it, <@1001>", json!({}))).expect("message");
+            (m.id, m.nonce) = (nonce, Some(nonce.to_string()));
+            store.add_local_message(m);
+            st.failed.insert(nonce, super::queue::Failed { channel: Snowflake(GENERAL), reply: None });
+            st.hover_msg = Some(nonce);
+            if scene == "send-error" {
+                let e = reflux_net::Error::Api { status: reqwest::StatusCode::TOO_MANY_REQUESTS, error: Box::new(reflux_model::ApiError { code: "RATE_LIMITED".into(), retry_after: Some(4.2), ..Default::default() }) };
+                st.notice = Some(super::queue::send_error(&e, false, 0));
+            }
+        }
         "menu" => {
             st.popups.open_at(&format!("msg-menu-{ada}"), [620.0, 330.0]);
             st.active_msg = Some(ada);
@@ -825,12 +892,27 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.search.query.focused = true;
             st.search.nav = Some((String::new(), 2));
         }
+        "search-dates" => {
+            st.search.query = rune::TextEdit::new("release from:ada -has:link before:");
+            st.search.query.focused = true;
+            st.search.nav = Some((st.search.query.text.clone(), 1));
+        }
+        "search-scope" => st.popups.open = Some("search-scope".into()),
         "switcher" => {
             st.toggle_switcher();
             if let Some(sw) = &mut st.switcher {
                 sw.query = rune::TextEdit::new("#");
                 sw.query.focused = true;
             }
+        }
+        "pending-sticker" => {
+            st.composer = rune::TextEdit::new("ship it");
+            st.pending_sticker = store.guilds.values().flat_map(|g| g.stickers.first()).next().map(|x| (Snowflake(GENERAL), x.id));
+        }
+        "format" => {
+            st.composer = rune::TextEdit::new("the release goes out on friday after the review");
+            st.composer.focused = true;
+            st.composer.set_selection(17, 37);
         }
         "autocomplete" => {
             st.composer = rune::TextEdit::new("hey @a");
@@ -846,7 +928,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
         m if m.starts_with("media-") => media_scene(st, store, &m[6..]),
-        "picker-emoji" | "picker-sticker" | "picker-gif" | "picker-gif-search" | "picker-memes" => expr_scene(st, scene),
+        "picker-emoji" | "picker-menu" | "gif-import" | "meme-delete" | "picker-sticker" | "picker-gif" | "picker-gif-search" | "picker-memes" => expr_scene(st, scene),
         "react-picker" => {
             st.limits.global_expressions = true;
             super::expr::open_react(st, Snowflake(GENERAL), shot);
@@ -920,7 +1002,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
 /// `--msg-scene=media-<scene>`: attachments and embeds. `mosaic` (several images, a spoiler,
 /// alt text), `files` (video, audio, text preview, file card), `embeds` (rich, YouTube, gifv),
 /// `invite`, `viewer` (the lightbox), `link` (external link warning), `nsfw` (the channel gate),
-/// `blur` (flagged media under the guild filter).
+/// `blur` (flagged media under the guild filter), `system` (system messages).
 fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     let t = |m| at(0, 12, m);
     let att = |id: u64, name: &str, ty: &str, w: u32, h: u32, extra: Value| {
@@ -934,8 +1016,9 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     };
     let ext = |w: u32, h: u32| json!({"url": "https://example.com/x.png", "proxy_url": "https://media.fluxer.app/external/sig/x.png", "width": w, "height": h});
     let mut msgs = Vec::new();
-    // Fluxer's defaults: spoilers on click.
+    // Fluxer's defaults: spoilers on click, embeds and their media shown, GIFs autoplay.
     store.settings.render_spoilers = 1;
+    (store.settings.render_embeds, store.settings.inline_embed_media, store.settings.gif_auto_play) = (true, true, true);
     match scene {
         "mosaic" | "viewer" => {
             msgs.push(message(t(1), 0, 1001, "Three from the offsite:", json!({"attachments": [
@@ -958,6 +1041,8 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 "use std::io;\n\n/// Greets the world.\nfn main() -> io::Result<()> {\n    let name = \"Fluxer\";\n    println!(\"hello, {name}\");\n    Ok(())\n}\n");
         }
         "embeds" => {
+            msgs.push(message(t(0), 0, 1007, "", json!({"embeds": [{"type": "rich", "title": "Deploy ok", "description": "All green.", "color": 0x23A55A},
+                {"type": "rich", "title": "Release notes", "description": "Threads, forum tags, the new inbox and a long list of fixes that wraps onto more than one line of the embed.", "url": "https://fluxer.app/notes"}]})));
             msgs.push(message(t(1), 0, 1007, "https://ci.fluxer.app/1843", json!({"embeds": [{"type": "rich", "title": "Build #1843 failed", "url": "https://ci.fluxer.app/1843",
                 "description": "2 tests failed on `main`:\n- `store::ack`\n- `gateway::resume`", "color": 0xED4245,
                 "author": {"name": "Fluxer CI", "url": "https://ci.fluxer.app", "icon_url": "https://ci.fluxer.app/i.png", "proxy_icon_url": "https://media.fluxer.app/external/sig/ci.png"},
@@ -975,20 +1060,46 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "invite" => {
             msgs.push(message(t(1), 0, 1001, "come hang out https://fluxer.gg/rustlang and https://fluxer.gg/gone", json!({})));
-            msgs.push(message(t(2), 0, 1003, "also https://fluxer.gg/hq", json!({})));
-            let inv = |code: &str, id: u64, name: &str| -> super::invite_embed::Preview {
-                let v = json!({"code": code, "type": 0, "guild": {"id": id.to_string(), "name": name, "icon": "demo"},
-                               "channel": {"id": "1", "name": "general", "type": 0}, "member_count": 12873, "presence_count": 2041});
+            msgs.push(message(t(2), 0, 1003, "also https://fluxer.gg/hq and https://fluxer.gg/closed", json!({})));
+            let inv = |code: &str, id: u64, name: &str, extra: Value| -> super::invite_embed::Preview {
+                let mut g = json!({"id": id.to_string(), "name": name, "icon": "demo"});
+                g.as_object_mut().expect("guild").extend(extra.as_object().cloned().unwrap_or_default());
+                let v = json!({"code": code, "type": 0, "guild": g, "channel": {"id": "1", "name": "general", "type": 0}, "member_count": 12873, "presence_count": 2041});
                 super::invite_embed::Preview::Ready(Box::new(serde_json::from_value(v).expect("invite")))
             };
-            st.media_ui.invites.insert("rustlang".into(), inv("rustlang", 9900, "Rust Programming"));
+            st.media_ui.invites.insert("rustlang".into(), inv("rustlang", 9900, "Rust Programming", json!({"features": ["VERIFIED"], "embed_splash": "demo"})));
             st.media_ui.invites.insert("gone".into(), super::invite_embed::Preview::Unknown);
-            st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ"));
+            st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ", json!({"features": ["PARTNERED"]})));
+            st.media_ui.invites.insert("closed".into(), inv("closed", 9901, "Quiet Corner", json!({"features": ["INVITES_DISABLED", "DISCOVERABLE"]})));
+        }
+        "system" => {
+            let call = |end: Option<u64>, who: &[u64]| json!({"type": 3, "call": {"participants": who.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
+                "ended_timestamp": end.map(iso)}});
+            msgs.push(message(t(1), 0, 1001, "", json!({"type": 6, "message_reference": {"channel_id": GENERAL.to_string(), "message_id": "1"}})));
+            msgs.push(message(t(2), 0, 1002, "", json!({"type": 1, "mentions": [user(1003, "grace", "Grace Hopper")]})));
+            msgs.push(message(t(3), 0, 1004, "", json!({"type": 2, "mentions": [user(1004, "alan", "Alan Turing")]})));
+            msgs.push(message(t(4), 0, 1003, "release-crew", json!({"type": 4})));
+            msgs.push(message(t(5), 0, 1003, "", json!({"type": 5})));
+            msgs.push(message(t(6), 0, 1001, "Fluxer News #announcements", json!({"type": 12})));
+            msgs.push(message(t(7), 0, 1006, "", call(Some(t(7) + 754_000), &[1006])));
+            msgs.push(message(t(9), 0, ME, "", call(Some(t(9) + 30_000), &[ME])));
+            msgs.push(message(t(10), 0, 1002, "", call(None, &[1002])));
+        }
+        "markup" => {
+            msgs.push(message(t(1), 0, 1001, "> [!NOTE]\n> Useful information.\n\n> [!TIP]\n> Helpful advice.\n\n> [!IMPORTANT]\n> Key information.\n\n> [!WARNING]\n> Needs attention.\n\n> [!CAUTION]\n> Negative outcomes.", json!({})));
+            msgs.push(message(t(2), 0, 1002, "| Name | Role | Lines |\n|:-----|:----:|------:|\n| Ada | **Docs** | 12 |\n| Grace | Compiler | 3400 |\n| Alan | `tests` | 7 |", json!({})));
         }
         "link" => st.media_ui.link_warning = Some(("https://example.com/some/long/path?q=1".into(), false)),
-        "nsfw" => {
+        "nsfw" | "nsfw-check" | "nsfw-geo" => {
             if let Some(c) = store.channels.get_mut(&Snowflake(GENERAL)) {
                 c.nsfw_override = Some(true);
+            }
+            if let Some(me) = store.me.as_mut() {
+                me.nsfw_allowed = scene != "nsfw-check";
+            }
+            if scene == "nsfw-geo" {
+                st.media_ui.age_geos = vec![("GB".into(), None)];
+                st.expr.fetched.insert(super::attachments::GEO.into(), super::expr::Fetched::Done(json!({"countryCode": "GB"})));
             }
         }
         "blur" => {

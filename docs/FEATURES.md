@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -36,7 +36,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### 1.2 Community settings (ours guild/settings.rs)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Overview | PARTIAL | no invite page / invite modal preview buttons; threshold date is typed (no date picker); images are taken as picked, not through AssetCropModal | guild_tabs/guild_overview_tab/* |
+| Overview | PARTIAL | no invite page / invite modal preview buttons; images are taken as picked, not through AssetCropModal (threshold date uses the DateTimePickerField kit) | guild_tabs/guild_overview_tab/* |
 | Roles | PARTIAL | uploads are centre-cropped (no crop modal); members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
 | Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
 | Activity log | PARTIAL | change details are labelled `Field: old → new` rows (humanised labels, Yes/No, joined lists), not Fluxer's per-action sentences; "Load more" button instead of scroll paging; user filter lists known members | guild_tabs/GuildAuditLogTab.tsx |
@@ -88,13 +88,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Rail drag-reorder / create folder | DONE | | F/app/components/layout/dnd/* |
 | Favorites | DONE | (synced_preferences field 40; no base-hash conflict retry) | FavoritesButton.tsx |
 | Set custom status | DONE | | CustomStatusModal.tsx |
-| Nagbars (connection, notice, maintenance…) | PARTIAL | instance notice, maintenance, desktop-notification, premium ones (connection, update, streamer, verify done) | app_layout/nagbars/* |
+| Nagbars (connection, notice, maintenance…) | DONE | maintenance polls Instatus every 60 s flat; price-announcement nagbars need Stripe billing state; Manage/Reactivate open the web Plutonium page; desktop-notification nagbar never shows on desktop (as Fluxer) | app_layout/nagbars/* |
 | Skeletons | DONE | | F/app/components/skeleton/* |
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
 | Toasts | DONE | only used by add-to-dictionary so far | Toasts.tsx |
 | Pop-out windows | PARTIAL | one voice pop-out at a time (Fluxer keeps several, keyed by call/tile); no Quick CSS editor pop-out; Fluxer has no chat pop-outs |  | PopoutWindow.tsx |
-| Error / rate-limit modals | PARTIAL | | GenericErrorModal.tsx |
+| Error / rate-limit modals | DONE | DM-restricted/content-blocked texts are the modal body | GenericErrorModal.tsx |
 
 ### channel/
 | Feature | Status | Missing | Official source |
@@ -105,44 +105,44 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Topic modal | DONE | | ChannelTopicModal.tsx |
 | Announcement follow | DONE | | ChannelFollowModal.tsx |
 | DM call buttons | DONE | | CallButtons.tsx |
-| Compact layout | PARTIAL | text wraps under its own start, not 32px under the name (no negative text-indent in Rune) | CompactMessageLayout.tsx |
+| Compact layout | PARTIAL | impossible in Rune: no text-indent, and a placeholder run of spaces would leak into copied text and break messages that open with a block (fence, quote, list, heading); text wraps under its own start, not 32px under the name | CompactMessageLayout.tsx |
 | Welcome sections | DONE | | ChannelWelcomeSection.tsx |
 | Blocked message groups | DONE | | BlockedMessageGroups.tsx |
 | Typing indicator tiers | DONE | (tier strings >4 typers are English-only) | ChannelTyping.tsx |
-| Rich composer (pills, toolbar) | PARTIAL | custom emoji pills show `:name:`; toolbar sits at the composer's left, not over the selection | F/lexical/* |
-| Emoji / GIF / sticker / memes pickers | PARTIAL | right-click Favorite/Copy menu; sticker sends at once (no pending sticker); GIF favorites import/export; saved-media upload/delete; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
+| Rich composer (pills, toolbar) | PARTIAL | custom emoji pills show `:name:`: impossible without a Rune change (pill chips take only a vector `Icon` and no pill rect is exposed to overlay the image); toolbar floats over the selection, centred on its caret end (Rune exposes the caret rect, not the range's) | F/lexical/* |
+| Emoji / GIF / sticker / memes pickers | PARTIAL | right-click menu lacks "Clone to…" (on the info card) and reverse image search; "Add to saved media" from message media (AddFavoriteMemeModal) and saved-media edit; premium upsell; frecency/favorites local, not synced via settings proto | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
 | Composer context menu | DONE | | TextareaContextMenu.tsx |
 | Slash commands | DONE | no option hints | useCommands.ts |
 | @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
 | Attachments | PARTIAL | video/audio play through GStreamer on Linux (`gst` feature, default) and Rune's `Player` on macOS; Windows keeps "Open in browser" (pre-signed and multipart uploads live-verified) | embeds/attachments/* |
-| Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
-| Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
-| NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
-| Guild members page | PARTIAL | no "Custom range…" date filter (no date picker) | GuildMembersPage.tsx |
-| DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
+| Embeds | PARTIAL | YouTube opens the browser: impossible inline (the embed carries only an iframe URL, no stream); gifv plays only on Linux (GStreamer), a still elsewhere | RichEmbed.tsx |
+| Invite embed | DONE | custom badge ids aren't drawn (built-in badges only) | InviteEmbed.tsx |
+| NSFW gate / blur | DONE | region shown as its ISO code; no "Learn more" link | MatureContentChannelGate.tsx |
+| Guild members page | DONE | | GuildMembersPage.tsx |
+| DM list | DONE | | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
 | Group DM management | DONE | | EditGroupModal.tsx |
 | Active Now | DONE |  | ActiveNowSidebar.tsx |
 | Private channel create step | DONE | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
-| Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
-| Call system message / system message wording | PARTIAL | call message has no inline "Join the call" link; other system messages generic | CallMessage.tsx, SystemMessageUtils.tsx |
+| Search UI | DONE | jump highlight also tints the matching result (unchecked vs Fluxer) | message_search_bar/* |
+| Call system message / system message wording | DONE | missed-call icon not mirrored; English list joining | CallMessage.tsx, SystemMessageUtils.tsx |
 
 ### messaging/
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Send/edit/delete/reply/react/pin/unread/copy, delete confirm, error modals | DONE | (live-verified against a real instance, `--live=write`: nonce dedupe, edit, react, reply, pin/unpin, mark unread, delete) | |
-| Offline queue | PARTIAL | | MessageQueue.tsx |
-| Action bar / context menu | PARTIAL | shift layout | MessageContextMenu.tsx |
+| Offline queue | DONE | failed text sends stay (Retry/Delete), file sends go back to the composer; Fluxer has no queue-while-disconnected either | MessageQueue.tsx |
+| Action bar / context menu | DONE | | MessageContextMenu.tsx |
 | Forward | DONE | | ForwardModal.tsx |
 | Saved messages | DONE | (the inbox's Bookmarks tab, bookmark/unbookmark in the message menu) | SavedMessagesPage.tsx |
-| Inbox / recent mentions | PARTIAL | no paging past 25; unread tab lists channels only | InboxPopout.tsx |
-| Who reacted | PARTIAL | reactors past the first 100; filter right-click "Remove reaction" (it's in the message menu) | ReactionTooltip.tsx, MessageReactionsModal.tsx |
+| Inbox / recent mentions | DONE | | InboxPopout.tsx |
+| Who reacted | DONE | filter right-click "Remove reaction" is in the message menu | ReactionTooltip.tsx, MessageReactionsModal.tsx |
 | Media viewer | DONE | | MediaModal.tsx |
 | Edit alt text | DONE | single-line field | EditAltTextModal.tsx |
 | External link warning | DONE | | ExternalLinkWarningModal.tsx |
-| Markdown alerts/tables | PARTIAL | | markdown/renderers/* |
+| Markdown alerts/tables | DONE | | markdown/renderers/* |
 | Code highlighting | DONE | | F/code_highlighting/* |
 | Crosspost | DONE | | MessageCrosspostConfirmModal.tsx |
 
@@ -151,7 +151,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Desktop notifications | PARTIAL | clicks on Win/mac | MessageNotificationPreview.ts |
 | Sounds, status select, custom status display | DONE | | |
-| Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
+| Acks | DONE | | NotificationAutoAck.ts |
 | Timed mute expiry | DONE | | useMuteSheet.ts |
 | Per-channel overrides | DONE | header bell + the notification modal's overrides section | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
@@ -226,7 +226,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
 | Invite: friends list, accept preview, pause | DONE | | F/invite/* |
 | Discovery page | DONE | load-more pages via `offset` | DiscoveryPage.tsx |
-| Search UI chips/suggestions, history | PARTIAL | filter + value suggestions, per-scope history and keyboard nav done; no chips, scope menu or date pickers | F/search/* |
+| Search UI chips/suggestions, history | DONE | desktop has token styling (chips are mobile-only in Fluxer); unapplied-token wavy warning not drawn | F/search/* |
 | Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |

@@ -370,3 +370,14 @@ fn calls_follow_create_update_delete() {
     apply(&mut s, "CALL_DELETE", json!({"channel_id":"50"}));
     assert!(s.calls.is_empty() && !s.voice_states.contains_key(&(None, Snowflake(7))));
 }
+
+#[test]
+fn pinned_dms_sort_first_in_pin_order() {
+    let mut s = Store::default();
+    for (id, last) in [(1u64, 30u64), (2, 20), (3, 10)] {
+        apply(&mut s, "CHANNEL_CREATE", json!({"id": id.to_string(), "type": 1, "last_message_id": last.to_string()}));
+    }
+    assert_eq!(ids(&s.private_channels()), [1, 2, 3], "newest first");
+    s.pinned_dms = vec![S(3), S(2)];
+    assert_eq!(ids(&s.private_channels()), [3, 2, 1]);
+}

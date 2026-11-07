@@ -43,6 +43,8 @@
 "Favorite animations": "Favourite animations",
 "Favorite button": "Favourite button",
 "Favorite channels": "Favourite channels",
+"Favorite emoji": "Favourite emoji",
+"Favorite sticker": "Favourite sticker",
 "Favorited": "Favourited",
 "Favorites": "Favourites",
 "Folder color": "Folder colour",
@@ -51,6 +53,7 @@
 "Help center button in the sidebar": "Help centre button in the sidebar",
 "Hide the window when minimized and reopen from the tray": "Hide the window when minimised and reopen from the tray",
 "If you share this network, for example at school, at work, on public Wi-Fi, through your mobile carrier or a VPN, this block may have nothing to do with you. The quickest fix is to switch networks, for example to mobile data instead of Wi-Fi, or to turn your VPN on or off.": "If you share this network, for example at school, at work, on public Wi-Fi, through your mobile network or a VPN, this block may have nothing to do with you. The quickest fix is to switch networks, for example to mobile data instead of Wi-Fi, or to turn your VPN on or off.",
+"Import favorite GIFs": "Import favourite GIFs",
 "Invalid authorization request": "Invalid authorisation request",
 "Invite-only community": "Community accessible by invite only",
 "Localization": "Localisation",
@@ -80,11 +83,15 @@
 "Show strikethrough Markdown text in a slightly muted color.": "Show strikethrough Markdown text in a slightly muted colour.",
 "Start minimized": "Start minimised",
 "Theme color": "Theme colour",
+"This group is not marked for mature content. The group owner can turn on Mature content in the group settings if everyone in the group is 18 or older.": "This group isn't marked for mature content. The group owner can turn on Mature content in the group settings if everyone in the group is 18 or older.",
 "This thread is closed. Sending a message will open it again.": "This thread is closed. Sending a message will reopen it.",
 "Turn on at least one scope to authorize this app.": "Turn on at least one scope to authorise this app.",
 "Uncategorized": "Uncategorised",
+"Unfavorite emoji": "Unfavourite emoji",
+"Unfavorite sticker": "Unfavourite sticker",
 "Unread badge customization": "Unread badge customisation",
 "Use this device's system reduced motion preference, or customize it below.": "Use this device's system reduced motion preference, or customise it below.",
 "Voice channel join behavior": "Voice channel join behaviour",
-"You will be taken to {redirectHostname} after authorizing.": "You will be taken to {redirectHostname} after authorising."
+"You will be taken to {redirectHostname} after authorizing.": "You will be taken to {redirectHostname} after authorising.",
+"You're at the favorite GIF limit.": "You're at the favourite GIF limit."
 }

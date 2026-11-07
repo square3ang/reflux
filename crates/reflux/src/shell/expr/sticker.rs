@@ -2,14 +2,15 @@
 
 use std::rc::Rc;
 
-use reflux_model::{Channel, Permissions};
+use reflux_model::{Channel, Permissions, Snowflake};
 use reflux_store::Store;
-use rune::{El, Tx, col, el, row};
+use rune::{El, Tx, col, el, icon, row, text};
 
-use super::{CellCx, For, Grid, Item, ShellAccess, ShellState, close, grid_key, grid_list, hover_cell, inspector, rail, search_bar};
+use super::{CellCx, For, Grid, Item, ShellAccess, ShellState, close, grid_key, grid_list, hover_cell, inspector, with_menu, rail, search_bar};
 use crate::media::Load;
 use crate::shell::Intent;
-use crate::theme::Palette;
+use crate::icons;
+use crate::theme::{Palette, font};
 use crate::i18n::t;
 
 /// `STICKER_PICKER_ITEM_SIZE` (+ the 8px gap) over four columns.
@@ -39,13 +40,51 @@ fn all(store: &Store, st: &ShellState, channel: Option<&Channel>) -> Vec<Item> {
         .collect()
 }
 
-/// Sends the sticker on its own.
-// shortcut: Fluxer stages it beside a typed message (`pendingSticker`); this sends at once.
+/// `handleStickerSelect`: with text or files in the composer the sticker waits beside them
+/// (`setPendingSticker`); otherwise it goes at once.
 fn pick(st: &mut ShellState, item: &Item, _: bool, _: &mut Tx) {
     let (Some(For::Composer(channel)), Item::Sticker { id, .. }) = (st.expr.target, item) else { return };
-    st.intents.push(Intent::SendExtra { channel, sticker: Some(*id), meme: None });
+    if !st.composer.text.trim().is_empty() || !st.uploads.is_empty() {
+        st.pending_sticker = Some((channel, *id));
+    } else {
+        st.intents.push(Intent::SendExtra { channel, sticker: Some(*id), meme: None });
+    }
     st.expr.track(&item.key(), crate::app::now_ms());
     close(st);
+}
+
+/// `ChannelStickersArea`: the staged sticker (64px preview, `:name:`, description) and its remove
+/// button, above the composer field.
+pub fn pending<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let (_, id) = st.pending_sticker.filter(|(c, _)| *c == channel)?;
+    let x = store.guilds.values().flat_map(|g| g.stickers.iter()).find(|x| x.id == id);
+    let (name, desc) = x.map_or((String::new(), String::new()), |x| (x.name.clone(), x.description.clone()));
+    let mut info = col().gap(2.0).child(text(format!(":{name}:")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
+    if !desc.is_empty() {
+        info = info.child(text(desc).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
+    }
+    let remove = row()
+        .size(32.0, 32.0)
+        .center()
+        .radius(6.0)
+        .hover(p.background_modifier_hover)
+        .hover_group()
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(t("Remove sticker"))
+        .key("pending-sticker-remove")
+        .child(icon(&icons::X_BOLD, 20.0).color(p.text_primary_muted).group_color(p.text_primary))
+        .on_press(move |s: &mut S| acc(s).pending_sticker = None);
+    Some(
+        row().px(16.0).py(8.0).child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(row().size(64.0, 64.0).center().radius(6.0).fill(p.background_tertiary).child(image(&st.media, id, 56.0)))
+                .child(info)
+                .child(remove),
+        ),
+    )
 }
 
 fn cell<S: 'static>(cx: &CellCx, item: &Item, g: Grid, selected: bool, acc: ShellAccess<S>) -> El {
@@ -65,7 +104,7 @@ fn cell<S: 'static>(cx: &CellCx, item: &Item, g: Grid, selected: bool, acc: Shel
             if m.alt { st.expr.toggle_favorite(&it.key()) } else { pick(st, &it, m.shift, tx) }
         });
     c = if selected { c.fill(cx.p.background_modifier_selected) } else { c.hover(cx.p.background_modifier_selected) };
-    hover_cell(c, item.key(), acc)
+    with_menu(hover_cell(c, item.key(), acc), item, acc)
 }
 
 pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel>, _: For, p: &Palette, acc: ShellAccess<S>) -> (El, El) {

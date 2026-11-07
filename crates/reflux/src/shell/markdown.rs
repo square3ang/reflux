@@ -11,6 +11,7 @@ use reflux_store::Store;
 use rune::text::{Span, TextHighlight, TextSystem};
 use rune::{Color, El, Pixels, col, el, rich, row, text};
 
+use crate::i18n::t;
 use crate::media::Load;
 use crate::theme::{Palette, font};
 use crate::ui::mix;
@@ -432,19 +433,23 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
             .child(el().w(4.0).self_stretch().radius(4.0).fill(p.interactive_muted).mr(12.0))
             .child(col().grow(1.0).min_w(0.0).py(4.0).child(blocks(children, md, p.text_chat_muted))),
         Node::Alert { children, alert_type } => {
-            // shortcut: alerts draw as a tinted blockquote without the title row and icon.
-            let c = match alert_type {
-                reflux_markdown::AlertType::Note => p.alert_note_color,
-                reflux_markdown::AlertType::Tip => p.alert_tip_color,
-                reflux_markdown::AlertType::Important => p.alert_important_color,
-                reflux_markdown::AlertType::Warning => p.alert_warning_color,
-                reflux_markdown::AlertType::Caution => p.alert_caution_color,
+            // `AlertRenderer`: a 4px bar in the alert's colour, its icon and title, then the body.
+            use reflux_markdown::AlertType as A;
+            let (c, glyph, title) = match alert_type {
+                A::Note => (p.alert_note_color, &crate::icons::INFO, t("Note")),
+                A::Tip => (p.alert_tip_color, &crate::icons::LIGHTBULB_FILAMENT, t("Tip")),
+                A::Important => (p.alert_important_color, &crate::icons::WARNING, t("Important")),
+                A::Warning => (p.alert_warning_color, &crate::icons::WARNING_OCTAGON, t("Warning")),
+                A::Caution => (p.alert_caution_color, &crate::icons::WARNING_CIRCLE, t("Caution")),
             };
+            let (size, _) = body_size();
+            let title = row().gap(4.0).center_y().mb(4.0).child(rune::icon(glyph, size * 0.9375).color(c)).child(text(title).font(font(size * 0.9375, 600.0)).color(c));
             row()
                 .w_full()
-                .my(4.0)
+                .mt(4.0)
+                .mb(if last { 0.0 } else { 4.0 })
                 .child(el().w(4.0).self_stretch().radius(4.0).fill(c).mr(12.0))
-                .child(col().grow(1.0).min_w(0.0).py(4.0).child(blocks(children, md, color)))
+                .child(col().grow(1.0).min_w(0.0).py(6.0).pr(12.0).child(title).child(col().w_full().mt(4.0).child(blocks(children, md, color))))
         }
         Node::List { ordered, items } => {
             // margin 4 0 0 20; items 4 apart; the marker hangs in the left margin.
@@ -471,21 +476,44 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
         Node::Spoiler { children, .. } => {
             col().w_full().padding(4.0).radius(6.0).fill(mix(color, Color::TRANSPARENT, 16.0)).child(blocks(children, md, Color::TRANSPARENT))
         }
-        Node::Table { header, rows, .. } => {
-            // shortcut: tables render as one line per row, cells separated by " │ ".
-            let line = |r: &Node| {
-                let mut run = Run::default();
-                if let Node::TableRow { cells } = r {
-                    for (i, c) in cells.iter().enumerate() {
-                        if i > 0 {
-                            run.push_span(" │ ", |s| s.color(p.text_tertiary));
-                        }
+        Node::Table { header, rows, alignments } => {
+            // `TableRenderer`: 14px cells padded 8×12, at least 80 wide, a 600-weight header on
+            // `bg-table-header`, rows striped odd/even, inside a rounded border; too wide, it
+            // scrolls sideways. Columns are stacks of cells, so every cell is one line tall (the
+            // table is `max-content`, so cells don't wrap anyway).
+            let cells = |r: &Node| match r {
+                Node::TableRow { cells } => cells.clone(),
+                _ => Vec::new(),
+            };
+            let all: Vec<Vec<Node>> = std::iter::once(cells(header)).chain(rows.iter().map(cells)).collect();
+            let n = all.iter().map(Vec::len).max().unwrap_or(0);
+            let mut grid = row().radius(8.0).clip_rounded(8.0).border(1.0, p.border_color);
+            for ci in 0..n {
+                let mut column = col().min_w(80.0);
+                for (ri, r) in all.iter().enumerate() {
+                    let (bg, weight, fg) = match ri {
+                        0 => (p.bg_table_header, 600.0, p.text_primary),
+                        i if i % 2 == 1 => (p.bg_table_row_odd, 400.0, color),
+                        _ => (p.bg_table_row_even, 400.0, color),
+                    };
+                    let mut run = Run::default();
+                    if let Some(c) = r.get(ci) {
                         inline(c, Style::default(), &mut run, md);
                     }
+                    let align = match alignments.get(ci) {
+                        Some(reflux_markdown::TableAlignment::Center) => rune::Align::Center,
+                        Some(reflux_markdown::TableAlignment::Right) => rune::Align::End,
+                        _ => rune::Align::Start,
+                    };
+                    let cell = row().w_full().h(34.6).px(12.0).center_y().fill(bg);
+                    column = column.child(cell.children(run.el(14.0, 19.6, weight, fg, md).map(|t| t.align(align))));
+                    if ri + 1 < all.len() {
+                        column = column.child(el().w_full().h(1.0).fill(p.border_color));
+                    }
                 }
-                run.el(14.0, 20.0, 400.0, color, md).unwrap_or_else(el)
-            };
-            col().w_full().my(4.0).child(line(header).font(font(14.0, 600.0).lh(20.0))).children(rows.iter().map(line))
+                grid = grid.child(column);
+            }
+            row().w_full().mb(if last { 0.0 } else { 12.0 }).scroll_x().child(row().child(grid))
         }
         other => {
             let mut run = Run::default();

@@ -1,10 +1,11 @@
 //! The Media tab (`MemesPicker`): saved media from `/users/@me/memes`, filtered and searched,
 //! sent with `favorite_meme_id`.
 
-use rune::{El, col, row, text};
+use rune::{El, col, icon, row, text};
 use serde_json::Value;
 
 use super::{For, Fetched, ShellAccess, ShellState, close, search_bar};
+use crate::icons;
 use crate::shell::Intent;
 use crate::theme::{Palette, font};
 use crate::i18n::t;
@@ -73,6 +74,21 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                         });
                         let h = (w * mh / mw.max(1.0)).round().max(40.0);
                         let shown = (!video(&m) || url.ends_with(".gif") || url.contains(".gif?")).then_some(url.as_str());
+                        let (id, name) = (m["id"].as_str().unwrap_or_default().to_string(), m["name"].as_str().unwrap_or_default().to_string());
+                        // `MemeGridItem`'s hover Delete (the danger action button).
+                        let delete = row()
+                            .pin(None, Some(6.0), Some(6.0), None)
+                            .size(28.0, 28.0)
+                            .center()
+                            .radius(6.0)
+                            .fill(rune::Color { a: 0.6, ..rune::Color::BLACK })
+                            .hover(p.status_danger)
+                            .cursor(rune::Cursor::Pointer)
+                            .role("button")
+                            .label(t("Delete saved media"))
+                            .child(icon(&icons::TRASH_FILL, 18.0).color(rune::Color::WHITE))
+                            .group_opacity(0.0, 1.0)
+                            .on_press(move |s: &mut S| acc(s).expr.confirm_meme = Some((id.clone(), name.clone())));
                         let e = rune::el()
                             .size(w, h)
                             .radius(6.0)
@@ -80,7 +96,9 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                             .cursor(rune::Cursor::Pointer)
                             .role("button")
                             .label(m["name"].as_str().unwrap_or("Media").to_string())
+                            .hover_group()
                             .child(super::gif::image(st, shown, w, h, p))
+                            .child(delete)
                             .on_press(move |s: &mut S| pick(acc(s), &m));
                         (e, h)
                     })
@@ -92,6 +110,25 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         _ => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     (bar, body)
+}
+
+/// `buildDeleteMemeConfirmation`: deletes on confirm and drops the tile at once.
+pub fn confirm_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    use crate::ui::{Button, ButtonVariant, Modal};
+    let Some((id, name)) = st.expr.confirm_meme.clone() else { return };
+    let close = move |s: &mut S| acc(s).expr.confirm_meme = None;
+    let body = text(crate::i18n::tf("Delete \"{memeName}\"? Can't be undone.", &[("memeName", &name)])).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
+    let delete = Button::new(t("Delete")).variant(ButtonVariant::Danger).on_press(move |s: &mut S| {
+        let st = acc(s);
+        st.expr.confirm_meme = None;
+        if let Some(Fetched::Done(Value::Array(list))) = st.expr.fetched.get_mut("memes") {
+            list.retain(|m| m["id"].as_str() != Some(id.as_str()));
+        }
+        super::send(st, reqwest::Method::DELETE, format!("/users/@me/memes/{id}"), None);
+        crate::desktop::toast(&mut st.desktop, "Removed from saved media", true);
+    });
+    let footer = row().gap(8.0).child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p)).child(delete.el(p));
+    layer.push(Modal::new(t("Delete saved media"), close).body(body).footer(footer).el(p));
 }
 
 #[cfg(test)]
