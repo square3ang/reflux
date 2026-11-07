@@ -4821,6 +4821,7 @@ dependencies = [
  "fastrand",
  "futures-util",
  "hex",
+ "keyring",
  "pbkdf2",
  "reflux-model",
  "reflux-store",

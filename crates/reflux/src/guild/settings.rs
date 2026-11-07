@@ -810,22 +810,35 @@ fn audit_path(g: Snowflake, f: &Form, before: Option<Snowflake>) -> String {
     q
 }
 
-/// A changed value as text: strings bare, the rest as JSON.
+/// A changed value as text, the way Fluxer's change details read: strings bare, booleans as
+/// Yes/No, arrays joined, the rest as JSON.
 fn change_value(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
+        Value::Bool(true) => t("Yes").to_string(),
+        Value::Bool(false) => t("No").to_string(),
+        Value::Array(a) => a.iter().map(change_value).collect::<Vec<_>>().join(", "),
         v => v.to_string(),
     }
 }
 
+/// A changed field's label (`ChangeDetails`): `mention_everyone` → "Mention everyone".
+fn change_label(key: &str) -> String {
+    let mut s = key.replace('_', " ");
+    if let Some(c) = s.get_mut(0..1) {
+        c.make_ascii_uppercase();
+    }
+    t(&s).to_string()
+}
+
 /// One `changes` row: (tone glyph, line). `+` added, `−` removed, `•` changed.
 fn change_line(c: &Value) -> (&'static str, String) {
-    let key = c.get("key").and_then(Value::as_str).unwrap_or("?");
+    let key = change_label(c.get("key").and_then(Value::as_str).unwrap_or("?"));
     match (c.get("old_value").filter(|v| !v.is_null()), c.get("new_value").filter(|v| !v.is_null())) {
         (None, Some(n)) => ("+", format!("{key}: {}", change_value(n))),
         (Some(o), None) => ("−", format!("{key}: {}", change_value(o))),
         (Some(o), Some(n)) => ("•", format!("{key}: {} → {}", change_value(o), change_value(n))),
-        (None, None) => ("•", key.to_string()),
+        (None, None) => ("•", key),
     }
 }
 
@@ -889,7 +902,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
             let id = e.id.to_string();
             let open = cur("audit-open") == id;
             if open {
-                // shortcut: generic `key: old → new` lines, not Fluxer's per-action sentences.
+                // Fluxer words some actions as a sentence; here every change is a labelled line.
                 c = c.child(col().w_full().gap(4.0).pt(8.0).children(e.changes.iter().map(|ch| {
                     let (glyph, line) = change_line(ch);
                     let tone = match glyph {
@@ -947,8 +960,9 @@ mod tests {
         f.data.insert("audit-user".into(), json!("7"));
         f.data.insert("audit-action".into(), json!(""));
         assert_eq!(audit_path(Snowflake(1), &f, Some(Snowflake(9))), "/guilds/1/audit-logs?limit=50&user_id=7&before=9");
-        assert_eq!(change_line(&json!({ "key": "name", "old_value": "a", "new_value": "b" })), ("•", "name: a → b".into()));
-        assert_eq!(change_line(&json!({ "key": "nsfw", "new_value": true })), ("+", "nsfw: true".into()));
-        assert_eq!(change_line(&json!({ "key": "topic", "old_value": "x" })), ("−", "topic: x".into()));
+        assert_eq!(change_line(&json!({ "key": "name", "old_value": "a", "new_value": "b" })), ("•", t("Name: a → b").into()));
+        assert_eq!(change_line(&json!({ "key": "nsfw", "new_value": true })), ("+", t("Nsfw: Yes").into()));
+        assert_eq!(change_line(&json!({ "key": "mention_everyone", "old_value": false, "new_value": true })), ("•", t("Mention everyone: No → Yes").into()));
+        assert_eq!(change_line(&json!({ "key": "topic", "old_value": "x" })), ("−", t("Topic: x").into()));
     }
 }
