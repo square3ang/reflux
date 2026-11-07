@@ -604,6 +604,12 @@ impl Store {
     /// (unread, mention total) over the viewable channels of a guild. Muted channels don't make
     /// the guild unread but their mentions still count.
     pub fn guild_unread(&self, guild: Snowflake) -> (bool, u32) {
+        self.guild_unread_with(guild, |_| None)
+    }
+
+    /// [`Self::guild_unread`] with a channel's unread badge level (`resolveGuildReadStateContribution`):
+    /// all messages counts its unread even when muted; only mentions or nothing don't count it.
+    pub fn guild_unread_with(&self, guild: Snowflake, level: impl Fn(&Channel) -> Option<NotificationLevel>) -> (bool, u32) {
         let mut unread = false;
         let mut mentions = 0;
         for c in self.channels.values().filter(|c| c.guild_id == Some(guild)) {
@@ -612,7 +618,12 @@ impl Store {
             }
             mentions += self.mention_count(c.id);
             // Threads count only when joined (`getThreadContribution`).
-            unread |= (!c.kind.is_thread() || c.member.is_some()) && !self.is_muted(c) && self.has_unread(c.id);
+            let allowed = match level(c) {
+                Some(NotificationLevel::ALL_MESSAGES) => true,
+                Some(NotificationLevel::NO_MESSAGES | NotificationLevel::ONLY_MENTIONS) => false,
+                _ => !self.is_muted(c),
+            };
+            unread |= (!c.kind.is_thread() || c.member.is_some()) && allowed && self.has_unread(c.id);
         }
         (unread, mentions)
     }

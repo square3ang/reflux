@@ -163,7 +163,7 @@ fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, rows: &Rc<Ve
     let selected = st.guild == Some(id) && !st.nav.favorites;
     let lit = selected || st.hover_guild == Some(Some(id));
     let name = store.guilds.get(&id).and_then(|g| g.info.as_ref()).map_or("", |i| i.name.as_str());
-    let (unread, mentions) = store.guild_unread(id);
+    let (unread, mentions) = super::unread_badges::guild(store, id);
     let drag = st.nav.drag;
     let face = match drag {
         // `CombinePreview`: the target and the dragged guild in a ringed 2×2 grid.
@@ -306,7 +306,7 @@ fn folder_item<S: 'static>(store: &Store, st: &ShellState, folder: &GuildFolder,
     let mut unread = false;
     let mut mentions = 0;
     for &g in guilds {
-        let (u, m) = store.guild_unread(g);
+        let (u, m) = super::unread_badges::guild(store, g);
         unread |= u;
         mentions += m;
     }

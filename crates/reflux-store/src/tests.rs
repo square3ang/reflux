@@ -413,3 +413,15 @@ fn mention_order_follows_arrival_and_reads() {
     apply(&mut s, "MESSAGE_CREATE", mention(2003, 102));
     assert_eq!(s.mention_order, [S(101), S(102)], "read, then mentioned again: it moves to the end");
 }
+
+#[test]
+fn guild_unread_honours_badge_levels() {
+    use reflux_model::NotificationLevel as L;
+    let mut s = store();
+    apply(&mut s, "MESSAGE_CREATE", msg(2000, 101, 6));
+    assert!(s.guild_unread(S(G)).0);
+    assert!(!s.guild_unread_with(S(G), |_| Some(L::ONLY_MENTIONS)).0, "only mentions hides plain unread");
+    apply(&mut s, "USER_GUILD_SETTINGS_UPDATE", json!({"guild_id": G.to_string(), "muted": true}));
+    assert!(!s.guild_unread(S(G)).0);
+    assert!(s.guild_unread_with(S(G), |_| Some(L::ALL_MESSAGES)).0, "all messages shows unread even when muted");
+}

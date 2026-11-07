@@ -16,6 +16,11 @@ pub fn level(store: &Store, c: &Channel) -> Option<NotificationLevel> {
     ov(c.id).or_else(|| c.parent_id.and_then(ov)).or_else(|| explicit(s.unread_badges))
 }
 
+/// The rail's (unread, mentions) for a community with the channels' levels applied.
+pub fn guild(store: &Store, g: reflux_model::Snowflake) -> (bool, u32) {
+    store.guild_unread_with(g, |c| level(store, c))
+}
+
 /// What the row shows: (unread indicator, mention count, highlighted name, dimmed indicator).
 pub fn apply(level: Option<NotificationLevel>, unread: bool, mentions: u32) -> (bool, u32, bool, bool) {
     match level {
