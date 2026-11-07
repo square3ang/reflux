@@ -20,11 +20,14 @@ pub struct Input<'a, S: 'static> {
     secure: bool,
     /// `<Textarea>`: wraps and takes Enter, at least this tall.
     multiline: Option<f32>,
+    /// `leftElement` / `rightElement`: buttons inside the box beside the text.
+    left: Option<El>,
+    right: Option<El>,
 }
 
 impl<'a, S: 'static> Input<'a, S> {
     pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
-        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None }
+        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None, left: None, right: None }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
@@ -32,6 +35,8 @@ impl<'a, S: 'static> Input<'a, S> {
     pub fn password(mut self, revealed: bool, toggle: fn(&mut S)) -> Self { self.password = Some((revealed, toggle)); self }
     pub fn secure(mut self) -> Self { self.secure = true; self }
     pub fn multiline(mut self, min_h: f32) -> Self { self.multiline = Some(min_h); self }
+    pub fn left(mut self, e: El) -> Self { self.left = Some(e); self }
+    pub fn right(mut self, e: El) -> Self { self.right = Some(e); self }
 
     pub fn el(self, p: &Palette) -> El {
         let style = font(14.0, 400.0).lh(20.0);
@@ -68,9 +73,10 @@ impl<'a, S: 'static> Input<'a, S> {
         let mut boxed = row()
             .w_full()
             .min_h(44.0)
-            .pl(17.0)
-            .pr(if self.password.is_some() { 49.0 } else { 17.0 })
+            .pl(if self.left.is_some() { 5.0 } else { 17.0 })
+            .pr(if self.password.is_some() { 49.0 } else if self.right.is_some() { 5.0 } else { 17.0 })
             .py(if self.multiline.is_some() { 11.0 } else { 0.0 })
+            .gap(if self.left.is_some() || self.right.is_some() { 4.0 } else { 0.0 })
             .center_y()
             .radius(8.0)
             .fill(p.form_surface_background)
@@ -92,7 +98,7 @@ impl<'a, S: 'static> Input<'a, S> {
                     .child(icon(eye, 18.0).color(p.text_tertiary)),
             );
         } else {
-            boxed = boxed.child(field);
+            boxed = boxed.children(self.left).child(field).children(self.right);
         }
 
         let mut group = col().w_full().gap(6.0).child(boxed);

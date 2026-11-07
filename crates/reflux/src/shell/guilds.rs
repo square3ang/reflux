@@ -19,8 +19,11 @@ const ICON: f32 = dim::GUILD_ICON_SIZE;
 
 pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let rows = Rc::new(rail::rows(store, &st.nav.open));
+    // Up/Down move between the rail's items in keyboard mode.
     let mut list = col()
         .w_full()
+        .focus_group()
+        .role("list")
         .pt(dim::SPACING_1)
         .pb(user_area_overlay(st) + dim::SPACING_2)
         .child(home(store, st, p, acc))
@@ -108,7 +111,8 @@ fn slot<S: 'static>(
     if selected || hovered || unread {
         item = item.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p));
     }
-    let mut frame = el().size(ICON, ICON).child(face);
+    // The keyboard ring hugs the icon (the row is wider than the rail's clip).
+    let mut frame = el().size(ICON, ICON).radius(ICON / 2.0).focus_ring(4.0, 0.0, p.focus_primary).child(face);
     if let Some(b) = badge {
         // `.guildBadge` sits 4px past the corner on a 3px `guild-badge-surface` cutout.
         frame = frame.child(
@@ -121,7 +125,7 @@ fn slot<S: 'static>(
     }
     item.child(frame)
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true)
         .on_hover_change(move |s: &mut S, inside, _| {
             let st = acc(s);
             if inside {
@@ -333,7 +337,7 @@ fn folder_item<S: 'static>(store: &Store, st: &ShellState, folder: &GuildFolder,
         .children(drop_marks(st, Slot::Folder(fid), p))
         .opacity(if st.nav.drag.is_some_and(|d| d.src == Slot::Folder(fid)) { 0.5 } else { 1.0 })
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(format!("{name} folder, {}", if open { "expanded" } else { "collapsed" }))
         .key(format!("folder-{}", fid.unwrap_or(0)))
         .on_hover_change(move |s: &mut S, inside, _| {
@@ -396,7 +400,7 @@ fn add_button<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
             .border_dash(4.0, 3.0)
             .hover(mix(p.text_primary, rune::Color::TRANSPARENT, 4.0))
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label("Add a Community")
             .on_press(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Add(crate::guild::AddView::Landing)))
             .child(icon(&icons::PLUS_BOLD, 20.0).color(p.text_primary)),
@@ -415,7 +419,7 @@ fn explore_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
             .hover(p.brand_primary)
             .hover_group()
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(t("Explore"))
             .key("rail-explore")
             .on_press(move |s: &mut S| {

@@ -211,49 +211,111 @@ fn time_format<S: 'static>(store: &reflux_store::Store, p: &Palette, acc: ShellA
 /// added from the composer's menu.
 fn spellcheck<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     use crate::desktop::spell::{DICTS, wanted};
+    let sub = |title: &str, content: El| col().w_full().gap(12.0).child(text(title.to_string()).font(font(15.0, 600.0).lh(19.5)).color(p.text_primary)).child(content);
+    let hint = |s: &str| text(s.to_string()).font(font(13.0, 400.0).lh(17.6)).color(p.text_primary_muted).wrap();
     let mut c = col().w_full().gap(16.0).child(switch(st, p, acc, t("Enable spellcheck"), None, |p| p.spellcheck, |p, v| p.spellcheck = v));
     if !st.prefs.spellcheck {
         return c;
     }
-    let active = wanted(&st.prefs);
-    let langs = col().w_full().gap(8.0).children(DICTS.iter().map(|d| {
-        let on = active.contains(&d.package);
-        let package = d.package;
-        crate::ui::Checkbox::new(on)
-            .size(18.0)
-            .label(d.name)
-            .on_toggle(move |s: &mut S| {
-                let sh = acc(s);
-                let mut prefs = sh.prefs.clone();
-                // Start from what's in effect, so the first pick keeps the language's own.
-                let mut list: Vec<String> = wanted(&prefs).into_iter().map(String::from).collect();
-                if on {
-                    list.retain(|p| p != package);
-                } else {
-                    list.push(package.into());
-                }
-                prefs.spell_langs = list;
-                sh.intents.push(Intent::Prefs(Box::new(prefs)));
-            })
-            .el(p)
-    }));
-    c = c
-        .child(text(t("Languages")).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary))
-        .child(text(t("Pick one or more dictionaries. Words from any selected dictionary are accepted, which is useful for multilingual chats.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap())
-        .child(langs);
-    if !st.prefs.words.is_empty() {
-        let words = col().w_full().gap(4.0).children(st.prefs.words.iter().map(|w| {
+    // Languages: detect while typing, else the dictionaries picked (`.dictionaryGrid`).
+    let mut langs = col().w_full().gap(12.0).child(switch(st, p, acc, t("Detect while typing"), None, |p| p.spell_auto, |p, v| p.spell_auto = v));
+    if !st.prefs.spell_auto {
+        let active = wanted(&st.prefs);
+        let cell = |d: &'static crate::desktop::spell::Dict| {
+            let on = active.contains(&d.package);
+            let package = d.package;
+            let r = row()
+                .w(0.0)
+                .grow(1.0)
+                .min_w(0.0)
+                .px(10.0)
+                .py(8.0)
+                .gap(8.0)
+                .center_y()
+                .radius(6.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("checkbox")
+                .checked(on)
+                .label(d.name)
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    let mut prefs = sh.prefs.clone();
+                    // Start from what's in effect, so the first pick keeps the language's own.
+                    let mut list: Vec<String> = wanted(&prefs).into_iter().map(String::from).collect();
+                    if on {
+                        list.retain(|p| p != package);
+                    } else {
+                        list.push(package.into());
+                    }
+                    prefs.spell_langs = list;
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                })
+                .child(crate::ui::Checkbox::<S>::new(on).size(18.0).el(p))
+                .child(text(d.name).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).grow(1.0).min_w(0.0).truncate())
+                .child(text(d.tag).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
+            if on { r.fill(p.background_modifier_selected) } else { r.hover(p.background_modifier_hover) }
+        };
+        let mut grid = col().w_full().gap(8.0);
+        for pair in DICTS.chunks(2) {
+            grid = grid.child(row().w_full().gap(8.0).children(pair.iter().map(cell)).children((pair.len() == 1).then(|| rune::el().w(0.0).grow(1.0))));
+        }
+        langs = langs.child(hint(t("Pick one or more dictionaries. Words from any selected dictionary are accepted, which is useful for multilingual chats."))).child(grid);
+    }
+    c = c.child(sub(t("Languages"), langs));
+    // Personal dictionary: add a word, then the words as removable chips.
+    let typed = st.form.text.get("spell.word").map(|e| e.text.trim().to_string()).unwrap_or_default();
+    let add = move |s: &mut S| {
+        let sh = acc(s);
+        let word = sh.form.text.get("spell.word").map(|e| e.text.trim().to_string()).unwrap_or_default();
+        if word.is_empty() {
+            return;
+        }
+        let mut prefs = sh.prefs.clone();
+        if !prefs.words.contains(&word) {
+            prefs.words.push(word);
+        }
+        sh.form.text.insert("spell.word".into(), rune::TextEdit::new(""));
+        sh.intents.push(Intent::Prefs(Box::new(prefs)));
+    };
+    let edit = st.form.text.get("spell.word").cloned().unwrap_or_else(|| rune::TextEdit::new(""));
+    let field = rune::text_input(&edit, font(14.0, 400.0).lh(20.0))
+        .single_line()
+        .key("spell-word")
+        .grow(1.0)
+        .min_w(0.0)
+        .px(10.0)
+        .py(8.0)
+        .radius(6.0)
+        .fill(p.form_surface_background)
+        .border(1.0, p.background_modifier_accent)
+        .color(p.text_primary)
+        .placeholder(t("Add a word…"), p.text_tertiary)
+        .caret(p.text_primary, p.background_modifier_selected)
+        .on_edit(move |s: &mut S| -> &mut rune::TextEdit { acc(s).form.text.entry("spell.word".into()).or_insert_with(|| rune::TextEdit::new("")) })
+        .on_submit(move |s: &mut S, _| add(s));
+    let add_row = row().w_full().gap(8.0).center_y().child(field).child(
+        crate::ui::Button::new(t("Add")).variant(crate::ui::ButtonVariant::Secondary).size(crate::ui::ButtonSize::Small).disabled(typed.is_empty()).key("spell-add").on_press(add).el(p),
+    );
+    let words = if st.prefs.words.is_empty() {
+        text(t("No personal words yet.")).font(font(13.0, 400.0).lh(17.6).italic()).color(p.text_primary_muted)
+    } else {
+        row().w_full().flex_wrap().gaps(6.0, 6.0).children(st.prefs.words.iter().map(|w| {
             let word = w.clone();
             let label = tf("Remove \"{word}\" from dictionary", &[("word", w)]);
             row()
-                .w_full()
-                .h(32.0)
-                .gap(8.0)
+                .py(4.0)
+                .pl(10.0)
+                .pr(8.0)
+                .gap(4.0)
                 .center_y()
-                .child(text(w.clone()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0))
+                .radius(999.0)
+                .fill(p.background_modifier_accent)
+                .child(text(w.clone()).font(font(13.0, 400.0).lh(17.0)).color(p.text_primary))
                 .child(
-                    rune::icon(&crate::icons::X_BOLD, 14.0)
-                        .color(p.text_tertiary)
+                    text("×")
+                        .font(font(14.0, 400.0).lh(14.0))
+                        .color(p.text_primary_muted)
+                        .px(2.0)
                         .cursor(rune::Cursor::Pointer)
                         .role("button")
                         .label(label)
@@ -264,8 +326,7 @@ fn spellcheck<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                             sh.intents.push(Intent::Prefs(Box::new(prefs)));
                         }),
                 )
-        }));
-        c = c.child(text(t("Dictionary")).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary)).child(words);
-    }
-    c
+        }))
+    };
+    c.child(sub(t("Personal dictionary"), col().w_full().gap(12.0).child(add_row).child(words)))
 }

@@ -1,7 +1,7 @@
 //! Favorites (`messaging/state/Favorites.ts`, `sidebar_nav/FavoritesButton`,
 //! `FavoritesGuildHeader`, `FavoritesChannelListContent`, `AddFavoriteChannelModal`).
-// shortcut: favorites live in the per-account local prefs, not the synced settings protobuf,
-// and have no categories, nicknames or drag reordering.
+// Synced through `synced_preferences` by [`super::favorites_sync`].
+// shortcut: categories and nicknames are kept in the snapshot but not shown; no drag reordering.
 
 use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;

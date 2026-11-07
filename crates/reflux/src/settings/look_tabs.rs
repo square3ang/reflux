@@ -18,7 +18,7 @@ use crate::ui::{Button, ButtonSize, ButtonVariant, RadioGroup, Select, Slider, S
 // ---- Helpers -------------------------------------------------------------------------------
 
 /// Saves a changed copy of the look preferences.
-fn update<S>(s: &mut S, acc: ShellAccess<S>, f: impl FnOnce(&mut Prefs)) {
+pub(super) fn update<S>(s: &mut S, acc: ShellAccess<S>, f: impl FnOnce(&mut Prefs)) {
     let sh = acc(s);
     let mut prefs = sh.prefs.clone();
     f(&mut prefs.look);
@@ -345,7 +345,7 @@ pub fn notifications<S: 'static>(store: &Store, st: &ShellState, p: &Palette, ac
                 .child(text(format!("{}%", look.volume.round())).font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary)),
         )
         .child(muted(t("Sets the level for every sound effect. Per-sound overrides ignore this."), p))
-        .child(Slider::new("master-volume", look.volume, 0.0, 100.0).step(1.0).on_change(move |s: &mut S, v| update(s, acc, |l| l.volume = v.clamp(0.0, 100.0))).el(p));
+        .child(Slider::new("master-volume", look.volume, 0.0, 200.0).step(1.0).on_change(move |s: &mut S, v| update(s, acc, |l| l.volume = v.round().clamp(0.0, 200.0))).el(p));
     let all = Switch::new(all_off)
         .label(t("Disable all notification sounds"))
         .description(t("Your existing notification sound settings will be preserved."))
@@ -364,7 +364,8 @@ pub fn notifications<S: 'static>(store: &Store, st: &ShellState, p: &Palette, ac
         .child(volume)
         .child(all)
         .child(muted(&tf("Click the upload icon next to any sound to customize it with your own audio file. Max {customSoundMaxSizeLabel}.", &[("customSoundMaxSizeLabel", &max)]), p))
-        .child(rows);
+        .child(rows)
+        .child(overrides(st, look, all_off, p, acc));
 
     let narration = [
         ("0", t("Every channel"), Some(t("Let every incoming message be spoken, regardless of which channel is open."))),
@@ -394,6 +395,100 @@ pub fn notifications<S: 'static>(store: &Store, st: &ShellState, p: &Palette, ac
         .child(section(t("Text-to-speech notifications"), tts, false, p))
 }
 
+/// The "Per-sound volume" accordion: a slider per sound that follows the master volume until moved.
+fn overrides<S: 'static>(st: &ShellState, look: &Prefs, all_off: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let open = st.form.data.contains_key("sound-overrides");
+    let n = look.sound_volumes.len();
+    let desc = if n > 0 {
+        tf("Active custom sound volume overrides: {overrideCount}.", &[("overrideCount", &n.to_string())])
+    } else {
+        t("Set custom volumes for individual sounds. Sounds without an override follow the master volume.").to_string()
+    };
+    let head = row()
+        .w_full()
+        .gap(12.0)
+        .py(8.0)
+        .center_y()
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .expanded(open)
+        .on_press(move |s: &mut S| {
+            let d = &mut acc(s).form.data;
+            if d.remove("sound-overrides").is_none() {
+                d.insert("sound-overrides".into(), json!(true));
+            }
+        })
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .gap(4.0)
+                .child(text(t("Per-sound volume")).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
+                .child(text(desc).font(font(13.0, 400.0).lh(18.0)).color(p.text_secondary).wrap()),
+        )
+        .child(rune::icon(if open { &crate::icons::CARET_UP_BOLD } else { &crate::icons::CARET_DOWN_BOLD }, 16.0).color(p.text_tertiary));
+    let mut c = col().w_full().px(12.0).radius(8.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).child(head);
+    if !open {
+        return c;
+    }
+    let pct = |v: f32| format!("{}%", v.round());
+    for snd in SOUNDS {
+        let id = snd.id();
+        let label = t(snd.label());
+        let over = look.sound_volumes.get(id).copied();
+        let value = over.unwrap_or(look.volume);
+        let enabled = look.sound_on(id);
+        let disabled = all_off || !enabled;
+        let shown = match over {
+            Some(_) => pct(value),
+            None => tf("Following master • {effectiveValue}", &[("effectiveValue", &pct(value))]),
+        };
+        let mute = rune::icon(if enabled { &crate::icons::SPEAKER_HIGH_FILL } else { &crate::icons::SPEAKER_X_FILL }, 14.0)
+            .color(if enabled { p.text_secondary } else { p.status_danger })
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(tf(if enabled { "Mute {label}" } else { "Unmute {label}" }, &[("label", label)]))
+            .on_press(move |s: &mut S| update(s, acc, |l| { l.sounds_off.insert(id.to_string(), enabled); }));
+        let mut header = row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).truncate().shrink())
+            .child(mute)
+            .child(el().grow(1.0))
+            .child(text(shown).font(font(12.0, 500.0).lh(16.0)).color(p.text_secondary));
+        if over.is_some() && !disabled {
+            header = header.child(
+                rune::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0)
+                    .color(p.text_tertiary)
+                    .cursor(rune::Cursor::Pointer)
+                    .role("button")
+                    .label(tf("Reset {label} to master volume", &[("label", label)]))
+                    .on_press(move |s: &mut S| update(s, acc, |l| { l.sound_volumes.remove(id); })),
+            );
+        }
+        let slider = Slider::new(format!("sound-volume-{id}"), value, 0.0, 200.0)
+            .step(1.0)
+            .disabled(disabled)
+            .on_change(move |s: &mut S, v| update(s, acc, |l| { l.sound_volumes.insert(id.to_string(), v.round().clamp(0.0, 200.0)); }))
+            .el(p);
+        c = c.child(col().w_full().gap(6.0).px(4.0).py(8.0).opacity(if over.is_some() { 1.0 } else { 0.78 }).child(header).child(slider));
+    }
+    if n > 0 && !all_off {
+        c = c.child(
+            row().w_full().py(8.0).child(
+                Button::new(t("Reset all overrides"))
+                    .variant(ButtonVariant::Secondary)
+                    .size(ButtonSize::Small)
+                    .key("sound-overrides-reset")
+                    .on_press(move |s: &mut S| update(s, acc, |l| l.sound_volumes.clear()))
+                    .el(p),
+            ),
+        );
+    }
+    c
+}
+
 /// One sound: its switch, preview, and custom file upload / removal.
 fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let id = snd.id();
@@ -403,7 +498,7 @@ fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, a
     let icon_btn = |icon: &'static rune::Icon, label: String| {
         rune::icon(icon, 16.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(label)
     };
-    let (volume, custom2) = (look.volume / 100.0, custom.clone());
+    let (volume, custom2) = (look.sound_gain(id), custom.clone());
     let mut r = row()
         .w_full()
         .h(40.0)
@@ -505,6 +600,7 @@ pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     col()
         .w_full()
         .child(section(t("Base theme"), buttons, true, p))
+        .child(section(t("Your themes"), super::theme_library::your_themes(st, p, acc), false, p))
         .child(colors(store, st, p, acc))
         .child(quick_css(st, p, acc))
         .child(share(st, p, acc))
@@ -559,6 +655,19 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
         );
     }
     let open = st.form.data.get("token-group").and_then(|v| v.as_str()).unwrap_or("");
+    // Typography: the font families (Rune swaps them with `Tx::set_font_families`).
+    let fonts: Vec<&'static str> = custom::FONTS.into_iter().filter(|n| search.is_empty() || n.contains(&search)).collect();
+    if !fonts.is_empty() {
+        let expanded = !search.is_empty() || open == "Typography";
+        out = out.child(group_head("Typography", fonts.len(), expanded, p, acc));
+        if expanded {
+            let set = custom::fonts(css);
+            out = out.children(fonts.into_iter().map(|name| {
+                let i = usize::from(name == "--font-mono");
+                font_row(st, name, set[i].clone(), [crate::theme::FAMILIES.0, crate::theme::FAMILIES.1][i], p, acc)
+            }));
+        }
+    }
     let mut base = base;
     for (group, _) in GROUPS {
         let names: Vec<&str> = crate::theme::NAMES.iter().copied().filter(|n| group_of(n) == group && (search.is_empty() || n.contains(&search))).collect();
@@ -566,30 +675,65 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
             continue;
         }
         let expanded = !search.is_empty() || open == group;
-        let head = row()
-            .w_full()
-            .h(36.0)
-            .gap(8.0)
-            .center_y()
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .child(rune::icon(if expanded { &crate::icons::CARET_DOWN_BOLD } else { &crate::icons::CARET_RIGHT_BOLD }, 14.0).color(p.text_tertiary))
-            .child(text(t(group)).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
-            .child(text(names.len().to_string()).font(font(12.0, 500.0).lh(16.0)).color(p.text_tertiary))
-            .on_press(move |s: &mut S| {
-                let form = &mut acc(s).form;
-                let same = form.data.get("token-group").and_then(|v| v.as_str()) == Some(group);
-                form.data.insert("token-group".into(), json!(if same { "" } else { group }));
-            });
-        out = out.child(head);
+        out = out.child(group_head(group, names.len(), expanded, p, acc));
         if !expanded {
             continue;
         }
         out = out.children(names.into_iter().map(|name| token_row(st, name, &overrides, base.get_mut(name).copied(), p, acc)));
     }
-    // shortcut: font, size and other non-colour variables can't be overridden (Rune draws with
-    // the bundled Fluxer fonts and fixed metrics).
+    // shortcut: sizes, spacing and other non-colour, non-font variables can't be overridden
+    // (Rune lays out with fixed metrics).
     section(t("Colors and fonts"), out, false, p)
+}
+
+/// A collapsible token group heading with its count.
+fn group_head<S: 'static>(group: &'static str, n: usize, expanded: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    row()
+        .w_full()
+        .h(36.0)
+        .gap(8.0)
+        .center_y()
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .child(rune::icon(if expanded { &crate::icons::CARET_DOWN_BOLD } else { &crate::icons::CARET_RIGHT_BOLD }, 14.0).color(p.text_tertiary))
+        .child(text(t(group)).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .child(text(n.to_string()).font(font(12.0, 500.0).lh(16.0)).color(p.text_tertiary))
+        .on_press(move |s: &mut S| {
+            let form = &mut acc(s).form;
+            let same = form.data.get("token-group").and_then(|v| v.as_str()) == Some(group);
+            form.data.insert("token-group".into(), json!(if same { "" } else { group }));
+        })
+}
+
+/// A font family token: the override (a CSS family list) or the bundled family it falls back to.
+fn font_row<S: 'static>(st: &ShellState, name: &'static str, value: Option<String>, base: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    let key = format!("tok-{name}");
+    let shown = value.clone().unwrap_or_else(|| base.to_string());
+    let input = field(st, &key, &shown, p, acc).single_line().font(font(13.0, 400.0).mono().lh(18.0)).on_submit(move |s: &mut S, _| {
+        let sh = acc(s);
+        let v = sh.form.text.get(&format!("tok-{name}")).map(|e| e.text.trim().to_string()).unwrap_or_default();
+        sh.form.text.remove("quick-css");
+        let base = if name == "--font-mono" { crate::theme::FAMILIES.1 } else { crate::theme::FAMILIES.0 };
+        update(s, acc, |l| l.css = custom::set_var(&l.css, name, (!v.is_empty() && v != base).then_some(v.as_str())));
+    });
+    let mut r = row()
+        .w_full()
+        .h(36.0)
+        .gap(12.0)
+        .pl(22.0)
+        .center_y()
+        .child(text("Aa").font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary).w(20.0))
+        .child(text(name).font(font(13.0, 400.0).mono().lh(18.0)).color(if value.is_some() { p.text_primary } else { p.text_secondary }).grow(1.0).min_w(0.0).truncate())
+        .child(row().w(200.0).px(8.0).py(4.0).radius(6.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).child(input.grow(1.0)));
+    if value.is_some() {
+        r = r.child(rune::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(t("Reset")).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.form.text.remove(&format!("tok-{name}"));
+            sh.form.text.remove("quick-css");
+            update(s, acc, |l| l.css = custom::set_var(&l.css, name, None));
+        }));
+    }
+    r
 }
 
 fn token_row<S: 'static>(st: &ShellState, name: &'static str, overrides: &[(String, String)], base: Option<rune::Color>, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -725,8 +869,8 @@ fn share<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     if let Some(s) = status {
         c = c.child(muted(&s, p));
     }
-    // shortcut: no theme library (saved themes, assets, backup files); the quick CSS is the theme.
-    section(t("Share your theme"), c, false, p)
+    c = c.children(super::theme_library::backup_rows(st, p, acc));
+    section(t("Share and back up"), c, false, p)
 }
 
 /// The ID in a theme link (`…/theme/<16 hex>`).

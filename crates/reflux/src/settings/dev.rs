@@ -1,7 +1,7 @@
 //! Developer tabs: `ApplicationsTab` (list, create, detail with secrets, bot profile and the
 //! OAuth2 URL builder) and `EmbedDebuggerTab` (`POST /unfurl`, its preview and raw JSON).
-// shortcut: the bot's avatar/banner and friendly-bot flags aren't editable, and a created app
-// stays on the list instead of opening its detail; add them when someone ships bots from Reflux.
+// shortcut: no discriminator field or username rule checklist in the bot profile, and the bot
+// banner preview is the profile card's (Fluxer shows an `ImagePreviewField`).
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -31,10 +31,30 @@ pub struct Dev {
     pub public: Option<bool>,
     pub code_grant: Option<bool>,
     pub redirects: Option<Vec<String>>,
+    /// The bot's friendly-bot flags, edited.
+    pub friendly: Option<bool>,
+    pub manual_approval: Option<bool>,
     /// The URL builder's picks.
     pub scopes: Vec<String>,
     pub redirect: Option<String>,
     pub perms: u64,
+}
+
+/// `PublicUserFlags.FRIENDLY_BOT` and `FRIENDLY_BOT_MANUAL_APPROVAL`.
+const FRIENDLY_BOT: u64 = 1 << 4;
+const FRIENDLY_BOT_MANUAL_APPROVAL: u64 = 1 << 5;
+
+/// Once a frame: a created application joins the list and its detail opens
+/// (`navigateToDetail(app.id, app)`).
+pub fn poll(st: &mut ShellState) -> bool {
+    let Some(app) = st.form.data.remove("dev.created") else { return false };
+    let Some(id) = app["id"].as_str().map(str::to_string) else { return false };
+    if let Some(Value::Array(list)) = st.form.data.get_mut("dev.apps") {
+        list.push(app);
+    }
+    st.nav.dev = Dev { app: Some(id), ..Dev::default() };
+    st.form.text.retain(|k, _| !k.starts_with("dev."));
+    true
 }
 
 pub(super) fn load(sh: &mut ShellState) {
@@ -151,7 +171,8 @@ fn create_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -
         }
         sh.nav.dev.create = false;
         sh.form.text.remove("dev.create");
-        sh.api(Method::POST, "/oauth2/applications", Some(json!({ "name": name, "redirect_uris": [] })), Then::Reload("dev.apps".into(), LIST.into()));
+        // `onCreated`: [`poll`] opens the new application.
+        sh.api(Method::POST, "/oauth2/applications", Some(json!({ "name": name, "redirect_uris": [] })), Then::Keep("dev.created".into()));
     };
     Modal::new(t("Create application"), close)
         .size(ModalSize::Small)
@@ -269,18 +290,71 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
     }
     let secrets = card(Some((t("Secrets & tokens"), Some(t("Keep these safe. Regenerating will break existing integrations.")), None)), secret_rows, p);
 
-    // Bot profile.
+    // Bot profile (`BotProfileSection`): avatar, username, bio, banner, friendly-bot flags.
+    let flags = bot["flags"].as_u64().unwrap_or(0);
+    let friendly = d.friendly.unwrap_or(flags & FRIENDLY_BOT != 0);
+    let manual = d.manual_approval.unwrap_or(flags & FRIENDLY_BOT_MANUAL_APPROVAL != 0);
     let bot_card = (!bot.is_null()).then(|| {
-        card(
-            Some((t("Bot profile"), Some(t("Avatar, tag, and rich profile details for your bot.")), None)),
-            vec![col()
-                .w_full()
-                .padding(16.0)
-                .gap(16.0)
-                .child(super::input(st, acc, "dev.bot_name", bot["username"].as_str().unwrap_or_default(), t("Username"), "", false, p))
-                .child(super::input(st, acc, "dev.bot_bio", bot["bio"].as_str().unwrap_or_default(), t("Bot bio"), t("A helpful bot that does amazing things!"), false, p))],
-            p,
-        )
+        let bot_id = bot["id"].as_str().and_then(|i| i.parse().ok()).map(reflux_model::Snowflake);
+        let asset = |key: &'static str, kind: super::crop::Asset, has: bool, change: &str, remove: &str, p: &Palette| {
+            let shown = match st.form.data.get(key) {
+                Some(Value::Null) => false,
+                Some(_) => true,
+                None => has,
+            };
+            let mut r = row().gap(8.0).child(Button::<S>::new(change).size(crate::ui::ButtonSize::Small).el(p).on_press_tx(super::profile::pick(acc, key, kind)));
+            if shown {
+                r = r.child(
+                    Button::new(remove)
+                        .variant(ButtonVariant::Ghost)
+                        .size(crate::ui::ButtonSize::Small)
+                        .on_press(move |s: &mut S| {
+                            acc(s).form.data.insert(key.into(), Value::Null);
+                        })
+                        .el(p),
+                );
+            }
+            r
+        };
+        let face = match (st.form.data.get("dev.bot_avatar"), bot_id) {
+            (Some(Value::String(u)), _) => super::profile::picked_px(st, u).map(|px| el().size(80.0, 80.0).radius(40.0).pixels_fit(&px, rune::SurfaceFit::Fill)),
+            (Some(_), _) | (None, None) => None,
+            (None, Some(b)) => bot["avatar"].as_str().and_then(|h| match st.media.asset(|base, s| crate::media::avatar_url(base, b, h, 80.0, s)) {
+                crate::media::Load::Ready(px) => Some(el().size(80.0, 80.0).radius(40.0).pixels_fit(&px, rune::SurfaceFit::Fill)),
+                _ => None,
+            }),
+        };
+        let initial = bot["username"].as_str().and_then(|n| n.chars().next()).map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+        let face = face.unwrap_or_else(|| row().size(80.0, 80.0).center().radius(40.0).fill(p.brand_primary).child(text(initial).font(font(32.0, 600.0)).color(p.brand_primary_fill)));
+        let mut fields = col()
+            .w_full()
+            .padding(16.0)
+            .gap(16.0)
+            .child(row().gap(16.0).center_y().child(face).child(asset("dev.bot_avatar", super::crop::Asset::Avatar, !bot["avatar"].is_null(), t("Change avatar"), t("Remove avatar"), p)))
+            .child(super::input(st, acc, "dev.bot_name", bot["username"].as_str().unwrap_or_default(), t("Username"), "", false, p))
+            .child(super::input(st, acc, "dev.bot_bio", bot["bio"].as_str().unwrap_or_default(), t("Bot bio"), t("A helpful bot that does amazing things!"), false, p))
+            .child(asset("dev.bot_banner", super::crop::Asset::ProfileBanner, !bot["banner"].is_null(), t("Change banner"), t("Remove banner"), p));
+        let banner = match (st.form.data.get("dev.bot_banner"), bot_id, bot["banner"].as_str()) {
+            (Some(Value::String(u)), ..) => super::profile::picked_px(st, u),
+            (None, Some(b), Some(h)) => crate::shell::profile::banner_px(st, b, h),
+            _ => None,
+        };
+        fields = fields.child(match banner {
+            Some(px) => el().w_full().aspect_fit(17.0 / 6.0).radius(8.0).pixels_fit(&px, rune::SurfaceFit::Fit),
+            None => row().w_full().h(96.0).center().radius(8.0).border(1.0, p.background_modifier_accent).child(muted(t("No bot banner").to_string(), p)),
+        });
+        // `shouldShowFriendSettings`.
+        fields = fields
+            .child(Switch::new(friendly).label(t("Friendly bot")).description(t("Allow users to send this bot friend requests for manual approval.")).on_toggle(move |s: &mut S| acc(s).nav.dev.friendly = Some(!friendly)).el(p))
+            .child(
+                Switch::new(manual)
+                    .label(t("Require manual friend approval"))
+                    .description(t("Friend requests to this bot need manual approval."))
+                    .disabled(!friendly)
+                    .on_toggle(move |s: &mut S| acc(s).nav.dev.manual_approval = Some(!manual))
+                    .el(p),
+            );
+        card(Some((t("Bot profile"), Some(t("Avatar, tag, and rich profile details for your bot.")), None)), vec![fields], p)
     });
 
     // OAuth2 URL builder.
@@ -334,7 +408,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
     );
     let builder = card(Some((t("OAuth2 URL builder"), Some(t("Construct an authorization URL with scopes and permissions.")), None)), vec![builder], p);
 
-    let (save_id, del_id, has_bot) = (id.clone(), id.clone(), !bot.is_null());
+    let (save_id, del_id, has_bot, bot_flags) = (id.clone(), id.clone(), !bot.is_null(), flags);
     let (init_name, init_bot, init_bio) = (app["name"].as_str().unwrap_or_default().to_string(), bot["username"].as_str().unwrap_or_default().to_string(), bot["bio"].as_str().unwrap_or_default().to_string());
     let save = move |s: &mut S| {
         let sh = acc(s);
@@ -343,11 +417,21 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
             patch["redirect_uris"] = json!(r);
         }
         if has_bot {
-            let bot = json!({ "username": sh.form.value("dev.bot_name", &init_bot).trim(), "bio": sh.form.value("dev.bot_bio", &init_bio) });
+            let mut bot = json!({ "username": sh.form.value("dev.bot_name", &init_bot).trim(), "bio": sh.form.value("dev.bot_bio", &init_bio) });
+            for (key, field) in [("dev.bot_avatar", "avatar"), ("dev.bot_banner", "banner")] {
+                if let Some(v) = sh.form.data.get(key) {
+                    bot[field] = v.clone();
+                }
+            }
+            // Only the two friendly bits change (`ApplicationDetail.handleSave`).
+            let next = (bot_flags & !(FRIENDLY_BOT | FRIENDLY_BOT_MANUAL_APPROVAL)) | if friendly { FRIENDLY_BOT } else { 0 } | if manual { FRIENDLY_BOT_MANUAL_APPROVAL } else { 0 };
+            if next != bot_flags {
+                bot["bot_flags"] = json!(next);
+            }
             sh.api(Method::PATCH, format!("/oauth2/applications/{save_id}/bot"), Some(bot), Then::Nothing);
         }
         sh.api(Method::PATCH, format!("/oauth2/applications/{save_id}"), Some(patch), Then::Saved { clear: "dev.".into(), reload: Some(("dev.apps".into(), LIST.into())) });
-        (sh.nav.dev.public, sh.nav.dev.code_grant, sh.nav.dev.redirects) = (None, None, None);
+        (sh.nav.dev.public, sh.nav.dev.code_grant, sh.nav.dev.redirects, sh.nav.dev.friendly, sh.nav.dev.manual_approval) = (None, None, None, None, None);
     };
     let delete = move |s: &mut S| {
         let sh = acc(s);
@@ -426,7 +510,7 @@ pub fn demo(sh: &mut ShellState, scene: &str) {
     sh.web_base = "https://web.fluxer.app".into();
     let tab = if scene == "embed-debugger" { "embed_debugger" } else { "applications" };
     sh.open_settings(Some(tab));
-    let bot = json!({ "id": "1400000000000000001", "username": "Fluxbot", "discriminator": "0420", "bio": "Rolls dice." });
+    let bot = json!({ "id": "1400000000000000001", "username": "Fluxbot", "discriminator": "0420", "bio": "Rolls dice.", "flags": 16 });
     sh.form.data.insert(
         "dev.apps".into(),
         json!([

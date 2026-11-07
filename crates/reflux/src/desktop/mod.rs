@@ -8,6 +8,7 @@ pub mod link;
 pub mod menu;
 pub mod nagbar;
 pub mod notify;
+pub mod os_idle;
 pub mod shortcuts;
 pub mod sound;
 pub mod spell;
@@ -53,6 +54,8 @@ pub struct Prefs {
     /// Spellcheck in the composer, its dictionaries (`dictionary-*` package names; empty = the
     /// interface language's) and the user's own words.
     pub spellcheck: bool,
+    /// "Detect while typing" (`Spellcheck.autoDetect`); off, `spell_langs` are used.
+    pub spell_auto: bool,
     pub spell_langs: Vec<String>,
     pub words: Vec<String>,
     /// System-wide mute / deafen / push-to-talk shortcuts.
@@ -62,8 +65,10 @@ pub struct Prefs {
     pub streamer: streamer::Prefs,
     /// Appearance, accessibility, chat input, sounds and quick CSS.
     pub look: crate::look::Prefs,
-    /// The update version whose bar was dismissed.
+    /// The update version whose bar was dismissed, and "Disable automatic updates" (no
+    /// background check).
     pub skipped_update: Option<String>,
+    pub no_auto_update: bool,
     /// Per-account preferences (favorites, keybinds), by user ID.
     pub accounts: std::collections::HashMap<String, crate::nav::AccountPrefs>,
     /// Channels opened, newest first (`SelectedChannel.recentVisits`, the quick switcher's
@@ -87,6 +92,7 @@ impl Default for Prefs {
             window: None,
             zoom: 1.0,
             spellcheck: true,
+            spell_auto: true,
             spell_langs: Vec::new(),
             words: Vec::new(),
             global_shortcuts: true,
@@ -94,6 +100,7 @@ impl Default for Prefs {
             streamer: Default::default(),
             look: Default::default(),
             skipped_update: None,
+            no_auto_update: false,
             accounts: Default::default(),
             recent: Vec::new(),
             search_history: Default::default(),
@@ -188,7 +195,7 @@ pub struct Desktop {
 pub fn play(s: &State, sound: Sound) {
     let p = &s.app.saved.desktop;
     if p.sounds && p.look.sound_on(sound.id()) && !streamer::mute_sounds(&p.streamer, s.desktop.capture_app) {
-        sound::play(sound, p.look.volume / 100.0, p.look.custom_sounds.get(sound.id()).map(String::as_str));
+        sound::play(sound, p.look.sound_gain(sound.id()), p.look.custom_sounds.get(sound.id()).map(String::as_str));
     }
 }
 
@@ -269,6 +276,7 @@ pub fn on_dispatch(s: &mut State, d: &DispatchEvent) {
         DispatchEvent::CallCreate(c) | DispatchEvent::CallUpdate(c) if c.ringing.contains(&s.app.store.my_id()) => {
             play(s, Sound::IncomingRing)
         }
+        DispatchEvent::MessageDelete(d) => tts::on_delete(d.channel_id, d.id),
         _ => {}
     }
 }
@@ -350,6 +358,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     window::tick(s, tx);
     streamer::tick(s, tx);
     updater::tick(s);
+    tts::on_channel(s.app.shell.channel);
     let prefs = &mut s.app.saved.desktop;
     let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
     if s.app.route == Route::Main && here.is_some() && prefs.last != here && !rune::is_headless() {

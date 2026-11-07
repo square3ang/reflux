@@ -160,6 +160,9 @@ pub fn overrides(css: &str) -> (Vec<(String, String)>, usize) {
             let Some((name, value)) = decl.split_once(':') else { continue };
             let (name, value) = (name.trim(), value.trim());
             let value = value.strip_suffix("!important").unwrap_or(value).trim();
+            if FONTS.contains(&name) {
+                continue;
+            }
             if name.starts_with("--") && super::palette::NAMES.contains(&name) && parse_color(value).is_some() {
                 out.retain(|(n, _): &(String, String)| n != name);
                 out.push((name.to_string(), value.to_string()));
@@ -169,6 +172,42 @@ pub fn overrides(css: &str) -> (Vec<(String, String)>, usize) {
         }
     }
     (out, ignored)
+}
+
+/// The font tokens Rune can follow (`--font-sans`, `--font-mono` in `globals.css`), through
+/// `Tx::set_font_families`.
+pub const FONTS: [&str; 2] = ["--font-sans", "--font-mono"];
+
+/// The `:root` values of [`FONTS`] in `css` (the last wins).
+pub fn fonts(css: &str) -> [Option<String>; 2] {
+    let css = strip_comments(css);
+    let mut out = [None, None];
+    let mut rest = css.as_str();
+    while let Some(open) = rest.find('{') {
+        let selector = rest[..open].trim();
+        let Some(close) = rest[open..].find('}') else { break };
+        let body = &rest[open + 1..open + close];
+        rest = &rest[open + close + 1..];
+        if selector.rsplit(['}', ';']).next().unwrap_or("").trim() != ":root" {
+            continue;
+        }
+        for decl in body.split(';') {
+            let Some((name, value)) = decl.split_once(':') else { continue };
+            let value = value.trim();
+            let value = value.strip_suffix("!important").unwrap_or(value).trim();
+            if let Some(i) = FONTS.iter().position(|f| *f == name.trim()).filter(|_| !value.is_empty()) {
+                out[i] = Some(value.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The families Rune draws with: an override first, falling back to Fluxer's bundled fonts.
+pub fn families(css: &str) -> (String, String) {
+    let [sans, mono] = fonts(css);
+    let with = |o: Option<String>, base: &str| o.map_or(base.to_string(), |o| format!("{o}, {base}"));
+    (with(sans, super::FAMILIES.0), with(mono, super::FAMILIES.1))
 }
 
 fn strip_comments(css: &str) -> String {
@@ -311,6 +350,8 @@ mod tests {
 
     #[test]
     fn overrides_and_saturation_apply() {
+        assert_eq!(families(":root { --font-sans: Inter; --font-mono: 'Fira Code' }"), ("Inter, Fluxer Sans".into(), "'Fira Code', Fluxer Mono".into()));
+        assert_eq!(overrides(":root { --font-sans: Inter }").1, 0, "fonts aren't ignored");
         let p = effective("dark", true, 1.0, ":root { --text-link: #ff0000 }");
         assert!(close(p.text_link, crate::ui::rgb(255, 0, 0)));
         let grey = effective("dark", true, 0.0, ":root { --text-link: #ff0000 }");

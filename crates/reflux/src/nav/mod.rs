@@ -1,7 +1,9 @@
 //! Navigation extras: guild rail folders and drag and drop, folder settings, favorites.
 
 pub mod favorites;
+mod favorites_sync;
 pub mod folder;
+mod keybind_sync;
 pub mod keys;
 pub mod oauth;
 pub mod rail;
@@ -45,6 +47,15 @@ pub struct Nav {
     /// The Favorites rail item is selected (the sidebar lists favorite channels).
     pub favorites: bool,
     pub hover_favorites: bool,
+    pub synced_favorites: Option<favorites_sync::Seen>,
+    pub synced_keys: Option<keybind_sync::Seen>,
+    /// "Sync keybinds" was just switched on: send this device's keybinds.
+    pub push_keys: bool,
+    /// The image crop modal over the settings.
+    pub crop: Option<crate::settings::crop::Crop>,
+    /// The profile local time modal and its time zone search.
+    pub timezone: bool,
+    pub timezone_query: TextEdit,
     /// "Add favorite channels" modal: the community picked in it, its search and filter.
     pub add_favorite: Option<Option<Snowflake>>,
     pub favorite_query: TextEdit,
@@ -54,6 +65,8 @@ pub struct Nav {
     pub pending_dm: Option<(Snowflake, String)>,
     /// The custom keybind (by index) whose recorder is listening.
     pub recording: Option<usize>,
+    /// The Keybinds tab's "Search keybinds…" box.
+    pub key_query: TextEdit,
     pub key_menu: Option<keys::RowMenu>,
     pub confirm_reset_keys: bool,
     /// The Ctrl+/ keybind list and the first-Tab keyboard mode intro.
@@ -81,6 +94,8 @@ pub struct AccountPrefs {
     pub builtins_off: bool,
     pub disabled_builtins: Vec<crate::keybinds::Action>,
     pub keyboard_intro_seen: bool,
+    /// "Sync keybinds".
+    pub sync_keybinds: bool,
 }
 
 /// This account's preferences.
@@ -98,7 +113,7 @@ pub fn update_mine(st: &mut ShellState, f: impl FnOnce(&mut AccountPrefs)) {
 
 /// Once a frame with the store: writes a released rail drop as the new `guild_folders`.
 pub fn poll(store: &Store, st: &mut ShellState) -> bool {
-    let changed = favorites::reconcile(store, st) | crate::compose::poll(store, st) | oauth::poll(store, st);
+    let changed = favorites::reconcile(store, st) | favorites_sync::poll(store, st) | keybind_sync::poll(store, st) | crate::compose::poll(store, st) | oauth::poll(store, st);
     let folders = match (st.nav.pending.take(), st.nav.folder_edit.take()) {
         (Some((src, drop)), _) => rail::apply(store, src, drop),
         (None, Some(edit)) => Some(folder::edited(&store.settings.guild_folders, &edit)),

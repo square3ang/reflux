@@ -58,7 +58,7 @@ pub fn newer(candidate: &str, current: &str) -> bool {
 }
 
 pub fn tick(s: &mut State) {
-    if rune::is_headless() || s.desktop.update_checked.is_some_and(|t| t.elapsed() < EVERY) {
+    if rune::is_headless() || s.app.shell.prefs.no_auto_update || s.desktop.update_checked.is_some_and(|t| t.elapsed() < EVERY) {
         return;
     }
     s.desktop.update_checked = Some(Instant::now());

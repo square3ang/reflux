@@ -2,8 +2,10 @@
 //! dictionaries, downloaded on demand from its static CDN, checked against their SHA-256 and
 //! cached, read by `spellbook` (pure Rust). Misspellings get a red underline in the composer,
 //! and its context menu offers suggestions and "Add to dictionary".
-// shortcut: no OS spellchecker engine and no "Detect while typing"; the dictionaries are the
-// interface language's or the ones picked in Language settings.
+// "Detect while typing" (`autoDetect`, the default) guesses the draft's language like the desktop
+// app's `franc` (trigrams over the bundled languages, via `whatlang`) and checks against it plus
+// the system and interface languages' dictionaries; off, the ones picked in Language settings.
+// shortcut: no OS spellchecker engine.
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -74,6 +76,12 @@ struct Checker {
     loaded: Vec<(&'static str, Arc<spellbook::Dictionary>)>,
     loading: HashSet<&'static str>,
     words: HashSet<String>,
+    /// Detect while typing: the preferred languages' packages, the draft's guessed one, and the
+    /// text it was guessed from.
+    auto: bool,
+    preferred: Vec<&'static str>,
+    detected: Option<&'static str>,
+    detected_from: String,
     /// Bumped when what's checked changes, so cached results go stale.
     generation: u64,
 }
@@ -90,8 +98,58 @@ pub fn for_locale(code: &str) -> Option<&'static Dict> {
     DICTS.iter().find(|d| d.tag == code).or_else(|| DICTS.iter().find(|d| d.tag == base))
 }
 
-/// The packages [`super::Prefs`] asks for.
+/// `detectPreferredLanguages`: the system locale (`LANG`, …) then the interface language.
+fn preferred_locales() -> Vec<String> {
+    let os = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty() && v != "C" && v != "POSIX"));
+    let os = os.map(|v| v.split(['.', '@']).next().unwrap_or_default().replace('_', "-"));
+    os.into_iter().chain([crate::i18n::locale().to_string()]).collect()
+}
+
+/// `chooseBundledTagForLanguage`: English is en-GB when a preferred locale is, else US.
+fn package_for(base: &str, preferred: &[String]) -> Option<&'static str> {
+    if base == "en" {
+        let gb = preferred.iter().any(|l| for_locale(l).is_some_and(|d| d.tag == "en-GB"));
+        return Some(if gb { "dictionary-en-gb" } else { "dictionary-en" });
+    }
+    preferred.iter().filter_map(|l| for_locale(l)).find(|d| d.tag.split('-').next() == Some(base)).or_else(|| for_locale(base)).map(|d| d.package)
+}
+
+/// `ISO6393_TO_DICTIONARY_BASE`.
+const ISO6393: &[(&str, &str)] = &[
+    ("bul", "bg"), ("cat", "ca"), ("ces", "cs"), ("dan", "da"), ("deu", "de"), ("ell", "el"), ("eng", "en"), ("epo", "eo"), ("est", "et"), ("eus", "eu"),
+    ("fas", "fa"), ("fra", "fr"), ("glg", "gl"), ("heb", "he"), ("hrv", "hr"), ("hun", "hu"), ("isl", "is"), ("ita", "it"), ("kor", "ko"), ("lav", "lv"),
+    ("lit", "lt"), ("nld", "nl"), ("nob", "nb"), ("pol", "pl"), ("por", "pt"), ("ron", "ro"), ("rus", "ru"), ("slk", "sk"), ("slv", "sl"), ("spa", "es"),
+    ("srp", "sr"), ("swe", "sv"), ("tur", "tr"), ("ukr", "uk"), ("vie", "vi"),
+];
+
+static DETECTOR: LazyLock<whatlang::Detector> = LazyLock::new(|| whatlang::Detector::with_allowlist(ISO6393.iter().filter_map(|(c, _)| whatlang::Lang::from_code(*c)).collect()));
+
+/// `detectLanguageFromText`: the dictionary for the text's language (2000 characters at most,
+/// three letters at least).
+fn detect_package(text: &str) -> Option<&'static str> {
+    let text: String = text.chars().take(2000).collect();
+    if text.chars().filter(|c| c.is_alphabetic()).count() < 3 {
+        return None;
+    }
+    let code = DETECTOR.detect_lang(&text)?.code();
+    let base = ISO6393.iter().find(|(c, _)| *c == code)?.1;
+    package_for(base, &preferred_locales())
+}
+
+/// The packages [`super::Prefs`] asks for (with detection, before any draft is read).
 pub fn wanted(p: &super::Prefs) -> Vec<&'static str> {
+    if p.spell_auto {
+        let pref = preferred_locales();
+        let mut out: Vec<&'static str> = Vec::new();
+        for l in &pref {
+            if let Some(d) = for_locale(l).and_then(|d| package_for(d.tag.split('-').next().unwrap_or(d.tag), &pref))
+                && !out.contains(&d)
+            {
+                out.push(d);
+            }
+        }
+        return out;
+    }
     if p.spell_langs.is_empty() {
         return for_locale(crate::i18n::locale()).map(|d| d.package).into_iter().collect();
     }
@@ -102,9 +160,19 @@ pub fn wanted(p: &super::Prefs) -> Vec<&'static str> {
 pub fn configure(p: &super::Prefs) {
     let mut c = CHECKER.write().unwrap();
     c.enabled = p.spellcheck;
-    c.wanted = wanted(p);
+    c.auto = p.spell_auto;
+    c.preferred = wanted(p);
+    c.wanted = match c.detected.filter(|_| c.auto) {
+        Some(d) => std::iter::once(d).chain(c.preferred.iter().copied().filter(|x| *x != d)).collect(),
+        None => c.preferred.clone(),
+    };
     c.words = p.words.iter().cloned().collect();
     c.generation += 1;
+    load_missing(&mut c);
+}
+
+/// Starts loading the wanted dictionaries not loaded yet.
+fn load_missing(c: &mut Checker) {
     let missing: Vec<&'static str> = c.wanted.iter().copied().filter(|w| !c.loaded.iter().any(|(p, _)| p == w) && !c.loading.contains(w)).collect();
     if !c.enabled || rune::is_headless() {
         return;
@@ -229,8 +297,33 @@ thread_local! {
     static CACHE: std::cell::RefCell<(u64, String, usize, Vec<Range<usize>>)> = Default::default();
 }
 
+/// Detect while typing: re-guesses the draft's language unless it only grew or shrank by a
+/// few characters since (`isTinyAutodetectPrefixChange`, 20), and checks against it first.
+fn follow_draft(text: &str) {
+    let tiny = |prev: &str| {
+        !prev.is_empty() && !text.is_empty() && prev.len().abs_diff(text.len()) < 20 && (text.starts_with(prev) || prev.starts_with(text))
+    };
+    {
+        let c = CHECKER.read().unwrap();
+        if !c.enabled || !c.auto || c.detected_from == text || tiny(&c.detected_from) {
+            return;
+        }
+    }
+    let found = if text.trim().is_empty() { None } else { detect_package(text) };
+    let mut c = CHECKER.write().unwrap();
+    c.detected_from = text.to_string();
+    if found.is_some() && found != c.detected {
+        c.detected = found;
+        let d = found.unwrap_or_default();
+        c.wanted = std::iter::once(d).chain(c.preferred.iter().copied().filter(|x| *x != d)).collect();
+        c.generation += 1;
+        load_missing(&mut c);
+    }
+}
+
 /// The composer's decorations: a red underline under each misspelling (cached per text).
 pub fn spans(text: &str, caret: usize, color: rune::Color) -> Vec<rune::Span> {
+    follow_draft(text);
     let generation = CHECKER.read().unwrap().generation;
     CACHE.with_borrow_mut(|(g, t, k, ranges)| {
         if *g != generation || t != text || *k != caret {
@@ -297,5 +390,15 @@ mod tests {
         assert_eq!(for_locale("en-GB").unwrap().package, "dictionary-en-gb");
         assert_eq!(for_locale("pt-BR").unwrap().package, "dictionary-pt");
         assert!(for_locale("ja").is_none());
+    }
+
+    #[test]
+    fn detects_the_draft_language() {
+        assert_eq!(detect_package("Dies ist ein ganz normaler deutscher Satz über das Wetter heute."), Some("dictionary-de"));
+        assert_eq!(detect_package("Ceci est une phrase française tout à fait ordinaire sur le temps."), Some("dictionary-fr"));
+        assert_eq!(detect_package("오늘 날씨가 정말 좋네요"), Some("dictionary-ko"));
+        assert_eq!(detect_package("ok"), None, "too short");
+        assert_eq!(package_for("en", &["en-GB".into()]), Some("dictionary-en-gb"));
+        assert_eq!(package_for("pt", &["pt-BR".into()]), Some("dictionary-pt"));
     }
 }

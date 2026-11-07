@@ -19,7 +19,7 @@ fn header_bar(p: &Palette) -> El {
 
 fn list(content: El, p: &Palette) -> El {
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
-    scroller(viewport.child(content), false, p)
+    scroller(viewport.child(content.focus_group().role("list")), false, p)
 }
 
 pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -51,7 +51,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .gap(dim::SPACING_1)
         .center_y()
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(name.clone())
         .key(crate::guild::HEADER_MENU)
         .on_press(move |s: &mut S| acc(s).popups.toggle(crate::guild::HEADER_MENU))
@@ -116,7 +116,7 @@ fn category<S: 'static>(cat: &Channel, collapsed: bool, p: &Palette, acc: ShellA
             .radius(6.0)
             .hover_group()
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(name.clone())
             .on_press(move |s: &mut S| {
                 let c = &mut acc(s).collapsed;
@@ -164,7 +164,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         .center_y()
         .radius(6.0)
         .cursor(rune::Cursor::Pointer)
-        .role("link")
+        .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(c.name.clone().unwrap_or_default())
         .hover_group()
         .child(icon(channel_icon(c.kind), 20.0).color(fg).group_color(if selected { fg } else { p.text_chat }))
@@ -257,7 +257,7 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                 .fill(rgb(220, 38, 38))
                 .child(text("LIVE").font(font(10.0, 600.0).lh(10.0)).color(Color::WHITE));
             if u != me {
-                badge = badge.cursor(rune::Cursor::Pointer).role("button").label(t("Watch stream")).on_press(move |s: &mut S| {
+                badge = badge.cursor(rune::Cursor::Pointer).role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary).label(t("Watch stream")).on_press(move |s: &mut S| {
                     let sh = acc(s);
                     sh.voice.watching = Some(u);
                     sh.intents.push(super::Intent::Watch(Some(u)));
@@ -340,7 +340,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                         .center()
                         .hover_group()
                         .cursor(rune::Cursor::Pointer)
-                        .role("button")
+                        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
                         .label(t("Create DM"))
                         .key("create-dm")
                         .on_press(move |s: &mut S| crate::social::open_create_dm(acc(s)))
@@ -373,7 +373,7 @@ fn special(glyph: &'static rune::Icon, label: &str, selected: bool, badge: usize
         .radius(dim::RADIUS_MD)
         .hover_group()
         .cursor(rune::Cursor::Pointer)
-        .role("link")
+        .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(label.to_string())
         .child(row().size(32.0, 32.0).center().radius(16.0).fill(disc).child(icon(glyph, 20.0).color(glyph_c)))
         .child(text(label).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).grow(1.0));
@@ -419,7 +419,7 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .center()
         .radius(dim::RADIUS_FULL)
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(crate::i18n::tf("Close direct message with {displayName}", &[("displayName", &name)]))
         .group_opacity(0.0, 1.0)
         .on_press(move |s: &mut S| {
@@ -446,7 +446,7 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .radius(dim::RADIUS_MD)
         .cursor(rune::Cursor::Pointer)
         .hover_group()
-        .role("link")
+        .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(name)
         .key(format!("dm-{id}"))
         .on_press(move |s: &mut S| acc(s).select_channel(id))
@@ -489,7 +489,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             .center()
             .radius(dim::RADIUS_MD)
             .hover_group()
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(label.to_string())
             .child(icon(i, 20.0).color(fg).group_color(hover_fg));
         if active {
@@ -542,7 +542,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .radius(dim::RADIUS_MD)
         .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label("User area")
         .on_press(move |s: &mut S| acc(s).popups.toggle(super::status::MENU))
         .child(avatar(store, st, me, 32.0, Some(dot), surface, p))

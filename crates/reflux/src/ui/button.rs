@@ -174,7 +174,7 @@ impl<S: 'static> Button<S> {
         if self.disabled {
             b = b.opacity(0.5);
         }
-        b = b.disabled(self.disabled).role("button").label(self.label.clone());
+        b = b.disabled(self.disabled).role("button").focusable(!self.disabled).focus_ring(4.0, 0.0, p.focus_primary).label(self.label.clone());
         if let Some(k) = self.key {
             b = b.key(k);
         }

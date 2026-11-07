@@ -321,7 +321,7 @@ impl Demo {
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
         let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, gif_provider: "Klipy".into(), ..ShellState::default() };
-        // `--settings[=tab]` opens user settings; `--theme=light|coal|dark_legacy|system` sets the
+        // `--settings[=tab]` opens user settings (`--settings-search=q` types into its search); `--theme=light|coal|dark_legacy|system` sets the
         // account theme; `--compact` the dense message layout.
         for a in rune::extra_args() {
             if let Some(t) = a.strip_prefix("--theme=") {
@@ -334,6 +334,10 @@ impl Demo {
                 let mut lib = super::voice::EntranceLibrary { sounds: vec![sound(1, "airhorn"), sound(2, "door chime")], ..Default::default() };
                 lib.selections.insert("global".into(), Snowflake(1));
                 shell.voice.entrance = Some(lib);
+            } else if let Some(q) = a.strip_prefix("--settings-search=")
+                && let Some(u) = shell.settings.as_mut()
+            {
+                u.search = rune::TextEdit::new(q);
             }
         }
         // `REFLUX_LOOK='{"saturation":0.5}'`: appearance / accessibility preferences for snapshots.
@@ -432,7 +436,7 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
     }
 }
 
-/// `--account-ui=<scene>`: `menu` (user area), `status`, `accounts`, `nickname`, `sudo`,
+/// `--account-ui=<scene>`: `menu` (user area), `status`, `status-emoji` (with a draft and the picker), `crop` / `crop-banner` (the crop modal), `timezone`, `accounts`, `nickname`, `sudo`,
 /// `profile` (the full profile modal).
 fn account_scene(sh: &mut ShellState, scene: &str) {
     use crate::settings::ShellModal;
@@ -443,6 +447,25 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
             sh.birthday.error = Some("Something went wrong. Try again.".into());
         }
         "status" => super::status::open(sh, ShellModal::CustomStatus),
+        "crop" | "crop-banner" => {
+            sh.open_settings(Some("my_profile"));
+            let img = image::RgbaImage::from_fn(900, 600, |x, y| image::Rgba([(x / 4) as u8, (y / 3) as u8, 160, 255]));
+            let mut png = Vec::new();
+            let _ = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
+            let asset = if scene == "crop" { crate::settings::crop::Asset::Avatar } else { crate::settings::crop::Asset::ProfileBanner };
+            sh.nav.crop = crate::settings::crop::Crop::new("p.avatar", asset, png);
+        }
+        "timezone" => {
+            sh.open_settings(Some("my_profile"));
+            sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));
+            sh.nav.timezone = true;
+        }
+        "status-emoji" => {
+            super::status::open(sh, ShellModal::CustomStatus);
+            sh.form.text.insert("m.status".into(), rune::TextEdit::new("Shipping the status picker"));
+            sh.form.data.insert("m.emoji".into(), json!({"emoji_name": "🚀"}));
+            super::expr::open_status(sh);
+        }
         "accounts" => super::status::open(sh, ShellModal::Accounts),
         "nickname" => super::status::open(sh, ShellModal::Nickname(Snowflake(HQ))),
         "sudo" => {
@@ -1129,7 +1152,7 @@ fn acc(s: &mut State) -> &mut ShellState {
 pub fn view(d: &Demo) -> El {
     let look = &d.shell.prefs.look;
     crate::look::set_reduced_motion(look.reduced(false));
-    let p = theme::custom::effective(&d.store.settings.theme, std::env::var("REFLUX_SYSTEM_LIGHT").is_err(), look.saturation, &look.css);
+    let p = theme::custom::effective(&d.store.settings.theme, std::env::var("REFLUX_SYSTEM_LIGHT").is_err(), look.saturation, &look.theme_css());
     super::view(&d.store, &d.shell, &p, acc)
 }
 

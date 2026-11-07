@@ -40,19 +40,25 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "async-
 # The authenticator app setup QR code.
 qrcode = { version = "0.14", default-features = false }
 spellbook = "0.4"
+whatlang = "0.18"
+jiff = "0.2"
+regex = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts"] }
 # Unity LauncherEntry (dock badge / urgency); notify-rust already pulls zbus 5.
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+# System idle time on Wayland (ext-idle-notify-v1); both already come with Rune.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # Video attachment playback and camera capture (GStreamer playbin / v4l2src into appsinks).
 gstreamer = { version = "0.24", optional = true }
 gstreamer-app = { version = "0.24", optional = true }
 gstreamer-video = { version = "0.24", optional = true }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_SystemInformation"] }
 
 [features]
 # Needs the GStreamer 1.x runtime (and -dev headers to build); `--no-default-features` drops it,

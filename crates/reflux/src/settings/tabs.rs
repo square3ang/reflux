@@ -1,19 +1,17 @@
 //! The content of each settings tab.
 
 use reflux_store::Store;
-use rune::{El, col, el, row, text};
-use serde_json::json;
+use rune::{El, col, el, text};
 
 use super::SettingsUi;
-use crate::shell::{Intent, ShellAccess, ShellState};
+use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
-use crate::ui::Switch;
-use crate::i18n::t;
 
-pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    match ui.tab {
+/// Tab `tab`'s content (the open tab, or one shown inline in search results).
+pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &str, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    match tab {
         "my_profile" => super::profile::tab(store, st, ui, p, acc, layer),
-        "account_security" if st.desktop.streamer && st.prefs.streamer.hide_personal => super::desktop_tabs::streamer_gate(p, acc),
+        "account_security" | "linked_accounts" if st.desktop.streamer && st.prefs.streamer.hide_personal => super::desktop_tabs::streamer_gate(p, acc),
         "account_security" => super::account::tab(store, st, ui, p, acc),
         "privacy_safety" => super::privacy::tab(store, st, p, acc, layer),
         "devices" => super::privacy::devices(st, p, acc),
@@ -24,7 +22,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         "themes" => super::look_tabs::themes(store, st, p, acc),
         "chat_settings" => super::look_tabs::chat(store, st, p, acc),
         "accessibility" => super::look_tabs::accessibility(store, st, p, acc, layer),
-        "advanced_settings" => advanced(store, p, acc),
+        "advanced_settings" => super::advanced::tab(store, st, ui.search.text.trim(), p, acc),
         "voice_video" => super::voice_tabs::tab(st, p, acc, layer),
         "notifications" => super::look_tabs::notifications(store, st, p, acc),
         "keybinds" => crate::nav::keys::tab(st, p, acc, layer),
@@ -71,28 +69,3 @@ pub(crate) fn not_available(p: &Palette) -> El {
         )
 }
 
-/// `AdvancedSettingRow` for developer mode, under its "Developer" category.
-fn advanced<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) -> El {
-    let on = store.settings.developer_mode;
-    let row = row()
-        .w_full()
-        .py(16.0)
-        .gap(12.0)
-        .center_y()
-        .child(
-            col()
-                .grow(1.0)
-                .min_w(0.0)
-                .gap(8.0)
-                .child(text(t("Developer mode")).font(font(14.0, 600.0).lh(18.9)).color(p.text_primary))
-                .child(text(t("Enable developer mode")).font(font(13.0, 400.0).lh(18.2)).color(p.text_secondary)),
-        )
-        .child(
-            Switch::new(on)
-                .on_toggle(move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(json!({ "developer_mode": !on }))))
-                .el(p),
-        )
-        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.border_color));
-    // shortcut: only developer mode; Fluxer's other advanced settings aren't implemented.
-    section(t("Developer"), row, true, p)
-}

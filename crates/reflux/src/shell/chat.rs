@@ -190,7 +190,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
             .radius(dim::RADIUS_FULL)
             .hover_group()
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(label.to_string())
             .child(icon(i, dim::CHANNEL_HEADER_ACTION_ICON_SIZE).color(if selected { p.text_primary } else { muted }).group_color(p.text_primary))
     };
@@ -429,6 +429,8 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     for (k, it) in items.iter().enumerate() {
         let row_el = match *it {
             Item::Date(ms) => date_divider(ms, p).key(format!("{pre}date-{}", format_full_date(ms))),
+            // "Hide messages from blocked users": no bar either.
+            Item::Msg { i, .. } if run_of(i).is_some() && crate::look::with(|l| l.hide_blocked) => el().key(format!("msg-{}", msgs[i].id)),
             Item::Msg { i, .. } if run_of(i).is_some_and(|(s, _)| !st.social.show_blocked.contains(&msgs[s].id)) => {
                 let (s, n) = run_of(i).unwrap_or_default();
                 if s == i { crate::social::blocked_bar(msgs[s].id, n, false, p, acc).key(format!("msg-{}", msgs[i].id)) } else { el().key(format!("msg-{}", msgs[i].id)) }
@@ -462,10 +464,21 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                             st.popups.open_at(&format!("msg-menu-{id}"), [at.x, at.y]);
                             st.active_msg = Some(id);
                         });
+                    // `messageDoubleClickActions`: edit my own message, else reply.
+                    if crate::look::with(|l| l.double_click_actions) && perms.send && is_user_message(m) && m.message_snapshots.is_empty() {
+                        let (m2, me, edit) = (m.clone(), perms.me, perms.can_edit(m));
+                        body = body.on_double_press(move |s: &mut S| {
+                            let st = acc(s);
+                            if st.editing.as_ref().is_some_and(|e| e.0 == m2.id) {
+                                return;
+                            }
+                            if edit { start_edit(st, &m2) } else { start_reply(st, me, &m2) }
+                        });
+                    }
                     let editing = st.editing.as_ref().is_some_and(|e| e.0 == id);
                     if !editing && (st.hover_msg == Some(id) || active == Some(id)) {
                         let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(id).is_none()), ..perms };
-                        body = body.child(action_bar(m, perms, st, p, acc, layer));
+                        body = body.child(action_bar(m, c, perms, st, p, acc, layer));
                     }
                 }
                 r.child(body).key(format!("msg-{}", m.id))
@@ -633,13 +646,13 @@ fn message_link(st: &ShellState, c: &Channel, m: &Message) -> String {
 /// and More. 28px items in a 2px-padded toolbar, its bottom 10px into the message.
 // shortcut: the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
 // those stay in More.
-fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let thread_from = perms.thread_from.filter(|_| is_user_message(m));
     let id = m.id;
     let open = st.popups.open.as_deref();
     let button = |glyph: El, active: bool| {
         let fg = if active { p.text_primary } else { p.text_tertiary };
-        let mut b = row().size(28.0, 28.0).center().radius(6.0).cursor(rune::Cursor::Pointer).role("button").hover_group().child(glyph.color(fg).group_color(p.text_primary));
+        let mut b = row().size(28.0, 28.0).center().radius(6.0).cursor(rune::Cursor::Pointer).role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary).hover_group().child(glyph.color(fg).group_color(p.text_primary));
         b = if active { b.fill(p.surface_interactive_selected_bg) } else { b.hover(p.surface_interactive_hover_bg) };
         b
     };
@@ -651,7 +664,22 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
         .fill(p.form_surface_background)
         .border(1.0, over(p.background_modifier_accent, p.form_surface_background))
         .box_shadow(Shadow { x: 0.0, y: 6.0, blur: 14.0, spread: 0.0, color: rune::Color { a: 0.18, ..Color::BLACK }, inset: false });
-    if perms.react {
+    let (show, more_only, quick, expand) = crate::look::with(|l| (l.action_bar, l.action_bar_more_only, l.action_bar_quick_reactions, l.action_bar_shift_expand));
+    // `showFullActions`: Shift held over the bar shows the menu's main items instead of More.
+    let full = show && expand && !more_only && st.shift_held;
+    let more_id = format!("msg-more-{id}");
+    let more = |bar: El, layer: &mut Vec<El>| {
+        let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
+            let st = acc(s);
+            st.popups.toggle(&format!("msg-more-{id}"));
+            st.active_msg = Some(id);
+        });
+        bar.child(tip(more_id.clone(), t("More"), b, layer))
+    };
+    if !show || more_only {
+        return more(bar, layer).pin(None, Some(-24.0), Some(14.0), None);
+    }
+    if perms.react && quick && !full {
         for (name, glyph) in [("thumbsup", "👍"), ("ok_hand", "👌"), ("tada", "🎉")] {
             let m2 = m.clone();
             let b = button(text(glyph).font(font(18.0, 400.0).lh(20.0)), false).on_press(move |s: &mut S| {
@@ -659,6 +687,32 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
             });
             bar = bar.child(tip(format!("quick-{name}-{id}"), &format!(":{name}:"), b, layer));
         }
+    }
+    if full {
+        if perms.dev {
+            let mid = m.id;
+            let b = button(icon(&icons::SNOWFLAKE_FILL, 20.0), false).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(mid.to_string()));
+            bar = bar.child(tip(format!("copy-id-{id}"), t("Copy message ID"), b, layer));
+        }
+        let link = message_link(st, c, m);
+        let b = button(icon(&icons::LINK_BOLD, 20.0), false).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(link.clone()));
+        bar = bar.child(tip(format!("copy-link-{id}"), t("Copy message link"), b, layer));
+        let ch = m.channel_id;
+        let b = button(icon(&icons::ENVELOPE_OPEN_FILL, 20.0), false).on_press(move |s: &mut S| acc(s).intents.push(Intent::MarkUnread { channel: ch, message: id }));
+        bar = bar.child(tip(format!("unread-{id}"), t("Mark as unread"), b, layer));
+        if perms.pin && is_user_message(m) {
+            let pin = !m.pinned;
+            let (label, glyph) = if pin { ("Pin message", &icons::PUSH_PIN_FILL) } else { ("Unpin message", &icons::PUSH_PIN_SLASH_FILL) };
+            let b = button(icon(glyph, 20.0), false).on_press(move |s: &mut S| acc(s).intents.push(Intent::Pin { channel: ch, message: id, pin }));
+            bar = bar.child(tip(format!("pin-{id}"), t(label), b, layer));
+        }
+        if perms.can_edit(m) && perms.send {
+            let (m2, me) = (m.clone(), perms.me);
+            let b = button(icon(&icons::ARROW_BEND_UP_LEFT_FILL, 20.0), false).on_press(move |s: &mut S| start_reply(acc(s), me, &m2));
+            bar = bar.child(tip(format!("reply-full-{id}"), t("Reply"), b, layer));
+        }
+    }
+    if perms.react {
         let picking = open == Some(&*format!("emoji-{id}"));
         let ch = m.channel_id;
         let b = button(icon(&icons::SMILEY_FILL, 20.0), picking).on_press(move |s: &mut S| {
@@ -684,13 +738,13 @@ fn action_bar<S: 'static>(m: &Message, perms: Perms, st: &ShellState, p: &Palett
         let b = button(icon(&icons::CHATS_FILL, 20.0), false).on_press(move |s: &mut S| super::threads::start_create(acc(s), parent, Some(id)));
         bar = bar.child(tip(format!("thread-{id}"), t("Create thread"), b, layer));
     }
-    let more_id = format!("msg-more-{id}");
-    let b = button(icon(&icons::DOTS_THREE_BOLD, 20.0), open == Some(&*more_id)).on_press(move |s: &mut S| {
-        let st = acc(s);
-        st.popups.toggle(&format!("msg-more-{id}"));
-        st.active_msg = Some(id);
-    });
-    bar = bar.child(tip(more_id, t("More"), b, layer));
+    if full && perms.can_delete(m) {
+        let m2 = m.clone();
+        let b = button(icon(&icons::TRASH_FILL, 20.0).color(p.status_danger), false).on_press(move |s: &mut S| request_delete(acc(s), &m2, true));
+        bar = bar.child(tip(format!("delete-{id}"), t("Delete message"), b, layer));
+    } else {
+        bar = more(bar, layer);
+    }
     bar.pin(None, Some(-24.0), Some(14.0), None)
 }
 

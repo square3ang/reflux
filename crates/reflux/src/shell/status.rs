@@ -97,62 +97,141 @@ fn error(st: &ShellState, p: &Palette) -> Option<El> {
 }
 
 /// The `custom_status` a save sends: `None` clears it.
-pub fn custom_status(text: &str, clear_after: Option<u64>, now_ms: u64) -> Value {
+pub fn custom_status(text: &str, emoji: Option<&Value>, clear_after: Option<u64>, now_ms: u64) -> Value {
     let text: String = text.trim().chars().take(MAX_STATUS).collect();
-    if text.is_empty() {
+    let emoji = emoji.filter(|e| e["emoji_name"].as_str().is_some_and(|n| !n.is_empty()));
+    // `buildDraftStatus`: nothing to show clears the status.
+    if text.is_empty() && emoji.is_none() {
         return Value::Null;
     }
     let expires = clear_after.map(|m| crate::app::iso8601(now_ms + m * 60_000));
-    json!({ "text": text, "expires_at": expires, "emoji_name": null })
+    let mut v = json!({ "text": (!text.is_empty()).then_some(text), "expires_at": expires, "emoji_name": null });
+    if let Some(e) = emoji {
+        v["emoji_name"] = e["emoji_name"].clone();
+        if let Some(id) = e["emoji_id"].as_str() {
+            v["emoji_id"] = json!(id);
+            v["emoji_animated"] = e["emoji_animated"].clone();
+        }
+    }
+    v
 }
 
-/// `CustomStatusModal`: the text, when it clears, then "Update my status".
-// shortcut: no emoji picker or live profile preview; an existing status emoji is dropped on save.
+/// The draft's emoji: picked in the modal (`Null` = cleared), else the saved status's.
+fn draft_emoji(store: &Store, st: &ShellState) -> Option<Value> {
+    match st.form.data.get("m.emoji") {
+        Some(Value::Null) => None,
+        Some(v) => Some(v.clone()),
+        None => store.settings.custom_status.as_ref().filter(|c| c.emoji_name.is_some()).map(|c| {
+            json!({ "emoji_id": c.emoji_id.map(|i| i.to_string()), "emoji_name": c.emoji_name, "emoji_animated": c.emoji_animated })
+        }),
+    }
+}
+
+/// `CustomStatusModal`: a live profile preview, the text with its emoji button and clear
+/// button, then when it clears and "Update my status".
 pub fn custom_status_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let initial = store.settings.custom_status.as_ref().and_then(|c| c.text.clone()).unwrap_or_default();
     let typed = st.form.text.get("m.status").map_or(initial.as_str(), |e| e.text.as_str());
     let count = typed.chars().count();
+    let emoji = draft_emoji(store, st);
+    let emoji_el = |size: f32| {
+        let e = emoji.as_ref()?;
+        super::forum::forum_emoji(st, e["emoji_id"].as_str().and_then(|i| i.parse().ok()), e["emoji_name"].as_str(), size)
+    };
     let exp = st.form.data.get("m.clear").and_then(Value::as_str).unwrap_or("24h").to_string();
     let opts: Vec<(&str, &str)> = CLEAR_AFTER.iter().map(|(k, l, _)| (*k, t(l))).collect();
     let select = Select::new("clear-after", &opts, Some(&exp))
-        .label(t("Clear after"))
-        .width(408.0)
+        .width(406.0)
         .on_choose(move |s: &mut S, v| {
             acc(s).form.data.insert("m.clear".into(), Value::String(v.into()));
         })
         .el(&st.popups, pops(acc), p, layer);
+    // `ProfilePreview` with the draft as its custom status.
+    let me = store.my_id();
+    let mut card = super::profile::card_for(store, st, me, None, 80.0, p);
+    card.custom_status = Some(typed.trim().to_string()).filter(|s| !s.is_empty());
+    card.status_emoji = emoji_el(16.0);
+    let preview = row().w_full().justify_center().mb(16.0).child(super::profile::preview(store, st, card, p));
+    let picking = st.popups.is_open(super::expr::POPOUT);
+    let has_emoji = emoji.is_some();
+    let trigger = row()
+        .size(32.0, 32.0)
+        .center()
+        .radius(999.0)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(if has_emoji { t("Change emoji") } else { t("Choose an emoji") })
+        .expanded(picking)
+        .focusable(true)
+        .focus_ring(4.0, 0.0, p.focus_primary)
+        .key("status-emoji")
+        .hover(p.background_modifier_hover)
+        .on_press(move |s: &mut S| super::expr::open_status(acc(s)))
+        .child(emoji_el(22.0).unwrap_or_else(|| rune::icon(&icons::SMILEY_FILL, 22.0).color(p.text_primary_muted)));
+    let trigger = if picking { trigger.fill(p.background_modifier_hover) } else { trigger };
+    let edit = st.form.text.get("m.status").cloned().unwrap_or_else(|| rune::TextEdit::new(&initial));
+    let init = initial.clone();
+    let mut field = crate::ui::Input::new("form-m.status", &edit, move |s: &mut S| -> &mut rune::TextEdit {
+        acc(s).form.text.entry("m.status".into()).or_insert_with(|| rune::TextEdit::new(init.clone()))
+    })
+    .placeholder(t("What's happening?"))
+    .left(trigger);
+    if count > 0 || has_emoji {
+        // `handleClearDraft`.
+        field = field.right(
+            row()
+                .size(32.0, 32.0)
+                .center()
+                .radius(999.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Clear custom status"))
+                .focusable(true)
+                .focus_ring(4.0, 0.0, p.focus_primary)
+                .hover(p.background_modifier_hover)
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.form.text.insert("m.status".into(), rune::TextEdit::new(""));
+                    sh.form.data.insert("m.emoji".into(), Value::Null);
+                })
+                .child(rune::icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted)),
+        );
+    }
     let mut body = col()
         .w_full()
-        .gap(16.0)
+        .child(preview)
         .child(
             col()
                 .w_full()
                 .gap(6.0)
-                .child(input(st, acc, "m.status", &initial, "", t("What's happening?"), false, p))
                 .child(
                     text(format!("{count}/{MAX_STATUS}"))
                         .font(font(12.0, 400.0).lh(16.0))
                         .color(if count > MAX_STATUS { p.status_danger } else { p.text_tertiary })
                         .self_end(),
-                ),
-        )
-        .child(select);
+                )
+                .child(field.el(p)),
+        );
     if let Some(e) = error(st, p) {
         body = body.child(e);
     }
-    let save = move |s: &mut S| {
+    let save = move |s: &mut S, store_emoji: Option<Value>| {
         let sh = acc(s);
         let text = sh.form.text.get("m.status").map_or(initial.clone(), |e| e.text.clone());
         let key = sh.form.data.get("m.clear").and_then(Value::as_str).unwrap_or("24h");
         let mins = CLEAR_AFTER.iter().find(|(k, ..)| *k == key).and_then(|(_, _, m)| *m);
-        sh.intents.push(Intent::PatchSettings(json!({ "custom_status": custom_status(&text, mins, crate::app::now_ms()) })));
+        sh.intents.push(Intent::PatchSettings(json!({ "custom_status": custom_status(&text, store_emoji.as_ref(), mins, crate::app::now_ms()) })));
         sh.close_account_modals();
     };
-    let footer = row()
-        .gap(8.0)
-        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close(acc)).el(p))
-        .child(Button::new(t("Update my status")).disabled(count > MAX_STATUS).key("modal-primary").on_press(save).el(p));
+    let footer = col()
+        .w_full()
+        .gap(12.0)
+        .child(col().w_full().gap(6.0).child(text(t("Clear after")).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary)).child(select))
+        .child(Button::new(t("Update my status")).fit_container().disabled(count > MAX_STATUS).key("modal-primary").on_press(move |s: &mut S| save(s, emoji.clone())).el(p));
     layer.push(Modal::new(t("Set your status"), close(acc)).body(body).footer(footer).el(p));
+    if let Some(picker) = super::expr::status_picker(store, st, p, acc) {
+        layer.push(picker);
+    }
 }
 
 /// `AccountSwitcherModal`: the signed-in account, the others saved on this device, then
@@ -254,11 +333,14 @@ mod tests {
 
     #[test]
     fn custom_status_body() {
-        assert_eq!(custom_status("  ", Some(15), 0), Value::Null);
-        let v = custom_status(" hi ", Some(15), 0);
+        assert_eq!(custom_status("  ", None, Some(15), 0), Value::Null);
+        let v = custom_status(" hi ", None, Some(15), 0);
         assert_eq!(v["text"], "hi");
         assert_eq!(v["expires_at"], "1970-01-01T00:15:00.000Z");
-        assert_eq!(custom_status("x", None, 0)["expires_at"], Value::Null);
-        assert_eq!(custom_status(&"a".repeat(200), None, 0)["text"].as_str().unwrap().len(), MAX_STATUS);
+        assert_eq!(custom_status("x", None, None, 0)["expires_at"], Value::Null);
+        assert_eq!(custom_status(&"a".repeat(200), None, None, 0)["text"].as_str().unwrap().len(), MAX_STATUS);
+        let e = json!({ "emoji_id": "42", "emoji_name": "blob", "emoji_animated": true });
+        let v = custom_status(" ", Some(&e), None, 0);
+        assert_eq!((v["text"].clone(), v["emoji_id"].clone(), v["emoji_name"].clone()), (Value::Null, json!("42"), json!("blob")), "an emoji alone is a status");
     }
 }

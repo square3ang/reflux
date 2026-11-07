@@ -1,9 +1,7 @@
 //! Auto-idle (`ui/state/Idle.ts`, `presence/state/LocalPresence.ts`): after 10 minutes without
 //! input an Online account publishes `idle` (op 3), and `afk` once the account's AFK timeout
-//! passes; the next input publishes the saved status again.
-// shortcut: only input to Reflux's own window counts (Fluxer's desktop build also asks the OS for
-// system-wide idle time); add an OS idle query (org.freedesktop.ScreenSaver / GetLastInputInfo) if
-// people go idle while active in other apps.
+//! passes; the next input publishes the saved status again. Input anywhere on the system counts
+//! too, like Fluxer's desktop build (`desktop::os_idle`).
 
 use std::time::{Duration, Instant};
 
@@ -14,7 +12,7 @@ use serde_json::json;
 use crate::State;
 
 /// `IDLE_DURATION_MS`.
-const IDLE: Duration = Duration::from_secs(10 * 60);
+pub(crate) const IDLE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Default)]
 pub struct Idle {
@@ -33,11 +31,12 @@ fn presence(saved: Status, inactive: Duration, afk_timeout: Duration) -> (Status
 /// A new session publishes the saved presence itself.
 pub fn ready(s: &mut State) {
     s.app.idle = Idle { since: Some(Instant::now()), sent: None };
+    crate::desktop::os_idle::start();
 }
 
 pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     let Some(since) = s.app.idle.since else { return };
-    let last = rune::last_input().map_or(since, |t| t.max(since));
+    let last = [rune::last_input(), crate::desktop::os_idle::last_activity()].into_iter().flatten().fold(since, Instant::max);
     let inactive = last.elapsed();
     let saved = s.app.store.settings.status;
     let afk = Duration::from_secs(u64::from(s.app.store.settings.afk_timeout.max(60)));
@@ -55,8 +54,10 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
         }
     }
     // Wake when the next threshold passes, so an untouched window still goes idle.
-    if let Some(next) = [IDLE, afk].into_iter().filter(|&d| d > inactive).min() {
-        tx.wake_after(next - inactive);
+    // While idle, look again when the OS may have seen input elsewhere.
+    match [IDLE, afk].into_iter().filter(|&d| d > inactive).min() {
+        Some(next) => tx.wake_after((next - inactive).min(crate::desktop::os_idle::CHECK)),
+        None => tx.wake_after(crate::desktop::os_idle::CHECK),
     }
 }
 

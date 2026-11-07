@@ -114,6 +114,15 @@ fn pick(st: &mut ShellState, item: &Item, shift: bool, _: &mut Tx) {
                 crate::guild::role_extra::emoji_picked(st, e.id.map(|i| i.to_string()));
             }
         }
+        // `useCustomStatusDraft.handleEmojiSelect`: a custom emoji's id and name, else the
+        // skin-toned surrogate.
+        Some(For::Status) => {
+            let e = reaction_emoji(item, tone);
+            let v = serde_json::json!({ "emoji_id": e.id.map(|i| i.to_string()), "emoji_name": e.name, "emoji_animated": e.animated.unwrap_or(false) });
+            st.form.data.insert("m.emoji".into(), v);
+            st.expr.track(&item.key(), crate::app::now_ms());
+            return close(st);
+        }
         None => return,
     }
     st.expr.track(&item.key(), crate::app::now_ms());

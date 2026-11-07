@@ -1,6 +1,6 @@
 //! The Profile tab (`tabs/MyProfileTab.tsx`, `my_profile_tab/*`): the global or a community
 //! profile (`ProfileTypeSelector`), username, display name or nickname, pronouns, avatar and
-//! banner (cropped to 1:1 and 17:6 like `AssetCropModal`'s presets), accent colour and bio, with
+//! banner (through the crop modal, [`super::crop`]), accent colour and bio, with
 //! the live card preview and the unsaved-changes bar. Edits live in `form.*["p.*"]`; saving
 //! sends `PATCH /users/@me` or `PATCH /guilds/{id}/members/@me` (`guild-members.mdx`).
 
@@ -42,6 +42,9 @@ struct Initial {
     accent: Option<u32>,
     avatar: Option<String>,
     banner: Option<String>,
+    /// The global profile's time zone and who sees it.
+    timezone: Option<String>,
+    tz_flags: u64,
 }
 
 fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<Initial> {
@@ -54,6 +57,8 @@ fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<I
             accent: me.accent_color,
             avatar: me.base.avatar.clone(),
             banner: me.banner.clone(),
+            timezone: me.timezone.clone(),
+            tz_flags: me.timezone_privacy_flags.bits(),
         },
         Some(_) => {
             let v = st.form.data.get("guild_profile")?;
@@ -66,6 +71,8 @@ fn initial(store: &Store, st: &ShellState, guild: Option<Snowflake>) -> Option<I
                 accent: gp["accent_color"].as_u64().map(|c| c as u32),
                 avatar: m["avatar"].as_str().map(str::to_string),
                 banner: m["banner"].as_str().or(gp["banner"].as_str()).map(str::to_string),
+                timezone: None,
+                tz_flags: 0,
             }
         }
     })
@@ -92,6 +99,16 @@ fn changes(st: &ShellState, init: &Initial, guild: bool) -> Map<String, Value> {
     {
         m.insert("accent_color".into(), a.map_or(Value::Null, Value::from));
     }
+    if let Some(v) = st.form.data.get("p.timezone")
+        && v.as_str() != init.timezone.as_deref()
+    {
+        m.insert("timezone".into(), v.clone());
+    }
+    if let Some(v) = st.form.data.get("p.timezone_privacy_flags")
+        && v.as_u64() != Some(init.tz_flags)
+    {
+        m.insert("timezone_privacy_flags".into(), v.clone());
+    }
     for k in ["avatar", "banner"] {
         if let Some(v) = st.form.data.get(&format!("p.{k}")) {
             m.insert(k.into(), v.clone());
@@ -102,48 +119,30 @@ fn changes(st: &ShellState, init: &Initial, guild: bool) -> Map<String, Value> {
 
 // ---- Picking and cropping ---------------------------------------------------------------------
 
-/// Centre-crops an image to `aspect` (width / height) as PNG; GIFs pass through (animated).
-pub fn crop(bytes: &[u8], aspect: f32) -> Result<Vec<u8>, String> {
-    if bytes.starts_with(b"GIF8") {
-        return Ok(bytes.to_vec());
-    }
-    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
-    let (w, h) = (img.width() as f32, img.height() as f32);
-    let (cw, ch) = if w / h > aspect { (h * aspect, h) } else { (w, w / aspect) };
-    let (x, y) = (((w - cw) / 2.0) as u32, ((h - ch) / 2.0) as u32);
-    let out = img.crop_imm(x, y, cw.round().max(1.0) as u32, ch.round().max(1.0) as u32);
-    let mut png = Vec::new();
-    out.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok(png)
-}
-
-fn pick<S: 'static>(acc: ShellAccess<S>, key: &'static str, aspect: f32) -> impl Fn(&mut S, &mut Tx) + 'static {
+/// Picks an image for `key`: a still opens the crop modal ([`super::crop`]), a GIF goes in as is.
+pub(super) fn pick<S: 'static>(acc: ShellAccess<S>, key: &'static str, asset: super::crop::Asset) -> impl Fn(&mut S, &mut Tx) + 'static {
     move |_: &mut S, tx: &mut Tx| {
         let options = FileDialogOptions { title: t("Choose an image").into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp"]);
         tx.open_file(options, move |s: &mut S, r, _| {
-            let form = &mut acc(s).form;
-            let read = r.map_err(|e| e.to_string()).and_then(|p| {
-                p.map(|p| {
-                    let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
-                    let gif = bytes.starts_with(b"GIF8");
-                    let out = crop(&bytes, aspect)?;
-                    Ok(crate::guild::data_url(std::path::Path::new(if gif { "a.gif" } else { "a.png" }), &out))
-                })
-                .transpose()
-            });
+            let sh = acc(s);
+            let read = r.map_err(|e| e.to_string()).and_then(|p| p.map(|p| std::fs::read(&p).map_err(|e| e.to_string())).transpose());
             match read {
-                Ok(Some(url)) => {
-                    form.data.insert(key.into(), Value::String(url));
+                Ok(Some(bytes)) if bytes.starts_with(b"GIF8") => {
+                    sh.form.data.insert(key.into(), Value::String(crate::guild::data_url(std::path::Path::new("a.gif"), &bytes)));
                 }
+                Ok(Some(bytes)) => match super::crop::Crop::new(key, asset, bytes) {
+                    Some(c) => sh.nav.crop = Some(c),
+                    None => sh.form.error = Some(t("This image couldn't be read. It may be damaged.").into()),
+                },
                 Ok(None) => {}
-                Err(e) => form.error = Some(format!("Couldn't open the image: {e}")),
+                Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
             }
         });
     }
 }
 
 /// A picked data URL decoded for the preview.
-fn picked_px(st: &ShellState, url: &str) -> Option<rune::Pixels> {
+pub(super) fn picked_px(st: &ShellState, url: &str) -> Option<rune::Pixels> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     url.hash(&mut h);
     let b64 = url.split_once(',').map_or(url, |(_, b)| b).to_string();
@@ -234,8 +233,11 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
             .child(input(st, acc, "p.name", &init.name, t("Display name"), &me.base.username, false, p));
     }
     form = form.child(input(st, acc, "p.pronouns", &init.pronouns, t("Pronouns"), "", false, p));
+    if guild.is_none() {
+        form = form.child(super::timezone::section(p, acc));
+    }
 
-    let asset_row = |title: &str, key: &'static str, aspect: f32, has: bool| {
+    let asset_row = |title: &str, key: &'static str, asset: super::crop::Asset, has: bool| {
         let picked = st.form.data.get(key);
         let shown = match picked {
             Some(Value::Null) => false,
@@ -246,7 +248,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
             Button::<S>::new(if title == "avatar" { t("Change avatar") } else { t("Change banner") })
                 .size(ButtonSize::Small)
                 .el(p)
-                .on_press_tx(pick(acc, key, aspect)),
+                .on_press_tx(pick(acc, key, asset)),
         );
         if shown {
             buttons = buttons.child(
@@ -261,7 +263,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         }
         col().w_full().gap(8.0).child(label(if title == "avatar" { t("Avatar") } else { t("Banner") }, p)).child(buttons)
     };
-    form = form.child(asset_row("avatar", "p.avatar", 1.0, init.avatar.is_some())).child(asset_row("banner", "p.banner", 17.0 / 6.0, init.banner.is_some()));
+    form = form.child(asset_row("avatar", "p.avatar", super::crop::Asset::Avatar, init.avatar.is_some())).child(asset_row("banner", "p.banner", super::crop::Asset::ProfileBanner, init.banner.is_some()));
 
     // `AccentColorPicker`.
     let swatch = accent.unwrap_or(DEFAULT_ACCENT);
@@ -351,6 +353,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         avatar,
         avatar_size: 80.0,
         custom_status: None,
+        status_emoji: None,
         badges: vec![],
         guild,
     };
@@ -419,21 +422,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crop_centres_to_the_aspect() {
-        let img = image::RgbaImage::from_pixel(300, 100, image::Rgba([1, 2, 3, 255]));
-        let mut png = Vec::new();
-        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-        let sq = image::load_from_memory(&crop(&png, 1.0).unwrap()).unwrap();
-        assert_eq!((sq.width(), sq.height()), (100, 100));
-        let wide = image::load_from_memory(&crop(&png, 17.0 / 6.0).unwrap()).unwrap();
-        assert_eq!((wide.width(), wide.height()), (283, 100));
-        assert_eq!(crop(b"GIF89a...", 1.0).unwrap(), b"GIF89a...", "animated images aren't re-encoded");
-    }
-
-    #[test]
     fn changes_only_lists_edited_fields() {
         let mut st = ShellState::default();
-        let init = Initial { name: "Ada".into(), pronouns: String::new(), bio: "hi".into(), accent: Some(0x112233), avatar: None, banner: None };
+        let init = Initial { name: "Ada".into(), pronouns: String::new(), bio: "hi".into(), accent: Some(0x112233), avatar: None, banner: None, timezone: None, tz_flags: 1 };
         assert!(changes(&st, &init, false).is_empty());
         st.form.text.insert("p.name".into(), TextEdit::new("Ada "));
         st.form.text.insert("p.bio".into(), TextEdit::new(""));

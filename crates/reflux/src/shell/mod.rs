@@ -18,7 +18,7 @@ pub mod invite_embed;
 pub mod lightbox;
 mod links;
 pub mod demo;
-mod emoji;
+pub(crate) mod emoji;
 pub(crate) mod role_icon;
 pub mod expr;
 pub(crate) mod friends;
@@ -226,6 +226,8 @@ pub struct ShellState {
     pub popups: Popups,
     /// The message under the pointer (shows its action bar).
     pub hover_msg: Option<Snowflake>,
+    /// Shift is down (the action bar's Shift to expand).
+    pub shift_held: bool,
     /// The message the open menu or picker belongs to (keeps its action bar up).
     pub active_msg: Option<Snowflake>,
     pub reply: Option<ReplyTo>,
@@ -340,6 +342,7 @@ impl Default for ShellState {
             member_list: true,
             hover_guild: None,
             now_ms: 0,
+            shift_held: false,
             default_avatars: Vec::new(),
             media: Default::default(),
             intents: Vec::new(),
@@ -497,6 +500,8 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= crate::nav::poll(store, st);
     changed |= members_page::poll(st, tx);
     changed |= crate::guild::poll_overwrite_search(store, st, tx);
+    changed |= crate::settings::search::poll(store, st);
+    changed |= crate::settings::dev::poll(st);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;

@@ -162,7 +162,17 @@ impl Combo {
 }
 
 /// `AppSpec::on_key`: keys nothing focused took (or the focused control passed on).
-pub fn on_key(s: &mut State, k: &KeyEvent, _tx: &mut Tx) -> bool {
+pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
+    if let Key::Modifier { .. } = k.key {
+        let sh = s.shell_demo.as_mut().map_or(&mut s.app.shell, |d| &mut d.shell);
+        sh.shift_held = k.mods.shift;
+        return true;
+    }
+    // `escapeExitsKeyboardMode`: Escape also drops the keyboard focus (and its ring); the key
+    // still does what it otherwise would.
+    if k.key == Key::Escape && k.mods == rune::Mods::default() && crate::look::with(|l| l.escape_exits_keyboard) {
+        tx.blur();
+    }
     let sh = match &mut s.shell_demo {
         Some(d) => Some(&mut d.shell),
         None if s.app.route == Route::Main => Some(&mut s.app.shell),

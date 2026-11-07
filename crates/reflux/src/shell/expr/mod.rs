@@ -66,12 +66,15 @@ pub enum For {
     /// A settings form's emoji field: the pick goes into `form.data[key]` as
     /// `{"id": custom ID or null, "name": surrogate or custom name}`, anchored under `pick-{key}`.
     Form { channel: Snowflake, key: &'static str },
+    /// The custom status modal's emoji (`CustomStatusModal`, emoji tab only).
+    Status,
 }
 
 impl For {
     fn channel(self) -> Snowflake {
         match self {
             For::Composer(c) | For::React { channel: c, .. } | For::Form { channel: c, .. } => c,
+            For::Status => Snowflake(0),
         }
     }
 }
@@ -372,6 +375,18 @@ pub fn react_picker<S: 'static>(store: &Store, st: &ShellState, channel: Snowfla
     popout(store, st, For::React { channel, message }, p, acc)
 }
 
+/// Opens the emoji picker for the custom status modal.
+pub fn open_status(st: &mut ShellState) {
+    st.popups.open = Some(POPOUT.into());
+    st.expr.reset(For::Status, Tab::Emojis);
+}
+
+/// The custom status modal's picker, under the emoji button (`status-emoji`).
+pub fn status_picker<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    (st.popups.is_open(POPOUT) && st.expr.target == Some(For::Status))
+        .then(|| popout(store, st, For::Status, p, acc).modal(true, move |s: &mut S| close(acc(s))).anchored_fit("status-emoji", Side::Bottom, Align::Start, 8.0))
+}
+
 /// `EXPRESSION_PICKER_DEFAULT_SIZE`.
 const WIDTH: f32 = 592.0;
 const HEIGHT: f32 = 690.0;
@@ -380,7 +395,7 @@ const HEIGHT: f32 = 690.0;
 fn popout<S: 'static>(store: &Store, st: &ShellState, t: For, p: &Palette, acc: ShellAccess<S>) -> El {
     let bg = p.form_surface_background;
     let tabs: Vec<Tab> = match t {
-        For::React { .. } | For::Form { .. } => vec![Tab::Emojis],
+        For::React { .. } | For::Form { .. } | For::Status => vec![Tab::Emojis],
         For::Composer(_) => Tab::ALL.into_iter().filter(|&x| x != Tab::Gifs || gif::enabled(st)).collect(),
     };
     let channel = store.channels.get(&t.channel());

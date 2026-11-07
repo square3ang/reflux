@@ -17,6 +17,7 @@ mod restrict;
 mod session;
 mod settings;
 mod shell;
+mod synced;
 mod social;
 mod theme;
 #[allow(dead_code, unused_imports)] // the kit exposes variants the screens don't use yet
@@ -103,6 +104,7 @@ fn main() {
         ..AppSpec::new("Fluxer", desktop::window::initial_size(&prefs, (1280.0, 800.0)), init, view)
     })
     .keep_running()
+    .modifier_keys()
     .on_close(desktop::on_close)
     .on_focus(|s, focused, _| s.desktop.focused = focused);
     let mut app = desktop::menu::install(app);

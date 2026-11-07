@@ -140,7 +140,7 @@ pub fn play_bytes(bytes: Vec<u8>, volume: f32) {
     send(Sound::Message, volume, Some(bytes));
 }
 
-/// Plays `s` at `volume` (0..=1) without waiting, from `custom` when that file reads. Never
+/// Plays `s` at `volume` (0..=2) without waiting, from `custom` when that file reads. Never
 /// plays headless (snapshots).
 pub fn play(s: Sound, volume: f32, custom: Option<&str>) {
     send(s, volume, custom.and_then(|p| std::fs::read(p).ok()));
@@ -180,6 +180,6 @@ fn send(s: Sound, volume: f32, custom: Option<Vec<u8>>) {
         Some(tx)
     });
     if let Some(tx) = tx {
-        let _ = tx.send((s, volume.clamp(0.0, 1.0), custom));
+        let _ = tx.send((s, volume.clamp(0.0, 2.0), custom));
     }
 }

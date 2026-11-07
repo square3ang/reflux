@@ -55,7 +55,7 @@ impl<S: 'static> Modal<S> {
             .hover_group()
             .hover(p.background_modifier_hover)
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(t("Close"))
             .on_press(move |s: &mut S| close(s))
             .child(icon(&icons::X_BOLD, 24.0).color(p.text_primary_muted).group_color(p.text_primary).group_opacity(0.5, 1.0));

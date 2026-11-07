@@ -29,19 +29,77 @@ pub fn title(store: &Store, m: &Message) -> String {
     }
 }
 
-/// The message text with user mentions as `@name`; attachments-only messages say so.
-// shortcut: no markdown stripping, role/channel mentions or embeds (Fluxer's
-// `buildMessageNotificationBody` renders those to plain text).
+/// `buildMessageNotificationBody` (`MessageNotificationPreview.ts`): the content rendered to
+/// plain text with markdown kept (mentions as `@name` / `@role` / `#channel`, custom emoji as
+/// `:name:`), else a sticker, attachment or embed line, else the forwarded message's.
+// shortcut: system messages show their raw content (Fluxer's `SystemMessageUtils.stringify`
+// isn't ported).
 pub fn body(store: &Store, m: &Message) -> String {
     let guild = store.channels.get(&m.channel_id).and_then(|c| c.guild_id);
-    let mut s = m.mentions.iter().fold(m.content.clone(), |s, u| {
-        let name = format!("@{}", store.display_name(guild, u.id));
-        s.replace(&format!("<@{}>", u.id), &name).replace(&format!("<@!{}>", u.id), &name)
-    });
-    if s.trim().is_empty() && !m.attachments.is_empty() {
-        s = t("Sent an attachment").into();
+    let users: Vec<Snowflake> = m.mentions.iter().map(|u| u.id).collect();
+    let text = markdown(store, guild, &m.content, &users, &m.mention_roles, &m.mention_channels);
+    if !text.is_empty() {
+        return text;
     }
-    s
+    if let Some(s) = fallback(&m.stickers, &m.attachments, &m.embeds) {
+        return s;
+    }
+    let Some(snap) = m.message_snapshots.first() else { return String::new() };
+    let text = markdown(store, guild, &snap.content, &snap.mentions, &snap.mention_roles, &snap.mention_channels);
+    if !text.is_empty() {
+        return text;
+    }
+    fallback(&snap.stickers, &snap.attachments, &snap.embeds).unwrap_or_else(|| t("Forwarded a message").into())
+}
+
+/// `renderMarkdownPreview`: `parseAndRenderToPlaintext` with `preserveMarkdown`.
+fn markdown(store: &Store, guild: Option<Snowflake>, content: &str, users: &[Snowflake], roles: &[Snowflake], channels: &[reflux_model::ChannelMention]) -> String {
+    if content.is_empty() {
+        return String::new();
+    }
+    let mut o = reflux_markdown::PlaintextOptions { preserve_markdown: true, ..Default::default() };
+    for &u in users {
+        o.users.insert(u.to_string(), store.display_name(guild, u));
+    }
+    if let Some(g) = guild.and_then(|g| store.guilds.get(&g)) {
+        for r in g.roles.iter().filter(|r| roles.contains(&r.id)) {
+            o.roles.insert(r.id.to_string(), r.name.clone());
+        }
+    }
+    for c in channels {
+        o.channels.insert(c.id.to_string(), c.name.clone());
+    }
+    // Channel mentions the message didn't list resolve from the store.
+    for c in store.channels.values().filter(|c| content.contains(&format!("<#{}>", c.id))) {
+        o.channels.entry(c.id.to_string()).or_insert_with(|| c.name.clone().unwrap_or_default());
+    }
+    let emoji = crate::shell::emoji::context(content);
+    let nodes = reflux_markdown::parse(content, &reflux_markdown::Options { flags: reflux_markdown::presets::STANDARD, emoji });
+    reflux_markdown::render_ast_to_plaintext(&nodes, &o).trim().to_string()
+}
+
+/// `buildMessageContentFallbackPreview`: stickers, then the first attachment, then the first embed.
+fn fallback(stickers: &[reflux_model::StickerItem], attachments: &[reflux_model::Attachment], embeds: &[reflux_model::Embed]) -> Option<String> {
+    if !stickers.is_empty() {
+        let names: Vec<&str> = stickers.iter().map(|s| s.name.trim()).filter(|n| !n.is_empty()).collect();
+        return Some(match names.as_slice() {
+            [] if stickers.len() == 1 => t("Sticker").into(),
+            [] => t("Stickers").into(),
+            [one] if stickers.len() == 1 => crate::i18n::tf("Sticker: {stickerName}", &[("stickerName", one)]),
+            _ => crate::i18n::tf("Stickers: {stickerNames}", &[("stickerNames", &names.join(", "))]),
+        });
+    }
+    if let Some(a) = attachments.first() {
+        return Some(crate::i18n::tf("Attachment: {filename}", &[("filename", &a.filename)]));
+    }
+    let e = embeds.first()?;
+    let s = match (&e.title, &e.description) {
+        (Some(t), Some(d)) => format!("{t}: {d}"),
+        (None, Some(d)) => d.clone(),
+        (Some(t), None) => t.clone(),
+        (None, None) => e.fields.first().map(|f| [f.name.as_str(), f.value.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(": ")).unwrap_or_default(),
+    };
+    (!s.is_empty()).then_some(s)
 }
 
 /// Shows one notification; `on_click` runs on the notification's thread when it's clicked.

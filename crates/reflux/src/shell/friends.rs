@@ -61,7 +61,7 @@ fn header<S: 'static>(active: FriendsTab, pending: usize, p: &Palette, acc: Shel
             .radius(6.0)
             .hover_group()
             .cursor(rune::Cursor::Pointer)
-            .role("tab")
+            .role("tab").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .checked(t == active)
             .label(label.to_string())
             .key(format!("friends-tab-{label}"))
@@ -261,7 +261,7 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
             .hover_group()
             .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 2.0, spread: 0.0, color: rgba(0, 0, 0, 0.12), inset: false })
             .cursor(rune::Cursor::Pointer)
-            .role("button")
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(tip.to_string())
             .child(icon(glyph, 20.0).color(fg).group_color(hfg));
         b = match intent {
@@ -306,7 +306,7 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
         .center_y()
         .hover_group()
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .key(format!("friend-row-{id}"))
         .on_press(move |s: &mut S| acc(s).open_profile(id, None, note.clone(), format!("friend-{id}"), Placement::RightStart))
         .on_secondary_press(move |s: &mut S, at, _| {

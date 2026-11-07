@@ -2,7 +2,7 @@
 //! its custom list, recorder (`KeybindRecorder`) and per-row menus, the Ctrl+/ list
 //! (`KeyboardShortcutsCheatsheetModal`) and the first-Tab `KeyboardModeIntroModal`. Kept per
 //! account on this device ([`super::AccountPrefs`]).
-// shortcut: no search box, "Sync across devices" or global (system-wide) custom keybinds.
+// shortcut: no global (system-wide) custom keybinds.
 
 use rune::{Color, El, Key, KeyEvent, Shadow, col, el, icon, row, text};
 use serde::{Deserialize, Serialize};
@@ -146,15 +146,33 @@ fn add_custom(m: &mut AccountPrefs, action: Option<Action>) {
 /// The Keybinds tab: the custom list, then the built-ins by section.
 pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let m = mine(st);
-    let mut out = col().w_full().gap(24.0).child(custom_list(st, &m, p, acc, layer));
-    for (i, &(id, heading)) in SECTIONS.iter().enumerate() {
-        out = out.child(crate::settings::tabs::section(t(heading), defaults(st, &m, id, p, acc), i == 0, p));
+    let q = st.nav.key_query.text.trim().to_lowercase();
+    let search = crate::ui::Input::new("kb-search", &st.nav.key_query, move |s: &mut S| &mut acc(s).nav.key_query)
+        .placeholder(t("Search keybinds…"))
+        .left(icon(&icons::MAGNIFYING_GLASS_BOLD, 16.0).color(p.text_tertiary))
+        .el(p)
+        .label(t("Search keybinds"));
+    let mut out = col().w_full().gap(24.0).child(search).child(custom_list(st, &m, &q, p, acc, layer));
+    let mut first = true;
+    for &(id, heading) in SECTIONS {
+        if let Some(rows) = defaults(st, &m, id, &q, p, acc) {
+            out = out.child(crate::settings::tabs::section(t(heading), rows, first, p));
+            first = false;
+        }
+    }
+    if first && !q.is_empty() {
+        out = out.child(text(t("No keybinds match that search.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
     }
     out
 }
 
+/// `entryMatchesQuery` / `comboMatchesQuery`: the label or a key cap holds the query.
+fn matches(label: &str, combo: Option<&Combo>, q: &str) -> bool {
+    q.is_empty() || label.to_lowercase().contains(q) || combo.is_some_and(|c| c.caps().join("+").to_lowercase().contains(q))
+}
+
 /// `CustomKeybindsList`.
-fn custom_list<S: 'static>(st: &ShellState, m: &AccountPrefs, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+fn custom_list<S: 'static>(st: &ShellState, m: &AccountPrefs, q: &str, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let any = !m.keybinds.is_empty() || m.builtins_off || !m.disabled_builtins.is_empty();
     let head = row()
         .w_full()
@@ -179,6 +197,12 @@ fn custom_list<S: 'static>(st: &ShellState, m: &AccountPrefs, p: &Palette, acc: 
     let options = col().w_full().gap(8.0).px(12.0).py(10.0).radius(8.0).border(1.0, p.background_modifier_accent).fill(p.background_secondary).child(
         Switch::new(off).label(t("Disable built-ins")).on_toggle(move |s: &mut S| update_mine(acc(s), |m| m.builtins_off = !off)).el(p),
     );
+    let sync = m.sync_keybinds;
+    let options = options.child(Switch::new(sync).label(t("Sync keybinds")).on_toggle(move |s: &mut S| {
+        let sh = acc(s);
+        sh.nav.push_keys = !sync;
+        update_mine(sh, |m| m.sync_keybinds = !sync);
+    }).el(p));
     let mut list = col().w_full().gap(8.0);
     if m.keybinds.is_empty() {
         list = list.child(text(t("No custom keybinds yet.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
@@ -187,8 +211,12 @@ fn custom_list<S: 'static>(st: &ShellState, m: &AccountPrefs, p: &Palette, acc: 
     let options_list: Vec<(String, String)> = BINDS.iter().map(|b| (format!("{:?}", b.action), label(b.action))).collect();
     let opts: Vec<(&str, &str)> = options_list.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
     let ids: Vec<String> = (0..m.keybinds.len()).map(|i| format!("kb-action-{i}")).collect();
-    for (i, c) in m.keybinds.iter().enumerate() {
-        list = list.child(custom_row(st, i, c, clash[i].as_deref(), &ids[i], &opts, p, acc, layer));
+    let shown: Vec<usize> = (0..m.keybinds.len()).filter(|&i| matches(&m.keybinds[i].action.map(label).unwrap_or_default(), m.keybinds[i].combo.as_ref(), q)).collect();
+    if !m.keybinds.is_empty() && shown.is_empty() {
+        list = list.child(text(t("No custom keybinds match that search.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
+    }
+    for i in shown {
+        list = list.child(custom_row(st, i, &m.keybinds[i], clash[i].as_deref(), &ids[i], &opts, p, acc, layer));
     }
     col().w_full().gap(12.0).child(head).child(options).child(list)
 }
@@ -280,9 +308,12 @@ fn recorder<S: 'static>(st: &ShellState, i: usize, combo: Option<Combo>, p: &Pal
 
 /// `DefaultKeybindsList` for one section: rows merged by label, their built-in chips (dimmed
 /// once overridden or disabled) and a menu.
-fn defaults<S: 'static>(_st: &ShellState, m: &AccountPrefs, id: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+fn defaults<S: 'static>(_st: &ShellState, m: &AccountPrefs, id: &str, q: &str, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let mut rows = col().w_full();
-    let binds: Vec<_> = BINDS.iter().filter(|b| b.section == id).collect();
+    let binds: Vec<_> = BINDS.iter().filter(|b| b.section == id && matches(t(b.label), Some(&b.combo), q)).collect();
+    if binds.is_empty() {
+        return None;
+    }
     let mut k = 0;
     while k < binds.len() {
         let label = binds[k].label;
@@ -310,7 +341,7 @@ fn defaults<S: 'static>(_st: &ShellState, m: &AccountPrefs, id: &str, p: &Palett
                 .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).h(1.0).fill(p.background_modifier_accent)),
         );
     }
-    rows
+    Some(rows)
 }
 
 /// The open row menu (`DefaultShortcutRow` / `CustomKeybindRow`).

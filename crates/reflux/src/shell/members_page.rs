@@ -175,7 +175,7 @@ pub fn sidebar_row<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         .center_y()
         .radius(6.0)
         .cursor(rune::Cursor::Pointer)
-        .role("link")
+        .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(t("Members").to_string())
         .key("members-page-row")
         .hover_group()

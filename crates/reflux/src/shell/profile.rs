@@ -34,6 +34,8 @@ pub struct Card {
     pub avatar: El,
     pub avatar_size: f32,
     pub custom_status: Option<String>,
+    /// The custom status emoji, drawn before its text.
+    pub status_emoji: Option<El>,
     pub badges: Vec<String>,
     pub guild: Option<Snowflake>,
 }
@@ -74,6 +76,7 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         (None, Some(h)) => banner_px(st, user, h),
         _ => None,
     };
+    let cs = store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref());
     let badges = prof.and_then(|v| v["profile_badges"].as_array()).map(|a| a.iter().filter_map(|b| b["description"].as_str().or(b["kind"].as_str()).map(str::to_string)).collect()).unwrap_or_default();
     Card {
         user,
@@ -85,7 +88,8 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         banner,
         avatar: avatar(store, st, user, size, Some(presence(store, user)), p.background_primary, p),
         avatar_size: size,
-        custom_status: store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref()?.text.clone()).filter(|t| !t.is_empty()),
+        custom_status: cs.and_then(|c| c.text.clone()).filter(|t| !t.is_empty()),
+        status_emoji: cs.and_then(|c| super::forum::forum_emoji(st, c.emoji_id, c.emoji_name.as_deref(), 16.0)),
         badges,
         guild,
     }
@@ -123,8 +127,12 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
             row().h(22.0).px(6.0).center_y().radius(4.0).fill(p.background_secondary_alt).child(text(b).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))
         })));
     }
-    if let Some(s) = c.custom_status {
-        content = content.child(text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap());
+    if c.custom_status.is_some() || c.status_emoji.is_some() {
+        let mut r = row().w_full().gap(4.0).center_y().children(c.status_emoji);
+        if let Some(s) = c.custom_status {
+            r = r.child(text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap().shrink());
+        }
+        content = content.child(r);
     }
     if let Some(bio) = c.bio {
         let md = super::markdown::Md::new(store, &st.media, c.guild, p, format!("bio-{}", c.user));
@@ -201,7 +209,8 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
             extra.push(r);
         }
     }
-    if user != me {
+    // `UserNoteEditor`: streamer mode hides notes.
+    if user != me && !store.mask_names {
         let field = text_input(&st.note, font(12.0, 400.0).lh(16.0))
             .key("profile-note")
             .w_full()
@@ -310,7 +319,8 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
             let mut c = col().w_full().gap(16.0);
             c = c.child(col().gap(4.0).child(section_title(t("Member since"), p)).child(muted(super::chat::format_full_date(user.timestamp_ms()))));
             let conns: Vec<String> = prof.and_then(|v| v["connected_accounts"].as_array()).map(|a| a.iter().filter_map(|c| c["name"].as_str().map(str::to_string)).collect()).unwrap_or_default();
-            if !conns.is_empty() {
+            // `UserProfileConnections`: hidden in streamer mode.
+            if !conns.is_empty() && !store.mask_names {
                 c = c.child(col().gap(6.0).child(section_title(t("Connections"), p)).children(conns.into_iter().map(|n| {
                     row().gap(8.0).center_y().child(rune::icon(&crate::icons::GLOBE, 16.0).color(p.text_secondary)).child(text(n).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
                 })));

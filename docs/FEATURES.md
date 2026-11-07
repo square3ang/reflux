@@ -3,14 +3,14 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
 ### 1.1 User settings (F/user/components/settings_utils/SettingsConstants.tsx; ours settings/)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Profile | PARTIAL | interactive crop (auto centre-crop), timezone, badges | F/user/components/modals/tabs/MyProfileTab.tsx |
+| Profile | PARTIAL | badges (hidden badges, premium timestamp); the preview doesn't show local time; GIFs skip the crop modal | F/user/components/modals/tabs/MyProfileTab.tsx |
 | Account | PARTIAL | recovery kit; a security key's PIN is asked up front | tabs/account_security_tab/* |
 | Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
 | Connections | PARTIAL | Bluesky (browser OAuth) | tabs/LinkedAccountsTab.tsx, F/connection/* |
@@ -19,19 +19,19 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Devices | DONE | | tabs/DevicesTab.tsx |
 | Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | PARTIAL | read-only: Plutonium link card + subscription status, Gifts inventory (copy links); checkout, plan changes, redeem form, Operator pass and Payments are in the browser | tabs/PlutoniumTab.tsx etc. |
 | Appearance | DONE | (device prefs in session.json, not the synced-preferences protobuf; Active now has no panel to show) | tabs/AppearanceTab.tsx |
-| Themes | PARTIAL | theme library/saved themes and backups; font and non-colour variables can't be overridden; Quick CSS applies only `:root` colour variables (the rest is counted and reported) | F/theme_settings/* |
-| Notifications | PARTIAL | per-sound volume overrides | tabs/NotificationsTab.tsx |
+| Themes | DONE | (impossible: Quick CSS beyond `:root` variables — Rune has no CSS engine; the rest is counted and reported) | F/theme_settings/* |
+| Notifications | DONE | | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
 | Voice & video | PARTIAL | no camera background effects; input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
-| Accessibility | PARTIAL | keyboard mode (so "Escape exits keyboard mode" is stored only); keep-animating-under-reduced-motion flags | tabs/AccessibilityTab.tsx |
-| Language & time | PARTIAL | auto-detect language, OS spellcheck engine, add-a-word field | tabs/LanguageTab.tsx |
-| Keybinds | PARTIAL | search box, sync across devices, global custom binds; PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
+| Accessibility | DONE | (Fluxer's current Motion tab has no keep-animating flags) | tabs/AccessibilityTab.tsx |
+| Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
+| Keybinds | PARTIAL | global (system-wide) custom combos: global shortcuts stay the portal / RegisterHotKey set; PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
-| Advanced | PARTIAL | action bar toggles, double-click edit, encoder options, hide blocked, hw accel, auto-update | tabs/AdvancedSettingsTab.tsx |
-| Applications (dev) | PARTIAL | bot avatar/banner and friendly-bot flags; a created app stays on the list | tabs/applications_tab/* |
+| Advanced | PARTIAL | encoder options (impossible: hardware acceleration — Rune always renders on the GPU) | tabs/AdvancedSettingsTab.tsx |
+| Applications (dev) | PARTIAL | bot username/discriminator rules | tabs/applications_tab/* |
 | Embed debugger (dev) | DONE | | tabs/EmbedDebuggerTab.tsx |
 | Design system (dev) | DONE | | tabs/component_gallery_tab/* |
-| Settings search | PARTIAL | sections/subtabs | SettingsConstants.tsx |
+| Settings search | PARTIAL | no in-tab match highlight or debounce | SettingsConstants.tsx |
 
 ### 1.2 Community settings (ours guild/settings.rs)
 | Tab | Status | Missing | Official source |
@@ -86,8 +86,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Guild rail, user area, UI kit, keyboard nav | DONE | | |
 | Guild folders | DONE | | GuildFolderItem.tsx |
 | Rail drag-reorder / create folder | DONE | | F/app/components/layout/dnd/* |
-| Favorites | PARTIAL | kept in local per-account prefs, not the synced settings | FavoritesButton.tsx |
-| Set custom status | PARTIAL | emoji picker, live preview | CustomStatusModal.tsx |
+| Favorites | DONE | (synced_preferences field 40; no base-hash conflict retry) | FavoritesButton.tsx |
+| Set custom status | DONE | | CustomStatusModal.tsx |
 | Nagbars (connection, notice, maintenance…) | PARTIAL | instance notice, maintenance, desktop-notification, premium ones (connection, update, streamer, verify done) | app_layout/nagbars/* |
 | Skeletons | DONE | | F/app/components/skeleton/* |
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
@@ -149,14 +149,14 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### notification / read_state / typing / presence
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Desktop notifications | PARTIAL | strip markdown; clicks on Win/mac | MessageNotificationPreview.ts |
+| Desktop notifications | PARTIAL | clicks on Win/mac | MessageNotificationPreview.ts |
 | Sounds, status select, custom status display | DONE | | |
 | Acks | PARTIAL | focus check (delayed auto-ack live-verified) | NotificationAutoAck.ts |
 | Timed mute expiry | DONE | | useMuteSheet.ts |
 | Per-channel overrides | DONE | header bell + the notification modal's overrides section | GuildNotificationSettingsModal.tsx |
 | Mute duration submenu | DONE | | MuteTargetMenuItem.tsx |
-| TTS | PARTIAL | speaks through the OS tool (spd-say/espeak-ng/say/PowerShell); no queue, no TtsTextFormatter simplification, replies not announced as such | TextToSpeech.tsx |
-| Auto-idle | PARTIAL | only Reflux's own window input counts (no OS idle query) | LocalPresence.ts |
+| TTS | DONE | (speaks through the OS voice tool: spd-say/espeak-ng/say/PowerShell) | TextToSpeech.tsx |
+| Auto-idle | DONE | | LocalPresence.ts |
 | Thread/forum notification levels | PARTIAL | forum-wide unread (FORUM_UNREADS); no live test | F/threads/* |
 
 ### relationship / user
@@ -232,7 +232,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | PARTIAL | RTL layout mirroring (Rune has no layout direction; bidi text only); some Reflux-only `format!` sentences stay English | F/i18n/* |
 | Reduced motion, screen reader announcements | DONE | | F/accessibility/* |
-| Streamer mode | PARTIAL | names masked via Store::display_name, account gate, invite link, sounds, notifications; notes in profile not hidden | F/streamer_mode/* |
+| Streamer mode | DONE | | F/streamer_mode/* |
 | Debug modals, experiments, account engine cache, premium *(low)* | PARTIAL | debug user/channel/community/member/message + Developer tools (state, settings, `/experiments` read-only); offline cache (last READY + 50 msgs × 30 channels per account); premium see §1.1; JSON not syntax-highlighted | |
 
 ## 3. Desktop shell

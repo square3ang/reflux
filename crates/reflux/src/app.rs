@@ -25,7 +25,7 @@ mod cache;
 mod chat;
 mod expr;
 mod guild;
-mod idle;
+pub(crate) mod idle;
 mod invites;
 mod threads;
 pub(crate) use guild::entered;
@@ -151,6 +151,8 @@ pub struct App {
     thread_sub: Option<(Snowflake, Option<Snowflake>)>,
     voice: voice::VoiceRt,
     idle: idle::Idle,
+    /// The font families last handed to Rune (theme `--font-sans` / `--font-mono`).
+    fonts: Option<(String, String)>,
     cache: cache::Cache,
 }
 
@@ -759,6 +761,12 @@ fn fetch_older(s: &State, channel: Snowflake) {
 /// Runs what the shell queued since the last frame; true when anything ran.
 pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.now_ms = now_ms();
+    // `--font-sans` / `--font-mono` overrides in the theme CSS.
+    let fam = theme::custom::families(&s.app.saved.desktop.look.theme_css());
+    if s.app.fonts.as_ref() != Some(&fam) {
+        tx.set_font_families(&fam.0, &fam.1);
+        s.app.fonts = Some(fam);
+    }
     let f = s.app.instance.as_ref().map(|i| &i.discovery.features);
     s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
     let community = s.app.instance.as_ref().map(|i| &i.discovery.community);
@@ -861,7 +869,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let reduced = look.reduced(cx.system_reduced_motion());
     cx.reduced_motion(reduced);
     crate::look::set_reduced_motion(reduced);
-    let pal = theme::custom::effective(&s.app.store.settings.theme, cx.system_dark(), look.saturation, &look.css);
+    let pal = theme::custom::effective(&s.app.store.settings.theme, cx.system_dark(), look.saturation, &look.theme_css());
     let p = &pal;
     let body = match s.app.route {
         Route::Auth => return crate::login::view(s, cx),

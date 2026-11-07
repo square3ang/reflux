@@ -51,18 +51,48 @@ pub struct Prefs {
     /// `syncReducedMotionWithSystem`, else `reducedMotionOverride`.
     pub sync_motion: bool,
     pub reduce_motion: bool,
+    /// The message action bar (`showMessageActionBar`, `…OnlyMoreButton`, `…QuickReactions`,
+    /// `…ShiftExpand`), `messageDoubleClickActions`, and `AdvancedSettings.hideBlockedMessages`.
+    pub action_bar: bool,
+    pub action_bar_more_only: bool,
+    pub action_bar_quick_reactions: bool,
+    pub action_bar_shift_expand: bool,
+    pub double_click_actions: bool,
+    pub hide_blocked: bool,
     /// `ChatInputSettings.convertEmoticons`.
     pub convert_emoticons: bool,
     /// `Notification.unreadMessageBadgeEnabled` (dock / taskbar / title badge).
     pub unread_badge: bool,
     /// `Sound.settings.disabledSounds` by Fluxer sound ID (absent = the sound's default).
     pub sounds_off: BTreeMap<String, bool>,
-    /// `masterVolume` (0..=100).
+    /// `masterVolume` and `soundOverrides` by sound ID (0..=200 %).
     pub volume: f32,
+    pub sound_volumes: BTreeMap<String, f32>,
     /// Custom sound files by sound ID (copied under the config dir).
     pub custom_sounds: BTreeMap<String, String>,
     /// Quick CSS. Only `:root` theme variable overrides apply ([`crate::theme::custom`]).
     pub css: String,
+    /// `ThemeLibrary`: saved themes, the IDs turned on (applied before the quick CSS, in this
+    /// order), and the imported assets, kept as they came so an export gives them back.
+    pub themes: Vec<LibraryTheme>,
+    pub enabled_themes: Vec<String>,
+    pub theme_assets: Vec<serde_json::Value>,
+}
+
+/// `ThemeLibraryTheme` (the fields an export carries).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LibraryTheme {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub author: String,
+    pub version: String,
+    pub tags: Vec<String>,
+    pub css: String,
+    pub file_name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 impl Default for Prefs {
@@ -90,12 +120,22 @@ impl Default for Prefs {
             skip_p2p_join: false,
             sync_motion: true,
             reduce_motion: false,
+            action_bar: true,
+            action_bar_more_only: false,
+            action_bar_quick_reactions: true,
+            action_bar_shift_expand: true,
+            double_click_actions: false,
+            hide_blocked: false,
             convert_emoticons: false,
             unread_badge: true,
             sounds_off: BTreeMap::new(),
             volume: 100.0,
+            sound_volumes: BTreeMap::new(),
             custom_sounds: BTreeMap::new(),
             css: String::new(),
+            themes: Vec::new(),
+            enabled_themes: Vec::new(),
+            theme_assets: Vec::new(),
         }
     }
 }
@@ -109,6 +149,17 @@ impl Prefs {
     /// `Sound.isSoundDisabled`: the user's choice, else the same-channel sound is off by default.
     pub fn sound_on(&self, id: &str) -> bool {
         !self.sounds_off.get(id).copied().unwrap_or(id == "same-channel-message")
+    }
+
+    /// The CSS that applies: the turned-on saved themes, then the quick CSS.
+    pub fn theme_css(&self) -> String {
+        let on = self.enabled_themes.iter().filter_map(|id| self.themes.iter().find(|t| &t.id == id));
+        on.map(|t| t.css.as_str()).chain([self.css.as_str()]).filter(|c| !c.trim().is_empty()).collect::<Vec<_>>().join("\n\n")
+    }
+
+    /// `getEffectiveMultiplier`: the sound's override, else the master volume, as a gain (0..=2).
+    pub fn sound_gain(&self, id: &str) -> f32 {
+        self.sound_volumes.get(id).copied().unwrap_or(self.volume).clamp(0.0, 200.0) / 100.0
     }
 
     /// The chat text scale (`--font-size` against the 16px default).
@@ -216,6 +267,9 @@ mod tests {
     fn sound_defaults_and_motion() {
         let mut p = Prefs::default();
         assert!(p.sound_on("message") && !p.sound_on("same-channel-message"));
+        p.volume = 50.0;
+        p.sound_volumes.insert("mute".into(), 150.0);
+        assert_eq!((p.sound_gain("message"), p.sound_gain("mute")), (0.5, 1.5));
         p.sounds_off.insert("message".into(), true);
         assert!(!p.sound_on("message"));
         assert!(p.reduced(true) && !p.reduced(false));

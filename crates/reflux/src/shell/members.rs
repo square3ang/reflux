@@ -60,7 +60,7 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         });
     // Before the first sync: `MemberListSkeleton`.
     let body = if rows.is_empty() { col().w_full().pt(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_START).px(dim::MEMBER_LIST_SCROLLER_PADDING_INLINE).child(crate::nav::skeleton::member_list(p)) } else { body };
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body.focus_group().role("list"));
     col()
         .w(dim::LAYOUT_MEMBER_LIST_WIDTH)
         .h_full()
@@ -108,7 +108,7 @@ pub(super) fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake,
         .radius(6.0)
         .hover(p.background_modifier_hover)
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .key(format!("member-{u}"))
         .on_press(move |s: &mut S| acc(s).open_profile(u, Some(gid), note.clone(), format!("member-{u}"), Placement::LeftStart))
         .on_secondary_press(move |s: &mut S, at, _| {

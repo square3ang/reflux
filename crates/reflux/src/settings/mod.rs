@@ -15,6 +15,13 @@ mod premium;
 pub use premium::{gift_accept, open_gift};
 pub(crate) use privacy::open_url;
 mod profile;
+mod advanced;
+pub(crate) mod crop;
+mod timezone;
+mod timezones;
+pub(crate) mod search;
+mod theme_library;
+mod search_index;
 pub mod sudo;
 pub(crate) mod tabs;
 mod voice_tabs;
@@ -42,13 +49,16 @@ pub struct SettingsUi {
     pub modal: Option<AccountModal>,
     /// The Profile tab edits this community's profile (`ProfileTypeSelector`).
     pub profile_guild: Option<Snowflake>,
+    /// The query the search results were last set up for, and the results folded since.
+    pub searched: String,
+    pub collapsed: Vec<&'static str>,
 }
 
 impl SettingsUi {
     /// Opens on `tab` (a [`TABS`] id), or on the first tab like Fluxer.
     pub fn new(tab: Option<&str>) -> Self {
         let tab = TABS.iter().find(|t| Some(t.id) == tab).map_or("my_profile", |t| t.id);
-        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None }
+        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), collapsed: Vec::new() }
     }
 }
 
@@ -192,6 +202,10 @@ const DESKTOP_APP: &str = match std::env::consts::OS.as_bytes() {
 /// Account tab (`PRIMARY_SETTINGS_NAV_HIDDEN_TAB_TYPES`).
 const NAV_HIDDEN: &[&str] = &["my_profile", "authorized_apps", "blocked_users", "devices"];
 
+fn visible_id(id: &str, store: &Store, premium: bool) -> bool {
+    TABS.iter().find(|t| t.id == id).is_some_and(|t| visible(t, store, premium))
+}
+
 fn visible(t: &TabDef, store: &Store, premium: bool) -> bool {
     match t.id {
         "embed_debugger" | "component_gallery" => store.settings.developer_mode,
@@ -279,9 +293,15 @@ const LAYER_KEY: &str = "settings-layer";
 pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let mut popups = Vec::new();
     let close = move |s: &mut S| acc(s).settings = None;
-    let (head, nav) = sidebar(store, st, ui, p, premium, acc);
-    let body = tabs::body(store, st, ui, p, acc, &mut popups);
-    let mut modal = frame(t("User settings"), label_of(ui.tab), head, nav, body, close, p);
+    let q = ui.search.text.trim();
+    let hits = search::search(q, |id| visible_id(id, store, premium));
+    let (head, nav) = sidebar(store, st, ui, p, premium, &hits, acc);
+    let (title, body) = if q.is_empty() {
+        (label_of(ui.tab), tabs::body(store, st, ui, ui.tab, p, acc, &mut popups))
+    } else {
+        (t("Search results"), search::results(store, st, ui, &hits, p, acc, &mut popups))
+    };
+    let mut modal = frame(t("User settings"), title, head, nav, body, close, p);
     if ui.confirm_logout {
         let cancel = move |s: &mut S| set(acc, s, |u| u.confirm_logout = false);
         modal = modal.child(
@@ -298,6 +318,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     }
     layer.push(modal);
     layer.extend(popups);
+    if st.nav.timezone {
+        layer.push(timezone::modal(store, st, p, acc));
+    }
+    if let Some(c) = &st.nav.crop {
+        layer.push(crop::modal(st, c, p, acc));
+    }
     if let Some(m) = &ui.modal {
         layer.extend(account::modal(store, st, m, p, acc));
     }
@@ -414,6 +440,11 @@ pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
     let Some(u) = sh.settings.as_mut() else { return };
     (u.tab, u.modal) = (id, None);
     sh.form = Default::default();
+    load_tab(sh, id);
+}
+
+/// Loads what tab `id` lists into the form.
+pub(crate) fn load_tab(sh: &mut ShellState, id: &str) {
     match id {
         "account_security" => sh.load("passkeys", "/users/@me/mfa/webauthn/credentials"),
         "devices" => sh.load("sessions", "/auth/sessions"),
@@ -449,7 +480,7 @@ pub(crate) fn colors(p: &Palette) -> Colors {
 }
 
 /// The search field and profile card, and the nav.
-fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>) -> (Vec<El>, El) {
+fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, hits: &[search::Hit], acc: ShellAccess<S>) -> (Vec<El>, El) {
     let c = colors(p);
     // `SettingsSearch`: 34 tall, a 16 bold magnifier 12 in, text 13/18.
     let search = row()
@@ -492,7 +523,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         .center_y()
         .radius(8.0)
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(t("Edit your profile"))
         .hover_group()
         .on_press(select(acc, "my_profile"))
@@ -519,9 +550,9 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
     let shown: Vec<&TabDef> = TABS
         .iter()
         .filter(|t| !NAV_HIDDEN.contains(&t.id) && visible(t, store, premium))
-        .filter(|tab| q.is_empty() || t(tab.label).to_lowercase().contains(&q))
+        .filter(|tab| q.is_empty() || hits.iter().any(|h| h.tab == tab.id))
         .collect();
-    let mut nav = col().w_full().gap(3.0);
+    let mut nav = col().w_full().gap(3.0).focus_group().role("tablist");
     if shown.is_empty() {
         nav = nav.child(
             text(t("No settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
@@ -597,7 +628,7 @@ pub(crate) fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, dang
         .center_y()
         .radius(8.0)
         .cursor(rune::Cursor::Pointer)
-        .role("tab")
+        .role("tab").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .checked(selected)
         .label(label.to_string())
         .hover_group()
@@ -621,7 +652,7 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .hover(c.hover)
         .hover_group()
         .cursor(rune::Cursor::Pointer)
-        .role("button")
+        .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(t("Close"))
         .on_press(close)
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
