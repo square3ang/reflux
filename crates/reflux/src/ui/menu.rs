@@ -29,6 +29,7 @@ pub struct MenuItem<S: 'static> {
     danger: bool,
     disabled: bool,
     check: Check,
+    keep_open: bool,
     on_select: Option<Rc<dyn Fn(&mut S, &mut Tx)>>,
 }
 
@@ -43,6 +44,7 @@ impl<S: 'static> MenuItem<S> {
             danger: false,
             disabled: false,
             check: Check::None,
+            keep_open: false,
             on_select: None,
         }
     }
@@ -53,6 +55,8 @@ impl<S: 'static> MenuItem<S> {
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
     pub fn checkbox(mut self, on: bool) -> Self { self.check = Check::Checkbox(on); self }
     pub fn radio(mut self, on: bool) -> Self { self.check = Check::Radio(on); self }
+    /// `closeOnSelect={false}`: the menu stays open after a pick.
+    pub fn keep_open(mut self) -> Self { self.keep_open = true; self }
     /// Runs after the menu closes.
     pub fn on_select(mut self, f: impl Fn(&mut S) + 'static) -> Self { self.on_select = Some(Rc::new(move |s, _| f(s))); self }
     /// [`Self::on_select`] with the press's `Tx` (clipboard writes, Shift-click).
@@ -64,8 +68,11 @@ pub enum MenuEntry<S: 'static> {
     Separator,
     /// `.groupLabel`: a small uppercase heading.
     Group(String),
-    /// (id, label, entries). One level deep.
+    /// (id, label, entries). Nested ones open beside their parent (`Popups::sub` holds the
+    /// open path, `a/b`).
     Submenu(String, String, Vec<MenuEntry<S>>),
+    /// A [`Self::Submenu`] with a hint line under its label, or disabled.
+    SubmenuHint { id: String, label: String, hint: Option<String>, disabled: bool, entries: Vec<MenuEntry<S>> },
     /// Any element, e.g. a labelled slider (`MenuSliderType`).
     El(Box<El>),
 }
@@ -99,7 +106,7 @@ impl<S: 'static> Menu<S> {
         if !popups.is_open(&self.id) {
             return;
         }
-        let m = surface(&self.id, self.entries, popups, access, p, true).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
+        let m = surface(&self.id, self.entries, popups, access, p, None).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
         let m = match popups.at {
             Some(at) => anchor_at_point(layer, m, &self.id, at),
             None => anchor(m, &self.id, self.placement, 4.0),
@@ -108,7 +115,8 @@ impl<S: 'static> Menu<S> {
     }
 }
 
-fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, top: bool) -> El {
+/// `parent`: the submenu path this surface belongs to (`None` = the menu itself).
+fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>) -> El {
     let bg = p.form_surface_background;
     let mut c = col()
         .min_w(208.0)
@@ -143,35 +151,78 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
                 .px(8.0)
                 .pb(2.0)
                 .mt(2.0),
-            MenuEntry::Item(it) => item(menu, it, access, p, top),
+            MenuEntry::Item(it) => item(menu, it, access, p, parent),
             MenuEntry::El(e) => *e,
-            MenuEntry::Submenu(id, label, entries) => {
-                let key = format!("{menu}-sub-{id}");
-                let open = popups.sub.as_deref() == Some(id.as_str());
-                let caret = row().size(18.0, 18.0).center().child(icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
-                let sid = id.clone();
-                let mut r = row_shell(p, false)
-                    .key(key.clone())
-                    .child(label_text(&label, p.text_primary))
-                    .child(caret)
-                    .role("menuitem")
-                    .label(label)
-                    .expanded(open)
-                    .on_hover(move |s: &mut S| access(s).sub = Some(sid.clone()))
-                    .on_press(move |s: &mut S| access(s).sub = Some(id.clone()));
-                if open {
-                    r = r.fill(p.surface_interactive_hover_bg).child(anchor(
-                        surface(menu, entries, popups, access, p, false),
-                        &key,
-                        Placement::RightStart,
-                        8.0,
-                    ));
-                }
-                r
-            }
+            MenuEntry::Submenu(id, label, entries) => submenu(menu, popups, access, p, parent, id, label, None, false, entries),
+            MenuEntry::SubmenuHint { id, label, hint, disabled, entries } => submenu(menu, popups, access, p, parent, id, label, hint, disabled, entries),
         });
     }
     c
+}
+
+#[allow(clippy::too_many_arguments)]
+fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>, id: String, label: String, hint: Option<String>, disabled: bool, entries: Vec<MenuEntry<S>>) -> El {
+    let id = match parent {
+        Some(par) => format!("{par}/{id}"),
+        None => id,
+    };
+    let key = format!("{menu}-sub-{id}");
+    let open = inside(&popups.sub, &id);
+    let caret = row().size(18.0, 18.0).center().child(icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
+    let mut words = col().grow(1.0).shrink().min_w(0.0).child(label_text(&label, p.text_primary));
+    if let Some(h) = hint {
+        words = words.child(text(h).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary_muted).mt(1.0).max_w(320.0).wrap());
+    }
+    let mut r = row_shell(p, false).key(key.clone()).child(words).child(caret).role("menuitem").label(label).expanded(open);
+    if disabled {
+        return r.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
+    }
+    // Over a deeper submenu (a descendant), keep it open.
+    let (sid, pid) = (id.clone(), id.clone());
+    r = r
+        .on_hover(move |s: &mut S| {
+            let sub = &mut access(s).sub;
+            if !inside(sub, &sid) {
+                *sub = Some(sid.clone());
+            }
+        })
+        .on_press(move |s: &mut S| access(s).sub = Some(pid.clone()));
+    if open {
+        // shortcut: rune can't tell us which way the parent flipped, so a nested submenu opens to the
+        // left (it flips right when there's no room). Only the developer tools menu nests, and it sits at the right edge.
+        let side = if parent.is_some() { Placement::LeftStart } else { Placement::RightStart };
+        r = r.fill(p.surface_interactive_hover_bg).child(anchor(
+            surface(menu, entries, popups, access, p, Some(&id)),
+            &key,
+            side,
+            8.0,
+        ));
+    }
+    r
+}
+
+/// A labelled slider row in a menu (`MenuItemSlider`): label, the formatted value, a mini slider.
+#[allow(clippy::too_many_arguments)]
+pub fn menu_slider<S: 'static>(key: String, label: &str, value: f32, min: f32, max: f32, shown: String, p: &Palette, on: impl Fn(&mut S, f32) + 'static) -> MenuEntry<S> {
+    MenuEntry::El(Box::new(
+        col()
+            .w_full()
+            .px(8.0)
+            .py(6.0)
+            .gap(4.0)
+            .child(
+                row()
+                    .w_full()
+                    .child(text(label.to_string()).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).grow(1.0))
+                    .child(text(shown).font(font(12.0, 500.0).lh(18.0)).color(p.text_tertiary)),
+            )
+            .child(super::Slider::new(key, value, min, max).mini().on_change(on).el(p)),
+    ))
+}
+
+/// `sub` is `id` or a submenu nested in it (`id/…`).
+fn inside(sub: &Option<String>, id: &str) -> bool {
+    sub.as_deref().is_some_and(|s| s == id || s.strip_prefix(id).is_some_and(|r| r.starts_with('/')))
 }
 
 /// `.item`: 32 tall, padding 5×8 inside a transparent 1px border, radius 6.
@@ -194,7 +245,7 @@ fn label_text(l: &str, c: Color) -> El {
     text(l).font(font(13.0, 500.0).lh(18.0)).color(c).truncate().grow(1.0).shrink()
 }
 
-fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p: &Palette, top: bool) -> El {
+fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>) -> El {
     let fg = if it.disabled {
         p.interactive_muted
     } else if it.danger {
@@ -242,15 +293,22 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
     if let Some(t) = trailing {
         r = r.child(row().size(18.0, 18.0).center().child(t));
     }
-    if top {
-        r = r.on_hover(move |s: &mut S| access(s).sub = None);
-    }
+    // Hovering an item closes the submenus open below its own level.
+    let level = parent.map(str::to_owned);
+    r = r.on_hover(move |s: &mut S| {
+        let sub = &mut access(s).sub;
+        if sub.as_deref().is_some_and(|x| Some(x) != level.as_deref()) {
+            *sub = level.clone();
+        }
+    });
     if it.disabled {
         return r.opacity(0.5).disabled(true).cursor(rune::Cursor::NotAllowed);
     }
-    let f = it.on_select;
+    let (f, keep) = (it.on_select, it.keep_open);
     r.on_press_tx(move |s: &mut S, tx| {
-        access(s).close();
+        if !keep {
+            access(s).close();
+        }
         if let Some(f) = &f {
             f(s, tx);
         }

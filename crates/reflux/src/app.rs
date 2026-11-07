@@ -765,8 +765,12 @@ fn os_name() -> &'static str {
 fn fetch_messages(s: &State, channel: Snowflake) {
     let Some(inst) = s.app.instance.clone() else { return };
     let generation = s.app.generation;
+    let (slow, fail) = crate::shell::devtools::load_gate(&s.app.saved.desktop.dev);
     spawn(async move {
-        let r = inst.rest.messages(channel, MessagePage::Latest, PAGE).await;
+        let r = match crate::shell::devtools::gate(slow, fail).await {
+            Ok(()) => inst.rest.messages(channel, MessagePage::Latest, PAGE).await,
+            Err(e) => Err(e),
+        };
         update(move |s| match r {
             Ok(page) if s.app.generation == generation => s.app.store.set_latest_messages(channel, page, PAGE as usize),
             Ok(_) => {}
@@ -782,8 +786,12 @@ fn fetch_older(s: &State, channel: Snowflake) {
         return;
     }
     let generation = s.app.generation;
+    let (slow, fail) = crate::shell::devtools::load_gate(&s.app.saved.desktop.dev);
     spawn(async move {
-        let r = inst.rest.messages(channel, MessagePage::Before(oldest), PAGE).await;
+        let r = match crate::shell::devtools::gate(slow, fail).await {
+            Ok(()) => inst.rest.messages(channel, MessagePage::Before(oldest), PAGE).await,
+            Err(e) => Err(e),
+        };
         update(move |s| match r {
             Ok(page) if s.app.generation == generation => s.app.store.prepend_messages(channel, page, PAGE as usize),
             Ok(_) => {}
@@ -802,7 +810,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         s.app.fonts = Some(fam);
     }
     let f = s.app.instance.as_ref().map(|i| &i.discovery.features);
-    s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled);
+    // `selfHostedModeOverride` hides premium like a self-hosted instance.
+    s.app.shell.premium = f.is_some_and(|f| !f.self_hosted || f.premium_enabled) && !s.app.saved.desktop.dev.self_hosted_mode_override;
     let community = s.app.instance.as_ref().map(|i| &i.discovery.community);
     s.app.shell.personal_notes = community.is_none_or(|c| c.personal_notes_enabled != Some(false));
     // The Voice & video tab lists devices once it opens.
@@ -846,6 +855,11 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::Social(r) => crate::social::run(s, r),
             Intent::PatchGuildSettings { guild: g, patch } => guild::patch_settings(s, g, patch),
             Intent::Logout => act(s, Action::Logout),
+            Intent::DevSocket { reset } => {
+                if let Some(gw) = &s.app.gateway {
+                    let _ = gw.send(if reset { Command::Reset } else { Command::Disconnect });
+                }
+            }
             Intent::Prefs(p) => {
                 crate::desktop::prefs_changed(&s.app.saved.desktop, &p);
                 s.app.saved.desktop = *p;

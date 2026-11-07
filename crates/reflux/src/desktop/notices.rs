@@ -184,9 +184,21 @@ fn learn_more<S: 'static>(url: String, p: &Palette, acc: ShellAccess<S>) -> El {
 /// Maintenance, then the instance notice (they sit under Connection and Terms).
 pub fn instance<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
     let mut out = Vec::new();
-    if let Some(m) = &st.desktop.maintenance {
+    // `getDeveloperScheduledMaintenance`: an hour from now, for an hour.
+    let forced = match crate::shell::devtools::nagbar(st, "forceScheduledMaintenance") {
+        Some(true) => Some(Maintenance {
+            id: "developer-scheduled-maintenance".into(),
+            status: Status::Scheduled,
+            start: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            minutes: 60,
+            url: "https://fluxerstatus.com".into(),
+        }),
+        _ => None,
+    };
+    let hidden = crate::shell::devtools::nagbar(st, "forceScheduledMaintenance") == Some(false);
+    if let Some(m) = forced.as_ref().or(st.desktop.maintenance.as_ref()).filter(|_| !hidden) {
         let key = format!("maintenance:{}:{:?}", m.id, m.status);
-        if !dismissed(st, &key) {
+        if forced.is_some() || !dismissed(st, &key) {
             let bg = match m.status {
                 Status::Scheduled => rgb(0x1d, 0x4e, 0xd8),
                 Status::InProgress => rgb(0x9a, 0x34, 0x12),
@@ -213,7 +225,10 @@ fn ms(ts: &str) -> Option<i64> {
 /// `GiftInventoryNagbar`, in that order (under the email verification bar).
 pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
     let mut out = Vec::new();
-    let Some(me) = store.me.as_ref().filter(|_| st.premium) else { return out };
+    let Some(me) = crate::shell::devtools::me(store, st).filter(|_| st.premium) else { return out };
+    let me = &*me;
+    // Developer tools' nagbar overrides win over the account state.
+    let force = |k: &str| crate::shell::devtools::nagbar(st, k);
     let now = chrono::Utc::now().timestamp_millis();
     let kind = me.premium_type.unwrap_or_default();
     let until = me.premium_until.as_deref().and_then(ms);
@@ -228,12 +243,16 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
     };
     // "Manage subscription" / "Reactivate": the billing portal.
     let portal = move |s: &mut S| acc(s).intents.push(Intent::CustomerPortal);
-    if let (Some(u), Some(g)) = (until, grace_end)
-        && kind != PremiumType::LIFETIME
+    let (grace, expired) = match (until, grace_end) {
+        (Some(u), Some(g)) if kind != PremiumType::LIFETIME => (
+            me.premium_grace_ends_at.is_some() && me.premium_billing_cycle.is_some() && now > u && now <= g && !dismissed(st, "premium-grace"),
+            !me.premium_will_cancel && now > g && now <= g + 30 * 86_400_000 && !dismissed(st, "premium-expired"),
+        ),
+        _ => (false, false),
+    };
     {
-        let grace = me.premium_grace_ends_at.is_some() && me.premium_billing_cycle.is_some() && now > u && now <= g;
-        let expired = !me.premium_will_cancel && now > g && now <= g + 30 * 86_400_000;
-        if grace && !dismissed(st, "premium-grace") {
+        let g = grace_end.unwrap_or(now + 3 * 86_400_000);
+        if force("forcePremiumGracePeriod").unwrap_or(grace) {
             let date = chrono::DateTime::from_timestamp_millis(g).unwrap_or_default().with_timezone(&chrono::Local);
             let msg = tf(
                 "Your {premiumProductName} subscription failed to renew. You still have access to all {premiumProductName} features until {formattedGraceDate}. Update your payment method before then to keep your access.",
@@ -241,7 +260,7 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
             );
             out.push(super::nagbar::bar("nagbar-premium-grace", rgb(0xf9, 0x73, 0x16), msg, vec![super::nagbar::button("nagbar-premium-manage", t("Manage subscription"), p, portal)], Some(dismiss(acc, "premium-grace".into()))));
         }
-        if expired && !dismissed(st, "premium-expired") {
+        if force("forcePremiumExpired").unwrap_or(expired) {
             let msg = tf(
                 "Your {premiumProductName} subscription has expired, and you no longer have access to {premiumProductName} features. Reactivate your subscription to get access again.",
                 &[("premiumProductName", PRODUCT)],
@@ -250,7 +269,9 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         }
     }
     let premium_now = kind == PremiumType::LIFETIME || (kind != PremiumType::default() && until.is_none_or(|u| u > now));
-    if premium_now && !me.has_dismissed_premium_onboarding && !dismissed(st, "premium-onboarding") {
+    // `isMockPremium`: a developer premium type alone doesn't welcome anyone.
+    let mock_premium = st.prefs.dev.premium_type_override.is_some_and(|k| k > 0);
+    if force("forcePremiumOnboarding").unwrap_or(premium_now && !mock_premium && !me.has_dismissed_premium_onboarding && !dismissed(st, "premium-onboarding")) {
         let close = move |s: &mut S| {
             let sh = acc(s);
             let mut p = sh.prefs.clone();
@@ -265,7 +286,7 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         let label = tf("View {premiumProductName} features", &[("premiumProductName", PRODUCT)]);
         out.push(super::nagbar::bar("nagbar-premium-onboarding", p.brand_primary, onboarding(me, now), vec![super::nagbar::button("nagbar-premium-view", &label, p, view)], Some(Box::new(close))));
     }
-    if me.has_unread_gift_inventory {
+    if force("forceGiftInventory").unwrap_or(me.has_unread_gift_inventory) {
         let n = me.unread_gift_inventory_count.max(1);
         let msg = if n == 1 { t("You have a new gift code waiting in your gift inventory.").to_string() } else { tf("You have {count} new gift codes waiting in your gift inventory.", &[("count", &n.to_string())]) };
         let open = move |s: &mut S| acc(s).open_settings(Some("gift_inventory"));

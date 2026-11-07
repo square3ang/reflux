@@ -21,10 +21,14 @@ pub(super) fn run(s: &mut State, i: Intent) {
     let generation = s.app.generation;
     // Runs `f` with a fetched page unless the session changed meanwhile.
     let fetch = inst.clone();
+    let (slow, fail) = crate::shell::devtools::load_gate(&s.app.saved.desktop.dev);
     let page = move |channel: Snowflake, at: MessagePage, f: fn(&mut State, Snowflake, Vec<Message>)| {
         let inst = fetch.clone();
         spawn(async move {
-            let r = inst.rest.messages(channel, at, PAGE).await;
+            let r = match crate::shell::devtools::gate(slow, fail).await {
+                Ok(()) => inst.rest.messages(channel, at, PAGE).await,
+                Err(e) => Err(e),
+            };
             update(move |s| match r {
                 Ok(p) if s.app.generation == generation => f(s, channel, p),
                 Ok(_) => {}
@@ -169,10 +173,14 @@ pub(super) fn send(s: &mut State, channel: Snowflake, content: String, reply: Op
     };
     let presigned = inst.discovery.features.presigned_attachment_uploads;
     let back = files.clone();
+    let dev = &s.app.saved.desktop.dev;
+    let (slow, fail) = (dev.slow_message_send, dev.force_fail_message_sends.then_some("Forced message send failure"));
     spawn(async move {
         // `MessageQueue`: text messages go out one at a time, in order; files at once.
         static QUEUE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        let r = if files.is_empty() {
+        let r = if let Err(e) = crate::shell::devtools::gate(slow, fail).await {
+            Err(e)
+        } else if files.is_empty() {
             let _turn = QUEUE.lock().await;
             inst.rest.send_message(channel, &body).await.map(drop)
         } else {

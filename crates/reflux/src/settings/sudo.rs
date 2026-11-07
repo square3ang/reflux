@@ -80,6 +80,11 @@ pub fn require(sh: &mut ShellState, call: Call, err: &Value) {
 /// Sends the waiting call again with `proof` merged into its JSON body.
 pub fn retry(sh: &mut ShellState, proof: Value) {
     let Some(x) = sh.account.sudo.as_mut() else { return };
+    // Developer tools' "Open sudo verification modal" has no call to retry.
+    if x.call.path == crate::shell::devtools::SUDO_PATH {
+        sh.account.sudo = None;
+        return;
+    }
     (x.busy, x.error) = (true, None);
     let mut call = x.call.clone();
     let mut body = match call.body.take() {

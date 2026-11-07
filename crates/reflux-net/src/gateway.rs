@@ -66,6 +66,10 @@ pub enum Command {
     /// Any client opcode (presence, voice state, lazy request, ...). Dropped while disconnected.
     Send(GatewayPayload),
     Close,
+    /// `GatewaySocket.reset()`: drop the session and connect again with a fresh IDENTIFY.
+    Reset,
+    /// `simulateNetworkDisconnect()`: close 4000 and reconnect (RESUME) as after a network drop.
+    Disconnect,
 }
 
 /// A running Gateway task. Dropping `commands` closes it.
@@ -157,6 +161,11 @@ impl Session {
                     _ = &mut wake => break,
                     cmd = cmds.recv() => match cmd {
                         Some(Command::Send(p)) => debug!(op = p.op.0, "gateway offline, dropping command"),
+                        Some(Command::Reset) => {
+                            self.clear();
+                            break;
+                        }
+                        Some(Command::Disconnect) => debug!("gateway offline, nothing to disconnect"),
                         Some(Command::Close) | None => {
                             return self.emit(GatewayEvent::State(ConnectionState::Disconnected(None)));
                         }
@@ -247,6 +256,17 @@ impl Session {
                         None
                     }
                     Some(Command::Send(p)) => conn.send(&p).await,
+                    Some(Command::Reset) => {
+                        info!("gateway reset");
+                        conn.close(1000, "Reset").await;
+                        conn.s.clear();
+                        Some(Exit::Reconnect { immediate: true })
+                    }
+                    Some(Command::Disconnect) => {
+                        info!("simulating network disconnect with resumable close");
+                        conn.close(4000, "Simulated network disconnect").await;
+                        Some(Exit::Reconnect { immediate: false })
+                    }
                     Some(Command::Close) | None => {
                         conn.close(1000, "").await;
                         Some(Exit::Shutdown)
@@ -600,5 +620,39 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn developer_disconnect_resumes_and_reset_identifies() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut gw = Gateway::connect(GatewayConfig {
+            url: format!("ws://{}", l.local_addr().unwrap()),
+            token: "tok".into(),
+            properties: Default::default(),
+            flags: SessionFlags::empty(),
+            presence: None,
+            compress: true,
+        })
+        .unwrap();
+        let hello = serde_json::json!({"op": 10, "d": {"heartbeat_interval": 41250}});
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await["op"], 2);
+        srv.send(serde_json::json!({"op": 0, "s": 5, "t": "READY", "d": {"session_id": "abc", "v": 1}})).await;
+        while !matches!(gw.events.recv().await, Some(GatewayEvent::Dispatch(DispatchEvent::Ready(_)))) {}
+        let closed = |m: Option<Result<Ws, _>>| match m {
+            Some(Ok(Ws::Close(Some(f)))) => u16::from(f.code),
+            other => panic!("expected a close frame, got {other:?}"),
+        };
+        gw.commands.send(Command::Disconnect).unwrap();
+        assert_eq!(closed(srv.ws.next().await), 4000);
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello.clone()).await;
+        assert_eq!(srv.recv().await, serde_json::json!({"op": 6, "d": {"token": "tok", "session_id": "abc", "seq": 5}}));
+        gw.commands.send(Command::Reset).unwrap();
+        assert_eq!(closed(srv.ws.next().await), 1000);
+        let mut srv = Server::accept(&l).await;
+        srv.send(hello).await;
+        assert_eq!(srv.recv().await["op"], 2, "a reset session identifies again");
     }
 }

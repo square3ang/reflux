@@ -28,7 +28,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
         "notifications" => super::look_tabs::notifications(store, st, p, acc),
         "keybinds" => crate::nav::keys::tab(st, p, acc, layer),
         "language" => super::desktop_tabs::language(store, st, p, acc),
-        "plutonium" => super::premium::plutonium(store, p, acc),
+        "plutonium" => super::premium::plutonium(store, st, p, acc),
         "gift_inventory" => section(crate::i18n::t("Purchased gifts"), super::premium::gifts(st, p, acc), true, p),
         "desktop_settings" => super::desktop_tabs::desktop(st, p, acc),
         "applications" => super::dev::applications(st, p, acc, layer),

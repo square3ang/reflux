@@ -13,6 +13,7 @@ mod guild_banner;
 mod command_hints;
 mod chat;
 pub mod debug;
+pub mod devtools;
 mod compact;
 pub(crate) mod embeds;
 pub(crate) mod highlight;
@@ -111,6 +112,9 @@ pub enum Intent {
     /// A partial user settings object: apply it now and `PATCH /users/@me/settings`.
     PatchSettings(serde_json::Value),
     Logout,
+    /// Developer tools: `socket.reset()` (drop the session, IDENTIFY again) or
+    /// `simulateNetworkDisconnect()` (close 4000, then RESUME).
+    DevSocket { reset: bool },
     /// Op 4 into the channel, then connect LiveKit on VOICE_SERVER_UPDATE.
     JoinVoice { guild: Option<Snowflake>, channel: Snowflake },
     LeaveVoice,
@@ -181,7 +185,14 @@ pub enum Intent {
 /// `EmailVerificationNagbar`: neutral tone (#4e5058 / white), 36 tall, 14px/600, centred message
 /// and a super-compact inverted button, gap 12.
 fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
-    let me = store.me.as_ref().filter(|u| !u.verified && u.email.is_some())?;
+    let me = devtools::me(store, st)?;
+    // `forceEmailVerification` / `forceHideEmailVerification`.
+    match devtools::nagbar(st, "forceEmailVerification") {
+        Some(false) => return None,
+        Some(true) => {}
+        None if me.verified || me.email.is_none() => return None,
+        None => {}
+    }
     let name = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
     let (message, button) = if me.email_bounced {
         (crate::i18n::tf("Hey {displayName}, we can't deliver email to your address. Add a working email to verify your account.", &[("displayName", &name.to_string())]), None)
@@ -252,6 +263,8 @@ pub struct ShellState {
     pub intents: Vec<Intent>,
     /// The verification nagbar's "Resend email" was used this session.
     pub verify_sent: bool,
+    /// The Developer tools menu's confirmations and mocks.
+    pub devtools: devtools::Ui,
     pub birthday: birthday::Gate,
     /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
     pub popups: Popups,
@@ -395,6 +408,7 @@ impl Default for ShellState {
             media: Default::default(),
             intents: Vec::new(),
             verify_sent: false,
+            devtools: Default::default(),
             birthday: Default::default(),
             popups: Popups::default(),
             hover_msg: None,
@@ -744,6 +758,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(attachments::delete_modal(st, p, acc));
     layer.extend(links::modal(st, p, acc));
     layer.extend(debug::modal(store, st, p, acc));
+    layer.extend(devtools::modal(st, p, acc));
     call::modals(store, st, p, acc, &mut layer);
     call::details(st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);

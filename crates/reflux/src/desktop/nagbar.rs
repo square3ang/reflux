@@ -74,7 +74,8 @@ fn prefs<S: 'static>(acc: ShellAccess<S>, f: impl Fn(&mut super::Prefs) + 'stati
 pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<El> {
     let v = &st.desktop;
     let mut out = Vec::new();
-    if v.offline {
+    // `forceConnectionNotice` (Developer tools' "Service incident nagbar").
+    if crate::shell::devtools::nagbar(st, "forceIncident").unwrap_or(v.offline) {
         out.push(bar::<S>("nagbar-connection", rgb(0x4e, 0x50, 0x58), t("Connection lost. Reconnecting…").into(), Vec::new(), None));
     }
     if let Some(u) = &v.update {

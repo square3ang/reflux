@@ -202,7 +202,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         );
     // `channelTypingIndicatorMode`: the typing dots, with the typers' avatars unless "only".
     let mode = crate::look::with(|l| l.typing_indicator);
-    let typers: Vec<_> = if mode < 2 { store.typing_users(c.id, st.now_ms).into_iter().filter(|u| *u != store.my_id()).collect() } else { Vec::new() };
+    let typers: Vec<_> = if mode < 2 { super::devtools::typing(store, st, c.id) } else { Vec::new() };
     if !typers.is_empty() {
         let dot_c = if selected { p.surface_interactive_selected_color } else { p.text_chat };
         let mut t = row().gap(4.0).center_y().child(typing_dots(dot_c));

@@ -42,7 +42,9 @@ pub(super) fn run(s: &mut State, op: Op) {
             }
             // Marks it as loading so it's asked once.
             s.app.shell.account.profiles.insert((user, guild), Ok(Value::Null));
+            let slow = s.app.saved.desktop.dev.slow_profile_load;
             spawn(async move {
+                let _ = crate::shell::devtools::gate(slow, None).await;
                 let r = inst.rest.get::<Value>(&path).await.map_err(|e| describe(&e));
                 update(move |s| {
                     s.app.shell.account.profiles.insert((user, guild), r);

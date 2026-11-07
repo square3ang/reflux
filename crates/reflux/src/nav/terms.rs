@@ -33,7 +33,7 @@ fn kind_for(terms_at: Option<&str>, privacy_at: Option<&str>, terms: Option<&str
 }
 
 fn kind(store: &Store, st: &ShellState) -> Option<Kind> {
-    if st.nav.terms_demo {
+    if st.nav.terms_demo || crate::shell::devtools::nagbar(st, "forceTermsAcceptance") == Some(true) {
         return Some(Kind::Both);
     }
     let me = store.me.as_ref()?;
@@ -42,6 +42,9 @@ fn kind(store: &Store, st: &ShellState) -> Option<Kind> {
 
 /// The nagbar: `#4338ca` / white (`NagbarToneKind.LEGAL`).
 pub fn nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    if crate::shell::devtools::nagbar(st, "forceTermsAcceptance") == Some(false) {
+        return None;
+    }
     kind(store, st)?;
     let review = Button::new(t("Review")).variant(ButtonVariant::Inverted).size(ButtonSize::SuperCompact).key("nagbar-terms").on_press(move |s: &mut S| acc(s).nav.terms = true).el(p);
     Some(

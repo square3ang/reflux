@@ -2,8 +2,6 @@
 //! MessageDebugModal}`): a record as pretty JSON behind "Debug user / channel / community /
 //! member / message" menu items, and a client inspector (session and store counts, user
 //! settings, the `/experiments` assignments) in place of the desktop app's Chromium devtools.
-// shortcut: no staff "Developer tools" header menu (`DeveloperToolsContextMenu`: overrides,
-// mocking, forced nagbars, runtime utilities); port it if staff tooling is wanted.
 
 use reflux_model::Snowflake;
 use reflux_store::Store;

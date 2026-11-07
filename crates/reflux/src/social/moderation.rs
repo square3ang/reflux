@@ -416,7 +416,12 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
                         }
                     }
                 }
-                sh.social(Method::POST, format!("/reports/flows/{target}/submissions"), Some(b), Done::Form("done".into()));
+                if sh.prefs.dev.no_op_in_app_reports {
+                    // `noOpInAppReports`: straight to the thank-you screen, nothing sent.
+                    sh.form.data.insert("done".into(), json!({}));
+                } else {
+                    sh.social(Method::POST, format!("/reports/flows/{target}/submissions"), Some(b), Done::Form("done".into()));
+                }
             }
         }
     };

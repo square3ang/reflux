@@ -97,6 +97,8 @@ pub struct Prefs {
     /// (`shell::expr::image_search`).
     pub ris_enabled: Vec<String>,
     pub ris_custom: Vec<(String, String, String)>,
+    /// Developer tools overrides (Fluxer's persisted `DeveloperOptions`, kept on this device).
+    pub dev: crate::shell::devtools::Options,
 }
 
 impl Default for Prefs {
@@ -134,6 +136,7 @@ impl Default for Prefs {
             media_muted: false,
             ris_enabled: vec!["google_lens".into()],
             ris_custom: Vec::new(),
+            dev: Default::default(),
         }
     }
 }

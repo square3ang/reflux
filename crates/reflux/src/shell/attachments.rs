@@ -179,6 +179,9 @@ pub enum Gate {
 /// channel, its category or the guild (kept per account, like Fluxer's synced agreements).
 pub fn gate_reason(store: &Store, st: &ShellState, c: &Channel) -> Option<Gate> {
     let g = c.guild_id?;
+    if let Some(mock) = st.prefs.dev.mature_gate() {
+        return Some(mock);
+    }
     if !channel_mature(store, c) {
         return None;
     }
@@ -199,6 +202,10 @@ pub fn gate_reason(store: &Store, st: &ShellState, c: &Channel) -> Option<Gate> 
 
 /// The client's `GET /ip` country and region (`GeoIP`), once loaded.
 fn geo(st: &ShellState) -> Option<(String, Option<String>)> {
+    // `mockInUK` (`getEffectiveMatureContentGeoContext`).
+    if st.prefs.dev.mock_in_uk {
+        return Some(("GB".into(), None));
+    }
     let Some(super::expr::Fetched::Done(v)) = st.expr.fetched.get(GEO) else { return None };
     let s = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
     Some((s("countryCode")?, s("regionCode")))
@@ -440,7 +447,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             animated: is_animated(&a.content_type, a.flags),
             alt: a.description.as_deref(),
             spoiler: is_spoiler(a) && !unspoil,
-            mature: flagged(a.nsfw, a.flags) && level == 1,
+            mature: (flagged(a.nsfw, a.flags) && level == 1) || st.prefs.dev.mature_media(),
             saved: Some((m.channel_id, m.id, a)),
             deletable,
             menu: MenuMedia::of(a).map(|mm| (m.id, mm)),

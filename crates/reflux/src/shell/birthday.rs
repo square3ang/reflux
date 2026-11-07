@@ -90,14 +90,14 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     );
     layer.extend(select_layer);
     if g.confirm_logout {
-        layer.push(logout_modal(store, p, acc));
+        layer.push(logout_modal(store, st, p, acc));
     }
 }
 
 /// `LogoutModal`: an unclaimed account (they're the ones asked for a birthday) can't sign back in.
-fn logout_modal<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) -> El {
+fn logout_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let cancel = move |s: &mut S| acc(s).birthday.confirm_logout = false;
-    let unclaimed = store.me.as_ref().is_some_and(|m| m.account_tier.as_deref() == Some("unclaimed"));
+    let unclaimed = super::devtools::me(store, st).is_some_and(|m| m.account_tier.as_deref() == Some("unclaimed"));
     let (body, primary, variant) = if unclaimed {
         (t("This account is unclaimed, so you can't sign back in to it."), t("Sign out anyway"), ButtonVariant::Danger)
     } else {

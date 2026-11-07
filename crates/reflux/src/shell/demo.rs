@@ -452,6 +452,9 @@ impl Demo {
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--nav=")) {
             crate::nav::demo(&mut shell, &store, sc);
         }
+        if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--dev=")) {
+            super::devtools::demo(&mut shell, &mut store, sc);
+        }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--desktop=")) {
             crate::desktop::demo(&mut shell, &mut store, sc);
         }

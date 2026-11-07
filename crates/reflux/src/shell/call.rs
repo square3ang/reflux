@@ -437,20 +437,31 @@ fn camera_after_join(sh: &mut ShellState, video: bool) {
 }
 
 /// `IncomingCallUI`: the first call ringing us that we haven't answered or dismissed.
+/// The developer tools' `MockIncomingCall` comes first; its buttons only dismiss it.
 pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let me = store.my_id();
-    let call = store
-        .calls
-        .values()
-        .filter(|c| c.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&c.channel_id) && st.voice.channel != Some((None, c.channel_id)))
-        .min_by_key(|c| c.channel_id)?;
-    let ch = store.channels.get(&call.channel_id);
-    let caller = call.voice_states.first().and_then(|v| v.user_id).or_else(|| ch.and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me)))?;
-    let name = match ch {
-        Some(c) if c.kind == ChannelType::GROUP_DM => super::chat::channel_title(store, c),
-        _ => store.display_name(None, caller),
+    let mock = super::devtools::mock_call(store, st);
+    let mocked = mock.is_some();
+    let (caller, name, channel) = match mock {
+        Some((caller, name)) => (caller, name, Snowflake(0)),
+        None => {
+            let call = store
+                .calls
+                .values()
+                .filter(|c| c.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&c.channel_id) && st.voice.channel != Some((None, c.channel_id)))
+                .min_by_key(|c| c.channel_id)?;
+            let ch = store.channels.get(&call.channel_id);
+            let caller = call.voice_states.first().and_then(|v| v.user_id).or_else(|| ch.and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me)))?;
+            let name = match ch {
+                Some(c) if c.kind == ChannelType::GROUP_DM => super::chat::channel_title(store, c),
+                _ => store.display_name(None, caller),
+            };
+            (caller, name, call.channel_id)
+        }
     };
-    let channel = call.channel_id;
+    let end_mock = move |s: &mut S| acc(s).devtools.mock_call = None;
+    let decline: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::DeclineCall(channel))) };
+    let accept: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::AcceptCall(channel))) };
     let secondary = rgba(235, 235, 245, 0.55);
     let circle = |i: &'static rune::Icon, bg: Color, hover: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
         col()
@@ -504,8 +515,8 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
             row()
                 .gap(56.0)
                 .pt(8.0)
-                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), t("Decline"), Box::new(op(acc, Op::DeclineCall(channel)))))
-                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), t("Accept"), Box::new(op(acc, Op::AcceptCall(channel))))),
+                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), t("Decline"), decline))
+                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), t("Accept"), accept)),
         )
         .child(
             text(t("Ignore"))
@@ -514,7 +525,12 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
                 .on_press(move |s: &mut S| {
-                    acc(s).voice.dismissed_calls.insert(channel);
+                    let st = acc(s);
+                    if mocked {
+                        st.devtools.mock_call = None;
+                    } else {
+                        st.voice.dismissed_calls.insert(channel);
+                    }
                 }),
         );
     Some(el().pin(Some(0.0), Some(24.0), Some(0.0), None).child(row().w_full().justify_center().child(card)))
@@ -964,20 +980,7 @@ fn trimmer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close:
 
 /// A labelled slider row in a menu (`MenuSliderType`), 0..200 %.
 fn menu_slider<S: 'static>(key: String, label: &str, value: f32, p: &Palette, on: impl Fn(&mut S, f32) + 'static) -> crate::ui::MenuEntry<S> {
-    crate::ui::MenuEntry::El(Box::new(
-        col()
-            .w_full()
-            .px(8.0)
-            .py(6.0)
-            .gap(4.0)
-            .child(
-                row()
-                    .w_full()
-                    .child(text(label.to_string()).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).grow(1.0))
-                    .child(text(format!("{value:.0}%")).font(font(12.0, 500.0).lh(18.0)).color(p.text_tertiary)),
-            )
-            .child(crate::ui::Slider::new(key, value, 0.0, 200.0).mini().on_change(on).el(p)),
-    ))
+    crate::ui::menu_slider(key, label, value, 0.0, 200.0, format!("{value:.0}%"), p, on)
 }
 
 // ---- Popouts and menus ---------------------------------------------------------------------------

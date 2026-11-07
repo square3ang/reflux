@@ -23,7 +23,7 @@ const PATH: &str = "/users/@me/recovery-kit";
 
 /// `showsRecoveryKit`: username sign-in, claimed account.
 pub(super) fn shown(store: &Store, st: &ShellState) -> bool {
-    st.username_sign_in && store.me.as_ref().is_some_and(|m| m.account_tier.as_deref() != Some("unclaimed"))
+    st.username_sign_in && crate::shell::devtools::me(store, st).is_some_and(|m| m.account_tier.as_deref() != Some("unclaimed"))
 }
 
 pub(super) fn load(sh: &mut ShellState) {

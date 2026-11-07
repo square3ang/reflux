@@ -51,8 +51,8 @@ fn card(glyph: El, title: String, body: String, action: El, p: &Palette) -> El {
 }
 
 /// The account's plan, from `premium_type` / `premium_until`.
-fn status(store: &Store) -> String {
-    let Some(me) = store.me.as_ref() else { return String::new() };
+fn status(store: &Store, st: &ShellState) -> String {
+    let Some(me) = crate::shell::devtools::me(store, st) else { return String::new() };
     match me.premium_type.unwrap_or_default() {
         PremiumType::LIFETIME => tf("You have lifetime {premiumProductName}.", &[("premiumProductName", PRODUCT)]),
         PremiumType::SUBSCRIPTION => match me.premium_until.as_deref() {
@@ -63,7 +63,7 @@ fn status(store: &Store) -> String {
     }
 }
 
-pub fn plutonium<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn plutonium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let atom = icon(&icons::ATOM_FILL, 32.0).color(p.plutonium_icon);
     let open = Button::new(tf("Open {premiumProductFullName}", &[("premiumProductFullName", "Fluxer Plutonium")]))
         .size(ButtonSize::Small)
@@ -72,7 +72,7 @@ pub fn plutonium<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) ->
         .el(p);
     let link = card(atom, "Fluxer Plutonium".into(), t("Plans, perks, gifts and your subscription are all on one page.").into(), open, p);
     let manage = Button::new(t("Manage in browser")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("plutonium-manage").on_press(open_web(acc, "/channels/@premium")).el(p);
-    let sub = card(icon(&icons::CROWN, 24.0).color(p.text_secondary), t("Subscription").into(), status(store), manage, p);
+    let sub = card(icon(&icons::CROWN, 24.0).color(p.text_secondary), t("Subscription").into(), status(store, st), manage, p);
     col().w_full().gap(16.0).child(link).child(sub)
 }
 

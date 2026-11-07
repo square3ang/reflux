@@ -261,6 +261,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     if !forum {
         right = right.child(super::search::bar(store, st, p, acc, layer));
     }
+    right = right.children(super::devtools::button(store, st, p, acc, layer));
     right = right.child(crate::social::inbox_button(st, p, acc));
     row()
         .w_full()
@@ -599,8 +600,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     if newer || rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, pre, p, acc));
     }
-    let me = store.my_id();
-    let typing: Vec<_> = store.typing_users(c.id, st.now_ms).into_iter().filter(|u| *u != me && !store.is_blocked(*u)).collect();
+    let typing: Vec<_> = super::devtools::typing(store, st, c.id).into_iter().filter(|u| !store.is_blocked(*u)).collect();
     if !typing.is_empty() {
         area = area.child(typing_rail(store, st, c.guild_id, &typing, p));
     }
@@ -1061,12 +1061,15 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
         };
         content = content.child(line.font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary).truncate());
     }
-    if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
+    let unknown = super::devtools::unknown(store, st, m);
+    if unknown {
+        content = content.child(super::devtools::unknown_warning(p));
+    } else if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         content = content.child(editor(edit, m, p, acc));
     } else if !m.content.is_empty() || m.edited_timestamp.is_some() {
         content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))));
     }
-    let acc_el = accessories(store, st, m, p, acc);
+    let acc_el = accessories(store, st, m, p, acc).filter(|_| !unknown);
     if let Some(a) = acc_el {
         content = content.child(a);
     }
@@ -1435,6 +1438,8 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .filter(|(t, items)| draft.focused && !items.is_empty() && st.ac_dismissed.as_ref() != Some(&(t.start, t.query.clone())));
     let ac_keys = ac.clone();
     let (limit, slow) = (st.limits.message_length, if slot == Slot::Create { 0 } else { slowmode(store, c) });
+    // `useSlowmode`'s mock: active, with a fixed time left.
+    let mock_slow = (st.prefs.dev.mock_slowmode_active && slot != Slot::Create).then_some(st.prefs.dev.mock_slowmode_remaining);
     let suggested = match (slot, st.threads.panel) {
         (Slot::Create, Some(super::threads::Panel::Create { message: Some(m), .. })) => super::threads::suggested_name(store, c.guild_id, find(store, cid, m)),
         _ => String::new(),
@@ -1526,7 +1531,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 .children(look.show_send_button.then(|| {
                     // `desktopSendDisabled`: nothing to send, over the limit or in slowmode.
                     let empty = draft.text.trim().is_empty() && (slot == Slot::Create || (if slot == Slot::Pane { &st.threads.uploads } else { &st.uploads }).is_empty());
-                    let blocked = empty || draft.text.chars().count() > limit || st.cooldowns.get(&cid).is_some_and(|t| *t > st.now_ms);
+                    let blocked = empty || draft.text.chars().count() > limit || st.cooldowns.get(&cid).is_some_and(|t| *t > st.now_ms) || mock_slow.is_some();
                     let b = button(&icons::PAPER_PLANE_RIGHT, t("Send message")).key(format!("composer-send-{}", slot as u8));
                     let submit = submit.clone();
                     if blocked { b.opacity(0.5) } else { b.on_press(move |s: &mut S| submit(s)) }
@@ -1567,7 +1572,9 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         let list = autocomplete::view(store, st, t, items, p, acc, slot).pin(Some(0.0), None, Some(0.0), Some(8.0));
         out = out.child(el().w_full().h(0.0).child(list));
     }
-    if slow > 0 {
+    if let Some(ms) = mock_slow {
+        out = out.child(slowmode_label(ms, p));
+    } else if slow > 0 {
         out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p));
     }
     out.child(boxed)
@@ -1617,7 +1624,7 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
         content = super::emoticons::convert(&content);
     }
     let sticker = st.pending_sticker.is_some_and(|(c, _)| c == channel);
-    if (content.is_empty() && st.uploads.is_empty() && !sticker) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) {
+    if (content.is_empty() && st.uploads.is_empty() && !sticker) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) || st.prefs.dev.mock_slowmode_active {
         return;
     }
     let len = content.chars().count();

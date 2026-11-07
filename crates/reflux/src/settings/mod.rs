@@ -484,7 +484,10 @@ pub(crate) fn load_tab(sh: &mut ShellState, id: &str) {
         "privacy_safety" => sh.load("harvest", "/users/@me/harvest/latest"),
         "my_profile" => profile::load(sh),
         "applications" => dev::load(sh),
-        "gift_inventory" => sh.load("gifts", "/users/@me/gifts"),
+        "gift_inventory" => match crate::shell::devtools::gifts(sh) {
+            Some(mock) => drop(sh.form.data.insert("gifts".into(), mock)),
+            None => sh.load("gifts", "/users/@me/gifts"),
+        },
         _ => {}
     }
 }

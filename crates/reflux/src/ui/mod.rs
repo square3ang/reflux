@@ -23,7 +23,7 @@ pub use button::{Button, ButtonSize, ButtonVariant, spinner};
 pub use datepicker::DatePicker;
 pub use controls::{Checkbox, RadioGroup, Slider, Switch, radio_dot};
 pub use input::Input;
-pub use menu::{Menu, MenuEntry, MenuItem};
+pub use menu::{Menu, MenuEntry, MenuItem, menu_slider};
 pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller};
 pub use modal::{Modal, ModalSize};
 pub use overlay::{Placement, PopupAccess, Popups, Tooltip, popup_access};

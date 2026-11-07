@@ -355,7 +355,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
             if prof.is_some_and(|v| v["profile_limited"].as_bool() == Some(true)) {
                 c = c.child(muted(t("This person's privacy settings hide the rest of their profile.").into()));
             }
-            if st.account.profiles.get(&(user, guild)).is_some_and(Result::is_err) {
+            if st.account.profiles.get(&(user, guild)).is_some_and(Result::is_err) || st.prefs.dev.force_profile_data_warning {
                 c = c.child(muted(t("Couldn't load this profile.").into()));
             }
             c

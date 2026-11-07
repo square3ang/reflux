@@ -127,7 +127,8 @@ fn mask_email(email: &str) -> String {
 // ---- The tab ---------------------------------------------------------------------------------
 
 pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::SettingsUi, p: &Palette, acc: ShellAccess<S>) -> El {
-    let Some(me) = store.me.as_ref() else { return not_available(p) };
+    let Some(me) = crate::shell::devtools::me(store, st) else { return not_available(p) };
+    let me = &*me;
     let set = move |s: &mut S| {
         if let Some(u) = acc(s).settings.as_mut() {
             u.reveal_email = !u.reveal_email;
