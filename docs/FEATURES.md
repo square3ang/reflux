@@ -39,7 +39,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Overview | PARTIAL | no invite page / invite modal preview buttons; threshold date is typed (no date picker); images are taken as picked, not through AssetCropModal | guild_tabs/guild_overview_tab/* |
 | Roles | PARTIAL | uploads are centre-cropped (no crop modal); members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
 | Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
-| Activity log | PARTIAL | change details are generic `key: old → new` rows, not Fluxer's per-action sentences; "Load more" button instead of scroll paging; user filter lists known members | guild_tabs/GuildAuditLogTab.tsx |
+| Activity log | PARTIAL | change details are labelled `Field: old → new` rows (humanised labels, Yes/No, joined lists), not Fluxer's per-action sentences; "Load more" button instead of scroll paging; user filter lists known members | guild_tabs/GuildAuditLogTab.tsx |
 | Emoji | DONE | the upload dialog picks one file (Rune's file dialog returns one path); several upload by dropping them on the drop zone | guild_tabs/GuildEmojiTab.tsx |
 | Stickers | DONE | one at a time like Fluxer's drop zone; images contained in a 320px square (`optimizeStickerImage`) | guild_tabs/GuildStickersTab.tsx |
 | Explore (discovery listing) | DONE | | guild_tabs/GuildDiscoveryTab.tsx |
