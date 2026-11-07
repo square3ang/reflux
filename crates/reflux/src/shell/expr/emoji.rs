@@ -107,6 +107,10 @@ fn pick(st: &mut ShellState, item: &Item, shift: bool, _: &mut Tx) {
             st.composer.insert(&format!("{}{space}", wire(item, tone)));
         }
         Some(For::React { channel, message }) => st.intents.push(Intent::React { channel, message, emoji: reaction_emoji(item, tone), add: true }),
+        Some(For::Form { key, .. }) => {
+            let e = reaction_emoji(item, tone);
+            st.form.data.insert(key.into(), serde_json::json!({ "id": e.id.map(|i| i.to_string()), "name": e.name }));
+        }
         None => return,
     }
     st.expr.track(&item.key(), crate::app::now_ms());

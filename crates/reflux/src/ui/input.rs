@@ -18,22 +18,29 @@ pub struct Input<'a, S: 'static> {
     password: Option<(bool, fn(&mut S))>,
     /// Masked without the reveal button.
     secure: bool,
+    /// `<Textarea>`: wraps and takes Enter, at least this tall.
+    multiline: Option<f32>,
 }
 
 impl<'a, S: 'static> Input<'a, S> {
     pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
-        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false }
+        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
     pub fn error(mut self, e: Option<&'a str>) -> Self { self.error = e; self }
     pub fn password(mut self, revealed: bool, toggle: fn(&mut S)) -> Self { self.password = Some((revealed, toggle)); self }
     pub fn secure(mut self) -> Self { self.secure = true; self }
+    pub fn multiline(mut self, min_h: f32) -> Self { self.multiline = Some(min_h); self }
 
     pub fn el(self, p: &Palette) -> El {
         let style = font(14.0, 400.0).lh(20.0);
-        let mut field = text_input(self.edit, style)
-            .single_line()
+        let mut field = text_input(self.edit, style);
+        field = match self.multiline {
+            Some(h) => field.min_h(h - 22.0),
+            None => field.single_line(),
+        };
+        let mut field = field
             .key(self.key)
             .grow(1.0)
             .shrink()
@@ -63,6 +70,7 @@ impl<'a, S: 'static> Input<'a, S> {
             .min_h(44.0)
             .pl(17.0)
             .pr(if self.password.is_some() { 49.0 } else { 17.0 })
+            .py(if self.multiline.is_some() { 11.0 } else { 0.0 })
             .center_y()
             .radius(8.0)
             .fill(p.form_surface_background)

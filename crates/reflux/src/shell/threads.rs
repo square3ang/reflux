@@ -68,6 +68,8 @@ pub struct Settings {
     pub name: TextEdit,
     pub auto_archive: u32,
     pub invitable: bool,
+    /// `rate_limit_per_user` (moderators only).
+    pub slowmode: u32,
 }
 
 /// UI state of threads and forums.
@@ -970,11 +972,11 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     }
     if r.edit {
         let meta = t.thread_metadata.clone().unwrap_or_default();
-        let (tname, auto, invitable) = (t.name.clone().unwrap_or_default(), meta.auto_archive_duration.max(60), meta.invitable.unwrap_or(true));
+        let (tname, auto, invitable, slowmode) = (t.name.clone().unwrap_or_default(), meta.auto_archive_duration.max(60), meta.invitable.unwrap_or(true), t.rate_limit_per_user);
         m = m.item(MenuItem::new("thread-edit", crate::i18n::t("Edit thread")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
             let st = acc(s);
             st.popups.close();
-            st.threads.settings = Some(Settings { thread: id, name: TextEdit::new(tname.clone()), auto_archive: auto, invitable });
+            st.threads.settings = Some(Settings { thread: id, name: TextEdit::new(tname.clone()), auto_archive: auto, invitable, slowmode });
         }));
     }
     let archived = rules::is_archived(t);
@@ -1032,7 +1034,8 @@ pub(super) fn layer<S: 'static>(store: &Store, st: &ShellState, c: Option<&Chann
     if let Some(s) = &st.threads.settings
         && let Some(t) = store.thread(s.thread)
     {
-        layer.push(settings_modal(s, t, p, acc));
+        let moderator = t.parent_id.is_some_and(|c| store.permissions(c).contains(reflux_model::Permissions::MANAGE_THREADS));
+        layer.push(settings_modal(s, t, moderator, p, acc));
     }
     match st.threads.confirm {
         Some(Confirm::Delete(id)) => {
@@ -1076,9 +1079,9 @@ fn confirm<S: 'static>(p: &Palette, acc: ShellAccess<S>, title: &str, body: &str
         .el(p)
 }
 
-/// `ThreadSettingsModal`: name, hide after inactivity and (private threads) invites.
-// shortcut: no slowmode control.
-fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
+/// `ThreadSettingsModal`: name, hide after inactivity, slowmode (moderators) and (private
+/// threads) invites.
+fn settings_modal<S: 'static>(s: &Settings, t: &Channel, moderator: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).threads.settings = None;
     let opts: [(&str, &str, Option<&str>); 4] = [("60", "1 hour", None), ("1440", "24 hours", None), ("4320", "3 days", None), ("10080", "1 week", None)];
     let cur = s.auto_archive.to_string();
@@ -1091,7 +1094,7 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
         .child(
             Input::new("thread-settings-name", &s.name, move |s: &mut S| {
                 let st = acc(s);
-                &mut st.threads.settings.get_or_insert_with(|| Settings { thread: Snowflake(0), name: TextEdit::new(""), auto_archive: 4320, invitable: true }).name
+                &mut st.threads.settings.get_or_insert_with(|| Settings { thread: Snowflake(0), name: TextEdit::new(""), auto_archive: 4320, invitable: true, slowmode: 0 }).name
             })
             .label(crate::i18n::t("Thread name"))
             .el(p),
@@ -1106,6 +1109,13 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
                 })
                 .el(p),
         );
+    if moderator {
+        body = body.child(crate::guild::channel_opts::slowmode_control("thread-settings-slowmode", crate::i18n::t("Slowmode"), s.slowmode, p, move |s: &mut S, v| {
+            if let Some(x) = draft(acc, s) {
+                x.slowmode = v;
+            }
+        }));
+    }
     let private = t.kind == ChannelType::PRIVATE_THREAD;
     if private {
         body = body.child(Switch::new(s.invitable).label(crate::i18n::t("Allow anyone to invite")).on_toggle(move |s: &mut S| {
@@ -1114,7 +1124,7 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
             }
         }).el(p));
     }
-    let id = t.id;
+    let (id, slow) = (t.id, t.rate_limit_per_user);
     Modal::new(crate::i18n::t("Thread settings"), close)
         .body(body)
         .footer(
@@ -1130,6 +1140,9 @@ fn settings_modal<S: 'static>(s: &Settings, t: &Channel, p: &Palette, acc: Shell
                             let mut body = serde_json::json!({ "name": x.name.text.trim(), "auto_archive_duration": x.auto_archive });
                             if private {
                                 body["invitable"] = x.invitable.into();
+                            }
+                            if moderator && x.slowmode != slow {
+                                body["rate_limit_per_user"] = x.slowmode.into();
                             }
                             op(st, Op::Patch { channel: id, body });
                         })

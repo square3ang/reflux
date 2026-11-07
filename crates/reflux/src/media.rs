@@ -46,6 +46,20 @@ pub fn avatar_url(base: &str, user: Snowflake, hash: &str, css: f32, scale: f32)
     asset(base, "avatars", user, hash, snap_within(css * scale, 128, 1024))
 }
 
+/// `getGuildMemberAvatarURL` / `getGuildMemberBannerURL`: a member's per-community image.
+fn member_asset(base: &str, route: &str, guild: Snowflake, user: Snowflake, hash: &str, size: u32) -> String {
+    let hash = hash.strip_prefix("a_").unwrap_or(hash);
+    format!("{}/guilds/{guild}/users/{user}/{route}/{hash}.webp?size={size}", base.trim_end_matches('/'))
+}
+
+pub fn member_avatar_url(base: &str, guild: Snowflake, user: Snowflake, hash: &str, css: f32, scale: f32) -> String {
+    member_asset(base, "avatars", guild, user, hash, snap_within(css * scale, 128, 1024))
+}
+
+pub fn member_banner_url(base: &str, guild: Snowflake, user: Snowflake, hash: &str, scale: f32) -> String {
+    member_asset(base, "banners", guild, user, hash, snap_within(360.0 * scale, 480, 2400))
+}
+
 /// `getGuildIconURL`: icon class.
 pub fn guild_icon_url(base: &str, guild: Snowflake, hash: &str, css: f32, scale: f32) -> String {
     asset(base, "icons", guild, hash, snap_within(css * scale, 128, 1024))
@@ -54,6 +68,12 @@ pub fn guild_icon_url(base: &str, guild: Snowflake, hash: &str, css: f32, scale:
 /// `getGuildBannerURL`: banner class (480–2400) at the 360px header width.
 pub fn guild_banner_url(base: &str, guild: Snowflake, hash: &str, scale: f32) -> String {
     asset(base, "banners", guild, hash, snap_within(360.0 * scale, 480, 2400))
+}
+
+/// `getGuildSplashURL` / `getGuildEmbedSplashURL` (`kind` "splashes" / "embed-splashes"): wide
+/// class at the 360px preview width.
+pub fn guild_wide_url(base: &str, kind: &str, guild: Snowflake, hash: &str, scale: f32) -> String {
+    asset(base, kind, guild, hash, snap_within(360.0 * scale, 480, 2400))
 }
 
 /// `getEmojiURL`: no `size`, so the server's 128.
@@ -525,6 +545,8 @@ mod tests {
         assert_eq!(avatar_url(B, Snowflake(42), "a_abc", 80.0, 2.0), "https://media.fluxer.app/avatars/42/abc.webp?size=160");
         assert_eq!(guild_icon_url(B, Snowflake(7), "ff", 48.0, 1.0), "https://media.fluxer.app/icons/7/ff.webp?size=128");
         assert_eq!(guild_banner_url(B, Snowflake(7), "bb", 2.0), "https://media.fluxer.app/banners/7/bb.webp?size=1024");
+        assert_eq!(member_avatar_url(B, Snowflake(7), Snowflake(42), "a_m", 40.0, 2.0), "https://media.fluxer.app/guilds/7/users/42/avatars/m.webp?size=128");
+        assert_eq!(member_banner_url(B, Snowflake(7), Snowflake(42), "mb", 2.0), "https://media.fluxer.app/guilds/7/users/42/banners/mb.webp?size=1024");
         assert_eq!(emoji_url(B, "99"), "https://media.fluxer.app/emojis/99.webp");
     }
 

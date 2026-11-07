@@ -63,12 +63,15 @@ impl Tab {
 pub enum For {
     Composer(Snowflake),
     React { channel: Snowflake, message: Snowflake },
+    /// A settings form's emoji field: the pick goes into `form.data[key]` as
+    /// `{"id": custom ID or null, "name": surrogate or custom name}`, anchored under `pick-{key}`.
+    Form { channel: Snowflake, key: &'static str },
 }
 
 impl For {
     fn channel(self) -> Snowflake {
         match self {
-            For::Composer(c) | For::React { channel: c, .. } => c,
+            For::Composer(c) | For::React { channel: c, .. } | For::Form { channel: c, .. } => c,
         }
     }
 }
@@ -248,6 +251,27 @@ pub fn open_react(st: &mut ShellState, channel: Snowflake, message: Snowflake) {
     st.expr.reset(For::React { channel, message }, Tab::Emojis);
 }
 
+/// The settings forms' emoji picker in [`crate::ui::Popups`].
+pub const FORM_POPOUT: &str = "expr-form";
+
+/// Opens the emoji picker for a settings form field (see [`For::Form`]); `channel` decides which
+/// custom emoji may be used.
+pub fn open_for_form(st: &mut ShellState, channel: Snowflake, key: &'static str) {
+    st.popups.close();
+    st.popups.open = Some(FORM_POPOUT.into());
+    st.expr.reset(For::Form { channel, key }, Tab::Emojis);
+}
+
+/// The settings forms' picker, for the dialog layer that owns the field to draw over itself.
+pub fn form_picker<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let t @ For::Form { key, .. } = st.expr.target? else { return None };
+    if !st.popups.is_open(FORM_POPOUT) {
+        return None;
+    }
+    let e = popout(store, st, t, p, acc).modal(true, move |s: &mut S| close(acc(s)));
+    Some(crate::ui::overlay::anchor(e, &format!("pick-{key}"), crate::ui::Placement::BottomStart, 8.0))
+}
+
 /// A composer button: opens the picker on `tab`, switches to it, or closes it when it already
 /// shows `tab` (`handleExpressionPickerTabToggle`).
 pub fn toggle(st: &mut ShellState, channel: Snowflake, tab: Tab) {
@@ -356,7 +380,7 @@ const HEIGHT: f32 = 690.0;
 fn popout<S: 'static>(store: &Store, st: &ShellState, t: For, p: &Palette, acc: ShellAccess<S>) -> El {
     let bg = p.form_surface_background;
     let tabs: Vec<Tab> = match t {
-        For::React { .. } => vec![Tab::Emojis],
+        For::React { .. } | For::Form { .. } => vec![Tab::Emojis],
         For::Composer(_) => Tab::ALL.into_iter().filter(|&x| x != Tab::Gifs || gif::enabled(st)).collect(),
     };
     let channel = store.channels.get(&t.channel());

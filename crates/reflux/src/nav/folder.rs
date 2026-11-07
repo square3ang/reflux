@@ -9,6 +9,7 @@ use rune::{El, TextEdit, col, el, icon, row, text};
 use serde_json::json;
 
 use crate::guild::Then;
+use crate::i18n::t;
 use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
@@ -143,7 +144,7 @@ fn settings<S: 'static>(store: &Store, st: &ShellState, fid: Option<i64>, p: &Pa
                 .gap(8.0)
                 .child(Button::new("Delete folder").variant(ButtonVariant::Danger).on_press(delete).el(p))
                 .child(el().grow(1.0))
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close).el(p))
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
                 .child(Button::new("Save").on_press(save).el(p)),
         )
         .el(p)
@@ -180,16 +181,15 @@ fn purge<S: 'static>(store: &Store, g: Snowflake, p: &Palette, acc: ShellAccess<
     let go = move |s: &mut S| {
         let sh = acc(s);
         sh.nav.confirm_purge = None;
-        sh.api(Method::POST, format!("/users/@me/guilds/{g}/messages/bulk-delete-mine"), Some(json!({})), Then::Nothing);
-        crate::desktop::toast(&mut sh.desktop, "Deleted your messages.", true);
+        sh.api(Method::POST, format!("/users/@me/guilds/{g}/messages/bulk-delete-mine"), Some(json!({})), Then::Toast("Deleted your messages.", "Couldn't delete your messages"));
     };
-    Modal::new("Delete your messages in this community?", close)
-        .body(text("Permanently delete every message you've sent here, across every channel. Can't be undone.").font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
+    Modal::new(t("Delete your messages in this community?"), close)
+        .body(text(t("Permanently delete every message you've sent here, across every channel. Can't be undone.")).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap())
         .footer(
             row()
                 .gap(8.0)
-                .child(Button::new("Cancel").variant(ButtonVariant::Secondary).on_press(close).el(p))
-                .child(Button::new("Delete my messages").variant(ButtonVariant::Danger).on_press(go).el(p)),
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
+                .child(Button::new(t("Delete my messages")).variant(ButtonVariant::Danger).on_press(go).el(p)),
         )
         .el(p)
 }

@@ -75,8 +75,14 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             data(st, "guild", json!("2000"));
         }
         "topic" => st.open_social(Modal::Topic(s(GENERAL))),
-        "members-page" => {
+        "members-page" | "members-filter" => {
             st.open_members_page(g);
+            if scene == "members-filter" {
+                if let Some(m) = &mut st.social.members {
+                    m.roles = vec![s(2012)];
+                }
+                st.popups.open = Some("members-filter-roles".into());
+            }
             st.intents.clear();
             let m = |u: u64, nick: Option<&str>, roles: &[u64], joined: i64, src: u8| json!({"user_id": u.to_string(), "username": format!("user{u}"), "discriminator": "0",
                 "global_name": null, "nickname": nick, "role_ids": roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), "joined_at": joined, "is_bot": u == 1007,
@@ -118,7 +124,7 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             data(st, "invite", json!({"code": "rust", "guild": {"id": "3000", "name": "Rust Lang"}, "inviter": {"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, "member_count": 12840, "presence_count": 2310}));
         }
         "webhook" => {
-            st.open_social(Modal::Webhook { guild: g, id: s(9100) });
+            st.open_social(Modal::Webhook { guild: g, channel: None, id: s(9100) });
             data(st, "webhook", json!({"id": "9100", "name": "CI", "channel_id": "2202", "token": "t"}));
         }
         "inbox" | "inbox-bookmarks" | "inbox-unread" => {

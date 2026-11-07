@@ -6,6 +6,13 @@
 //! GUILD_ROLE_*, CHANNEL_*), so the store stays the source of truth.
 
 mod channel;
+pub use channel::poll as poll_overwrite_search;
+mod expr_upload;
+pub(crate) mod channel_opts;
+mod create_access;
+mod overview_extra;
+mod role_extra;
+mod invite_friends;
 mod forum;
 mod menu;
 mod modals;
@@ -106,6 +113,12 @@ pub enum Then {
     Keep(String),
     /// GET `path` again into `form.data[key]` (a list the call changed).
     Reload(String, String),
+    /// Extend the arrays of `form.data[key]` with the response's (a next page of `page` rows);
+    /// sets `{key}-end` once a page comes back short.
+    Append(String, usize),
+    /// The response is a DM or group DM channel: post `content` there, then add
+    /// `user` to the `form.data[mark]` list (`useSendLinkToRecipients`).
+    SendDm { content: String, user: Snowflake, mark: String },
     /// Open the guild or channel the response is (a created guild or channel, an accepted invite)
     /// and close the dialog.
     Enter,
@@ -118,6 +131,9 @@ pub enum Then {
     Token,
     /// The account is gone from this device (disabled or deleted): sign out locally.
     SignOut,
+    /// A toast: the first text on success (none if empty), the second on failure (dialog-less
+    /// actions).
+    Toast(&'static str, &'static str),
 }
 
 impl ShellState {
@@ -134,6 +150,13 @@ impl ShellState {
     /// GETs `path` into `form.data[key]`.
     pub fn load(&mut self, key: &str, path: impl Into<String>) {
         self.api(Method::GET, path, None, Then::Keep(key.into()));
+    }
+
+    /// Opens channel settings on `tab`, loading what it lists (`voice`: the channel's voice
+    /// regions too).
+    pub fn open_channel_settings(&mut self, channel: Snowflake, tab: &'static str, voice: bool) {
+        self.open_dialog(Dialog::Channel { channel, tab, target: None });
+        channel::load_tab(self, channel, tab, voice);
     }
 
     /// Opens community settings on `tab`, loading what it lists.
@@ -157,6 +180,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         Dialog::Social(_) => {}
         _ => modals::view(store, st, d, p, acc, layer),
     }
+    layer.extend(crate::shell::expr::form_picker(store, st, p, acc));
 }
 
 // ---- Shared bits ---------------------------------------------------------------------------
@@ -167,6 +191,17 @@ pub(crate) fn can(store: &Store, guild: Snowflake, p: Permissions) -> bool {
 
 /// A form text field showing what's typed so far, else `initial`.
 fn field<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, initial: &str, label: &str, placeholder: &str, p: &Palette) -> El {
+    input(st, acc, key, initial, label, placeholder, None, p)
+}
+
+/// [`field`] as a growing `<Textarea>` at least `min_h` tall.
+#[allow(clippy::too_many_arguments)]
+fn textarea<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, initial: &str, label: &str, placeholder: &str, min_h: f32, p: &Palette) -> El {
+    input(st, acc, key, initial, label, placeholder, Some(min_h), p)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn input<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, initial: &str, label: &str, placeholder: &str, multiline: Option<f32>, p: &Palette) -> El {
     let edit = st.form.text.get(key).cloned().unwrap_or_else(|| TextEdit::new(initial));
     let init = initial.to_string();
     let el_key = format!("form-{key}");
@@ -174,6 +209,9 @@ fn field<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, in
         acc(s).form.text.entry(key.to_string()).or_insert_with(|| TextEdit::new(init.clone()))
     })
     .placeholder(placeholder);
+    if let Some(h) = multiline {
+        i = i.multiline(h);
+    }
     if !label.is_empty() {
         i = i.label(label);
     }

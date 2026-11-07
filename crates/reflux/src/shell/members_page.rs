@@ -2,9 +2,9 @@
 //! channels opens a table of members from `POST /guilds/{id}/members-search` (name, member
 //! since, joined Fluxer, join method, top role) with search, sort and paging. A row opens the
 //! profile; right-click is the usual member menu (roles, nickname, kick, ban…).
-// shortcut: search runs on Enter (Fluxer debounces 300 ms while typing); no column filters
-// (member since, account age, join method, roles), no rows-per-page picker (25), no
-// indexing poll.
+//! Search debounces 300 ms; the header's funnels filter by member since, account age, join method
+//! and roles; rows per page is 12/25/50/100; while the server is indexing it asks again every 5 s.
+// shortcut: no "Custom range…" date filter (no date picker); presets only.
 
 use reflux_model::{Permissions as P, Snowflake};
 use reflux_store::Store;
@@ -18,10 +18,25 @@ use crate::i18n::t;
 use crate::icons;
 use crate::social::Done;
 use crate::theme::{Palette, dim, font};
-use crate::ui::{Button, ButtonSize, ButtonVariant, Placement, mix, over};
+use crate::ui::{Button, ButtonSize, ButtonVariant, Menu, MenuItem, Placement, mix, over};
 
-const PAGE: u32 = 25;
 const KEY: &str = "members-search";
+/// `SEARCH_DEBOUNCE_MS`, `INDEXING_POLL_INTERVAL_MS`, `PAGE_SIZE_OPTIONS`.
+const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+const INDEXING_POLL: std::time::Duration = std::time::Duration::from_secs(5);
+const PAGE_SIZES: [(&str, &str); 4] = [("12", "12"), ("25", "25"), ("50", "50"), ("100", "100")];
+const HOUR_MS: u64 = 3_600_000;
+const DAY_MS: u64 = 86_400_000;
+/// The date-range presets (`PAST_*`), as a window back from now.
+const PRESETS: [(&str, u64); 7] = [
+    ("Past 1 hour", HOUR_MS),
+    ("Past 24 hours", 24 * HOUR_MS),
+    ("Past 7 days", 7 * DAY_MS),
+    ("Past 2 weeks", 14 * DAY_MS),
+    ("Past 3 weeks", 21 * DAY_MS),
+    ("Past 4 weeks", 28 * DAY_MS),
+    ("Past 3 months", 90 * DAY_MS),
+];
 
 /// `MEMBERS_PAGE_PERMISSIONS`: who sees the row.
 pub fn can_view(store: &Store, g: Snowflake) -> bool {
@@ -35,6 +50,65 @@ pub struct MembersPage {
     /// 1-based.
     pub page: u32,
     pub oldest_first: bool,
+    /// Rows per page (0 = 25).
+    pub page_size: u32,
+    /// Date filters: a window back from now in ms (member since, joined Fluxer).
+    pub since: Option<u64>,
+    pub created: Option<u64>,
+    /// Join method: an invite code (the vanity code for "Vanity URL").
+    pub invite: Option<String>,
+    pub roles: Vec<Snowflake>,
+    /// A search waiting for typing to pause, or the next indexing poll.
+    pub due: Option<std::time::Instant>,
+}
+
+impl MembersPage {
+    fn size(&self) -> u32 {
+        if self.page_size == 0 { 25 } else { self.page_size }
+    }
+
+    /// `buildMemberSearchParams`.
+    fn params(&self, now_s: u64) -> serde_json::Value {
+        let size = self.size();
+        let mut body = json!({ "limit": size, "offset": (self.page.max(1) - 1) * size, "sort_by": "joinedAt", "sort_order": if self.oldest_first { "asc" } else { "desc" } });
+        let q = self.query.text.trim();
+        if !q.is_empty() {
+            body["query"] = json!(q);
+        }
+        if !self.roles.is_empty() {
+            body["role_ids"] = json!(self.roles.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        }
+        if let Some(w) = self.since {
+            body["joined_at_gte"] = json!(now_s.saturating_sub(w / 1000));
+        }
+        if let Some(w) = self.created {
+            body["user_created_at_gte"] = json!(now_s.saturating_sub(w / 1000));
+        }
+        if let Some(c) = &self.invite {
+            body["source_invite_code"] = json!([c]);
+        }
+        body
+    }
+}
+
+/// Once a frame: runs a debounced search or the indexing poll when it's due.
+pub fn poll(st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    let indexing = st.social.data.get(KEY).and_then(|v| v.get("indexing")).and_then(serde_json::Value::as_bool) == Some(true);
+    let Some(m) = &mut st.social.members else { return false };
+    if m.due.is_none() && indexing {
+        m.due = Some(std::time::Instant::now() + INDEXING_POLL);
+    }
+    let Some(due) = m.due else { return false };
+    let now = std::time::Instant::now();
+    if now < due {
+        tx.wake_after(due - now);
+        return false;
+    }
+    if let Some(m) = &mut st.social.members {
+        m.due = None;
+    }
+    st.search_members();
+    true
 }
 
 #[derive(Deserialize, Default)]
@@ -71,18 +145,15 @@ impl ShellState {
     /// Shows the members page of `g` and loads its first page.
     pub fn open_members_page(&mut self, g: Snowflake) {
         self.social.members = Some(MembersPage { guild: g, page: 1, ..Default::default() });
-        self.social.data.remove(KEY);
         self.search_members();
     }
 
     fn search_members(&mut self) {
         let Some(m) = &self.social.members else { return };
-        let q = m.query.text.trim();
-        let mut body = json!({ "limit": PAGE, "offset": (m.page.max(1) - 1) * PAGE, "sort_by": "joinedAt", "sort_order": if m.oldest_first { "asc" } else { "desc" } });
-        if !q.is_empty() {
-            body["query"] = json!(q);
-        }
+        let body = m.params(crate::app::now_ms() / 1000);
         let path = format!("/guilds/{}/members-search", m.guild);
+        // The table shows progress until the answer (`isSearching`).
+        self.social.data.remove(KEY);
         self.social(Method::POST, path, Some(body), Done::Data(KEY.into()));
     }
 }
@@ -116,7 +187,7 @@ pub fn sidebar_row<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
 }
 
 /// The page itself, in place of the chat.
-pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> Option<El> {
     let m = st.social.members.as_ref().filter(|m| Some(m.guild) == st.guild)?;
     let g = m.guild;
     let header = row()
@@ -152,11 +223,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                 .placeholder(t("Search by username or ID"), p.text_tertiary)
                 .caret(p.text_primary, p.background_modifier_selected)
                 .label(t("Search by username or ID"))
-                .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).social.members.get_or_insert_with(Default::default).query })
+                .on_edit(move |s: &mut S| -> &mut TextEdit {
+                    let m = acc(s).social.members.get_or_insert_with(Default::default);
+                    (m.due, m.page) = (Some(std::time::Instant::now() + DEBOUNCE), 1);
+                    &mut m.query
+                })
                 .on_submit(move |s: &mut S, _| {
                     let sh = acc(s);
                     if let Some(m) = &mut sh.social.members {
-                        m.page = 1;
+                        (m.page, m.due) = (1, None);
                     }
                     sh.search_members();
                 }),
@@ -188,14 +263,96 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let cell = |i: usize, e: El| row().grow(cols[i].1).w(0.0).min_w(cols[i].0).px(14.0).center_y().child(e);
     let head = |s: &str| text(s.to_uppercase()).font(font(11.0, 700.0).lh(16.0)).color(p.text_tertiary);
     let joined = crate::i18n::tf("Joined {productName}", &[("productName", "Fluxer")]);
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    // A header funnel opening `menu` (`.filterButton`, 12px, `focus-primary` while active).
+    let funnel = |id: &'static str, label: &str, active: bool, menu: Menu<S>, layer: &mut Vec<El>| {
+        menu.placement(Placement::BottomEnd).el(&st.popups, pops, p, layer);
+        let open = st.popups.is_open(id);
+        let c = if active { p.focus_primary } else if open { p.text_primary } else { p.text_tertiary };
+        row()
+            .padding(2.0)
+            .radius(4.0)
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label.to_string())
+            .key(id)
+            .on_press(move |s: &mut S| acc(s).popups.toggle(id))
+            .child(icon(if active { &icons::FUNNEL_FILL } else { &icons::FUNNEL_BOLD }, 12.0).color(c))
+    };
+    let set = move |f: fn(&mut MembersPage)| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(m) = &mut sh.social.members {
+                f(m);
+                (m.page, m.due) = (1, None);
+            }
+            sh.search_members();
+        }
+    };
+    let presets = |id: &'static str, cur: Option<u64>, pick: fn(&mut MembersPage, Option<u64>)| {
+        let mut menu = Menu::new(id).item(MenuItem::new(format!("{id}-all"), t("All")).radio(cur.is_none()).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(m) = &mut sh.social.members {
+                pick(m, None);
+                (m.page, m.due) = (1, None);
+            }
+            sh.search_members();
+        }));
+        for (i, (label, ms)) in PRESETS.iter().enumerate() {
+            let ms = *ms;
+            menu = menu.item(MenuItem::new(format!("{id}-{i}"), t(label)).radio(cur == Some(ms)).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                if let Some(m) = &mut sh.social.members {
+                    pick(m, Some(ms));
+                    (m.page, m.due) = (1, None);
+                }
+                sh.search_members();
+            }));
+        }
+        menu
+    };
+    let since_menu = presets("members-filter-since", m.since, |m, v| m.since = v);
+    let created_menu = presets("members-filter-created", m.created, |m, v| m.created = v);
+    // Join method: all, the vanity URL, and the invite codes on this page.
+    let vanity = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()?.vanity_url_code.clone());
+    let mut codes: Vec<String> = res.as_ref().map(|r| r.members.iter().filter_map(|x| x.supplemental.source_invite_code.clone()).collect()).unwrap_or_default();
+    codes.sort();
+    codes.dedup();
+    codes.retain(|c| Some(c) != vanity.as_ref());
+    let mut join_menu = Menu::new("members-filter-join").item(MenuItem::new("join-all", t("All")).radio(m.invite.is_none()).on_select(set(|m| m.invite = None)));
+    for (label, code) in vanity.iter().map(|v| (t("Vanity URL").to_string(), v.clone())).chain(codes.into_iter().map(|c| (c.clone(), c))) {
+        let on = m.invite.as_ref() == Some(&code);
+        join_menu = join_menu.item(MenuItem::new(format!("join-{code}"), label).radio(on).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(m) = &mut sh.social.members {
+                (m.invite, m.page, m.due) = (Some(code.clone()), 1, None);
+            }
+            sh.search_members();
+        }));
+    }
+    let mut roles_menu = Menu::new("members-filter-roles").item(MenuItem::new("roles-clear", t("Clear all")).disabled(m.roles.is_empty()).on_select(set(|m| m.roles.clear())));
+    let mut by_rank: Vec<_> = store.guilds.get(&g).map(|gs| gs.roles.iter().filter(|r| r.id != g).collect()).unwrap_or_default();
+    by_rank.sort_by_key(|r| std::cmp::Reverse(r.position));
+    for r in by_rank {
+        let (rid, on) = (r.id, m.roles.contains(&r.id));
+        roles_menu = roles_menu.item(MenuItem::new(format!("role-filter-{rid}"), r.name.clone()).checkbox(on).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(m) = &mut sh.social.members {
+                if on { m.roles.retain(|x| *x != rid) } else { m.roles.push(rid) }
+                (m.page, m.due) = (1, None);
+            }
+            sh.search_members();
+        }));
+    }
+    let with = |label: &str, f: El| row().gap(4.0).center_y().child(head(label)).child(f);
     let head_row = row()
         .w_full()
         .py(5.0)
         .child(cell(0, head(t("Name"))))
-        .child(cell(1, head(t("Member since"))))
-        .child(cell(2, head(&joined)))
-        .child(cell(3, head(t("Join method"))))
-        .child(cell(4, head(t("Roles"))))
+        .child(cell(1, with(t("Member since"), funnel("members-filter-since", t("Filter by member since"), m.since.is_some(), since_menu, layer))))
+        .child(cell(2, with(&joined, funnel("members-filter-created", t("Filter by account creation date"), m.created.is_some(), created_menu, layer))))
+        .child(cell(3, with(t("Join method"), funnel("members-filter-join", t("Filter by join method"), m.invite.is_some(), join_menu, layer))))
+        .child(cell(4, with(t("Roles"), funnel("members-filter-roles", t("Filter by roles"), !m.roles.is_empty(), roles_menu, layer))))
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary));
     let locale = crate::i18n::locale();
     let date = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).map(|d| crate::desktop::time::short_date(&d.with_timezone(&chrono::Local), locale)).unwrap_or_default();
@@ -203,7 +360,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let body: El = match &res {
         None if st.form.error.is_some() => empty(t("Something went wrong loading members. Try again later."), p),
         None => row().w_full().grow(1.0).center().child(crate::ui::spinner(p.text_primary_muted)),
-        Some(r) if r.members.is_empty() => empty(if r.indexing { t("Indexing…") } else { t("Nobody matches that search.") }, p),
+        Some(r) if r.indexing => row().w_full().grow(1.0).center().gap(8.0).child(crate::ui::spinner(p.text_primary_muted)).child(text(t("Indexing…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)),
+        Some(r) if r.members.is_empty() => empty(t("Nobody matches that search."), p),
         Some(r) => {
             let rows = r.members.iter().map(|mm| {
                 let u = mm.user_id;
@@ -277,7 +435,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p)
         }
     };
-    let pages = total.div_ceil(u64::from(PAGE)).max(1) as u32;
+    let pages = total.div_ceil(u64::from(m.size())).max(1) as u32;
     let page = m.page.max(1);
     let go = move |to: u32| {
         move |s: &mut S| {
@@ -294,7 +452,20 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .px(14.0)
         .gap(12.0)
         .center_y()
-        .child(text(format!("{page} / {pages}")).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).grow(1.0))
+        .child(text(t("Rows per page")).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted))
+        .child(
+            crate::ui::Select::new("members-page-size", &PAGE_SIZES, Some(&m.size().to_string()))
+                .width(88.0)
+                .on_choose(move |s: &mut S, v| {
+                    let sh = acc(s);
+                    if let Some(m) = &mut sh.social.members {
+                        (m.page_size, m.page, m.due) = (v.parse().unwrap_or(25), 1, None);
+                    }
+                    sh.search_members();
+                })
+                .el(&st.popups, pops, p, layer),
+        )
+        .child(text(format!("{page} / {pages}")).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).grow(1.0).align(rune::Align::End))
         .child(Button::new(t("Previous")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page <= 1).key("members-page-prev").on_press(go(page.saturating_sub(1))).el(p))
         .child(Button::new(t("Next")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page >= pages).key("members-page-next").on_press(go(page + 1)).el(p))
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_header_secondary));
@@ -326,6 +497,17 @@ fn empty(msg: &str, p: &Palette) -> El {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn params_carry_filters_and_page_size() {
+        let m = super::MembersPage { page: 3, page_size: 50, since: Some(super::DAY_MS), roles: vec![reflux_model::Snowflake(9)], invite: Some("abc".into()), ..Default::default() };
+        let b = m.params(1_000_000);
+        assert_eq!((b["limit"].as_u64(), b["offset"].as_u64()), (Some(50), Some(100)));
+        assert_eq!(b["joined_at_gte"].as_u64(), Some(1_000_000 - 86_400));
+        assert_eq!(b["role_ids"][0], "9");
+        assert_eq!(b["source_invite_code"][0], "abc");
+        assert!(b.get("query").is_none() && b.get("user_created_at_gte").is_none());
+    }
+
     #[test]
     fn response_parses() {
         let r: super::Response = serde_json::from_value(serde_json::json!({"guild_id": "1", "members": [{"id": "x", "guild_id": "1", "user_id": "5", "username": "ada",

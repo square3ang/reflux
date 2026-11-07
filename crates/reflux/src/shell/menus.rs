@@ -206,15 +206,16 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
             }));
         }
         if let Some(tab) = crate::guild::first_channel_tab(store, c) {
+            let voice = ch.kind == ChannelType::GUILD_VOICE;
             let label = if category { t("Edit category") } else { t("Edit channel") };
             m = m.separator().item(MenuItem::new("edit-channel", label).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| {
-                acc(s).open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None })
+                acc(s).open_channel_settings(c, tab, voice)
             }));
             if store.permissions(c).contains(reflux_model::Permissions::MANAGE_CHANNELS) {
                 let label = if category { t("Delete category") } else { t("Delete channel") };
                 m = m.item(MenuItem::new("delete-channel", label).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| {
                     let sh = acc(s);
-                    sh.open_dialog(crate::guild::Dialog::Channel { channel: c, tab, target: None });
+                    sh.open_channel_settings(c, tab, voice);
                     sh.form.confirm = Some(crate::guild::Confirm::DeleteChannel(c));
                 }));
             }

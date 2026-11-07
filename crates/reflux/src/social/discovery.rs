@@ -1,7 +1,6 @@
 //! Explore (`DiscoveryPage`, `DiscoveryGuildCard`), the guild preview nagbar shown while
 //! visiting a community, and `InviteAcceptModal`.
-// shortcut: cards show the community's initials instead of its icon and banner images, there is
-// no language filter, and results stop at the first 24.
+// shortcut: results stop at the first 24 (Fluxer loads more on scroll).
 
 use reflux_model::Snowflake;
 use reflux_store::Store;
@@ -18,8 +17,45 @@ use crate::i18n::t;
 
 const CATEGORIES: [&str; 9] = ["Gaming", "Music", "Entertainment", "Education", "Science & Technology", "Content Creator", "Anime & Manga", "Movies & TV", "Other"];
 
-/// The search request for the current query and category.
-pub fn search_path(query: &str, category: Option<u8>) -> String {
+/// `DiscoverySupportedLanguages`: (code, English name).
+const LANGUAGES: [(&str, &str); 33] = [
+    ("ar", "Arabic"),
+    ("bg", "Bulgarian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("en-US", "English"),
+    ("es-ES", "Spanish (Spain)"),
+    ("es-419", "Spanish (Latin America)"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hr", "Croatian"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("lt", "Lithuanian"),
+    ("nl", "Dutch"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt-BR", "Portuguese (Brazil)"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sv-SE", "Swedish"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+    ("zh-CN", "Chinese (Simplified)"),
+    ("zh-TW", "Chinese (Traditional)"),
+];
+
+/// The search request for the current query, category and language.
+pub fn search_path(query: &str, category: Option<u8>, language: Option<&str>) -> String {
     let mut p = "/discovery/guilds?limit=24".to_string();
     let q = query.trim();
     if !q.is_empty() {
@@ -35,6 +71,9 @@ pub fn search_path(query: &str, category: Option<u8>) -> String {
     if let Some(c) = category {
         p.push_str(&format!("&category={c}"));
     }
+    if let Some(l) = language {
+        p.push_str(&format!("&language={l}"));
+    }
     p
 }
 
@@ -47,7 +86,7 @@ pub fn open(st: &mut ShellState) {
 
 fn search(st: &mut ShellState) {
     st.social.data.remove("discovery");
-    let path = search_path(&st.social.discovery_query.text, st.social.discovery_category);
+    let path = search_path(&st.social.discovery_query.text, st.social.discovery_category, st.social.discovery_language);
     st.social(Method::GET, path, None, Done::Data("discovery".into()));
 }
 
@@ -59,7 +98,7 @@ fn compact(n: u64) -> String {
     }
 }
 
-pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let search_box = Input::new("discovery-search", &st.social.discovery_query, move |s: &mut S| -> &mut rune::TextEdit { &mut acc(s).social.discovery_query })
         .placeholder(t("Search communities"))
         .el(p)
@@ -80,6 +119,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         .child(rune::el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
         .child(icon(&icons::COMPASS_FILL, 20.0).color(p.text_primary_muted))
         .child(text(t("Explore")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .child(language(st, p, acc, layer))
         .child(search_box);
     let pill = |label: &str, cat: Option<u8>| {
         let on = st.social.discovery_category == cat;
@@ -128,7 +168,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
                 for chunk in guilds.chunks(3) {
                     let mut r = row().w_full().gap(16.0).items_stretch();
                     for g in chunk {
-                        r = r.child(card(g, p, acc));
+                        r = r.child(card(st, g, p, acc));
                     }
                     for _ in chunk.len()..3 {
                         r = r.child(el().grow(1.0).w(0.0));
@@ -149,15 +189,43 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         .child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(content), false, p)))
 }
 
-/// `DiscoveryGuildCard`: banner strip, initials, name, description and counts; opens a preview.
-fn card<S: 'static>(g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
+/// `DiscoveryLanguageDropdown`: "All languages" and the supported ones by name.
+fn language<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let mut opts: Vec<(&str, &str)> = LANGUAGES.iter().map(|&(c, n)| (c, t(n))).collect();
+    opts.sort_by_key(|o| o.1.to_lowercase());
+    opts.insert(0, ("", t("All languages")));
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    crate::ui::Select::new("discovery-language", &opts, Some(st.social.discovery_language.unwrap_or("")))
+        .width(200.0)
+        .on_choose(move |s: &mut S, v: &str| {
+            let st = acc(s);
+            st.social.discovery_language = LANGUAGES.iter().find(|l| l.0 == v).map(|l| l.0);
+            search(st);
+        })
+        .el(&st.popups, pops, p, layer)
+}
+
+/// `DiscoveryGuildCard`: banner strip, icon (or initials), name, description and counts; opens
+/// a preview.
+fn card<S: 'static>(st: &ShellState, g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
     let id: Snowflake = g["id"].as_str().and_then(|s| s.parse().ok()).unwrap_or_default();
     let name = g["name"].as_str().unwrap_or_default().to_string();
     let description = g["description"].as_str().filter(|d| !d.is_empty()).unwrap_or("No description.").to_string();
     let online = g["online_count"].as_u64().unwrap_or(0);
     let members = g["member_count"].as_u64().unwrap_or(0);
     let dot = |c| el().size(8.0, 8.0).radius(4.0).fill(c);
-    let face = row().size(56.0, 56.0).center().radius(16.0).fill(p.background_primary).border(3.0, p.background_secondary).child(text(crate::shell::acronym(&name)).font(font(18.0, 600.0)).color(p.text_primary));
+    let image = |hash: Option<&str>, url: &dyn Fn(&str, &str, f32) -> String| hash.map(|h| st.media.asset(|b, s| url(b, h, s)));
+    let icon_px = image(g["icon"].as_str(), &|b, h, s| crate::media::guild_icon_url(b, id, h, 56.0, s));
+    let banner_px = image(g["banner"].as_str(), &|b, h, s| crate::media::guild_banner_url(b, id, h, s));
+    let face = row().size(56.0, 56.0).center().radius(16.0).clip_rounded(16.0).fill(p.background_primary).border(3.0, p.background_secondary);
+    let face = match icon_px {
+        Some(crate::media::Load::Ready(px)) => face.child(el().size(50.0, 50.0).radius(13.0).pixels_fit(&px, rune::SurfaceFit::Fill)),
+        _ => face.child(text(crate::shell::acronym(&name)).font(font(18.0, 600.0)).color(p.text_primary)),
+    };
+    let banner = match banner_px {
+        Some(crate::media::Load::Ready(px)) => el().w_full().h(120.0).pixels_fit(&px, rune::SurfaceFit::Fill),
+        _ => el().w_full().h(120.0).fill(p.background_tertiary),
+    };
     let visits = g["visits_enabled"].as_bool().unwrap_or(true);
     col()
         .grow(1.0)
@@ -180,7 +248,7 @@ fn card<S: 'static>(g: &Value, p: &Palette, acc: ShellAccess<S>) -> El {
                 st.social(Method::POST, format!("/discovery/guilds/{id}/join"), None, Done::EnterGuild(id));
             }
         })
-        .child(el().w_full().h(120.0).fill(p.background_tertiary))
+        .child(banner)
         .child(face.pin(Some(16.0), Some(92.0), None, None))
         .child(
             col()
@@ -303,8 +371,8 @@ mod tests {
 
     #[test]
     fn search_paths_encode_the_query() {
-        assert_eq!(search_path("", None), "/discovery/guilds?limit=24");
-        assert_eq!(search_path(" rust & go ", Some(4)), "/discovery/guilds?limit=24&sort_by=relevance&query=rust%20%26%20go&category=4");
+        assert_eq!(search_path("", None, None), "/discovery/guilds?limit=24");
+        assert_eq!(search_path(" rust & go ", Some(4), Some("de")), "/discovery/guilds?limit=24&sort_by=relevance&query=rust%20%26%20go&category=4&language=de");
         assert_eq!(compact(1500), "1.5K");
         assert_eq!(compact(2000), "2K");
         assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://fluxer.gg/AbC-1"), Some("AbC-1".into()));

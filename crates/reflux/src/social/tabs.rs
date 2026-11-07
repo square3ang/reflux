@@ -1,8 +1,6 @@
 //! Settings tabs: the community's Moderation (`GuildModerationTab`), Vanity URL
 //! (`GuildVanityURLTab`), Webhooks (`GuildWebhooksTab`) and Explore listing tabs, the channel
 //! Invites and Webhooks tabs, the webhook editor, and pausing invites.
-// shortcut: the webhook editor returns to the community's Webhooks tab even when opened from a
-// channel's.
 
 use reflux_model::{ChannelType, Invite, Permissions as P, Snowflake};
 use reflux_store::Store;
@@ -246,7 +244,7 @@ fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: O
             }
             r.child(Button::new(t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(format!("webhook-edit-{id}")).on_press(move |s: &mut S| {
                 let sh = acc(s);
-                sh.open_social(Modal::Webhook { guild: g, id });
+                sh.open_social(Modal::Webhook { guild: g, channel, id });
                 sh.form.data.insert("webhook".into(), w2.clone());
             }).el(p))
                 .child(Button::new(t("Delete")).variant(ButtonVariant::Danger).size(ButtonSize::Compact).key(format!("webhook-delete-{id}")).on_press(move |s: &mut S| {
@@ -265,8 +263,13 @@ fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: O
 }
 
 /// Name, channel and avatar of one webhook (`form.data["webhook"]`).
-pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, id: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    let back = move |s: &mut S| acc(s).open_guild_settings(g, "webhooks");
+#[allow(clippy::too_many_arguments)]
+pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, from: Option<Snowflake>, id: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    // Back to the Webhooks tab it was opened from.
+    let back = move |s: &mut S| match from {
+        Some(c) => acc(s).open_channel_settings(c, "webhooks", false),
+        None => acc(s).open_guild_settings(g, "webhooks"),
+    };
     let w = st.form.data.get("webhook").cloned().unwrap_or(Value::Null);
     let name = w["name"].as_str().unwrap_or_default().to_string();
     let ch = w["channel_id"].as_str().unwrap_or_default().to_string();
@@ -317,7 +320,7 @@ pub fn webhook_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, 
         if let Some(a) = sh.form.data.get("avatar") {
             b["avatar"] = a.clone();
         }
-        sh.social(Method::PATCH, format!("/webhooks/{id}"), Some(b), Done::GuildTab(g, "webhooks"));
+        sh.social(Method::PATCH, format!("/webhooks/{id}"), Some(b), match from { Some(c) => Done::ChannelTab(c, "webhooks"), None => Done::GuildTab(g, "webhooks") });
     };
     let footer = row()
         .gap(8.0)

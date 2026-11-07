@@ -8,7 +8,7 @@ use rune::{El, Tx, col, icon, row};
 use serde_json::{Value, json};
 
 use super::settings::{card, empty, small, title};
-use super::{Then, data_url, error, field};
+use super::{Then, error, field};
 use crate::icons;
 use crate::media;
 use crate::settings::tabs::section;
@@ -49,6 +49,14 @@ fn icon_button<S: 'static>(glyph: &'static rune::Icon, label: &str, p: &Palette,
         .child(icon(glyph, 16.0).color(p.text_primary_muted))
 }
 
+/// Squares a sticker to 320 px (`optimizeStickerImage`) and posts it.
+fn post(sh: &mut ShellState, g: Snowflake, path: &std::path::Path) {
+    match super::expr_upload::prepared(path, 320) {
+        Ok(image) => sh.api(Method::POST, format!("/guilds/{g}/stickers"), Some(json!({ "name": sticker_name(path), "tags": [], "image": image })), Then::Nothing),
+        Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
+    }
+}
+
 pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let list: Vec<&Sticker> = store.guilds.get(&g).map(|gs| gs.stickers.iter().collect()).unwrap_or_default();
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
@@ -58,13 +66,7 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         tx.open_file(options, move |s: &mut S, r, _| {
             let sh = acc(s);
             match r {
-                Ok(Some(path)) => match std::fs::read(&path) {
-                    Ok(b) => {
-                        let body = json!({ "name": sticker_name(&path), "tags": [], "image": data_url(&path, &b) });
-                        sh.api(Method::POST, format!("/guilds/{g}/stickers"), Some(body), Then::Nothing)
-                    }
-                    Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
-                },
+                Ok(Some(path)) => post(sh, g, &path),
                 Ok(None) => {}
                 Err(e) => sh.form.error = Some(e.to_string()),
             }
@@ -119,6 +121,9 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         .w_full()
         .gap(16.0)
         .child(row().w_full().justify_between().center_y().gap(12.0).child(small("Names come from the file name; edit them after uploading. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap().shrink()).child(upload));
+    if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
+        content = content.child(super::expr_upload::drop_zone(st, t("Drag and drop a sticker file here (one at a time)"), false, p, acc, move |sh, files| post(sh, g, &files[0])));
+    }
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }

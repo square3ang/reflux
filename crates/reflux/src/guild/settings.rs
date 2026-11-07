@@ -2,7 +2,7 @@
 //! user settings frame: permission-gated tabs, the community name over the nav, and Delete
 //! community at its foot for the owner.
 
-use reflux_model::{AuditLogEntry, Ban, ChannelType, Emoji, GuildMember, Invite, PartialUser, Permissions as P, Role, Snowflake};
+use reflux_model::{AuditLogEntry, Ban, ChannelType, Emoji, Invite, PartialUser, Permissions as P, Role, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, Icon, Tx, col, el, icon, row, text};
@@ -16,7 +16,7 @@ use crate::settings::tabs::{not_available, section};
 use crate::settings::{colors, frame, nav_group, nav_item};
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
-use crate::ui::{Button, ButtonSize, ButtonVariant, Menu, MenuItem, RadioGroup, Select, Switch, over, popup_access};
+use crate::ui::{Button, ButtonSize, ButtonVariant, RadioGroup, Select, Switch, over, popup_access};
 use crate::i18n::t;
 
 /// (id, category, label, icon, any of these permissions).
@@ -54,7 +54,6 @@ pub fn tabs(store: &Store, guild: Snowflake) -> impl Iterator<Item = &'static Ta
 /// Fetches what a tab lists.
 pub fn load_tab(st: &mut ShellState, guild: Snowflake, tab: &str) {
     match tab {
-        "members" => st.load("members", format!("/guilds/{guild}/members?limit=1000")),
         "invites" => st.load("invites", format!("/guilds/{guild}/invites")),
         "bans" => st.load("bans", format!("/guilds/{guild}/bans")),
         "audit_log" => st.load("audit", format!("/guilds/{guild}/audit-logs?limit=50")),
@@ -95,6 +94,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
     if info.owner_id == store.my_id() {
         nav = nav.child(nav_item(&icons::TRASH, t("Delete community"), false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteGuild(guild))));
     }
+    nav = nav.children(super::overview_extra::threshold_button(store, guild, p, acc));
     let label = TABS.iter().find(|t| t.0 == tab).map_or(t("Community settings"), |x| t(x.2));
     let body = match tab {
         "overview" => overview(store, st, guild, p, acc, &mut popups),
@@ -104,12 +104,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
         },
         "emoji" => emoji(store, st, guild, p, acc),
         "stickers" => super::stickers::view(store, st, guild, p, acc),
-        "members" => members(store, st, guild, p, acc, &mut popups),
         "invites" => invites(store, st, guild, p, acc),
         "bans" => bans(store, st, guild, p, acc),
-        "audit_log" => audit_log(store, st, p),
+        "audit_log" => audit_log(store, st, guild, p, acc, &mut popups),
         _ => crate::social::guild_tab(store, st, guild, tab, p, acc, &mut popups).unwrap_or_else(|| not_available(p)),
     };
+    popups.extend(super::overview_extra::threshold_modal(st, guild, info, p, acc));
     let mut modal = frame(t("Community settings"), label, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {
         modal = modal.child(confirm(store, st, cf, p, acc));
@@ -120,6 +120,14 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
 
 fn select_tab(st: &mut ShellState, guild: Snowflake, tab: &'static str) {
     st.popups.close();
+    // `handleDesktopTabSelect`: Members leaves settings for the community's members page.
+    if tab == "members" {
+        st.dialog = None;
+        if st.guild != Some(guild) {
+            st.select_guild(Some(guild), None);
+        }
+        return st.open_members_page(guild);
+    }
     st.form = Form::default();
     st.dialog = Some(Dialog::Guild { guild, tab, role: None });
     load_tab(st, guild, tab);
@@ -212,7 +220,7 @@ fn picked(f: &Form, key: &str) -> Option<Option<String>> {
 /// An icon or banner field: the current image (or the picked one's placeholder) and Change /
 /// Remove buttons.
 #[allow(clippy::too_many_arguments)]
-fn image_field<S: 'static>(st: &ShellState, label: &str, key: &'static str, current: Load, w: f32, h: f32, radius: f32, p: &Palette, acc: ShellAccess<S>) -> El {
+pub(super) fn image_field<S: 'static>(st: &ShellState, label: &str, key: &'static str, current: Load, w: f32, h: f32, radius: f32, p: &Palette, acc: ShellAccess<S>) -> El {
     let state = picked(&st.form, key);
     // `current` is `Failed` when there's no image.
     let has = matches!(state, Some(Some(_))) || (state.is_none() && !matches!(current, Load::Failed));
@@ -242,11 +250,13 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palett
     let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
     let icon_load = info.icon.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_icon_url(b, g, h, 80.0, s)));
     let banner_load = info.banner.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_banner_url(b, g, h, s)));
-    let mut branding = col().w_full().gap(20.0).child(image_field(st, t("Icon"), "icon", icon_load, 80.0, 80.0, 40.0, p, acc));
+    // `BrandingSection`: icon, name, detached banner, banner, splashes.
+    let mut branding = col().w_full().gap(20.0).child(image_field(st, t("Icon"), "icon", icon_load, 80.0, 80.0, 40.0, p, acc)).child(field(st, acc, "name", &info.name, t("Name"), t("My awesome community"), p));
+    branding = branding.children(super::overview_extra::detached(st, info, p, acc));
     if info.features.iter().any(|f| f == "BANNER") {
         branding = branding.child(image_field(st, t("Banner"), "banner", banner_load, 240.0, 135.0, 8.0, p, acc));
     }
-    branding = branding.child(field(st, acc, "name", &info.name, t("Name"), t("My awesome community"), p));
+    branding = branding.children(super::overview_extra::splashes(st, g, info, p, acc));
 
     // Channel pickers keep their choice in `form.data` as a string ID ("" = none).
     let chosen = |key: &str, cur: Option<Snowflake>| f.data.get(key).and_then(Value::as_str).map_or_else(|| cur.map_or(String::new(), |c| c.to_string()), str::to_string);
@@ -335,14 +345,15 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palett
     if notif != info.default_message_notifications.to_string() {
         patch.insert("default_message_notifications".into(), json!(notif.parse::<u8>().unwrap_or(0)));
     }
+    super::overview_extra::patch(st, info, &mut patch);
     let mut body = col()
         .w_full()
         .child(section(t("Branding"), branding, true, p))
         .child(section(t("Idle settings"), idle, false, p))
         .child(section(t("System & welcome"), welcome, false, p))
-        .child(section(t("Default notifications"), notifications, false, p));
-    // shortcut: the detached banner, invite splash, visits, message history and Advanced
-    // sections aren't here yet.
+        .child(section(t("Previewing"), super::overview_extra::previewing(store, g, info, p, acc), false, p))
+        .child(section(t("Default notifications"), notifications, false, p))
+        .child(super::overview_extra::advanced(st, info, p, acc));
     if !patch.is_empty() {
         let patch = Value::Object(patch);
         body = body.child(save_bar(st, p, acc, move |s: &mut S| {
@@ -374,42 +385,29 @@ fn roles<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let all = sorted_roles(store, g);
     let movable: Vec<Snowflake> = all.iter().filter(|r| r.id != g).map(|r| r.id).collect();
     let counts = |r: Snowflake| store.guilds.get(&g).map_or(0, |gs| gs.members.values().filter(|m| m.roles.contains(&r)).count());
+    let drag = super::role_extra::drag_state(st);
     let rows: Vec<El> = all
         .iter()
         .map(|r| {
             let id = r.id;
             let i = movable.iter().position(|&x| x == id);
-            let order = movable.clone();
-            let mv = move |d: isize| {
-                let order = order.clone();
-                move |s: &mut S| {
-                    let Some(i) = i else { return };
-                    let j = i as isize + d;
-                    if j < 0 || j as usize >= order.len() {
-                        return;
-                    }
-                    let mut o = order.clone();
-                    o.swap(i, j as usize);
-                    // Top of the list ranks highest; the server renumbers from 1.
-                    let n = o.len();
-                    let body: Vec<Value> = o.iter().enumerate().map(|(k, r)| json!({ "id": r, "position": n - k })).collect();
-                    acc(s).api(Method::PATCH, format!("/guilds/{g}/roles"), Some(Value::Array(body)), Then::Nothing);
-                }
-            };
-            let arrow = |glyph: &'static Icon, label: &str, ok: bool, f: Box<dyn Fn(&mut S)>| {
-                let b = row().size(28.0, 28.0).center().radius(6.0).role("button").label(label.to_string()).child(icon(glyph, 16.0).color(p.text_primary_muted));
-                if ok { b.hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).on_press(f) } else { b.opacity(0.3).disabled(true) }
-            };
             let name = if id == g { "@everyone".to_string() } else { r.name.clone() };
             let sub = if id == g { "Default permissions for all members".to_string() } else { format!("{} members", counts(id)) };
-            let mut line = row()
-                .w_full()
-                .gap(12.0)
-                .center_y()
-                .child(color_dot(r.color, p))
-                .child(col().grow(1.0).min_w(0.0).child(title(name, p)).child(small(sub, p)));
+            let mut line = row().w_full().gap(12.0).center_y();
+            if i.is_some() {
+                line = line.child(icon(&icons::DOTS_SIX_VERTICAL_BOLD, 16.0).color(p.text_tertiary)).cursor(rune::Cursor::Grab);
+            }
+            line = line.child(color_dot(r.color, p)).child(col().grow(1.0).min_w(0.0).child(title(name, p)).child(small(sub, p)));
             if let Some(i) = i {
-                line = line.child(arrow(&icons::ARROW_UP_BOLD, t("Move up"), i > 0, Box::new(mv(-1)))).child(arrow(&icons::ARROW_DOWN_BOLD, t("Move down"), i + 1 < movable.len(), Box::new(mv(1))));
+                // The landing spot gets a 2px line on the side the row will go.
+                if let Some((from, to)) = drag.filter(|d| d.1 == i && d.0 != d.1) {
+                    let mark = if to < from { el().pin(Some(0.0), Some(-11.0), Some(0.0), None) } else { el().pin(Some(0.0), None, Some(0.0), Some(-11.0)) };
+                    line = line.child(mark.h(2.0).radius(1.0).fill(p.brand_primary_light).inert());
+                }
+                if drag.is_some_and(|d| d.0 == i) {
+                    line = line.opacity(0.5);
+                }
+                line = super::role_extra::draggable(line, g, i, movable.clone(), 24.0, acc);
             }
             line.child(Button::new(t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| open_role(acc(s), g, id)).el(p))
         })
@@ -417,7 +415,7 @@ fn roles<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let create = Button::new(t("Create role")).icon(&icons::PLUS_BOLD).size(ButtonSize::Small).key("create-role").on_press(move |s: &mut S| {
         acc(s).api(Method::POST, format!("/guilds/{g}/roles"), Some(json!({ "name": "new role" })), Then::Select);
     });
-    let mut content = col().w_full().gap(16.0).child(row().w_full().justify_between().center_y().child(small("Members use the colour of their highest role. Use the arrows to reorder roles.", p).wrap().shrink()).child(create.el(p)));
+    let mut content = col().w_full().gap(16.0).child(row().w_full().justify_between().center_y().child(small("Members use the colour of their highest role. Drag roles to reorder them.", p).wrap().shrink()).child(create.el(p)));
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
@@ -472,6 +470,7 @@ fn role_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, rid: Sn
         display = display
             .child(field(st, acc, "rname", &r.name, t("Role name"), "", p))
             .child(col().gap(8.0).child(title("Role colour", p)).child(row().gap(12.0).center_y().child(el().size(40.0, 40.0).radius(8.0).fill(if color == 0 { p.text_tertiary } else { crate::shell::role_color(color) })).child(col().w(160.0).child(field(st, acc, "color", &if r.color == 0 { String::new() } else { hex(r.color) }, "", "#000000", p))).child(swatches)))
+            .child(super::role_extra::field(store, st, g, r, p, acc))
             .child(Switch::new(hoist).label("Display role members separately").on_toggle(set("hoist", json!(!hoist))).el(p))
             .child(Switch::new(mention).label("Allow anyone to @mention this role").on_toggle(set("mentionable", json!(!mention))).el(p));
     }
@@ -493,6 +492,7 @@ fn role_editor<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, rid: Sn
     if !everyone && color != r.color && (color_text.trim().is_empty() || parse_hex(&color_text).is_some()) {
         patch.insert("color".into(), json!(color));
     }
+    super::role_extra::patch(st, &mut patch);
     if hoist != r.hoist {
         patch.insert("hoist".into(), json!(hoist));
     }
@@ -547,27 +547,57 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let manage = store.guild_permissions(g).contains(P::MANAGE_EXPRESSIONS);
     let me = store.my_id();
     let upload = Button::<S>::new(t("Upload emoji")).size(ButtonSize::Small).key("upload-emoji").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| {
+        // shortcut: one file per dialog (Rune's dialog picks one path); drop several on the zone.
         let options = rune::FileDialogOptions { title: "Upload emoji".into(), ..Default::default() }.filter(t("Images"), &["png", "jpg", "jpeg", "gif", "webp", "avif"]);
         tx.open_file(options, move |s: &mut S, r, _| {
             let sh = acc(s);
             match r {
-                Ok(Some(path)) => match std::fs::read(&path) {
-                    Ok(b) => sh.api(Method::POST, format!("/guilds/{g}/emojis"), Some(json!({ "name": emoji_name(&path), "image": super::data_url(&path, &b) })), Then::Nothing),
-                    Err(e) => sh.form.error = Some(format!("Couldn't open the image: {e}")),
-                },
+                Ok(Some(path)) => super::expr_upload::upload_emojis(sh, g, &[path]),
                 Ok(None) => {}
                 Err(e) => sh.form.error = Some(e.to_string()),
             }
         });
     });
+    let editing = st.form.data.get("emoji-edit").and_then(Value::as_str).and_then(|s| s.parse::<Snowflake>().ok());
     let rows: Vec<El> = list
         .iter()
         .map(|e| {
             let id = e.id;
             let img = crate::shell::picture(st.media.asset(|b, _| media::emoji_url(b, &id.to_string())), 32.0, 32.0, 4.0, p);
             let by = e.user.as_ref().map(user_name).unwrap_or_default();
-            let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(title(format!(":{}:", e.name), p)).child(small(by, p)));
-            if manage || e.user.as_ref().is_some_and(|u| u.id == me) {
+            let mine = manage || e.user.as_ref().is_some_and(|u| u.id == me);
+            if editing == Some(id) {
+                return row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(field(st, acc, "emoji-rename", &e.name, "", "", p))).child(
+                    Button::<S>::new(t("Save")).size(ButtonSize::Small).key("emoji-save").el(p).on_press(move |s: &mut S| {
+                        let sh = acc(s);
+                        // `handleSave`: strip what the API refuses, then 2-32 characters.
+                        let name: String = sh.form.value("emoji-rename", "").chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                        match name.len() {
+                            0..2 => sh.form.error = Some(t("Emoji name must be at least 2 characters.").into()),
+                            33.. => sh.form.error = Some(t("Emoji name must be at most 32 characters.").into()),
+                            _ => {
+                                sh.form.data.remove("emoji-edit");
+                                sh.form.text.remove("emoji-rename");
+                                sh.api(Method::PATCH, format!("/guilds/{g}/emojis/{id}"), Some(json!({ "name": name })), Then::Nothing);
+                            }
+                        }
+                    }),
+                ).child(Button::<S>::new(t("Cancel")).size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
+                    let f = &mut acc(s).form;
+                    f.data.remove("emoji-edit");
+                    f.text.remove("emoji-rename");
+                }));
+            }
+            let mut name = title(format!(":{}:", e.name), p);
+            if mine {
+                name = name.cursor(rune::Cursor::Text).on_press(move |s: &mut S| {
+                    let f = &mut acc(s).form;
+                    f.data.insert("emoji-edit".into(), json!(id.to_string()));
+                    f.text.remove("emoji-rename");
+                });
+            }
+            let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(name).child(small(by, p)));
+            if mine {
                 line = line.child(
                     row()
                         .size(28.0, 28.0)
@@ -588,79 +618,18 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
         .w_full()
         .gap(16.0)
         .child(row().w_full().justify_between().center_y().gap(12.0).child(small("Names come from the file name: letters, digits and underscores. PNG, JPEG, GIF, WebP or AVIF up to 512 KB.", p).wrap().shrink()).child(upload));
+    if store.guild_permissions(g).intersects(P::MANAGE_EXPRESSIONS | P::CREATE_EXPRESSIONS) {
+        content = content.child(super::expr_upload::drop_zone(st, t("Drag and drop emoji files here"), true, p, acc, move |sh, files| super::expr_upload::upload_emojis(sh, g, files)));
+    }
     if let Some(e) = error(st, p) {
         content = content.child(e);
+    }
+    let failed = super::expr_upload::failures(st);
+    if !failed.is_empty() {
+        content = content.child(col().w_full().gap(4.0).child(title(t("Some emojis could not be added"), p)).children(failed.into_iter().map(|(n, e)| small(format!("{n}: {e}"), p).wrap())));
     }
     content = content.child(if rows.is_empty() { empty("No emoji yet.", p) } else { card(rows, p) });
     section(&format!("Emoji — {}", list.len()), content, true, p)
-}
-
-// ---- Members --------------------------------------------------------------------------------
-
-fn members<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    let list: Vec<GuildMember> = match loaded(st, "members", p) {
-        Ok(l) => l,
-        Err(e) => return section(t("Members"), e, true, p),
-    };
-    let have = store.guild_permissions(g);
-    let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).map(|i| i.owner_id);
-    let q = st.form.value("search", "").trim().to_lowercase();
-    let roles = sorted_roles(store, g);
-    let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
-    let shown: Vec<&GuildMember> = list
-        .iter()
-        .filter(|m| q.is_empty() || [Some(&m.user.username), m.user.global_name.as_ref(), m.nick.as_ref()].iter().flatten().any(|n| n.to_lowercase().contains(&q)))
-        .take(200)
-        .collect();
-    let rows: Vec<El> = shown
-        .iter()
-        .map(|m| {
-            let u = m.user.id;
-            let name = m.nick.clone().unwrap_or_else(|| user_name(&m.user));
-            let chips = row().gap(4.0).wrap().children(m.roles.iter().filter_map(|r| roles.iter().find(|x| x.id == *r)).map(|r| {
-                row().gap(4.0).px(6.0).py(2.0).center_y().radius(4.0).fill(p.background_modifier_hover).child(color_dot(r.color, p).size(8.0, 8.0)).child(text(r.name.clone()).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary))
-            }));
-            let mut line = row()
-                .w_full()
-                .gap(12.0)
-                .center_y()
-                .child(crate::shell::avatar(store, st, u, 32.0, None, p.background_secondary, p))
-                .child(col().grow(1.0).min_w(0.0).gap(2.0).child(title(name, p)).child(small(m.user.username.clone(), p)).child(chips));
-            let target = Some(u) != owner && u != store.my_id();
-            if have.contains(P::MANAGE_ROLES) {
-                let id = format!("member-roles-{u}");
-                let mut menu = Menu::new(id.clone());
-                for r in roles.iter().filter(|r| r.id != g) {
-                    let (rid, on) = (r.id, m.roles.contains(&r.id));
-                    menu = menu.item(MenuItem::new(format!("role-{rid}"), r.name.clone()).checkbox(on).on_select(move |s: &mut S| {
-                        acc(s).api(
-                            if on { Method::DELETE } else { Method::PUT },
-                            format!("/guilds/{g}/members/{u}/roles/{rid}"),
-                            None,
-                            Then::Reload("members".into(), format!("/guilds/{g}/members?limit=1000")),
-                        )
-                    }));
-                }
-                menu.el(&st.popups, pops, p, layer);
-                let toggle = id.clone();
-                line = line.child(Button::new(t("Roles")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key(id).on_press(move |s: &mut S| acc(s).popups.toggle(&toggle)).el(p));
-            }
-            if target && have.contains(P::KICK_MEMBERS) {
-                line = line.child(Button::new(t("Kick")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).open_social(crate::social::Modal::Kick { guild: g, user: u })).el(p));
-            }
-            if target && have.contains(P::BAN_MEMBERS) {
-                line = line.child(Button::new(t("Ban")).variant(ButtonVariant::Danger).size(ButtonSize::Compact).on_press(move |s: &mut S| acc(s).open_social(crate::social::Modal::Ban { guild: g, user: u })).el(p));
-            }
-            line
-        })
-        .collect();
-    let mut content = col().w_full().gap(16.0).child(field(st, acc, "search", "", "", "Search members", p));
-    if let Some(e) = error(st, p) {
-        content = content.child(e);
-    }
-    content = content.child(if rows.is_empty() { empty("No members match.", p) } else { card(rows, p) });
-    // shortcut: lists the first 1000 members (one page of `GET /guilds/{id}/members`).
-    section(&format!("Members — {}", list.len()), content, true, p)
 }
 
 // ---- Invites and bans -----------------------------------------------------------------------
@@ -786,10 +755,110 @@ pub fn action_phrase(t: u32) -> &'static str {
     }
 }
 
-fn audit_log(store: &Store, st: &ShellState, p: &Palette) -> El {
+/// The "Filter by action" options (`AuditLogConstants.ts`); threads only when threads are on.
+const AUDIT_ACTIONS: [(&str, &str); 36] = [
+    ("1", "Community updated"),
+    ("10", "Channel created"),
+    ("11", "Channel updated"),
+    ("12", "Channel deleted"),
+    ("13", "Permission override added"),
+    ("14", "Permission override updated"),
+    ("15", "Permission override removed"),
+    ("20", "Member kicked"),
+    ("22", "Member banned"),
+    ("23", "Member unbanned"),
+    ("24", "Member updated"),
+    ("25", "Member roles updated"),
+    ("26", "Member moved"),
+    ("27", "Member disconnected"),
+    ("28", "Bot added"),
+    ("30", "Role created"),
+    ("31", "Role updated"),
+    ("32", "Role deleted"),
+    ("40", "Invite created"),
+    ("42", "Invite deleted"),
+    ("50", "Webhook created"),
+    ("51", "Webhook updated"),
+    ("52", "Webhook deleted"),
+    ("60", "Emoji created"),
+    ("61", "Emoji updated"),
+    ("62", "Emoji deleted"),
+    ("90", "Sticker created"),
+    ("91", "Sticker updated"),
+    ("92", "Sticker deleted"),
+    ("72", "Message deleted"),
+    ("73", "Messages deleted"),
+    ("74", "Message pinned"),
+    ("75", "Message unpinned"),
+    ("110", "Thread created"),
+    ("111", "Thread updated"),
+    ("112", "Thread deleted"),
+];
+const AUDIT_PAGE: usize = 50;
+
+/// The audit log query for the form's filters, after `before` when paging.
+fn audit_path(g: Snowflake, f: &Form, before: Option<Snowflake>) -> String {
+    let mut q = format!("/guilds/{g}/audit-logs?limit={AUDIT_PAGE}");
+    for (key, param) in [("audit-user", "user_id"), ("audit-action", "action_type")] {
+        if let Some(v) = f.data.get(key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+            q.push_str(&format!("&{param}={v}"));
+        }
+    }
+    if let Some(b) = before {
+        q.push_str(&format!("&before={b}"));
+    }
+    q
+}
+
+/// A changed value as text: strings bare, the rest as JSON.
+fn change_value(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }
+}
+
+/// One `changes` row: (tone glyph, line). `+` added, `−` removed, `•` changed.
+fn change_line(c: &Value) -> (&'static str, String) {
+    let key = c.get("key").and_then(Value::as_str).unwrap_or("?");
+    match (c.get("old_value").filter(|v| !v.is_null()), c.get("new_value").filter(|v| !v.is_null())) {
+        (None, Some(n)) => ("+", format!("{key}: {}", change_value(n))),
+        (Some(o), None) => ("−", format!("{key}: {}", change_value(o))),
+        (Some(o), Some(n)) => ("•", format!("{key}: {} → {}", change_value(o), change_value(n))),
+        (None, None) => ("•", key.to_string()),
+    }
+}
+
+fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
+    let refilter = move |key: &'static str| {
+        move |s: &mut S, v: &str| {
+            let sh = acc(s);
+            sh.form.data.insert(key.into(), json!(v));
+            for k in ["audit", "audit-end", "audit-open"] {
+                sh.form.data.remove(k);
+            }
+            let path = audit_path(g, &sh.form, None);
+            sh.load("audit", path);
+        }
+    };
+    let cur = |k: &str| st.form.data.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    // "Filter by user": the community's known members (Fluxer lists the member store too).
+    let mut users: Vec<(String, String)> = store.guilds.get(&g).map(|gs| gs.members.values().map(|m| (m.user.id.to_string(), m.nick.clone().unwrap_or_else(|| user_name(&m.user)))).collect()).unwrap_or_default();
+    users.sort_by_key(|u| u.1.to_lowercase());
+    users.insert(0, (String::new(), t("All users").into()));
+    let user_refs: Vec<(&str, &str)> = users.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let threads = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.threads_active);
+    let actions: Vec<(&str, &str)> = std::iter::once(("", t("All actions"))).chain(AUDIT_ACTIONS.iter().filter(|a| threads || a.0.len() < 3).map(|&(v, l)| (v, t(l)))).collect();
+    let filters = row()
+        .w_full()
+        .gap(12.0)
+        .child(Select::new("audit-user", &user_refs, Some(&cur("audit-user"))).label(t("Filter by user")).width(300.0).on_choose(refilter("audit-user")).el(&st.popups, pops, p, layer))
+        .child(Select::new("audit-action", &actions, Some(&cur("audit-action"))).label(t("Filter by action")).width(300.0).on_choose(refilter("audit-action")).el(&st.popups, pops, p, layer));
+    let head = col().w_full().gap(16.0).child(small(t("Track moderator actions across the community."), p)).child(filters);
     let log: AuditLog = match loaded(st, "audit", p) {
         Ok(l) => l,
-        Err(e) => return section(t("Activity log"), e, true, p),
+        Err(e) => return section(t("Activity log"), head.child(e), true, p),
     };
     let known = |id: Snowflake| {
         let me = store.me.as_ref().filter(|m| m.id == id).map(|m| &m.base);
@@ -817,11 +886,41 @@ fn audit_log(store: &Store, st: &ShellState, p: &Palette) -> El {
             if let Some(r) = e.reason.as_ref().filter(|r| !r.is_empty()) {
                 c = c.child(small(format!("Reason: {r}"), p));
             }
-            row().w_full().gap(12.0).center_y().child(crate::shell::avatar(store, st, e.user_id, 32.0, None, p.background_secondary, p)).child(c)
+            let id = e.id.to_string();
+            let open = cur("audit-open") == id;
+            if open {
+                // shortcut: generic `key: old → new` lines, not Fluxer's per-action sentences.
+                c = c.child(col().w_full().gap(4.0).pt(8.0).children(e.changes.iter().map(|ch| {
+                    let (glyph, line) = change_line(ch);
+                    let tone = match glyph {
+                        "+" => p.status_online,
+                        "−" => p.status_danger,
+                        _ => p.text_tertiary,
+                    };
+                    row().w_full().gap(8.0).child(text(glyph).font(font(13.0, 700.0).lh(18.0)).color(tone).w(10.0)).child(small(line, p).wrap().grow(1.0).min_w(0.0))
+                })));
+            }
+            let mut r = row().w_full().gap(12.0).center_y().child(crate::shell::avatar(store, st, e.user_id, 32.0, None, p.background_secondary, p)).child(c);
+            if !e.changes.is_empty() {
+                r = r.child(icon(if open { &icons::CARET_UP } else { &icons::CARET_DOWN }, 16.0).color(p.text_tertiary)).on_press(move |s: &mut S| {
+                    let f = &mut acc(s).form.data;
+                    if open { f.remove("audit-open") } else { f.insert("audit-open".into(), json!(id)) };
+                });
+            }
+            r
         })
         .collect();
-    // shortcut: the newest 50 entries, no filters or paging, and no per-field change details.
-    section(t("Activity log"), if rows.is_empty() { empty("Nothing has happened yet.", p) } else { card(rows, p) }, true, p)
+    let mut body = head.child(if rows.is_empty() { empty(t("No logs yet"), p) } else { card(rows, p) });
+    let last = log.audit_log_entries.last().map(|e| e.id);
+    if let Some(last) = last.filter(|_| !st.form.data.contains_key("audit-end") && log.audit_log_entries.len() >= AUDIT_PAGE) {
+        // shortcut: a "Load more" button where Fluxer loads on scroll.
+        body = body.child(Button::new(t("Load more")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).submitting(st.form.busy).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            let path = audit_path(g, &sh.form, Some(last));
+            sh.api(Method::GET, path, None, Then::Append("audit".into(), AUDIT_PAGE));
+        }).el(p));
+    }
+    section(t("Activity log"), body, true, p)
 }
 
 #[cfg(test)]
@@ -839,5 +938,17 @@ mod tests {
     fn audit_phrases() {
         assert_eq!(action_phrase(22), "banned a member");
         assert_eq!(action_phrase(999), "made a change");
+    }
+
+    #[test]
+    fn audit_query_and_changes() {
+        let mut f = Form::default();
+        assert_eq!(audit_path(Snowflake(1), &f, None), "/guilds/1/audit-logs?limit=50");
+        f.data.insert("audit-user".into(), json!("7"));
+        f.data.insert("audit-action".into(), json!(""));
+        assert_eq!(audit_path(Snowflake(1), &f, Some(Snowflake(9))), "/guilds/1/audit-logs?limit=50&user_id=7&before=9");
+        assert_eq!(change_line(&json!({ "key": "name", "old_value": "a", "new_value": "b" })), ("•", "name: a → b".into()));
+        assert_eq!(change_line(&json!({ "key": "nsfw", "new_value": true })), ("+", "nsfw: true".into()));
+        assert_eq!(change_line(&json!({ "key": "topic", "old_value": "x" })), ("−", "topic: x".into()));
     }
 }

@@ -495,6 +495,8 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let mut changed = expr::poll(store, st, tx);
     changed |= crate::nav::poll(store, st);
+    changed |= members_page::poll(st, tx);
+    changed |= crate::guild::poll_overwrite_search(store, st, tx);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));
         changed = true;
@@ -608,9 +610,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     };
     let main = match (st.guild, channel) {
         _ if st.voice.watching.is_some() => voice::viewer(store, st, p, acc).unwrap_or_else(el),
-        (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc),
+        (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc, &mut layer),
         _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, _)| g.is_some()) => call::view(store, st, p, acc).unwrap_or_else(el),
-        (Some(_), _) if st.social.members.as_ref().is_some_and(|m| Some(m.guild) == st.guild) => members_page::view(store, st, p, acc).unwrap_or_else(el),
+        (Some(_), _) if st.social.members.as_ref().is_some_and(|m| Some(m.guild) == st.guild) => members_page::view(store, st, p, acc, &mut layer).unwrap_or_else(el),
         (None, None) => row().grow(1.0).min_w(0.0).h_full().child(friends::view(store, st, p, acc, &mut layer)).children(active_now::view(store, st, p, acc)),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
     };
@@ -712,8 +714,8 @@ pub(crate) fn presence(store: &Store, user: Snowflake) -> Status {
 }
 
 /// A user's avatar from the media proxy: the skeleton while it loads, the default avatar
-/// (`id % 6`) without a hash or when it fails.
-// shortcut: guild member avatars aren't used; every surface shows the account avatar.
+/// (`id % 6`) without a hash or when it fails. In a community, the member's own avatar there
+/// wins (`getGuildMemberAvatarURL`).
 pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, p: &Palette) -> El {
     avatar_anim(store, st, user, size, status, surface, false, p)
 }
@@ -723,7 +725,12 @@ pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32,
 pub(crate) fn avatar_anim(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, animate: bool, p: &Palette) -> El {
     let hash = store.users.get(&user).map(|u| &u.avatar).or(store.me.as_ref().filter(|m| m.id == user).map(|m| &m.avatar));
     let default = || st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels().clone());
-    let px = match hash.and_then(|h| h.as_deref()).map(|h| st.media.asset(|b, s| media::animate(media::avatar_url(b, user, h, size, s), h, animate))) {
+    let member = st.guild.and_then(|g| Some((g, store.member(g, user)?.avatar.as_deref()?)));
+    let load = match member {
+        Some((g, h)) => Some(st.media.asset(|b, s| media::animate(media::member_avatar_url(b, g, user, h, size, s), h, animate))),
+        None => hash.and_then(|h| h.as_deref()).map(|h| st.media.asset(|b, s| media::animate(media::avatar_url(b, user, h, size, s), h, animate))),
+    };
+    let px = match load {
         Some(Load::Ready(px)) => Some(px),
         Some(Load::Pending) => None,
         Some(Load::Failed) | None => default(),

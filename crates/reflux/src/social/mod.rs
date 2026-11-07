@@ -54,6 +54,8 @@ pub struct Social {
     pub discovery: bool,
     pub discovery_query: TextEdit,
     pub discovery_category: Option<u8>,
+    /// The Explore language filter (a `DiscoverySupportedLanguages` code).
+    pub discovery_language: Option<&'static str>,
     /// A message held back by the @everyone confirmation: (channel, mention, members).
     pub mass: Option<(Snowflake, &'static str, u64)>,
     /// The API base (`…/api/v1`'s parent), for webhook URLs.
@@ -98,7 +100,8 @@ pub enum Modal {
     /// `GiftAcceptModal` for a gift code.
     GiftAccept(String),
     /// A webhook being edited.
-    Webhook { guild: Snowflake, id: Snowflake },
+    /// The webhook editor; `channel` when opened from that channel's settings (it returns there).
+    Webhook { guild: Snowflake, channel: Option<Snowflake>, id: Snowflake },
     /// `EditAltTextModal` for one of a message's attachments.
     AltText { channel: Snowflake, message: Snowflake, attachment: Snowflake },
 }
@@ -134,6 +137,8 @@ pub enum Done {
     EnterGuild(Snowflake),
     /// Back to a community settings tab.
     GuildTab(Snowflake, &'static str),
+    /// Back to a channel settings tab.
+    ChannelTab(Snowflake, &'static str),
     /// Close the dialog and show a success toast.
     Toast(&'static str),
 }
@@ -212,6 +217,7 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
             sh.select_guild(Some(g), None);
         }
         Done::GuildTab(g, tab) if same => sh.open_guild_settings(g, tab),
+        Done::ChannelTab(c, tab) if same => sh.open_channel_settings(c, tab, false),
         Done::Toast(msg) => {
             if same {
                 sh.dialog = None;
@@ -257,7 +263,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             Modal::Duplicate(c) => channel::duplicate(store, st, c, p, acc),
             Modal::InviteAccept(code) => discovery::invite_accept(store, st, &code, p, acc),
             Modal::GiftAccept(code) => crate::settings::gift_accept(st, &code, p, acc),
-            Modal::Webhook { guild, id } => tabs::webhook_editor(store, st, guild, id, p, acc, layer),
+            Modal::Webhook { guild, channel, id } => tabs::webhook_editor(store, st, guild, channel, id, p, acc, layer),
             Modal::AltText { channel, message, attachment } => inbox::alt_text(store, st, channel, message, attachment, p, acc),
         };
         // Under any select list it opened.

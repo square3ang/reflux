@@ -72,8 +72,12 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
             .on_press(toggle_hide)
             .child(row().size(20.0, 20.0).center().child(Checkbox::<S>::new(hide).size(18.75).el(p).inert())),
     );
-    // shortcut: "Delete my messages" (bulk-delete-mine) isn't offered yet.
     if !owner {
+        items.push(item(t("Delete my messages"), &icons::TRASH, true, p).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.nav.confirm_purge = Some(g);
+        }));
         items.push(item(t("Leave community"), &icons::SIGN_OUT, true, p).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.popups.close();

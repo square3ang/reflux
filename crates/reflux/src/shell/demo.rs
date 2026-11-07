@@ -197,6 +197,7 @@ impl Demo {
         hq["stickers"] = json!([{"id": "88", "name": "wave", "description": "Hello there", "tags": ["hi"], "animated": false},
                                 {"id": "89", "name": "ship it", "description": "", "tags": ["release"], "animated": false}]);
         hq["properties"]["banner"] = json!("demo");
+        hq["properties"]["features"] = json!(["INVITE_SPLASH", "VISITS_ENABLED"]);
         let small = |id: u64, name: &str, ch: u64, last: u64| {
             guild(
                 id,
@@ -457,8 +458,8 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
 }
 
 /// `--guild-ui=<scene>`: community management mid-use. `menu`, `add|create|join`, `invite[-edit]`,
-/// `channel|category`, `notif`, `privacy`, `gs-<tab>` (community settings), `role`, `delete`,
-/// `cs-overview|cs-permissions|cs-overwrite` (channel settings of #dev).
+/// `channel|category|channel-access`, `notif`, `privacy`, `gs-<tab>` (community settings), `role`, `delete`,
+/// `cs-overview|cs-permissions|cs-overwrite` (channel settings of #dev), `cs-voice`.
 fn guild_scene(st: &mut ShellState, scene: &str) {
     use crate::guild::{AddView, Confirm, Dialog};
     let g = Snowflake(HQ);
@@ -474,14 +475,28 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.open_dialog(Dialog::Invite(Snowflake(GENERAL), scene == "invite-edit"));
             st.invite_base = "https://fluxer.gg".into();
             data(st, "invite", json!({"code": "AbCd12", "max_age": 604800, "max_uses": 0}));
+            data(st, "invite-sent", json!(["1001"]));
         }
         "channel" | "category" => st.open_dialog(Dialog::CreateChannel { guild: g, parent: Some(Snowflake(2200)), category: scene == "category" }),
+        "channel-access" => {
+            st.open_dialog(Dialog::CreateChannel { guild: g, parent: Some(Snowflake(2200)), category: false });
+            data(st, "private", json!(true));
+            data(st, "step", json!("access"));
+            data(st, "access", json!(["0:2011"]));
+        }
         "notif" => st.open_dialog(Dialog::Notifications(g)),
         "privacy" => st.open_dialog(Dialog::Privacy(g)),
-        "role" => st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) }),
+        "role" => {
+            st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) });
+            data(st, "role-emoji", json!({"id": null, "name": "🛡️"}));
+        }
         "delete" => {
             st.open_dialog(Dialog::Guild { guild: g, tab: "overview", role: None });
             st.form.confirm = Some(Confirm::DeleteGuild(g));
+        }
+        "cs-voice" => {
+            st.open_dialog(Dialog::Channel { channel: Snowflake(2301), tab: "overview", target: None });
+            data(st, "regions", json!([{"id": "automatic", "name": "Automatic", "emoji": ""}, {"id": "eu-central", "name": "Europe Central", "emoji": ""}, {"id": "us-east", "name": "US East", "emoji": ""}]));
         }
         "cs-overview" | "cs-permissions" | "cs-overwrite" => {
             let tab = if scene == "cs-overview" { "overview" } else { "permissions" };
@@ -496,7 +511,20 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
                                       {"code": "Zz99", "uses": 1, "max_uses": 10, "max_age": 86400, "expires_at": "2026-12-01T00:00:00Z", "inviter": {"id": "1000", "username": "square"}, "channel": {"id": "2001", "name": "welcome", "type": 0}}]));
             data(st, "bans", json!([{"user": {"id": "1009", "username": "spammer", "global_name": "Spam Bot"}, "reason": "Spam links"}]));
             let e = |n: u64, user: u64, t: u32, target: &str| json!({"id": id_at(at(0, 9, 0), n), "user_id": user.to_string(), "action_type": t, "target_id": target});
-            data(st, "audit", json!({"audit_log_entries": [e(1, 1001, 22, "1009"), e(2, ME, 31, "2011"), e(3, 1002, 10, "2204")],
+            data(st, "advanced", json!(true));
+            if s == "gs-roles-drag" {
+                st.dialog = Some(Dialog::Guild { guild: g, tab: "roles", role: None });
+                data(st, "role-drag", json!([0, 2]));
+            }
+            if s == "gs-threshold" {
+                data(st, "mht", json!(true));
+                data(st, "mht-on", json!(true));
+            }
+            data(st, "emoji-failed", json!([{"name": "huge.png", "error": "Image is too large to process (9000x9000)"}]));
+            let mut role = e(2, ME, 31, "2011");
+            role["changes"] = json!([{"key": "name", "old_value": "Mods", "new_value": "Moderators"}, {"key": "hoist", "new_value": true}, {"key": "icon_hash", "old_value": "a1b2"}]);
+            data(st, "audit-open", json!(role["id"].clone()));
+            data(st, "audit", json!({"audit_log_entries": [e(1, 1001, 22, "1009"), role, e(3, 1002, 10, "2204")],
                                      "users": [{"id": "1001", "username": "ada", "global_name": "Ada Lovelace"}, {"id": "1009", "username": "spammer"}]}));
         }
     }
@@ -1044,9 +1072,9 @@ fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         "settings" => {
             super::threads::open_menu(st, Snowflake(release), [120.0, 420.0]);
             st.popups.close();
-            st.threads.settings = Some(super::threads::Settings { thread: Snowflake(release), name: rune::TextEdit::new("release-0.4"), auto_archive: 4320, invitable: true });
+            st.threads.settings = Some(super::threads::Settings { thread: Snowflake(release), name: rune::TextEdit::new("release-0.4"), auto_archive: 4320, invitable: true, slowmode: 0 });
         }
-        "forum" | "forum-grid" | "forum-compose" | "forum-post" | "forum-settings" => {
+        "forum" | "forum-grid" | "forum-compose" | "forum-post" | "forum-settings" | "forum-tag" => {
             st.select_channel(Snowflake(2204));
             if scene == "forum-grid" {
                 st.threads.forum.layout.insert(Snowflake(2204), 2);
@@ -1061,8 +1089,13 @@ fn thread_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                     preview: false,
                 });
             }
-            if scene == "forum-settings" {
+            if scene == "forum-settings" || scene == "forum-tag" {
                 st.open_dialog(crate::guild::Dialog::Channel { channel: Snowflake(2204), tab: "overview", target: None });
+            }
+            if scene == "forum-tag" {
+                st.form.data.insert("tag-edit".into(), serde_json::json!("2290"));
+                st.form.text.insert("tag-name".into(), rune::TextEdit::new("bug"));
+                st.form.data.insert("tag-emoji".into(), serde_json::json!({ "id": null, "name": "🐛" }));
             }
             if scene == "forum-post" {
                 put(store, now, "MESSAGE_CREATE", in_ch(message(t(11, 30), 0, 1002, "Does it happen with `--disable-gpu` too?", json!({})), wayland.0));

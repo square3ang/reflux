@@ -115,12 +115,54 @@ const CHANNEL_VOICE: (&str, &[Entry]) = (
     ],
 );
 
-/// Overwrite editor groups for a channel type.
-// shortcut: the thread permission rows and the forum variant aren't listed.
-pub fn channel(kind: ChannelType) -> Vec<(&'static str, &'static [Entry])> {
-    let mut v = vec![CHANNEL_ACCESS, CHANNEL_MANAGEMENT, CHANNEL_TEXT];
+const THREADS: [Entry; 4] = [
+    (P::CREATE_PUBLIC_THREADS, "Create public threads", "Allows members to start threads that everyone in the channel can see."),
+    (P::CREATE_PRIVATE_THREADS, "Create private threads", "Allows members to start threads that only invited members and moderators can see."),
+    (P::SEND_MESSAGES_IN_THREADS, "Send messages in threads", "Allows members to send messages in threads."),
+    (P::MANAGE_THREADS, "Manage threads", "Allows members to rename, close, lock and delete threads, and to view private threads."),
+];
+/// `generateForumPermissionSpec`: posts in place of messages and threads.
+const FORUM_POSTS: [Entry; 3] = [
+    (P::SEND_MESSAGES, "Create posts", "Allows members to create posts in this channel."),
+    (P::SEND_MESSAGES_IN_THREADS, "Send messages in posts", "Allows members to send messages in posts."),
+    (P::MANAGE_THREADS, "Manage posts", "Allows members to rename, close, lock, pin and delete posts, and to edit their tags."),
+];
+
+/// Overwrite editor groups for a channel type (`generateChannelPermissionSpecs`); `threads` when
+/// the community has threads on.
+pub fn channel(kind: ChannelType, threads: bool) -> Vec<(&'static str, Vec<Entry>)> {
+    let mut v = vec![(CHANNEL_ACCESS.0, CHANNEL_ACCESS.1.to_vec()), (CHANNEL_MANAGEMENT.0, CHANNEL_MANAGEMENT.1.to_vec())];
+    if threads && matches!(kind, ChannelType::GUILD_FORUM | ChannelType::GUILD_MEDIA) {
+        let mut posts = FORUM_POSTS.to_vec();
+        posts.extend(CHANNEL_TEXT.1.iter().filter(|e| e.0 != P::SEND_MESSAGES && e.0 != P::PIN_MESSAGES));
+        v.push((CHANNEL_TEXT.0, posts));
+        return v;
+    }
+    let mut text = CHANNEL_TEXT.1.to_vec();
+    if threads && matches!(kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_CATEGORY) {
+        text.extend(THREADS);
+    } else if threads && kind == ChannelType::GUILD_ANNOUNCEMENT {
+        text.extend(THREADS.iter().filter(|e| e.0 != P::CREATE_PRIVATE_THREADS));
+    }
+    v.push((CHANNEL_TEXT.0, text));
     if kind == ChannelType::GUILD_VOICE || kind == ChannelType::GUILD_CATEGORY {
-        v.push(CHANNEL_VOICE);
+        v.push((CHANNEL_VOICE.0, CHANNEL_VOICE.1.to_vec()));
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_rows_follow_the_channel_type() {
+        let bits = |k, th| channel(k, th).into_iter().flat_map(|g| g.1).map(|e| e.0).collect::<Vec<_>>();
+        assert!(!bits(ChannelType::GUILD_TEXT, false).contains(&P::MANAGE_THREADS));
+        assert!(bits(ChannelType::GUILD_TEXT, true).contains(&P::CREATE_PRIVATE_THREADS));
+        assert!(!bits(ChannelType::GUILD_ANNOUNCEMENT, true).contains(&P::CREATE_PRIVATE_THREADS));
+        let forum = channel(ChannelType::GUILD_FORUM, true);
+        assert_eq!(forum[2].1[0].1, "Create posts");
+        assert!(!forum[2].1.iter().any(|e| e.0 == P::PIN_MESSAGES));
+    }
 }

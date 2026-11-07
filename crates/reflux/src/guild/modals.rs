@@ -2,7 +2,7 @@
 //! and category creation, notification and privacy settings, and the confirmation the settings
 //! overlays share.
 
-use reflux_model::{ChannelType, Permissions, Snowflake};
+use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, Icon, Tx, col, icon, row, text};
@@ -21,7 +21,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, d: &Dialog, p: &Palette,
     let modal = match *d {
         Dialog::Add(v) => add(st, v, p, acc),
         Dialog::Invite(ch, edit) => invite(store, st, ch, edit, p, acc, layer),
-        Dialog::CreateChannel { guild, parent, category } => create_channel(st, guild, parent, category, p, acc),
+        Dialog::CreateChannel { guild, parent, category } => create_channel(store, st, guild, parent, category, p, acc),
         Dialog::Notifications(g) => notifications(store, st, g, p, acc, layer),
         Dialog::Privacy(g) => privacy(store, g, p, acc),
         _ => return,
@@ -248,6 +248,7 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
             .el(p);
     }
     let link = created.and_then(|v| v["code"].as_str()).map(|c| format!("{}/{c}", st.invite_base.trim_end_matches('/')));
+    let friends = super::invite_friends::view(store, st, link.clone(), p, acc);
     let hide = st.desktop.streamer && st.prefs.streamer.hide_invites && link.is_some();
     let shown = if hide { crate::i18n::t("Link hidden while sharing").to_string() } else { link.clone().unwrap_or_default() };
     // `CopyLinkSection`: the link in a read-only field with a Copy button inside it.
@@ -283,16 +284,17 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
         .cursor(rune::Cursor::Pointer)
         .role("link")
         .on_press(move |s: &mut S| acc(s).dialog = Some(Dialog::Invite(ch, true)));
+    let has_friends = friends.is_some();
     let mut body = col()
         .w_full()
         .gap(8.0)
-        .child(label("Send an invite link to a friend:", 500.0, p))
+        .children(friends.map(|f| f.mb(16.0)))
+        .child(label(if has_friends { t("Or send an invite link to a friend:") } else { t("Send an invite link to a friend:") }, 500.0, p))
         .child(field)
         .child(row().gap(4.0).child(text(expiry_text(max_age)).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)).child(edit_link));
     if let Some(e) = error(st, p) {
         body = body.child(e);
     }
-    // shortcut: Fluxer also lists friends to send the invite to directly; that list isn't here.
     Modal::new(crate::i18n::tf("Invite friends to {guildName}", &[("guildName", &gname.to_string())]), close(acc)).body(body).el(p)
 }
 
@@ -305,11 +307,16 @@ const TYPES: [(ChannelType, &str, &str); 4] = [
     (ChannelType::GUILD_LINK, "Link", "Shortcut to an external website"),
 ];
 
-fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<Snowflake>, category: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+#[allow(clippy::too_many_arguments)]
+fn create_channel<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, parent: Option<Snowflake>, category: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let kind = ChannelType(st.form.data.get("type").and_then(Value::as_u64).unwrap_or(0) as u16);
-    let private = st.form.data.get("private").and_then(Value::as_bool).unwrap_or(false);
+    let private = st.form.data.get("private").and_then(Value::as_bool).unwrap_or(false) && kind != ChannelType::GUILD_LINK;
+    let access = st.form.data.get("step").and_then(Value::as_str) == Some("access");
+    let me = store.my_id();
     let mut body = col().w_full().gap(20.0);
-    if !category {
+    if access {
+        body = body.child(super::create_access::view(store, st, guild, p, acc));
+    } else if !category {
         let options = TYPES.iter().map(|&(t, name, sub)| {
             let (name, sub) = (crate::i18n::t(name), crate::i18n::t(sub));
             let on = t == kind;
@@ -343,12 +350,14 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
         });
         body = body.child(col().w_full().gap(8.0).child(label(t("Channel type"), 500.0, p)).child(col().w_full().gap(6.0).role("radiogroup").children(options)));
     }
-    body = body.child(field(st, acc, "name", "", if category { t("Name") } else { t("Channel name") }, if category { t("New category") } else { "" }, p));
+    if !access {
+        body = body.child(field(st, acc, "name", "", if category { t("Name") } else { t("Channel name") }, if category { t("New category") } else { "" }, p));
+    }
     let link = kind == ChannelType::GUILD_LINK;
-    if link && !category {
+    if link && !category && !access {
         body = body.child(field(st, acc, "url", "", "URL", "https://", p));
     }
-    if !link {
+    if !link && !access {
         body = body.child(
             Switch::new(private)
                 .label(t("Private channel"))
@@ -369,6 +378,11 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
             sh.form.error = Some(t("Name is required.").into());
             return;
         }
+        // A private channel goes on to pick who may view it.
+        if private && !access {
+            sh.form.data.insert("step".into(), json!("access"));
+            return;
+        }
         let kind = if category { ChannelType::GUILD_CATEGORY } else { kind };
         let mut b = json!({ "type": kind.0, "name": name });
         if let Some(pid) = parent.filter(|_| !category) {
@@ -377,21 +391,27 @@ fn create_channel<S: 'static>(st: &ShellState, guild: Snowflake, parent: Option<
         if kind == ChannelType::GUILD_LINK {
             b["url"] = json!(sh.form.value("url", "").trim());
         }
-        // shortcut: Fluxer's private channels go on to pick members and roles; here only
-        // @everyone loses View channel.
-        if private && kind != ChannelType::GUILD_LINK {
-            b["permission_overwrites"] = json!([{ "id": guild, "type": 0, "deny": Permissions::VIEW_CHANNEL.bits().to_string() }]);
+        if private {
+            b["permission_overwrites"] = super::create_access::overwrites(guild, kind, &super::create_access::picked(sh), me);
         }
         sh.api(Method::POST, format!("/guilds/{guild}/channels"), Some(b), if category { Then::Close } else { Then::Enter });
     };
     let title = if category { t("Create category") } else { t("Create channel") };
-    Modal::new(title, close(acc))
-        .body(body)
-        .footer(buttons(vec![
+    let footer = if access {
+        let go = if super::create_access::picked(st).is_empty() { t("Skip") } else { t("Create channel") };
+        vec![
+            Button::new(t("Go back")).variant(ButtonVariant::Secondary).on_press(move |s: &mut S| {
+                acc(s).form.data.remove("step");
+            }).el(p),
+            Button::new(go).submitting(st.form.busy).key("create-channel").on_press(create).el(p),
+        ]
+    } else {
+        vec![
             Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close(acc)).el(p),
-            Button::new(title).submitting(st.form.busy).key("create-channel").on_press(create).el(p),
-        ]))
-        .el(p)
+            Button::new(if private { t("Next") } else { title }).submitting(st.form.busy).key("create-channel").on_press(create).el(p),
+        ]
+    };
+    Modal::new(if access { t("Add members or roles") } else { title }, close(acc)).body(body).footer(buttons(footer)).el(p)
 }
 
 // ---- Notification settings ------------------------------------------------------------------

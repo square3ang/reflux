@@ -67,7 +67,10 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
     let up = prof.map(|v| &v["user_profile"]).filter(|v| v.is_object());
     let field = |k: &str| gp.and_then(|v| v[k].as_str()).or(up.and_then(|v| v[k].as_str())).filter(|s| !s.is_empty()).map(str::to_string);
     let banner = match (gp.and_then(|v| v["banner"].as_str()), up.and_then(|v| v["banner"].as_str())) {
-        (Some(h), _) => guild.and_then(|_| banner_px(st, user, h)),
+        (Some(h), _) => guild.and_then(|g| match st.media.asset(|b, s| media::member_banner_url(b, g, user, h, s)) {
+            Load::Ready(px) => Some(px),
+            _ => None,
+        }),
         (None, Some(h)) => banner_px(st, user, h),
         _ => None,
     };

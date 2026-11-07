@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -36,16 +36,16 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### 1.2 Community settings (ours guild/settings.rs)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Overview | PARTIAL | splashes, detached banner, history threshold, advanced | guild_tabs/guild_overview_tab/* |
-| Roles | PARTIAL | role icon, members-in-role, drag reorder | guild_tabs/GuildRolesTab.tsx |
+| Overview | PARTIAL | no invite page / invite modal preview buttons; threshold date is typed (no date picker); images are taken as picked, not through AssetCropModal | guild_tabs/guild_overview_tab/* |
+| Roles | PARTIAL | a custom emoji role icon is kept by name, not fetched as the icon image; uploads are centre-cropped (no crop modal); members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
 | Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
-| Activity log | PARTIAL | filters, paging, change details | guild_tabs/GuildAuditLogTab.tsx |
-| Emoji | PARTIAL | rename, bulk upload | guild_tabs/GuildEmojiTab.tsx |
-| Stickers | PARTIAL | bulk upload, image crop | guild_tabs/GuildStickersTab.tsx |
+| Activity log | PARTIAL | change details are generic `key: old → new` rows, not Fluxer's per-action sentences; "Load more" button instead of scroll paging; user filter lists known members | guild_tabs/GuildAuditLogTab.tsx |
+| Emoji | DONE | the upload dialog picks one file (Rune's file dialog returns one path); several upload by dropping them on the drop zone | guild_tabs/GuildEmojiTab.tsx |
+| Stickers | DONE | one at a time like Fluxer's drop zone; images contained in a 320px square (`optimizeStickerImage`) | guild_tabs/GuildStickersTab.tsx |
 | Explore (discovery listing) | DONE | | guild_tabs/GuildDiscoveryTab.tsx |
 | Vanity URL | DONE | | guild_tabs/GuildVanityURLTab.tsx |
-| Webhooks | PARTIAL | editor always returns to the guild tab | guild_tabs/GuildWebhooksTab.tsx, F/webhook/* |
-| Members | PARTIAL | filters, paging | GuildMembersPage.tsx |
+| Webhooks | DONE | | guild_tabs/GuildWebhooksTab.tsx, F/webhook/* |
+| Members | DONE | opens the members page, like Fluxer | GuildMembersPage.tsx |
 | Invites | DONE | | DisableInvitesButton.tsx |
 | Bans | DONE | | GuildBansTab.tsx |
 | Delete community | DONE | | GuildDeleteModal.tsx |
@@ -54,13 +54,13 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### 1.3 Channel / thread / forum / group settings (ours guild/channel.rs)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Channel overview | PARTIAL | multi-line topic, voice bitrate/user limit/region, link URL | channel_tabs/ChannelOverviewTab.tsx |
-| Channel permissions | PARTIAL | network member search, sync-with-category, thread rows | channel_tabs/ChannelPermissionsTab.tsx |
+| Channel overview | DONE | | channel_tabs/ChannelOverviewTab.tsx |
+| Channel permissions | DONE | member search uses `members-search` (REST) | channel_tabs/ChannelPermissionsTab.tsx |
 | Channel invites | DONE | | ChannelSettingsModalUtils.ts |
 | Channel webhooks | DONE | | channel_tabs/ChannelWebhooksTab.tsx |
 | Delete channel | DONE | | ChannelDeleteModal.tsx |
-| Forum settings / tags | PARTIAL | tag add/edit/delete (ForumTagEditModal), default reaction picker, guidelines textarea, thread defaults, mature content | F/forum/components/settings/* |
-| Thread settings | PARTIAL | slowmode; no live write test | F/threads/…/ThreadSettingsModal.tsx |
+| Forum settings / tags | DONE | | F/forum/components/settings/* |
+| Thread settings | PARTIAL | no live write test | F/threads/…/ThreadSettingsModal.tsx |
 | Group DM edit | DONE | | modals/EditGroupModal.tsx |
 
 ## 2. Feature areas
@@ -119,12 +119,12 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Embeds | PARTIAL | gifv is a still + GIF badge; YouTube opens the browser (no iframe); text-only embeds don't shrink to fit | RichEmbed.tsx |
 | Invite embed | PARTIAL | splash, guild badges, context menu, invites-paused state | InviteEmbed.tsx |
 | NSFW gate / blur | PARTIAL | gate agreement lasts the session (Fluxer persists it); no geo/age-check variants | MatureContentChannelGate.tsx |
-| Guild members page | PARTIAL | search on Enter (no debounce); no column filters, page-size picker or indexing poll | GuildMembersPage.tsx |
+| Guild members page | PARTIAL | no "Custom range…" date filter (no date picker) | GuildMembersPage.tsx |
 | DM list | PARTIAL | pinned DMs; previews are plain text from cached messages | DirectMessageList.tsx |
 | Create DM / group DM | DONE | | CreateDMModal.tsx |
 | Group DM management | DONE | | EditGroupModal.tsx |
 | Active Now | PARTIAL | no stream thumbnail / Watch stream; doesn't hide on narrow windows | ActiveNowSidebar.tsx |
-| Private channel create step | PARTIAL | | ChannelCreateAccessStep.tsx |
+| Private channel create step | DONE | | ChannelCreateAccessStep.tsx |
 | Duplicate channel | DONE | | ChannelDuplicateModal.tsx |
 | Search UI | PARTIAL | jump highlight also tints the matching result (unchecked vs Fluxer); results and indexing state live-verified | message_search_bar/* |
 | Call system message / system message wording | PARTIAL | call message has no inline "Join the call" link; other system messages generic | CallMessage.tsx, SystemMessageUtils.tsx |
@@ -168,7 +168,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Profile popout | DONE | | UserProfilePopout.tsx |
 | Full profile modal | DONE | | UserProfileModal.tsx |
 | Change own nickname | DONE | | ChangeNicknameModal.tsx |
-| Community member avatars | PARTIAL | | F/user/components/profile/* |
+| Community member avatars | DONE | in the selected community every avatar uses the member's own; profile banners too | F/user/components/profile/* |
 | User context menu | PARTIAL | call, invite, local mute | UserContextMenu.tsx |
 
 ### guild
@@ -177,7 +177,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Create/join, header popout, context menu, privacy modal, leave | DONE | | |
 | Notification modal | DONE | | GuildNotificationSettingsModal.tsx |
 | Edit community profile | DONE | | MyProfileTab.tsx |
-| Delete my messages | MISSING | | useDeleteMyMessagesInGuild.tsx |
+| Delete my messages | DONE | | useDeleteMyMessagesInGuild.tsx |
 | Preview nagbar | DONE | (Join / Stop previewing; visiting permissions in `compute_permissions`) | GuildPreviewNagbar.tsx |
 | Role icons | DONE | | RoleIcon.tsx |
 | Folder settings | DONE | | GuildFolderSettingsModal.tsx |
@@ -224,8 +224,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Animated emoji/avatars/stickers | DONE | | |
 | Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
 | Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
-| Invite: friends list, accept preview, pause | PARTIAL | friends list in the invite modal | F/invite/* |
-| Discovery page | PARTIAL | card images, language filter | DiscoveryPage.tsx |
+| Invite: friends list, accept preview, pause | DONE | | F/invite/* |
+| Discovery page | PARTIAL | results stop at the first 24 (no load-more on scroll) | DiscoveryPage.tsx |
 | Search UI chips/suggestions, history | PARTIAL | filter + value suggestions and per-scope history done; no chips, scope menu, date pickers or keyboard nav | F/search/* |
 | Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |

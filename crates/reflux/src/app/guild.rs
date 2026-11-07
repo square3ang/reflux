@@ -22,6 +22,14 @@ pub(super) fn run(s: &mut State, c: Call) {
             (Ok(_), Then::Reload(_, path) | Then::Saved { reload: Some((_, path)), .. }) => Some(inst.rest.get::<Value>(path).await),
             _ => None,
         };
+        // A DM opened to send into: send.
+        let sent = match (&r, &c.then) {
+            (Ok(v), Then::SendDm { content, .. }) => {
+                let id = v.get("id").and_then(Value::as_str).unwrap_or_default();
+                Some(inst.rest.request::<Value, Value>(reqwest::Method::POST, &format!("/channels/{id}/messages"), Some(&serde_json::json!({ "content": content }))).await)
+            }
+            _ => None,
+        };
         let c_reload = match &c.then {
             Then::Saved { reload, .. } => reload.clone(),
             _ => None,
@@ -43,6 +51,9 @@ pub(super) fn run(s: &mut State, c: Call) {
                 }
                 Err(e) => {
                     eprintln!("reflux: {} {}: {e}", c.method, c.path);
+                    if let Then::Toast(_, err) = c.then {
+                        return crate::desktop::toast(&mut sh.desktop, crate::i18n::t(err), false);
+                    }
                     if sudo && let Some(x) = sh.account.sudo.as_mut() {
                         x.fail(describe(&e));
                     } else if same {
@@ -78,6 +89,24 @@ pub(super) fn run(s: &mut State, c: Call) {
                     Some(Err(e)) if same => sh.form.error = Some(describe(&e)),
                     _ => {}
                 },
+                Then::SendDm { user, mark, .. } => match sent {
+                    Some(Ok(_)) if same => {
+                        let list = sh.form.data.entry(mark).or_insert_with(|| Value::Array(vec![]));
+                        if let Some(a) = list.as_array_mut() {
+                            a.push(Value::String(user.to_string()));
+                        }
+                    }
+                    Some(Err(e)) if same => sh.form.error = Some(describe(&e)),
+                    _ => {}
+                },
+                Then::Append(key, page) => {
+                    if same {
+                        let end = append(sh.form.data.entry(key.clone()).or_insert(Value::Null), v) < page;
+                        if end {
+                            sh.form.data.insert(format!("{key}-end"), Value::Bool(true));
+                        }
+                    }
+                }
                 Then::Enter => {
                     sh.dialog = None;
                     if let Some((g, ch)) = entered(&v) {
@@ -107,6 +136,12 @@ pub(super) fn run(s: &mut State, c: Call) {
                     }
                 }
                 Then::SignOut => super::sign_out(s, None),
+                // An empty success text toasts only failures.
+                Then::Toast(ok, _) => {
+                    if !ok.is_empty() {
+                        crate::desktop::toast(&mut sh.desktop, crate::i18n::t(ok), true)
+                    }
+                }
                 Then::Select => {
                     let id = v.get("id").and_then(Value::as_str).and_then(|i| i.parse::<Snowflake>().ok());
                     match (&mut sh.dialog, id) {
@@ -131,6 +166,24 @@ pub fn entered(v: &Value) -> Option<(Snowflake, Option<Snowflake>)> {
         return Some((id(v, "guild_id")?, id(v, "id")));
     }
     Some((id(v, "id")?, id(v, "system_channel_id")))
+}
+
+/// Appends `new`'s arrays (or `new` itself, when an array) to `old`'s; returns the longest
+/// array appended, so a short page ends paging.
+fn append(old: &mut Value, new: Value) -> usize {
+    match (old, new) {
+        (Value::Array(o), Value::Array(n)) => {
+            let len = n.len();
+            o.extend(n);
+            len
+        }
+        (Value::Object(o), Value::Object(n)) => n.into_iter().map(|(k, v)| append(o.entry(k).or_insert_with(|| Value::Array(vec![])), v)).max().unwrap_or(0),
+        (o, n) => {
+            let len = n.as_array().map_or(0, Vec::len);
+            *o = n;
+            len
+        }
+    }
 }
 
 /// Applies a partial user guild settings object now and sends it; the response (or the
@@ -168,5 +221,15 @@ mod tests {
         assert_eq!(entered(&json!({ "id": "1", "name": "x", "system_channel_id": "3" })), Some((Snowflake(1), s(3))));
         assert_eq!(entered(&json!({ "id": "1", "system_channel_id": null })), Some((Snowflake(1), None)));
         assert_eq!(entered(&json!(null)), None);
+    }
+
+    #[test]
+    fn append_extends_pages() {
+        let mut old = json!({ "entries": [1, 2], "users": [] });
+        assert_eq!(append(&mut old, json!({ "entries": [3], "users": [7, 8] })), 2);
+        assert_eq!(old, json!({ "entries": [1, 2, 3], "users": [7, 8] }));
+        let mut list = json!([1]);
+        assert_eq!(append(&mut list, json!([])), 0);
+        assert_eq!(list, json!([1]));
     }
 }
