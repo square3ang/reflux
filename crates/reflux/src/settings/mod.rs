@@ -710,7 +710,9 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
     let c = colors(p);
     let bg = if is_light(p) { p.background_primary } else { p.background_secondary };
     // `SettingsModalHeader`: 60 tall, padding 0 16, title 18/600, a 34 close button.
-    let close = row()
+    let close = std::rc::Rc::new(close);
+    let enter = close.clone();
+    let x = row()
         .size(34.0, 34.0)
         .center()
         .radius(8.0)
@@ -719,7 +721,15 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .cursor(rune::Cursor::Pointer)
         .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(t("Close"))
-        .on_press(close)
+        .on_press(move |s: &mut S| close(s))
+        .on_key(move |s: &mut S, k, _| {
+            if crate::ui::enters(k) {
+                enter(s);
+                true
+            } else {
+                false
+            }
+        })
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
     let header = row()
         .w_full()
@@ -729,7 +739,7 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .center_y()
         .justify_between()
         .child(text(title.to_string()).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
-        .child(close)
+        .child(x)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(c.border, bg)));
     let inner = col().w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
     let viewport = col()

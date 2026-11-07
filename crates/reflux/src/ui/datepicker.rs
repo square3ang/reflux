@@ -163,7 +163,18 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                 return b.opacity(0.3).disabled(true);
             }
             let open_at = open_at.clone();
-            b.hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| open_at(s, to))
+            let enter = open_at.clone();
+            b.hover(p.background_modifier_hover)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut S| open_at(s, to))
+                .on_key(move |s: &mut S, k, _| {
+                    if crate::ui::enters(k) {
+                        enter(s, to);
+                        true
+                    } else {
+                        false
+                    }
+                })
         };
         let caption = row()
             .w_full()
@@ -201,7 +212,6 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .focus_selected(initial)
                     // The calendar opens on the chosen day, not on the month arrows.
                     .tab_index(if initial { 1 } else { 0 })
-                    .position_in_set(w * 7 + col + 1, 42)
                     .child(num);
                 if sel {
                     b = b.fill(p.brand_primary);
@@ -215,7 +225,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                         b = b.hover(p.background_modifier_hover);
                     }
                 }
-                row().size(DAY, DAY).center().role("gridcell").child(b)
+                row().size(DAY, DAY).center().role("gridcell").position_in_set(w * 7 + col + 1, 42).child(b)
             })));
         }
         let mut pop = col().padding(12.0).fill(p.background_primary).border(1.0, over(p.background_modifier_accent, p.background_primary)).radius(8.0).box_shadow(popout_shadow(p, 0.24, 0.24)).gap(4.0).child(caption).child(grid);

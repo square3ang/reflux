@@ -370,7 +370,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             body = body.child(line(tf("You will be taken to {redirectHostname} after authorizing.", &[("redirectHostname", host)]), p.text_primary_muted));
         }
         if let Some(e) = &o.error {
-            body = body.child(line(e.clone(), p.status_danger));
+            body = body.child(line(e.clone(), p.status_danger).role("alert"));
         }
     }
     let busy = matches!(st.expr.fetched.get(CONSENT), Some(Fetched::Loading));

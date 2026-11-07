@@ -308,6 +308,9 @@ fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
 pub fn key_name(k: &KeyEvent) -> String {
     match &k.key {
         Key::Modifier { modifier, .. } => format!("Modifier {{ modifier: {modifier:?}, pressed: true }}"),
+        // Letters ignore Shift and Caps Lock: the stored key matches either case.
+        Key::Text(t) => format!("Text({:?})", t.to_lowercase()),
+        Key::Command(c) => format!("Command({:?})", c.to_ascii_lowercase()),
         _ => format!("{:?}", k.key),
     }
 }
@@ -491,6 +494,16 @@ mod focus_tests {
         // A release alone never starts it.
         assert!(push_to_talk(&mut st, &ev(Key::Modifier { modifier: rune::Modifier::ControlLeft, pressed: false })));
         assert!(!st.voice.ptt_held);
+    }
+
+    #[test]
+    fn push_to_talk_ignores_a_letters_case() {
+        let mut st = ShellState { settings: Some(crate::settings::SettingsUi::new(Some("voice_video"))), ..ShellState::default() };
+        st.voice.settings.push_to_talk = true;
+        st.voice.settings.ptt_key = Some(key_name(&ev(Key::Text("V".into()))));
+        assert_eq!(st.voice.settings.ptt_key.as_deref(), Some("Text(\"v\")"), "recorded lowercase");
+        assert!(push_to_talk(&mut st, &ev(Key::Text("v".into()))));
+        assert!(st.voice.ptt_held);
     }
 
     #[test]

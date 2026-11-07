@@ -1,6 +1,8 @@
 //! `fluxer_app/src/features/ui/components/form/FormInput.module.css` (single-line `<Input>`).
 
-use rune::{El, TextEdit, col, icon, row, text, text_input};
+use std::rc::Rc;
+
+use rune::{El, Key, TextEdit, col, icon, row, text, text_input};
 
 use super::{mix, over};
 use crate::icons;
@@ -9,7 +11,7 @@ use crate::i18n::t;
 
 pub struct Input<'a, S: 'static> {
     edit: &'a TextEdit,
-    access: Box<dyn for<'b> Fn(&'b mut S) -> &'b mut TextEdit>,
+    access: Rc<dyn for<'b> Fn(&'b mut S) -> &'b mut TextEdit>,
     key: &'a str,
     label: Option<&'a str>,
     placeholder: &'a str,
@@ -29,7 +31,7 @@ pub struct Input<'a, S: 'static> {
 
 impl<'a, S: 'static> Input<'a, S> {
     pub fn new(key: &'a str, edit: &'a TextEdit, access: impl for<'b> Fn(&'b mut S) -> &'b mut TextEdit + 'static) -> Self {
-        Self { edit, access: Box::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None, rows: None, left: None, right: None }
+        Self { edit, access: Rc::new(access), key, label: None, placeholder: "", error: None, password: None, secure: false, multiline: None, rows: None, left: None, right: None }
     }
     pub fn label(mut self, l: &'a str) -> Self { self.label = Some(l); self }
     pub fn placeholder(mut self, p: &'a str) -> Self { self.placeholder = p; self }
@@ -57,11 +59,26 @@ impl<'a, S: 'static> Input<'a, S> {
             .placeholder(self.placeholder, p.text_tertiary)
             .caret(p.text_primary, p.background_modifier_selected)
             .on_edit({
-                let access = self.access;
+                let access = self.access.clone();
                 move |s: &mut S| -> &mut TextEdit { access(s) }
             });
+        if self.multiline.is_some() {
+            // A textarea's Enter types a newline, as on the web (Rune's default gives Return to
+            // submit / the default button). Shift and Option Return still insert one in the editor.
+            let access = self.access.clone();
+            field = field.on_input_key(move |s: &mut S, k, _| {
+                if k.key == Key::Enter && !k.mods.cmd && !k.mods.ctrl && !k.mods.alt && !k.mods.shift {
+                    access(s).insert("\n");
+                    true
+                } else {
+                    false
+                }
+            });
+        }
         if let Some(l) = self.label {
             field = field.label(l);
+        } else if !self.placeholder.is_empty() {
+            field = field.label(self.placeholder);
         }
         if let Some(e) = self.error {
             field = field.invalid(true).description(e.to_string());
@@ -133,5 +150,65 @@ impl<'a, S: 'static> Input<'a, S> {
             fieldset = fieldset.child(super::mark::marked(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
         }
         fieldset.child(group)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune::{Cx, Env, Key, Mods, Runtime, TextEdit, col};
+
+    fn single(edit: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        col().w_full().child(Input::new("field", edit, |s: &mut TextEdit| s).label("Name").el(p))
+    }
+
+    fn multiline(edit: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        col().w_full().child(Input::new("field", edit, |s: &mut TextEdit| s).label("Name").multiline(60.0).el(p))
+    }
+
+    fn press(rt: &mut Runtime<TextEdit>, k: Key, ctrl: bool) {
+        rt.key(rune::KeyEvent { key: k, mods: Mods { ctrl, ..Default::default() } });
+        rt.frame(0.0);
+    }
+
+    fn caret(edit: &TextEdit) -> usize {
+        edit.range().1
+    }
+
+    #[test]
+    fn text_field_keeps_home_end_word_movement_and_select_all() {
+        let mut edit = TextEdit::new("hello world");
+        edit.set_caret(edit.text.len());
+        let mut rt = Runtime::with_text(edit, single, (300.0, 80.0), Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab, false);
+        let focused = rt.elements().into_iter().find(|e| e.focused).unwrap();
+        assert_eq!((focused.key.as_deref(), focused.role), (Some("field"), "textbox"));
+        press(&mut rt, Key::Home, false);
+        assert_eq!(caret(&rt.state), 0);
+        press(&mut rt, Key::End, false);
+        assert_eq!(caret(&rt.state), 11);
+        press(&mut rt, Key::Left, true);
+        assert_eq!(caret(&rt.state), 6, "Ctrl+Left moves a word");
+        press(&mut rt, Key::Command('a'), false);
+        assert_eq!(rt.state.range(), (0, 11), "Ctrl+A selects all");
+        press(&mut rt, Key::Backspace, false);
+        assert_eq!(rt.state.text, "", "Backspace deletes the selection");
+    }
+
+    #[test]
+    fn multiline_enter_types_a_newline() {
+        let mut edit = TextEdit::new("one");
+        edit.set_caret(3);
+        let mut rt = Runtime::with_text(edit, multiline, (300.0, 120.0), Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab, false);
+        rt.elements().into_iter().find(|e| e.focused).expect("the field takes Tab");
+        press(&mut rt, Key::Enter, false);
+        press(&mut rt, Key::Text("two".into()), false);
+        assert_eq!(rt.state.text, "one\ntwo");
+        assert_eq!(caret(&rt.state), 7);
     }
 }

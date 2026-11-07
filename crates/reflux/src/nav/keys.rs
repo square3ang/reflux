@@ -668,6 +668,8 @@ fn cheatsheet<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 24.0, spread: -4.0, color: rgba(0, 0, 0, 0.25), inset: false })
         .role("dialog")
         .label(t("Keybinds"))
+        .focusable(true)
+        .focus_ring(2.0, -2.0, p.focus_primary)
         .scroll(rune::ScrollSpec { stick_bottom: false })
         .child(row().w_full().gap(12.0).px(14.0).py(14.0).items_start().children(cols))
         .modal(true, close);
