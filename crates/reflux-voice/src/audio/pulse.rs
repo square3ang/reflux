@@ -217,6 +217,12 @@ pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: A
 
 /// Records `device` at 48 kHz mono through the server into `chain`.
 pub(super) fn open_input(device: Option<&str>, mut chain: MicChain) -> Option<IoThread> {
+    open_capture(device, Arc::new(Mutex::new(move |samples: &[f32]| chain.feed(samples.iter().copied()))))
+}
+
+/// Records `device` at 48 kHz mono through the server, handing each block to `sink`: the call's
+/// input, and (through [`super::capture`]) the mic test meter and voice messages.
+pub(super) fn open_capture(device: Option<&str>, sink: super::CaptureSink) -> Option<IoThread> {
     let target = resolve(Direction::Record, device)?;
     let attr = BufferAttr { maxlength: u32::MAX, tlength: u32::MAX, prebuf: u32::MAX, minreq: u32::MAX, fragsize: REC_FRAGSIZE_MS * bytes_per_ms(1) };
     let stop = Arc::new(AtomicBool::new(false));
@@ -233,8 +239,8 @@ pub(super) fn open_input(device: Option<&str>, mut chain: MicChain) -> Option<Io
             if simple.read(&mut buf).is_err() {
                 break;
             }
-            let samples = buf.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b));
-            chain.feed(samples);
+            let samples: Vec<f32> = buf.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+            sink.lock().unwrap()(&samples);
         }
     });
     rx.recv().ok().filter(|ok| *ok).map(|_| IoThread { stop })

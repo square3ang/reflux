@@ -1,13 +1,13 @@
 //! The microphone outside the call: the level the mic test meter and the voice-activity gate
 //! read, and voice message recording (`VoiceMessageRecordingUtils.ts`: mono 16-bit WAV plus a
-//! base64 waveform). The call's own capture (`reflux_voice::audio`) opens the same selected
-//! input a second time, which PipeWire / PulseAudio / WASAPI / CoreAudio allow.
+//! base64 waveform). It opens the same selected input as the call (the PulseAudio source on
+//! Linux, cpal elsewhere or when no server answers), a second stream that PipeWire /
+//! PulseAudio / WASAPI / CoreAudio allow.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rodio::cpal;
-use rodio::cpal::traits::{DeviceTrait, StreamTrait};
+use reflux_voice::audio::Capture;
 
 /// The quietest level the meter shows (`-100` dB in Fluxer's activity slider).
 pub const FLOOR_DB: f32 = -100.0;
@@ -19,7 +19,7 @@ pub struct Mic {
     /// Mono samples while recording.
     rec: Arc<Mutex<Option<Vec<f32>>>>,
     rate: u32,
-    stop: Arc<AtomicBool>,
+    _capture: Capture,
 }
 
 impl Mic {
@@ -28,23 +28,21 @@ impl Mic {
     pub fn start(device: Option<String>, on_level: impl Fn(f32) + Send + 'static) -> Option<Self> {
         let level = Arc::new(AtomicU32::new(FLOOR_DB.to_bits()));
         let rec: Arc<Mutex<Option<Vec<f32>>>> = Arc::default();
-        let stop = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (l, r, st) = (level.clone(), rec.clone(), stop.clone());
-        // The cpal stream isn't Send everywhere: it lives and dies on this thread.
-        std::thread::spawn(move || {
-            let Some((stream, rate)) = open(device.as_deref(), l, r, on_level) else {
-                let _ = tx.send(None);
-                return;
-            };
-            let _ = tx.send(Some(rate));
-            while !st.load(Ordering::Relaxed) {
-                std::thread::park_timeout(std::time::Duration::from_millis(200));
+        let (l, r) = (level.clone(), rec.clone());
+        let capture = reflux_voice::audio::capture(device.as_deref(), move |block: &[f32]| {
+            let mut peak = 0f32;
+            let mut rec = r.lock().unwrap();
+            for &s in block {
+                peak = peak.max(s.abs());
+                if let Some(v) = rec.as_mut() {
+                    v.push(s);
+                }
             }
-            drop(stream);
-        });
-        let rate = rx.recv().ok().flatten()?;
-        Some(Self { level, rec, rate, stop })
+            let db = to_db(peak);
+            l.store(db.to_bits(), Ordering::Relaxed);
+            on_level(db);
+        })?;
+        Some(Self { level, rec, rate: capture.rate, _capture: capture })
     }
 
     pub fn level_db(&self) -> f32 {
@@ -72,46 +70,6 @@ impl Mic {
         let start = v.len().saturating_sub(n * block);
         v[start..].chunks(block).map(|c| c.iter().fold(0f32, |m, s| m.max(s.abs()))).collect()
     }
-}
-
-impl Drop for Mic {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-    }
-}
-
-fn open(name: Option<&str>, level: Arc<AtomicU32>, rec: Arc<Mutex<Option<Vec<f32>>>>, on_level: impl Fn(f32) + Send + 'static) -> Option<(cpal::Stream, u32)> {
-    let device = reflux_voice::audio::input_device(name)?;
-    let config = device.default_input_config().ok()?;
-    let (format, channels, rate) = (config.sample_format(), config.channels() as usize, config.sample_rate());
-    let feed = move |mono: &mut dyn Iterator<Item = f32>| {
-        let mut peak = 0f32;
-        let mut rec = rec.lock().unwrap();
-        for s in mono {
-            peak = peak.max(s.abs());
-            if let Some(v) = rec.as_mut() {
-                v.push(s);
-            }
-        }
-        let db = to_db(peak);
-        level.store(db.to_bits(), Ordering::Relaxed);
-        on_level(db);
-    };
-    let err = |e| eprintln!("reflux: microphone: {e}");
-    let stream = match format {
-        cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(config.config(), move |d, _| feed(&mut d.chunks(channels).map(|f| f[0])), err, None),
-        cpal::SampleFormat::I16 => {
-            device.build_input_stream::<i16, _, _>(config.config(), move |d, _| feed(&mut d.chunks(channels).map(|f| f[0] as f32 / 32768.0)), err, None)
-        }
-        other => {
-            eprintln!("reflux: microphone sample format {other:?} isn't supported");
-            return None;
-        }
-    }
-    .map_err(|e| eprintln!("reflux: microphone: {e}"))
-    .ok()?;
-    stream.play().ok()?;
-    Some((stream, rate))
 }
 
 pub fn to_db(peak: f32) -> f32 {

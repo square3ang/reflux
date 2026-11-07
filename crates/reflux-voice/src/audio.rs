@@ -250,7 +250,6 @@ fn run_stream(open: impl FnOnce() -> Option<cpal::Stream> + Send + 'static) -> O
 
 /// Names of the microphones and speakers (what the device pickers list): the PulseAudio
 /// server's sinks/sources on Linux (PipeWire), else cpal's devices.
-// shortcut: the mic test meter and voice-message recording (`voice_input::Mic`) still open cpal, so a non-default Pulse pick applies to the call but not to them. Upgrade when that path gets a pulse-backed `Mic`.
 pub fn devices() -> (Vec<String>, Vec<String>) {
     #[cfg(target_os = "linux")]
     if let Some((sinks, sources)) = pulse::enumerate() {
@@ -275,6 +274,68 @@ pub fn input_device(name: Option<&str>) -> Option<cpal::Device> {
 pub fn output_device(name: Option<&str>) -> Option<cpal::Device> {
     let host = cpal::default_host();
     name.and_then(|n| host.output_devices().ok()?.find(|d| d.to_string() == n)).or_else(|| host.default_output_device())
+}
+
+/// Where a [`Capture`]'s blocks go.
+type CaptureSink = Arc<Mutex<dyn FnMut(&[f32]) + Send>>;
+
+/// A running raw microphone capture: the mic test meter, the voice-activity gate outside the
+/// call, and voice-message recording. It records the same selected device as the call, without
+/// the mic chain. Dropping it stops capture.
+pub struct Capture {
+    /// Mono sample rate of the blocks.
+    pub rate: u32,
+    _thread: IoThread,
+}
+
+/// Opens the selected microphone for a [`Capture`]: the PulseAudio source on Linux (the same
+/// pick as the call's), else cpal. `on_block` runs on the audio thread with mono samples.
+pub fn capture(device: Option<&str>, on_block: impl FnMut(&[f32]) + Send + 'static) -> Option<Capture> {
+    let sink: CaptureSink = Arc::new(Mutex::new(on_block));
+    #[cfg(target_os = "linux")]
+    if let Some(thread) = pulse::open_capture(device, sink.clone()) {
+        return Some(Capture { rate: RATE, _thread: thread });
+    }
+    let name = device.map(str::to_string);
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let st = stop.clone();
+    std::thread::spawn(move || {
+        let Some((stream, rate)) = open_cpal_capture(name.as_deref(), sink) else {
+            let _ = tx.send(None);
+            return;
+        };
+        let _ = tx.send(Some(rate));
+        while !st.load(Ordering::Relaxed) {
+            std::thread::park_timeout(Duration::from_millis(200));
+        }
+        drop(stream);
+    });
+    let rate = rx.recv().ok().flatten()?;
+    Some(Capture { rate, _thread: IoThread { stop } })
+}
+
+fn open_cpal_capture(name: Option<&str>, sink: CaptureSink) -> Option<(cpal::Stream, u32)> {
+    let device = input_device(name)?;
+    let cfg = device.default_input_config().ok()?;
+    let channels = cfg.channels() as usize;
+    let feed = move |mono: &mut dyn Iterator<Item = f32>| {
+        let block: Vec<f32> = mono.collect();
+        sink.lock().unwrap()(&block);
+    };
+    let err = |e| eprintln!("reflux-voice: microphone: {e}");
+    let stream = match cfg.sample_format() {
+        cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(cfg.config(), move |d, _| feed(&mut d.chunks(channels).map(|f| f[0])), err, None),
+        cpal::SampleFormat::I16 => device.build_input_stream::<i16, _, _>(cfg.config(), move |d, _| feed(&mut d.chunks(channels).map(|f| f[0] as f32 / 32768.0)), err, None),
+        other => {
+            eprintln!("reflux-voice: input sample format {other:?} isn't supported");
+            return None;
+        }
+    }
+    .map_err(|e| eprintln!("reflux-voice: microphone: {e}"))
+    .ok()?;
+    stream.play().ok()?;
+    Some((stream, cfg.sample_rate()))
 }
 
 /// 48 kHz when the device takes it (PipeWire / PulseAudio always do), else its default.
@@ -600,5 +661,28 @@ mod tests {
         let mut out = Vec::new();
         Resampler::new(48_000, 44_100).process(&tone(1_000.0), &mut out);
         assert!((rms(&out[1000..]) - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01, "{}", rms(&out[1000..]));
+    }
+
+    /// Needs a real microphone: `cargo test -p reflux-voice captures_the_selected -- --ignored
+    /// --nocapture` (`REFLUX_TEST_INPUT` picks a listed source, else the default).
+    #[test]
+    #[ignore]
+    fn captures_the_selected_input() {
+        let (inputs, _) = devices();
+        eprintln!("inputs: {inputs:?}");
+        let device = std::env::var("REFLUX_TEST_INPUT").ok();
+        let samples = Arc::new(AtomicU32::new(0));
+        let peak = Arc::new(AtomicU32::new(0));
+        let (n, p) = (samples.clone(), peak.clone());
+        let cap = capture(device.as_deref(), move |block| {
+            n.fetch_add(block.len() as u32, Ordering::Relaxed);
+            let loudest = block.iter().fold(0f32, |m, s| m.max(s.abs()));
+            p.fetch_max(loudest.to_bits(), Ordering::Relaxed);
+        })
+        .expect("the selected input opens");
+        std::thread::sleep(Duration::from_secs(1));
+        let (n, p) = (samples.load(Ordering::Relaxed), f32::from_bits(peak.load(Ordering::Relaxed)));
+        eprintln!("{device:?}: {n} samples at {} Hz, peak {p}", cap.rate);
+        assert!(n >= cap.rate / 4, "only {n} samples in a second");
     }
 }
