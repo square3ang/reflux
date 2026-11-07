@@ -244,6 +244,8 @@ mod imp {
                 .field("framerate", gst::Fraction::new(30, 1))
                 .build();
             let appsink = rgba_sink(caps, sink);
+            // Capture, not playback: hand frames over as they come instead of waiting on the clock.
+            appsink.set_sync(false);
             let pipeline = gst::Pipeline::new();
             pipeline.add_many([&src, &convert, &scale, &rate, appsink.upcast_ref()]).ok()?;
             gst::Element::link_many([&src, &convert, &scale, &rate, appsink.upcast_ref()]).ok()?;
@@ -284,6 +286,8 @@ mod imp {
             let caps = gst::Caps::builder("audio/x-raw").field("format", "F32LE").field("rate", 48_000i32).field("channels", 2i32).field("layout", "interleaved").build();
             let appsink = gst_app::AppSink::builder()
                 .caps(&caps)
+                // With clock sync only ~30% of a PipeWire app's samples got through (live-tested).
+                .sync(false)
                 .callbacks(
                     gst_app::AppSinkCallbacks::builder()
                         .new_sample(move |s| {

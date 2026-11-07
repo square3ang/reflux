@@ -1,11 +1,12 @@
-//! `EmbedGifv`: a GIF link's video plays muted and looping in place of its still, through
-//! GStreamer, while its tile is on screen and GIFs autoplay (else while hovered).
+//! `EmbedGifv`: a GIF link's video plays muted and looping in place of its still, while its
+//! tile is on screen and GIFs autoplay (else while hovered). GStreamer decodes on Linux, Rune's
+//! `Player` on macOS; Windows has neither, so the still stays.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use rune::{El, Pixels, el};
+use rune::{El, Pixels, Player, PlayerState, SurfaceFit, el};
 
 use super::ShellState;
 
@@ -14,9 +15,13 @@ const MAX: usize = 6;
 /// A tile not drawn for this long stops its player.
 const LINGER: Duration = Duration::from_secs(2);
 
+enum Backend {
+    Gst { player: crate::gst::VideoPlayer, pixels: Pixels },
+    Rune(Player),
+}
+
 pub struct Clip {
-    player: crate::gst::VideoPlayer,
-    pixels: Pixels,
+    backend: Backend,
     started: bool,
 }
 
@@ -27,18 +32,38 @@ pub struct Gifv {
     seen: RefCell<HashMap<String, (String, Instant)>>,
 }
 
-/// From the view: `key` wants `url` playing. Returns its frames once the first one arrived.
-pub fn want(st: &ShellState, key: &str, url: &str) -> Option<Pixels> {
-    if !super::clip::native() {
+fn supported() -> bool {
+    super::clip::native() || cfg!(target_os = "macos")
+}
+
+/// From the view: `key` wants `url` playing. Returns the playing video at `size` once its
+/// first frame arrived (the still shows until then).
+pub fn want(st: &ShellState, key: &str, url: &str, size: (f32, f32)) -> Option<El> {
+    if !supported() {
         return None;
     }
     st.media_ui.gifv.seen.borrow_mut().insert(key.to_string(), (url.to_string(), Instant::now()));
-    st.media_ui.gifv.clips.get(key).filter(|c| c.started).map(|c| c.pixels.clone())
+    let c = st.media_ui.gifv.clips.get(key).filter(|c| c.started)?;
+    let e = el().size(size.0, size.1);
+    Some(match &c.backend {
+        Backend::Gst { pixels, .. } => e.pixels_fit(pixels, SurfaceFit::Fill),
+        Backend::Rune(p) => e.video(p, SurfaceFit::Fill),
+    })
 }
 
-/// The playing frame at `size`.
-pub fn frame(px: &Pixels, size: (f32, f32)) -> El {
-    el().size(size.0, size.1).pixels_fit(px, rune::SurfaceFit::Fill)
+fn open(url: &str) -> Option<Backend> {
+    if super::clip::native() {
+        let pixels = Pixels::default();
+        let mut player = crate::gst::VideoPlayer::new(url, pixels.clone())?;
+        player.set_volume(0.0, true);
+        player.play();
+        return Some(Backend::Gst { player, pixels });
+    }
+    let p = Player::url(url);
+    p.set_muted(true);
+    p.set_looping(true);
+    p.play();
+    Some(Backend::Rune(p))
 }
 
 /// Once a frame: starts players for tiles drawn just now, loops ended ones, stops the rest.
@@ -57,20 +82,23 @@ pub fn poll(st: &mut ShellState, tx: &mut rune::Tx) -> bool {
         if g.clips.len() >= MAX || g.clips.contains_key(&k) {
             continue;
         }
-        let pixels = Pixels::default();
-        if let Some(mut player) = crate::gst::VideoPlayer::new(&url, pixels.clone()) {
-            player.set_volume(0.0, true);
-            player.play();
-            g.clips.insert(k, Clip { player, pixels, started: false });
+        if let Some(backend) = open(&url) {
+            g.clips.insert(k, Clip { backend, started: false });
         }
     }
     for c in g.clips.values_mut() {
-        c.player.poll();
-        if c.player.ended {
-            c.player.play();
-        }
-        // The still shows until the first frame lands.
-        if !c.started && c.pixels.size().0 > 0 {
+        let ready = match &mut c.backend {
+            Backend::Gst { player, pixels } => {
+                player.poll();
+                if player.ended {
+                    player.play();
+                }
+                pixels.size().0 > 0
+            }
+            // A failed clip keeps its still.
+            Backend::Rune(p) => p.state() == PlayerState::Playing && p.natural_size().is_some(),
+        };
+        if !c.started && ready {
             (c.started, changed) = (true, true);
         }
     }

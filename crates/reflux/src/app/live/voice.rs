@@ -3,10 +3,11 @@
 //! intents, then checks: VOICE_SERVER_UPDATE → LiveKit connect (and whether the grant carried an
 //! E2EE key), the gateway's voice state echo, the mic published (`REFLUX_TEST_TONE=1` for a
 //! generated tone), ping, our own speaking, self mute / deafen echoes, a screen share track's
-//! encoder (`encoderImplementation`), the camera if one exists, and a clean leave.
+//! encoder (`encoderImplementation`), screen share audio from another app, the camera if one
+//! exists (each track: server sid, RTP sent, SFU receiver reports), and a clean leave.
 
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use reflux_model::{ChannelType, Permissions, Snowflake, VoiceState};
@@ -29,12 +30,13 @@ enum Step {
     Deafen,
     Undeafen,
     Screen,
+    StreamAudio,
     Camera,
     Leave,
     Done,
 }
 
-const ORDER: [Step; 13] = [
+const ORDER: [Step; 14] = [
     Step::Preflight,
     Step::Join,
     Step::Echo,
@@ -45,6 +47,7 @@ const ORDER: [Step; 13] = [
     Step::Deafen,
     Step::Undeafen,
     Step::Screen,
+    Step::StreamAudio,
     Step::Camera,
     Step::Leave,
     Step::Done,
@@ -60,6 +63,8 @@ pub struct Run {
     stop: Arc<AtomicBool>,
     /// The screen step's result from the network thread: encoders, or an error.
     got: Arc<Mutex<Option<Result<String, String>>>>,
+    /// The camera step's SFU check is running.
+    pending: bool,
 }
 
 fn say(msg: impl std::fmt::Display) {
@@ -83,7 +88,28 @@ impl Run {
             failures: Vec::new(),
             stop: Arc::default(),
             got: Arc::default(),
+            pending: false,
         })
+    }
+
+    /// Runs a check on the network thread; [`Run::result`] picks up its outcome.
+    fn spawn(&self, f: impl Future<Output = Result<String, String>> + Send + 'static) {
+        let got = self.got.clone();
+        *got.lock().unwrap() = None;
+        super::super::spawn(async move {
+            let r = f.await;
+            *got.lock().unwrap() = Some(r);
+            super::super::update(|_| {});
+        });
+    }
+
+    fn result(&self, what: &str) -> Option<bool> {
+        let r = self.got.lock().unwrap().take()?;
+        match &r {
+            Ok(m) => say(format!("{what}: {m}")),
+            Err(e) => say(format!("{what} failed: {e}")),
+        }
+        Some(r.is_ok())
     }
 
     fn mine<'a>(&self, s: &'a State) -> Option<&'a VoiceState> {
@@ -168,6 +194,10 @@ impl Run {
                     perms.contains(Permissions::SPEAK),
                     perms.contains(Permissions::STREAM)
                 ));
+                // The gateway grants an `e2ee_key` only to e2ee_capable sessions in a guild with
+                // this feature (or when its rollout is platform-wide).
+                let e2ee = c.guild_id.and_then(|g| s.app.store.guilds.get(&g)?.info.as_ref()).is_some_and(|g| g.features.iter().any(|f| f == "VOICE_E2EE"));
+                say(format!("guild feature VOICE_E2EE: {e2ee}"));
                 Some(c.kind == ChannelType::GUILD_VOICE && perms.contains(Permissions::CONNECT))
             }
             Step::Join => {
@@ -236,14 +266,8 @@ impl Run {
             Step::Screen => {
                 if first {
                     say(format!("LIVEKIT_PREFERRED_HW_ENCODER={:?}", std::env::var("LIVEKIT_PREFERRED_HW_ENCODER").ok()));
-                    let call = call?;
-                    let (stop, got) = (self.stop.clone(), self.got.clone());
-                    *got.lock().unwrap() = None;
-                    super::super::spawn(async move {
-                        let r = screen(call, stop).await;
-                        *got.lock().unwrap() = Some(r);
-                        super::super::update(|_| {});
-                    });
+                    let stop = self.stop.clone();
+                    self.spawn(screen(call?, stop));
                 }
                 match self.got.lock().unwrap().take()? {
                     Ok(enc) => {
@@ -256,8 +280,15 @@ impl Run {
                     }
                 }
             }
+            Step::StreamAudio => {
+                if first {
+                    self.spawn(stream_audio(call?));
+                }
+                self.result("stream audio")
+            }
             Step::Camera => {
                 if first {
+                    self.pending = false;
                     let cams = crate::gst::cameras();
                     if cams.is_empty() {
                         say("no camera; skipped");
@@ -266,16 +297,23 @@ impl Run {
                     say(format!("cameras: {cams:?}"));
                     sh.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::ToggleCamera));
                 }
-                if !sh.voice.camera && since > Duration::from_secs(2) && self.echo(s).is_none_or(|e| !e.self_video) {
+                if !self.pending {
+                    if !self.echo(s)?.self_video {
+                        return None;
+                    }
+                    say("echo self_video true; checking what the SFU receives");
+                    self.pending = true;
+                    self.spawn(async move {
+                        let call = call.ok_or_else(|| "no call".to_string())?;
+                        tokio::time::sleep(Duration::from_secs(4)).await;
+                        sent(&call, "Camera").await
+                    });
                     return None;
                 }
-                let e = self.echo(s)?;
-                if e.self_video {
-                    say("echo self_video true; turning the camera off");
-                    s.app.shell.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::ToggleCamera));
-                    return Some(true);
-                }
-                None
+                let r = self.result("camera")?;
+                say("turning the camera off");
+                s.app.shell.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::ToggleCamera));
+                Some(r)
             }
             Step::Leave => {
                 if first {
@@ -315,7 +353,92 @@ async fn screen(call: Arc<reflux_voice::Call>, stop: Arc<AtomicBool>) -> Result<
     });
     tokio::time::sleep(Duration::from_secs(6)).await;
     let enc = call.video_encoders().await;
+    let sfu = sent(&call, "Screenshare").await;
     let _ = call.unpublish_camera(&track).await;
     stop.store(true, Ordering::Relaxed);
+    sfu?;
     Ok(format!("{enc:?}"))
+}
+
+/// `source`'s publication was accepted by the server (a `TR_` sid), has sent RTP (and encoded
+/// frames, for video) and the SFU's receiver reports came back for it.
+async fn sent(call: &reflux_voice::Call, source: &str) -> Result<String, String> {
+    let all = call.published().await;
+    let p = all.iter().find(|p| p.source == source).ok_or_else(|| format!("no {source} publication in {all:?}"))?;
+    let video = matches!(source, "Camera" | "Screenshare");
+    let ok = p.sid.starts_with("TR_") && p.packets_sent > 0 && p.sfu_reports > 0 && (!video || p.frames_encoded > 0);
+    let line = format!("{p:?}");
+    say(format!("published {line}"));
+    if ok { Ok(line) } else { Err(line) }
+}
+
+/// Screen share audio from another application: a quiet 440 Hz tone played by `pw-play`, found
+/// in `pw-dump` like the app's picker does, captured with `pipewiresrc` and published as
+/// `ScreenshareAudio` for ~5 s. (Not gst's `pipewiresink`: its node can't be targeted, like
+/// with `pw-record --target`.)
+async fn stream_audio(call: Arc<reflux_voice::Call>) -> Result<String, String> {
+    use std::io::Write;
+    let mut tone = std::process::Command::new("pw-play")
+        .args(["--raw", "--format", "s16", "--rate", "48000", "--channels", "2", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("pw-play: {e}"))?;
+    let mut stdin = tone.stdin.take().ok_or("pw-play: no stdin")?;
+    std::thread::spawn(move || {
+        // One second of tone, 15 times at most; stops when pw-play is killed (broken pipe).
+        let mut pcm = Vec::with_capacity(48_000 * 4);
+        for i in 0..48_000 {
+            let v = ((i as f32 * 440.0 / 48_000.0 * std::f32::consts::TAU).sin() * 1500.0) as i16;
+            pcm.extend_from_slice(&v.to_le_bytes());
+            pcm.extend_from_slice(&v.to_le_bytes());
+        }
+        for _ in 0..15 {
+            if stdin.write_all(&pcm).is_err() {
+                break;
+            }
+        }
+    });
+    let r = capture_app(&call).await;
+    let _ = tone.kill();
+    let _ = tone.wait();
+    r
+}
+
+async fn capture_app(call: &reflux_voice::Call) -> Result<String, String> {
+    let mut found = None;
+    for _ in 0..20 {
+        let apps = tokio::task::spawn_blocking(crate::gst::audio_apps).await.unwrap_or_default();
+        found = apps.into_iter().find(|(_, name)| name.starts_with("pw-play"));
+        if found.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let (node, name) = found.ok_or("the test tone never showed up in pw-dump")?;
+    say(format!("capturing PipeWire node {node} ({name})"));
+    let audio = Arc::new(call.publish_stream_audio().await.map_err(|e| e.to_string())?);
+    let (total, loud) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (sink, t, l) = (audio.clone(), total.clone(), loud.clone());
+    let capture = crate::gst::AudioCapture::start(&node, move |pcm| {
+        t.fetch_add(pcm.len(), Ordering::Relaxed);
+        l.fetch_add(pcm.iter().filter(|s| s.abs() > 1e-3).count(), Ordering::Relaxed);
+        sink.push(pcm);
+    });
+    let r = match capture {
+        Some(c) => {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            drop(c);
+            sent(call, "ScreenshareAudio").await
+        }
+        None => Err("pipewiresrc didn't start".into()),
+    };
+    let _ = call.unpublish_stream_audio(&audio).await;
+    let (total, loud) = (total.load(Ordering::Relaxed), loud.load(Ordering::Relaxed));
+    say(format!("captured {total} samples, {loud} non-silent"));
+    if loud == 0 {
+        return Err(format!("silence from node {node}"));
+    }
+    r
 }

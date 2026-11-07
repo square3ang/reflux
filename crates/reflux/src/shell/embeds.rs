@@ -126,16 +126,16 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
                 Some(if is_youtube(e) { youtube(st, e, v, p, acc) } else { video(store, st, m, &key, v, thumb, p, acc) })
             } else if let (Some(t), "gifv") = (thumb, e.kind.as_str()) {
                 // The muted looping video over the still while GIFs autoplay (or it's hovered).
-                // shortcut: on macOS and Windows (no GStreamer) the still stays.
+                // Windows has no player (see `gifv`), so the still stays.
                 let v = blocked(&e.video, level);
                 let (w, h) = v.map_or(dims(t), dims);
                 let size = super::chat::fit(w, h, (EMBED_W, EMBED_H));
                 let auto = (store.settings.gif_auto_play && !crate::look::reduced_motion()) || st.hover_msg == Some(m.id);
-                let frames = v.filter(|_| auto).and_then(|v| super::gifv::want(st, &key, v.proxy_url.as_deref().unwrap_or(&v.url)));
+                let playing = v.filter(|_| auto).and_then(|v| super::gifv::want(st, &key, v.proxy_url.as_deref().unwrap_or(&v.url), size));
                 let gif = EmbedMedia { content_type: Some("image/gif".into()), ..t.clone() };
                 let still = tile(store, st, m, key, &gif, size, false, p, acc);
-                Some(match frames {
-                    Some(px) => still.child(super::gifv::frame(&px, size).absolute(0.0, 0.0).radius(dim::MEDIA_BORDER_RADIUS).clip_rounded(dim::MEDIA_BORDER_RADIUS).inert()),
+                Some(match playing {
+                    Some(video) => still.child(video.absolute(0.0, 0.0).radius(dim::MEDIA_BORDER_RADIUS).clip_rounded(dim::MEDIA_BORDER_RADIUS).inert()),
                     None => still,
                 })
             } else {

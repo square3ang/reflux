@@ -650,6 +650,9 @@ fn connect(s: &mut State) {
             os: os_name().into(),
             browser: "Reflux".into(),
             device: std::env::consts::ARCH.into(),
+            // Fluxer's `isLiveKitE2EECapable()`: without it the gateway never grants an
+            // `e2ee_key` and refuses encrypted channels with VOICE_E2EE_REQUIRED.
+            e2ee_capable: true,
             ..Default::default()
         },
         flags: SessionFlags::CHANNEL_THREADS,

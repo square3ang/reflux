@@ -76,7 +76,7 @@ See `git log` for details. Crates:
   converted; the remaining files are listed in `i18n.rs`. Headless snapshots: `REFLUX_LOCALE=ko`.
 - Media (`shell/{attachments,embeds,lightbox,links,highlight,invite_embed}.rs`, `media.rs`):
   mosaic, spoiler/mature blur, inline video/audio (Rune `Player`; it only plays on macOS, so
-  Linux/Windows show "Open in browser"), file cards + text previews, rich/YouTube/gifv embeds,
+  Linux/Windows show "Open in browser"; gifv uses it on macOS), file cards + text previews, rich/YouTube/gifv embeds,
   invite cards (`Intent::FetchInvite` → `app/invites.rs`), lightbox (zoom/pan/arrows/Esc,
   download, copy image/link), external link warning + trusted domains, syntect highlighting,
   GIF/animated-WebP frames on a shared clock (`Media::take_next_frame` → `wake_after`).
@@ -150,8 +150,8 @@ See `git log` for details. Crates:
   Shortcuts (in code): Wayland PiP not on top, linear resampler, one voice connection per user,
   P2P rollout read once per session. PTT = the
   in-window key OR `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the
-  desktop). Live-verified with `--live=voice` (see Testing); remote playout, AEC and app audio
-  capture were not (no second participant).
+  desktop). Live-verified with `--live=voice` (see Testing), including camera and app audio
+  capture; remote playout and AEC were not (no second participant).
 - Look & feel (`look.rs`, `theme/custom.rs`, `settings/look_tabs.rs`, `shell/compact.rs`,
   `desktop/{sound,tts}.rs`): Appearance (font size, group spacing, cozy/dense, hide compact
   avatars, channel-list typing indicator, unread on muted), Chat (inline media/embeds, link
@@ -236,7 +236,11 @@ See `git log` for details. Crates:
 - Voice, in one channel only: `REFLUX_VOICE_CHANNEL=<voice channel id> REFLUX_TEST_TONE=1
   [REFLUX_LIVE_ENCODER=nvenc] reflux --live=voice --snap ...`: joins, checks the gateway echo,
   ping, server-side speaking on our tone, mute/deafen echoes, a test-pattern screen share's
-  `encoderImplementation`, the camera if any, then leaves (< 2 min; ends with "left the channel").
+  `encoderImplementation`, screen share audio from another app (a `pw-play` tone captured through
+  `pipewiresrc`), the camera if any, then leaves (< 2 min; ends with "left the channel"). Each
+  published track is checked with `Call::published()`: server sid (`TR_…`), packets / frames
+  sent and the SFU's RTCP receiver reports. It also prints whether the guild has `VOICE_E2EE`
+  (the only way to get an `e2ee_key` unless the instance rolls E2EE out platform-wide).
   The guard lets op 4 through only for that channel and for leaving; settings aren't saved.
   `REFLUX_TEST_TONE=1` replaces the mic with a generated tone.
 - NVENC needs the gitignored `.cuda` symlink in every worktree *before* the first build; webrtc-sys

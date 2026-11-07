@@ -29,6 +29,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 pub mod audio;
 pub mod mesh;
+mod published;
+pub use published::Published;
 pub use audio::{Engine, Kind, Mixer, Processing, Source};
 pub use livekit;
 

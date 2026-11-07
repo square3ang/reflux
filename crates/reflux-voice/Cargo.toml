@@ -22,3 +22,5 @@ livekit = { workspace = true, features = ["glib-main-loop"] }
 
 [dev-dependencies]
 log = "0.4"
+# Already in the tree (rustls): an independent PBKDF2 + AES-GCM for tests/e2ee.rs.
+ring = "0.17"
