@@ -1,9 +1,15 @@
-//! Calls: `VoiceCallView` (participant tiles in a grid or one focused, video and stream tiles,
-//! speaking borders, mute icons, `VoiceControlBar`), the DM call strip (`CompactVoiceCallView`)
-//! and its header buttons (`CallButtons`), `IncomingCallUI`, the voice dialogs
-//! (`CameraPreviewModal`, `ScreenSharePickerModal`, `VoiceChannelFullModal`,
+//! Calls: `VoiceCallView` (participant tiles in a grid or one focused/pinned, video and stream
+//! tiles, speaking borders, mute icons, layout modes, participant list popout, connection stats,
+//! app fullscreen, auto-hiding chrome, `VoiceControlBar`), the in-call settings menus
+//! (`VoiceSettingsMenus`: devices, input profile/level, volumes, voice region, camera and screen
+//! share menus), the DM call strip (`CompactVoiceCallView`) and its header buttons (`CallButtons`,
+//! persisted compact height, unread chat badge, live stream previews, audio-only avatars),
+//! `IncomingCallUI`, the voice dialogs (`CameraPreviewModal` with device/quality/mirror controls,
+//! `HideOwnCameraConfirmModal`, `ScreenSharePickerModal`, `VoiceChannelFullModal`,
 //! `VoiceConnectionConfirmModal`, `CallNotRingableModal`), `VoiceDetailsPopout` and the
-//! participant menu (`VoiceParticipantMenuItems`: local mute, focus, watch, ring).
+//! participant menu (`VoiceParticipantMenuItems`: local mute, focus/pin, watch, ring).
+
+use std::time::{Duration, Instant};
 
 use reflux_model::{Channel, ChannelType, Permissions, Snowflake, VoiceState};
 use reflux_store::Store;
@@ -15,7 +21,7 @@ use crate::i18n::t;
 use crate::icons;
 use crate::theme::{Palette, dim, font};
 use crate::ui::overlay::{anchor, popout_shadow};
-use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Placement, rgb, rgba};
+use crate::ui::{Button, ButtonVariant, Menu, MenuEntry, MenuItem, Placement, Switch, rgb, rgba};
 
 // `VoiceCallView.module.css` / `VoiceControlBar.module.css` colours.
 fn surface_0() -> Color {
@@ -42,6 +48,182 @@ fn success() -> Color {
 
 pub const TILE_MENU: &str = "voice-tile";
 pub const DETAILS: &str = "voice-details";
+pub const PARTICIPANTS: &str = "voice-participants";
+pub const MENU_INPUT: &str = "voice-input-settings";
+pub const MENU_OUTPUT: &str = "voice-output-settings";
+pub const MENU_CAMERA: &str = "voice-camera-settings";
+pub const MENU_SCREEN: &str = "voice-screen-settings";
+pub const MENU_MORE: &str = "voice-more-options";
+
+/// `COMPACT_VOICE_CALL_HEIGHT_MIN` / `MAX` from `CompactVoiceCallHeight.ts`; the min is smaller
+/// here because our caller surface sits in the channel header, not the whole chat column.
+pub const COMPACT_HEIGHT_MIN: f32 = 112.0;
+pub const COMPACT_HEIGHT_MAX: f32 = 480.0;
+pub const COMPACT_HEIGHT_DEFAULT: f32 = 160.0;
+
+/// `VoiceCallLayout.layoutMode`: `grid` or one focused/pinned participant.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutMode {
+    #[default]
+    Grid,
+    Focus,
+}
+
+/// The numbers `VoiceDetailsPopout`'s Advanced section shows. `None` until the engine reports
+/// them (the shell has no WebRTC stats access).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CallStats {
+    pub audio_loss: f64,
+    pub video_loss: f64,
+    pub jitter_ms: f64,
+    pub send_bitrate: f64,
+    pub recv_bitrate: f64,
+}
+
+/// In-call UI state that isn't part of the voice engine (`VoiceCallLayout`, `VoicePrompts`,
+/// `VoiceSettings.showMyOwnCamera` and the compact-call persistence, kept per device).
+pub struct CallUi {
+    pub layout: LayoutMode,
+    /// `showMyOwnCamera`: false keeps our camera published but shows our avatar instead.
+    pub show_own_camera: bool,
+    /// `showNonVideoParticipants`.
+    pub show_non_video: bool,
+    /// `prioritizeSpeakingParticipants`.
+    pub prioritize_speakers: bool,
+    /// `HideOwnCameraConfirmModal` is open; the value is its "Don't ask me again" checkbox.
+    pub hide_camera_confirm: Option<bool>,
+    /// The input menu's level meter is running (`Op::MicTest`).
+    pub meter_on: bool,
+    /// A device enumeration was asked for by an open menu.
+    pub devices_loading: bool,
+    pub cameras_loading: bool,
+    /// The DM call's chosen region (`VoiceRegionSelect`), `None` = Automatic.
+    pub region: Option<String>,
+    /// The channel `region` belongs to, so switching calls drops the stale pick.
+    pub region_channel: Option<Snowflake>,
+    /// The latest WebRTC stats, if the engine reported them.
+    pub stats: Option<CallStats>,
+    /// When the call connected (the stats popout's duration).
+    pub connected_at: Option<Instant>,
+    /// `VoiceRegionTeleportOverlay` is up until this instant.
+    pub teleport_until: Option<Instant>,
+    /// Call chrome is shown until this instant (`VOICE_HUD_IDLE_TIMEOUT_MS`); `None` = always.
+    pub hud_until: Option<Instant>,
+    /// `useVoiceCallAppFullscreen`: the call fills the app window.
+    pub app_fullscreen: bool,
+}
+
+impl Default for CallUi {
+    fn default() -> Self {
+        Self {
+            layout: LayoutMode::Grid,
+            show_own_camera: true,
+            show_non_video: true,
+            prioritize_speakers: false,
+            hide_camera_confirm: None,
+            meter_on: false,
+            devices_loading: false,
+            cameras_loading: false,
+            region: None,
+            region_channel: None,
+            stats: None,
+            connected_at: None,
+            teleport_until: None,
+            hud_until: None,
+            app_fullscreen: false,
+        }
+    }
+}
+
+/// `VOICE_HUD_IDLE_TIMEOUT_MS`.
+pub const HUD_IDLE: Duration = Duration::from_millis(2500);
+
+impl CallUi {
+    /// `setPinnedParticipant`: a pin implies focus mode; clearing it goes back to the grid.
+    pub fn pin(&mut self, user: Option<Snowflake>) {
+        self.layout = if user.is_some() { LayoutMode::Focus } else { LayoutMode::Grid };
+    }
+
+    /// Switches the layout from the More options menu; grid drops the pin (`setLayoutMode`).
+    pub fn set_layout(&mut self, mode: LayoutMode) {
+        self.layout = mode;
+    }
+
+    /// `VoiceCallLayout.pinnedParticipantIdentity`: remembered even while the grid is shown,
+    /// but the tile is only enlarged in focus mode.
+    pub fn pinned(&self, focus: Option<Snowflake>) -> Option<Snowflake> {
+        (self.layout == LayoutMode::Focus).then_some(focus).flatten()
+    }
+}
+
+/// `COMPACT_VOICE_CALL_HEIGHT_MIN..MAX`.
+pub fn compact_height(h: f32) -> f32 {
+    h.clamp(COMPACT_HEIGHT_MIN, COMPACT_HEIGHT_MAX)
+}
+
+/// The chat pill's unread count: messages past the read marker in the loaded window.
+pub fn unread_messages(store: &Store, channel: Snowflake) -> u32 {
+    // shortcut: the store keeps a 200-message window and no total unread count, so a channel with
+    // more than the window clamps at 200 (the badge shows 9+ anyway).
+    let ack = store.read_states.get(&channel).and_then(|r| r.last_message_id);
+    store.messages(channel).iter().filter(|m| ack.is_none_or(|a| m.id > a)).count() as u32
+}
+
+/// `heightToggleUnreadBadge`: 1..9, then `9+`.
+pub fn unread_badge(n: u32) -> String {
+    if n > 9 { "9+".into() } else { n.to_string() }
+}
+
+/// `VoiceParticipantSortUtils`: speaking participants first when the setting is on, user ID
+/// order otherwise (stable, so a speaker does not jump between frames while still talking).
+pub fn order_participants<'a>(people: &[(Snowflake, &'a VoiceState)], speaking: &std::collections::HashSet<Snowflake>, prioritize: bool) -> Vec<(Snowflake, &'a VoiceState)> {
+    let mut v = people.to_vec();
+    if prioritize {
+        v.sort_by_key(|(u, _)| !speaking.contains(u));
+    }
+    v
+}
+
+/// The queue stays non-empty for our own tile: `show_non_video` hides only others without media.
+fn visible_people<'a>(people: &[(Snowflake, &'a VoiceState)], me: Snowflake, show_non_video: bool, videos: &std::collections::HashMap<Snowflake, Pixels>, speaking: &std::collections::HashSet<Snowflake>) -> Vec<(Snowflake, &'a VoiceState)> {
+    if show_non_video {
+        return people.to_vec();
+    }
+    people
+        .iter()
+        .filter(|(u, v)| *u == me || v.self_video || v.self_stream || videos.contains_key(u) || speaking.contains(u))
+        .copied()
+        .collect()
+}
+
+/// `formatPacketLossPercent` / `formatBitrateKbps` for the stats popout.
+pub fn stat_percent(v: f64) -> String {
+    format!("{v:.1}%")
+}
+
+pub fn stat_bitrate_kbps(bps: f64) -> String {
+    format!("{:.0} kbps", bps / 1000.0)
+}
+
+pub fn stat_ms(v: f64) -> String {
+    format!("{v:.0} ms")
+}
+
+/// RTT variation as a jitter stand-in: the mean absolute difference of the ping samples.
+pub fn jitter_from_pings(pings: &[u32]) -> f64 {
+    let n = pings.len();
+    if n < 2 {
+        return 0.0;
+    }
+    pings.windows(2).map(|w| w[0].abs_diff(w[1]) as f64).sum::<f64>() / (n - 1) as f64
+}
+
+/// Minutes:seconds for the connection duration.
+pub fn duration_label(d: Duration) -> String {
+    let secs = d.as_secs();
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
 
 fn op<S: 'static>(acc: ShellAccess<S>, o: Op) -> impl Fn(&mut S) + 'static {
     move |s: &mut S| acc(s).intents.push(Intent::Voice(o.clone()))
@@ -71,8 +253,25 @@ fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
     let v = &st.voice;
     match (t.screen, t.user == me) {
         (true, _) => (v.watching == Some(t.user)).then_some(&v.stream),
-        (false, true) => v.camera.then_some(&v.self_view),
+        // `showMyOwnCamera`: ours is only hidden from our own view, the track stays published.
+        (false, true) => (v.camera && st.call.show_own_camera).then_some(&v.self_view),
         (false, false) => v.videos.get(&t.user),
+    }
+}
+
+/// `useStreamPreview`: the Active Now preview frame for a participant's stream, if one is loaded.
+fn stream_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake) -> Option<Pixels> {
+    // shortcut: previews reuse Active Now's cached stream thumbnail; a call without one shows
+    // the Watch stream placeholder until watched. Subscribe a preview track when LiveKit exposes
+    // a cheap subscription for it.
+    let channel = st.voice.channel?.1;
+    let conn = store.voice_states.get(&(guild, user))?.connection_id.clone()?;
+    let key = format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string()));
+    let entry = st.voice.previews.get(&key)?;
+    let bytes = entry.bytes.clone()?;
+    match st.media.local(&format!("stream-preview:{key}:{}", entry.fetched_ms), move || Ok(bytes.to_vec())) {
+        crate::media::Load::Ready(px) => Some(px),
+        _ => None,
     }
 }
 
@@ -82,10 +281,12 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
     let me = store.my_id();
     let speaking = !t.screen && st.voice.speaking.contains(&t.user);
     let name = store.display_name(guild, t.user);
+    let preview = (t.screen && video(st, me, t).is_none()).then(|| stream_preview(store, st, guild, t.user)).flatten();
     let mut body = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).clip_rounded(dim::RADIUS_LG);
-    match video(st, me, t) {
-        Some(px) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
-        None if t.screen => {
+    match (video(st, me, t), &preview) {
+        (Some(px), _) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
+        (None, Some(px)) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
+        _ if t.screen => {
             // `watchStreamOverlay`: the stream isn't subscribed until asked for.
             let u = t.user;
             let watch = row()
@@ -109,7 +310,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
                 });
             body = body.fill(rgba(0, 0, 0, 0.78)).child(row().w_full().h_full().center().child(watch));
         }
-        None => {
+        _ => {
             let size = if big { 96.0 } else { 64.0 };
             let face = el().size(size, size).child(avatar(store, st, t.user, size, None, surface_3(), p));
             body = body.fill(surface_3()).child(row().w_full().h_full().center().child(face));
@@ -147,6 +348,10 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
     {
         pill = pill.child(text(format!(" · {c}")).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72)).truncate().shrink());
     }
+    if st.call.layout == LayoutMode::Focus && st.voice.focus == Some(t.user) {
+        // `pinnedParticipant`: the pin glyph marks the focused tile.
+        pill = pill.child(glyph(&icons::PUSH_PIN_FILL, rgba(255, 255, 255, 0.9)));
+    }
     let key = format!("tile-{}-{}", t.user, t.screen as u8);
     let mut outer = el()
         .key(key.clone())
@@ -163,10 +368,20 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
         // `[data-speaking='true']::after`: a 3.5px status-online border inside the tile.
         outer = outer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).border(3.5, p.status_online));
     }
+    let can_watch = t.screen && preview.is_some();
     let focus = (st.voice.focus != Some(t.user)).then_some(t.user);
     let user = t.user;
     outer
-        .on_press(move |s: &mut S| acc(s).voice.focus = focus)
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            if can_watch {
+                sh.voice.watching = Some(user);
+                sh.intents.push(Intent::Watch(Some(user)));
+                return;
+            }
+            sh.voice.focus = focus;
+            sh.call.pin(focus);
+        })
         .on_secondary_press(move |s: &mut S, at, _| {
             let sh = acc(s);
             sh.popups.open_at(TILE_MENU, [at.x, at.y]);
@@ -179,12 +394,57 @@ fn slot(content: El) -> El {
     row().grow(1.0).min_w(0.0).h_full().center().child(el().aspect_fit(16.0 / 9.0).max_w(9999.0).max_h(9999.0).child(content))
 }
 
-/// The tile area: a near-square grid, or the focused tile over a strip of the rest.
+/// The tile area: a near-square grid, one focused/pinned tile over a strip of the rest, or the
+/// `audioAvatarFallback` avatar list when nobody publishes video.
 fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], p: &Palette, acc: ShellAccess<S>) -> El {
-    let all = tiles(people);
+    let me = store.my_id();
+    let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
+    let all = tiles(&people);
     let state = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
     let make = |t: Tile, big: bool| state(t.user).map(|vs| tile(store, st, guild, t, vs, big, p, acc)).unwrap_or_else(el);
-    let focused = st.voice.focus.and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
+    // `audioAvatarFallback`: no camera or stream tracks → a centred avatar list.
+    if !all.iter().any(|t| video(st, me, *t).is_some() || t.screen) {
+        let _ = p;
+        let mut faces = row().w_full().h_full().padding(24.0).gap(24.0).flex_wrap().justify_center().items_center();
+        for (u, vs) in &people {
+            let user = *u;
+            let name = store.display_name(guild, user);
+            let speaking = st.voice.speaking.contains(&user);
+            let size = if people.len() <= 4 { 96.0 } else { 64.0 };
+            let mut face = col()
+                .items_center()
+                .gap(8.0)
+                .padding(10.0)
+                .radius(12.0)
+                .child(el().size(size, size).child(avatar(store, st, user, size, None, surface_3(), p)))
+                .child(
+                    row()
+                        .gap(4.0)
+                        .center_y()
+                        .child(text(name.clone()).font(font(13.0, 500.0).lh(16.0)).color(rgba(255, 255, 255, 0.9)).max_w(180.0).truncate())
+                        .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 13.0).color(danger()) } else { el() })
+                        .child(if st.voice.local_mutes.contains(&user) { icon(&icons::SPEAKER_X_FILL, 13.0).color(danger()) } else { el() }),
+                )
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(name)
+                .on_press(move |s: &mut S| {
+                    let st = acc(s);
+                    st.voice.focus = Some(user);
+                    st.call.pin(Some(user));
+                });
+            if speaking {
+                face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(12.0).border(2.0, p.status_online));
+            }
+            faces = faces.child(face);
+        }
+        if people.is_empty() {
+            faces = faces.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)));
+        }
+        return faces;
+    }
+    let focused = st.call.pinned(st.voice.focus).and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
     if let Some(f) = focused {
         let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
         let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(row().w_full().grow(1.0).min_h(0.0).child(slot(make(f, true))));
@@ -202,8 +462,29 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     grid
 }
 
-/// `VoiceControlBar`: 44px buttons on a black pill.
-fn control_bar<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> El {
+/// `.settingsButton`: the caret that opens a control's in-call menu.
+fn settings_button<S: 'static>(id: &'static str, label: &str, _p: &Palette, acc: ShellAccess<S>) -> El {
+    row()
+        .key(id)
+        .size(18.0, 44.0)
+        .center()
+        .radius(8.0)
+        .hover(rgba(255, 255, 255, 0.12))
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(label.to_string())
+        .child(icon(&icons::CARET_DOWN_BOLD, 12.0).color(rgba(255, 255, 255, 0.72)))
+        .on_press(move |s: &mut S| acc(s).popups.toggle(id))
+        .hover_group()
+}
+
+/// A control button and its caret, as `VoiceControlBar` lays them out.
+fn control_pair<S: 'static>(button: El, id: &'static str, label: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+    row().gap(1.0).center_y().child(button).child(settings_button(id, label, p, acc))
+}
+
+/// `VoiceControlBar`: 44px buttons on a black pill, each settings control with its caret menu.
+fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let v = &st.voice;
     let button = |i: &'static rune::Icon, label: &str, bg: Color, hover: Color, fg: Color, on: Box<dyn Fn(&mut S)>| {
         row()
@@ -233,17 +514,161 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: Sh
         .center_y()
         .radius(16.0 + 6.0 + 2.0)
         .fill(rgb(0, 0, 0))
-        .border(1.0, hud_border())
-        .child(button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { t("Unmute") } else { t("Mute") }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute())))
-        .child(button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { t("Undeafen") } else { t("Deafen") }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf())));
+        .border(1.0, hud_border());
+    let mic_button = button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { t("Unmute") } else { t("Mute") }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute()));
+    bar = bar.child(control_pair(mic_button, MENU_INPUT, t("Input settings"), p, acc));
+    let deaf_button = button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { t("Undeafen") } else { t("Deafen") }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf()));
+    bar = bar.child(control_pair(deaf_button, MENU_OUTPUT, t("Output settings"), p, acc));
     if can_video {
-        bar = bar.child(button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { t("Turn off camera") } else { t("Turn on camera") }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera))));
+        let cam_button = button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { t("Turn off camera") } else { t("Turn on camera") }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera)));
+        bar = bar.child(control_pair(cam_button, MENU_CAMERA, t("Camera settings"), p, acc));
     }
-    bar = bar.child(button(&icons::MONITOR_ARROW_UP_FILL, if v.screen { "Stop sharing your screen" } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
+    let scr_button = button(&icons::MONITOR_ARROW_UP_FILL, if v.screen { t("End screen share") } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
         let sh = acc(s);
         if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { open_screen_picker(sh) }
-    })));
+    }));
+    bar = bar.child(control_pair(scr_button, MENU_SCREEN, t("Screen share settings"), p, acc));
+    // `VoiceMoreOptionsMenu`: layout, own camera, speakers, region and settings.
+    bar = bar.child(
+        row()
+            .key(MENU_MORE)
+            .size(44.0, 44.0)
+            .center()
+            .radius(16.0)
+            .fill(neutral.0)
+            .hover(neutral.1)
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(t("More options"))
+            .child(icon(&icons::DOTS_THREE_BOLD, 22.0).color(neutral.2))
+            .on_press(move |s: &mut S| {
+                let sh = acc(s);
+                sh.popups.toggle(MENU_MORE);
+                if sh.popups.is_open(MENU_MORE) {
+                    ensure_regions(sh);
+                }
+            }),
+    );
     bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())))
+}
+
+/// `ChannelHeaderIcon`: a 32px header button.
+fn header_button<S: 'static>(i: &'static rune::Icon, label: &str, p: &Palette, _acc: ShellAccess<S>, on: impl Fn(&mut S) + 'static) -> El {
+    let _ = p;
+    row()
+        .size(32.0, 32.0)
+        .center()
+        .radius(8.0)
+        .hover(rgba(255, 255, 255, 0.12))
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(label.to_string())
+        .child(icon(i, 20.0).color(rgba(255, 255, 255, 0.9)))
+        .on_press(move |s: &mut S| on(s))
+}
+
+/// `CompactCallHeightToggleButton`'s chat pill: opens the full call view (chat hidden) and
+/// carries the unread badge. The full call view uses the same pill to go back to the list.
+pub fn chat_pill<S: 'static>(store: &Store, _st: &ShellState, channel: Snowflake, in_call: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let unread = unread_messages(store, channel);
+    let label = if in_call {
+        if unread > 0 {
+            crate::i18n::tf("Show chat with {count, plural, one {# unread message} other {# unread messages}}", &[("count", &unread.to_string())])
+        } else {
+            t("Show chat").to_string()
+        }
+    } else {
+        t("Expand call view").to_string()
+    };
+    let mut pill = row()
+        .key("voice-chat-toggle")
+        .h(32.0)
+        .px(10.0)
+        .gap(6.0)
+        .center_y()
+        .radius(8.0)
+        .hover(rgba(255, 255, 255, 0.12))
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(label)
+        .child(icon(&icons::CHAT_CIRCLE_TEXT_FILL, 18.0).color(rgba(255, 255, 255, 0.9)));
+    if unread > 0 {
+        pill = pill.child(
+            row()
+                .min_w(16.0)
+                .h(16.0)
+                .px(3.0)
+                .center()
+                .radius(8.0)
+                .fill(danger())
+                .child(text(unread_badge(unread)).font(font(10.0, 700.0).lh(12.0)).color(Color::WHITE)),
+        );
+    }
+    let _ = p;
+    pill.on_press(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.call_view = !in_call;
+    })
+}
+
+/// `VoiceParticipantSpeakingAvatarStack`: up to five avatars, the rest behind a `+N` popout.
+fn participant_stack<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], p: &Palette, acc: ShellAccess<S>) -> El {
+    let mut stack = row().gap(2.0).center_y().role("group").label(t("Voice participants"));
+    for (u, _) in people.iter().take(5) {
+        let user = *u;
+        let speaking = st.voice.speaking.contains(u);
+        let mut face = el().size(24.0, 24.0).radius(12.0).clip_rounded(12.0).child(avatar(store, st, user, 24.0, None, surface_3(), p));
+        if speaking {
+            face = face.border(2.0, p.status_online);
+        }
+        stack = stack.child(face.cursor(rune::Cursor::Pointer).role("button").label(store.display_name(guild, user)).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.focus = Some(user);
+            sh.call.pin(Some(user));
+        }));
+    }
+    if people.len() > 5 {
+        let extra = people.len() - 5;
+        stack = stack.child(
+            row()
+                .min_w(24.0)
+                .h(24.0)
+                .px(5.0)
+                .center()
+                .radius(12.0)
+                .fill(rgba(255, 255, 255, 0.12))
+                .hover(rgba(255, 255, 255, 0.2))
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(crate::i18n::tf("Show all {count} participants", &[("count", &people.len().to_string())]))
+                .child(text(format!("+{extra}")).font(font(11.0, 700.0).lh(14.0)).color(Color::WHITE))
+                .on_press(move |s: &mut S| acc(s).popups.toggle(PARTICIPANTS)),
+        );
+    }
+    stack
+}
+
+/// `VoiceRegionTeleportOverlay`: while a call moves to another region.
+pub fn teleport_overlay(p: &Palette) -> El {
+    let label = t("Teleporting you to another voice region...");
+    let _ = p;
+    el()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .center()
+        .fill(rgba(0, 0, 0, 0.72))
+        .role("alert")
+        .label(label)
+        .child(
+            col()
+                .items_center()
+                .gap(12.0)
+                .padding(24.0)
+                .radius(16.0)
+                .fill(surface_2())
+                .border(1.0, hud_border())
+                .child(icon(&icons::GLOBE_FILL, 36.0).color(rgba(255, 255, 255, 0.72)))
+                .child(text(label).font(font(15.0, 600.0).lh(19.0)).color(Color::WHITE)),
+        )
 }
 
 /// `VoiceCallView` for the connected channel, in place of the chat column.
@@ -251,44 +676,610 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let (guild, channel) = st.voice.channel?;
     let people = participants(store, guild, channel);
     let name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
+    let hud_visible = st.call.hud_until.is_none_or(|t| t > Instant::now());
     let mut header = row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
         .px(dim::SPACING_4)
         .gap(dim::SPACING_2)
         .center_y()
+        .child(header_button(&icons::LIST_BOLD, t("Back to voice channel"), p, acc, move |s: &mut S| acc(s).voice.call_view = false))
         .child(icon(&icons::SPEAKER_HIGH_FILL, 20.0).color(rgba(255, 255, 255, 0.72)))
         .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(Color::WHITE).truncate().shrink());
     if st.voice.encrypted {
         header = header.child(e2ee_badge());
     }
-    header = header.child(el().grow(1.0)).child(
-        row()
-            .size(32.0, 32.0)
-            .center()
-            .radius(8.0)
-            .hover(rgba(255, 255, 255, 0.12))
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .label(t("Show chat"))
-            .child(icon(&icons::CHAT_CIRCLE_TEXT_FILL, 20.0).color(rgba(255, 255, 255, 0.9)))
-            .on_press(move |s: &mut S| acc(s).voice.call_view = false),
-    );
+    let mut right = row().gap(4.0).center_y();
+    if !people.is_empty() {
+        right = right.child(participant_stack(store, st, guild, &people, p, acc));
+    }
+    right = right
+        .child(
+            row()
+                .key(PARTICIPANTS)
+                .h(32.0)
+                .px(6.0)
+                .gap(4.0)
+                .center_y()
+                .radius(8.0)
+                .hover(rgba(255, 255, 255, 0.12))
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Voice participants"))
+                .child(icon(&icons::USERS_FILL, 18.0).color(rgba(255, 255, 255, 0.9)))
+                .child(text(people.len().to_string()).font(font(12.0, 600.0).lh(16.0)).color(rgba(255, 255, 255, 0.9)))
+                .on_press(move |s: &mut S| acc(s).popups.toggle(PARTICIPANTS)),
+        )
+        .child(
+            row()
+                .key(DETAILS)
+                .size(32.0, 32.0)
+                .center()
+                .radius(8.0)
+                .hover(rgba(255, 255, 255, 0.12))
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Connection stats"))
+                .child(icon(&icons::CHART_BAR_FILL, 20.0).color(if st.popups.is_open(DETAILS) { success() } else { rgba(255, 255, 255, 0.9) }))
+                .on_press(move |s: &mut S| acc(s).popups.toggle(DETAILS)),
+        )
+        .child(header_button(if st.call.app_fullscreen { &icons::CORNERS_IN_BOLD } else { &icons::CORNERS_OUT_BOLD }, if st.call.app_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, p, acc, move |s: &mut S| {
+            let sh = acc(s);
+            sh.call.app_fullscreen = !sh.call.app_fullscreen;
+        }))
+        .child(chat_pill(store, st, channel, true, p, acc));
+    header = header.child(el().grow(1.0)).child(right);
     let body = if st.voice.connected {
         layout(store, st, guild, &people, p, acc)
     } else {
         row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
-    Some(
+    let mut body = body;
+    if let Some(until) = st.call.teleport_until
+        && until > Instant::now()
+    {
+        // shortcut: no region-teleport event from the engine; the overlay runs for a few seconds
+        // after the region PATCH. Replace with the reconnect event when reflux-voice exposes it.
+        body = el().w_full().grow(1.0).min_h(0.0).child(body).child(teleport_overlay(p));
+    }
+    let mut root = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .h_full()
+        .fill(surface_1());
+    if hud_visible {
+        root = root.child(header);
+    }
+    root = root.child(col().w_full().grow(1.0).min_h(0.0).child(body));
+    if hud_visible {
+        // shortcut: Rune has no pointer-move event, so the chrome hides after the idle timeout
+        // and comes back when the pointer enters the call (or Show controls is pressed).
+        root = root.child(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc)));
+    } else {
+        root = root.child(row().w_full().py(8.0).justify_center().child(header_button(&icons::CORNERS_OUT_BOLD, t("View call controls"), p, acc, move |s: &mut S| {
+            acc(s).call.hud_until = Some(Instant::now() + Duration::from_secs(8));
+        })));
+    }
+    Some(root.on_hover_change(move |s: &mut S, inside, tx: &mut rune::Tx| {
+        let sh = acc(s);
+        // shortcut: `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
+        // on every pointer move. A click or hover enter brings it back here.
+        sh.call.hud_until = if inside { Some(Instant::now() + HUD_IDLE) } else { Some(Instant::now() - Duration::from_millis(1)) };
+        if inside {
+            tx.wake_after(HUD_IDLE);
+        }
+    }))
+}
+
+// ---- In-call settings menus (`VoiceSettingsMenus`) ----------------------------------------------
+
+fn device_entries<S: 'static>(devices: Option<&Vec<String>>, current: Option<&str>, input: bool, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    let prefix = if input { "input" } else { "output" };
+    let mut out = vec![MenuEntry::Item(
+        MenuItem::new(format!("{prefix}-default"), t("Default"))
+            .radio(current.is_none())
+            .on_select(move |s: &mut S| {
+                let sh = acc(s);
+                if input {
+                    sh.voice.input = None;
+                } else {
+                    sh.voice.output = None;
+                }
+                sh.intents.push(Intent::VoiceDevices);
+            }),
+    )];
+    for name in devices.into_iter().flatten() {
+        let pick = name.clone();
+        out.push(MenuEntry::Item(
+            MenuItem::new(format!("{prefix}-{name}"), name.clone())
+                .radio(current == Some(name.as_str()))
+                .on_select(move |s: &mut S| {
+                    let sh = acc(s);
+                    if input {
+                        sh.voice.input = Some(pick.clone());
+                    } else {
+                        sh.voice.output = Some(pick.clone());
+                    }
+                    sh.intents.push(Intent::VoiceDevices);
+                }),
+        ));
+    }
+    out
+}
+
+fn profile_entries<S: 'static>(current: &str, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    [("voice", "Focused voice"), ("studio", "Direct input"), ("custom", "Custom")]
+        .into_iter()
+        .map(|(id, label)| {
+            MenuEntry::Item(MenuItem::new(format!("profile-{id}"), t(label)).radio(current == id).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.settings.processing = id.into();
+                sh.intents.push(Intent::Voice(Op::Settings));
+            }))
+        })
+        .collect()
+}
+
+/// `VoiceInputLevelItem`: the live meter under the input volume.
+fn meter_entry<S: 'static>(level_db: f32, p: &Palette) -> MenuEntry<S> {
+    let level = ((level_db + 60.0) / 60.0).clamp(0.0, 1.0);
+    let bar = row()
+        .w_full()
+        .h(6.0)
+        .radius(3.0)
+        .fill(p.background_tertiary)
+        .child(el().w((196.0 * level).max(0.0)).h_full().radius(3.0).fill(if level > 0.85 { p.status_danger } else { p.status_online }))
+        .role("meter")
+        .label(t("Input level"));
+    MenuEntry::El(Box::new(
         col()
-            .grow(1.0)
-            .min_w(0.0)
-            .h_full()
-            .fill(surface_1())
-            .child(header)
-            .child(col().w_full().grow(1.0).min_h(0.0).child(body))
-            .child(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc))),
-    )
+            .w_full()
+            .px(8.0)
+            .py(6.0)
+            .gap(5.0)
+            .child(text(t("Input level")).font(font(12.0, 500.0).lh(16.0)).color(p.text_tertiary))
+            .child(bar),
+    ))
+}
+
+fn camera_device_entries<S: 'static>(cameras: Option<&Vec<String>>, current: Option<&str>, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    let mut out = vec![MenuEntry::Item(
+        MenuItem::new("camera-default", t("Default"))
+            .radio(current.is_none())
+            .on_select(move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.settings.camera = None;
+                sh.intents.push(Intent::Voice(Op::Settings));
+                sh.intents.push(Intent::Voice(Op::Preview(false)));
+                sh.intents.push(Intent::Voice(Op::Preview(true)));
+            }),
+    )];
+    for name in cameras.into_iter().flatten() {
+        let pick = name.clone();
+        out.push(MenuEntry::Item(
+            MenuItem::new(format!("camera-{name}"), name.clone())
+                .radio(current == Some(name.as_str()))
+                .on_select(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.settings.camera = Some(pick.clone());
+                    sh.intents.push(Intent::Voice(Op::Settings));
+                    sh.intents.push(Intent::Voice(Op::Preview(false)));
+                    sh.intents.push(Intent::Voice(Op::Preview(true)));
+                }),
+        ));
+    }
+    out
+}
+
+fn camera_quality_entries<S: 'static>(higher: bool, current: &str, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    [("low", "480p"), ("medium", "720p"), ("high", "1080p")]
+        .into_iter()
+        .map(|(id, label)| {
+            let locked = id == "high" && !higher;
+            let item = MenuItem::new(format!("camera-quality-{id}"), t(label)).radio(current == id);
+            if locked {
+                MenuEntry::Item(item.disabled(true).hint(t("Plutonium")))
+            } else {
+                MenuEntry::Item(item.on_select(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.settings.camera_quality = id.into();
+                    sh.intents.push(Intent::Voice(Op::Settings));
+                    sh.intents.push(Intent::Voice(Op::Preview(false)));
+                    sh.intents.push(Intent::Voice(Op::Preview(true)));
+                }))
+            }
+        })
+        .collect()
+}
+
+fn screen_mode_entries<S: 'static>(current: &str, higher: bool, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    [("gaming", if higher { "Gaming (up to 1440p60)" } else { "Gaming (up to 720p30)" }), ("screenshare", "Screen share"), ("custom", "Custom")]
+        .into_iter()
+        .map(|(id, label)| {
+            MenuEntry::Item(MenuItem::new(format!("screen-mode-{id}"), t(label)).radio(current == id).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.settings.streaming_mode = id.into();
+                sh.intents.push(Intent::Voice(Op::Settings));
+            }))
+        })
+        .collect()
+}
+
+/// The camera's in-call menu (`VoiceCameraSettingsMenu`).
+fn camera_menu<S: 'static>(st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+    let v = &st.voice;
+    let cameras = v.cameras.as_ref();
+    let current = v.settings.camera.as_deref();
+    let higher = st.limits.higher_video_quality;
+    let quality = camera_quality_entries(higher, &v.settings.camera_quality, acc);
+    let mut menu = Menu::new(MENU_CAMERA).placement(Placement::Top);
+    menu = menu.entry(MenuEntry::SubmenuHint {
+        id: "cameras".into(),
+        label: t("Camera").to_string(),
+        hint: Some(current.unwrap_or(t("Default")).to_string()),
+        disabled: false,
+        entries: camera_device_entries(cameras, current, acc),
+    });
+    menu = menu
+        .entry(MenuEntry::Submenu("camera-quality".into(), t("Camera quality").to_string(), quality))
+        .item(MenuItem::new("mirror-camera", t("Mirror camera")).checkbox(v.settings.mirror_camera).keep_open().on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.settings.mirror_camera ^= true;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .separator()
+        .item(MenuItem::new("preview-camera", t("Preview camera")).icon(&icons::EYE_FILL).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.modal = Some(Modal::CameraPreview);
+            sh.intents.push(Intent::Voice(Op::LoadCameras));
+            sh.intents.push(Intent::Voice(Op::Preview(true)));
+        }))
+        .item(MenuItem::new("video-settings", t("Video settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.open_settings(Some("voice_video"));
+        }));
+    menu
+}
+
+fn screen_menu<S: 'static>(st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+    let v = &st.voice;
+    let higher = st.limits.higher_video_quality;
+    let mut menu = Menu::new(MENU_SCREEN).placement(Placement::Top);
+    if v.screen {
+        menu = menu
+            .item(MenuItem::new("stop-stream", t("End screen share")).icon(&icons::MONITOR_PLAY_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen)))
+            .item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::ARROWS_LEFT_RIGHT_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))));
+        for e in stream_quality_entries(st, acc) {
+            menu = menu.entry(e);
+        }
+    } else {
+        menu = menu.entry(MenuEntry::Group(t("Streaming mode").to_string()));
+        for e in screen_mode_entries(&v.settings.streaming_mode, higher, acc) {
+            menu = menu.entry(e);
+        }
+        for e in stream_quality_entries(st, acc) {
+            menu = menu.entry(e);
+        }
+        menu = menu
+            .separator()
+            .item(MenuItem::new("share-now", t("Share your screen")).icon(&icons::MONITOR_ARROW_UP_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))));
+    }
+    menu.item(MenuItem::new("screen-settings", t("Screen share settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+        let sh = acc(s);
+        sh.popups.close();
+        sh.open_settings(Some("voice_video"));
+    }))
+}
+
+fn input_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+    let v = &st.voice;
+    let set = &v.settings;
+    let inputs = v.devices.as_ref().map(|(i, _)| i);
+    let current = v.input.as_deref();
+    let level = if v.mic_test || st.call.meter_on { v.level } else { -60.0 };
+    let profile = match set.processing.as_str() {
+        "studio" => "Direct input",
+        "custom" => "Custom",
+        _ => "Focused voice",
+    };
+    Menu::new(MENU_INPUT)
+        .placement(Placement::Top)
+        .entry(MenuEntry::SubmenuHint {
+            id: "input-device".into(),
+            label: t("Input device").to_string(),
+            hint: Some(current.unwrap_or(t("Default")).to_string()),
+            disabled: false,
+            entries: device_entries(inputs, current, true, acc),
+        })
+        .entry(MenuEntry::SubmenuHint {
+            id: "input-profile".into(),
+            label: t("Input profile").to_string(),
+            hint: Some(t(profile).to_string()),
+            disabled: false,
+            entries: profile_entries(&set.processing, acc),
+        })
+        .separator()
+        .entry(menu_slider("input-volume".into(), t("Input volume"), set.input_volume, p, move |s: &mut S, x| {
+            let sh = acc(s);
+            sh.voice.settings.input_volume = x;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .entry(meter_entry(level, p))
+        .separator()
+        .item(MenuItem::new("push-to-talk", t("Push-to-talk")).checkbox(set.push_to_talk).keep_open().on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.settings.push_to_talk ^= true;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .item(MenuItem::new("deafen", t("Deafen")).checkbox(v.self_deaf).keep_open().on_select(move |s: &mut S| acc(s).toggle_deaf()))
+        .separator()
+        .item(MenuItem::new("voice-settings", t("Voice settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.open_settings(Some("voice_video"));
+        }))
+}
+
+fn output_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+    let v = &st.voice;
+    let outputs = v.devices.as_ref().map(|(_, o)| o);
+    let current = v.output.as_deref();
+    Menu::new(MENU_OUTPUT)
+        .placement(Placement::Top)
+        .entry(MenuEntry::SubmenuHint {
+            id: "output-device".into(),
+            label: t("Output device").to_string(),
+            hint: Some(current.unwrap_or(t("Default")).to_string()),
+            disabled: false,
+            entries: device_entries(outputs, current, false, acc),
+        })
+        .separator()
+        .entry(menu_slider("output-volume".into(), t("Output volume"), v.settings.output_volume, p, move |s: &mut S, x| {
+            let sh = acc(s);
+            sh.voice.settings.output_volume = x;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .separator()
+        .item(MenuItem::new("deafen", t("Deafen")).checkbox(v.self_deaf).keep_open().on_select(move |s: &mut S| acc(s).toggle_deaf()))
+        .item(MenuItem::new("voice-settings", t("Voice settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.open_settings(Some("voice_video"));
+        }))
+}
+
+/// `fetchCallRegions` for a DM call, through the generic REST intent.
+pub fn ensure_regions(sh: &mut ShellState) {
+    let Some((None, ch)) = sh.voice.channel else { return };
+    let key = format!("voice-regions-{ch}");
+    if matches!(sh.expr.fetched.get(&key), Some(super::expr::Fetched::Failed(_))) {
+        sh.expr.fetched.remove(&key);
+    }
+    if sh.expr.fetched.contains_key(&key) {
+        return;
+    }
+    sh.expr.fetched.insert(key.clone(), super::expr::Fetched::Loading);
+    sh.intents.push(Intent::Fetch { key, method: reqwest::Method::GET, path: format!("/channels/{ch}/call/regions"), body: None });
+}
+
+/// The region list from `GET /channels/:id/call/regions` (Automatic always first).
+pub fn region_options(st: &ShellState) -> Vec<(String, String)> {
+    let Some((None, ch)) = st.voice.channel else { return Vec::new() };
+    let key = format!("voice-regions-{ch}");
+    let mut out = vec![("automatic".to_string(), t("Automatic").to_string())];
+    if let Some(super::expr::Fetched::Done(serde_json::Value::Array(list))) = st.expr.fetched.get(&key) {
+        for r in list {
+            let Some(id) = r["id"].as_str() else { continue };
+            if id == "automatic" {
+                continue;
+            }
+            let name = r["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(id);
+            out.push((id.to_string(), name.to_string()));
+        }
+    }
+    out
+}
+
+fn region_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    let Some((_, ch)) = st.voice.channel else { return Vec::new() };
+    let current = st.call.region.clone();
+    let options = region_options(st);
+    if options.len() == 1 && !matches!(st.expr.fetched.get(&format!("voice-regions-{ch}")), Some(super::expr::Fetched::Done(_))) {
+        return vec![MenuEntry::Item(MenuItem::new("regions-loading", t("Loading…")).disabled(true))];
+    }
+    options
+        .into_iter()
+        .map(|(id, name)| {
+            let pick = id.clone();
+            MenuEntry::Item(MenuItem::new(format!("region-{id}"), name).radio(current.as_deref() == Some(id.as_str())).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                sh.call.teleport_until = Some(Instant::now() + Duration::from_secs(3));
+                sh.call.region = (pick != "automatic").then(|| pick.clone());
+                sh.intents.push(Intent::Fetch {
+                    key: format!("voice-region-set-{ch}"),
+                    method: reqwest::Method::PATCH,
+                    path: format!("/channels/{ch}/call"),
+                    body: Some(serde_json::json!({ "region": pick })),
+                });
+            }))
+        })
+        .collect()
+}
+
+/// `VoiceMoreOptionsMenu`: region, layout, own camera, non-video participants, speaker
+/// priority, standard-call switch and the settings entry.
+fn more_menu<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+    let v = &st.voice;
+    let mut menu = Menu::new(MENU_MORE).placement(Placement::Top).min_w(300.0);
+    if matches!(v.channel, Some((None, _))) {
+        let regions = region_entries(st, acc);
+        let hint = st.call.region.as_ref().and_then(|id| region_options(st).into_iter().find(|(i, _)| i == id).map(|(_, n)| n));
+        menu = menu.entry(MenuEntry::SubmenuHint {
+            id: "voice-region".into(),
+            label: t("Voice region").to_string(),
+            hint: Some(hint.unwrap_or_else(|| t("Automatic").to_string())),
+            disabled: false,
+            entries: regions,
+        });
+    }
+    let is_grid = st.call.layout == LayoutMode::Grid;
+    let first = v.channel.and_then(|(g, c)| participants(store, g, c).first().map(|(u, _)| *u));
+    menu = menu
+        .item(
+            MenuItem::new("grid-view", t("Grid view")).icon(&icons::GRID_FOUR_FILL).checkbox(is_grid).keep_open().on_select(move |s: &mut S| {
+                let sh = acc(s);
+                if sh.call.layout == LayoutMode::Grid {
+                    sh.call.set_layout(LayoutMode::Focus);
+                    sh.voice.focus = first.or(sh.voice.focus);
+                } else {
+                    sh.call.set_layout(LayoutMode::Grid);
+                    sh.voice.focus = None;
+                }
+            }),
+        )
+        .item(
+            MenuItem::new("show-own-camera", t("Show my own camera")).checkbox(st.call.show_own_camera).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                if sh.call.show_own_camera {
+                    if sh.prefs.skip_hide_own_camera_confirm {
+                        sh.call.show_own_camera = false;
+                    } else {
+                        sh.call.hide_camera_confirm = Some(false);
+                    }
+                } else {
+                    sh.call.show_own_camera = true;
+                }
+            }),
+        )
+        .item(
+            MenuItem::new("show-non-video", t("Show non-video participants"))
+                .checkbox(st.call.show_non_video)
+                .keep_open()
+                .on_select(move |s: &mut S| acc(s).call.show_non_video ^= true),
+        )
+        .item(
+            MenuItem::new("prioritize-speakers", t("Prioritize speakers"))
+                .checkbox(st.call.prioritize_speakers)
+                .keep_open()
+                .on_select(move |s: &mut S| acc(s).call.prioritize_speakers ^= true),
+        );
+    if let Some((g, c)) = v.channel
+        && super::voice::is_p2p(store, g, c)
+    {
+        menu = menu.item(MenuItem::new("standard-call", t("Switch to standard call")).icon(&icons::ARROWS_LEFT_RIGHT_FILL).on_select(op(acc, Op::SwitchToStandard)));
+    }
+    menu.separator()
+        .item(MenuItem::new("voice-video-settings", t("Voice & video settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.open_settings(Some("voice_video"));
+        }))
+}
+
+/// The gear menus (`VoiceSettingsMenus`), rendered into the overlay layer while open.
+pub fn menus<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    if st.voice.channel.is_none() {
+        return;
+    }
+    let pops = pops(acc);
+    input_menu(st, p, acc).el(&st.popups, pops, p, layer);
+    output_menu(st, p, acc).el(&st.popups, pops, p, layer);
+    camera_menu(st, p, acc).el(&st.popups, pops, p, layer);
+    screen_menu(st, p, acc).el(&st.popups, pops, p, layer);
+    more_menu(store, st, p, acc).el(&st.popups, pops, p, layer);
+    participants_popout(store, st, p, acc, layer);
+}
+
+/// The `+N` participant popout (`VoiceParticipantAvatarList`'s remaining-content list).
+fn participants_popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    if !st.popups.is_open(PARTICIPANTS) {
+        return;
+    }
+    let Some((guild, channel)) = st.voice.channel else { return };
+    let people = participants(store, guild, channel);
+    let mut rows = col().w_full().gap(2.0);
+    for (u, vs) in &people {
+        let user = *u;
+        rows = rows.child(
+            row()
+                .w_full()
+                .h(32.0)
+                .px(6.0)
+                .gap(8.0)
+                .center_y()
+                .radius(6.0)
+                .hover(p.background_modifier_hover)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(store.display_name(guild, user))
+                .child(avatar(store, st, user, 24.0, None, p.background_tertiary, p))
+                .child(text(store.display_name(guild, user)).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).truncate().grow(1.0))
+                .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 14.0).color(p.status_danger) } else { el() })
+                .child(if vs.deaf || vs.self_deaf { icon(&icons::SPEAKER_SLASH_FILL, 14.0).color(p.status_danger) } else { el() })
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.focus = Some(user);
+                    sh.call.pin(Some(user));
+                    sh.popups.close();
+                }),
+        );
+    }
+    let surface = col()
+        .w(240.0)
+        .padding(8.0)
+        .gap(2.0)
+        .radius(8.0)
+        .fill(p.background_secondary)
+        .border(1.0, p.background_modifier_accent)
+        .box_shadow(popout_shadow(p, 0.24, 0.14))
+        .role("dialog")
+        .label(t("Voice participants"))
+        .child(text(t("Voice participants")).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).px(6.0).pb(4.0))
+        .child(rows)
+        .modal(true, move |s: &mut S| acc(s).popups.close());
+    layer.push(anchor(surface, PARTICIPANTS, Placement::BottomStart, 8.0));
+}
+
+/// Keeps the menus' side effects in step each frame: the input menu runs the mic meter.
+pub fn poll(st: &mut ShellState) {
+    let channel = st.voice.channel.map(|(_, c)| c);
+    if channel != st.call.region_channel {
+        st.call.region_channel = channel;
+        st.call.region = None;
+    }
+    if channel.is_none() {
+        st.call.app_fullscreen = false;
+        st.call.hide_camera_confirm = None;
+        st.call.stats = None;
+    }
+    let meter = st.popups.is_open(MENU_INPUT) && st.voice.channel.is_some();
+    if meter != st.call.meter_on {
+        st.call.meter_on = meter;
+        st.intents.push(Intent::Voice(Op::MicTest(meter)));
+    }
+    if st.voice.connected {
+        if st.call.connected_at.is_none() {
+            st.call.connected_at = Some(Instant::now());
+        }
+    } else {
+        st.call.connected_at = None;
+    }
+    // The mic/output menus list the OS devices; the camera menu lists capture devices.
+    let audio_menu = st.popups.is_open(MENU_INPUT) || st.popups.is_open(MENU_OUTPUT);
+    if audio_menu && st.voice.devices.is_none() && !st.call.devices_loading {
+        st.call.devices_loading = true;
+        st.intents.push(Intent::LoadDevices);
+    } else if !audio_menu {
+        st.call.devices_loading = false;
+    }
+    let camera_menu = st.popups.is_open(MENU_CAMERA);
+    if camera_menu && st.voice.cameras.is_none() && !st.call.cameras_loading {
+        st.call.cameras_loading = true;
+        st.intents.push(Intent::Voice(Op::LoadCameras));
+    } else if !camera_menu {
+        st.call.cameras_loading = false;
+    }
 }
 
 /// `VoiceE2EEIndicator`: a lock and "Encrypted".
@@ -317,9 +1308,40 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     let joined = st.voice.channel == Some((None, c.id));
     let me = store.my_id();
     let ringing: Vec<Snowflake> = call.ringing.iter().copied().filter(|u| *u != me).collect();
-    let mut row_tiles = row().w_full().h(150.0).gap(8.0).justify_center();
-    for (u, vs) in &people {
-        row_tiles = row_tiles.child(el().w(240.0).h(135.0).child(tile(store, st, None, Tile { user: *u, screen: false }, vs, false, p, acc)));
+    let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
+    let all = tiles(&visible);
+    let has_media = all.iter().any(|t| t.screen && stream_preview(store, st, None, t.user).is_some() || video(st, me, *t).is_some());
+    let mut row_tiles = row().w_full().h(150.0).gap(8.0).justify_center().items_center();
+    if !has_media {
+        for (u, vs) in &visible {
+            let user = *u;
+            let name = store.display_name(None, user);
+            let mut face = col()
+                .w(135.0)
+                .h_full()
+                .center()
+                .gap(6.0)
+                .child(avatar(store, st, user, 64.0, None, surface_3(), p))
+                .child(
+                    row()
+                        .gap(4.0)
+                        .center_y()
+                        .child(text(name).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.9)).max_w(110.0).truncate())
+                        .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 12.0).color(danger()) } else { el() }),
+                );
+            if st.voice.speaking.contains(u) {
+                face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(12.0).border(2.0, p.status_online));
+            }
+            row_tiles = row_tiles.child(face);
+        }
+    } else {
+        for t in &all {
+            let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
+            if let Some(vs) = vs {
+                row_tiles = row_tiles.child(el().w(240.0).h_full().child(tile(store, st, None, *t, vs, false, p, acc)));
+            }
+        }
     }
     // Recipients being rung show dimmed with a ring button state.
     for u in ringing.iter().filter(|u| !people.iter().any(|(x, _)| x == *u)) {
@@ -352,7 +1374,8 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
 }
 
 /// `ChannelCompactCallSurface`: the call above a voice channel's text chat — the channel's
-/// participants and a Join button, or, once joined, the tiles with the call controls.
+/// participants and a Join button, or, once joined, the tiles with the call controls. The
+/// surface resizes by its bottom handle and remembers that height per channel.
 pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     if c.kind != ChannelType::GUILD_VOICE {
         return None;
@@ -361,46 +1384,120 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     let people = participants(store, Some(guild), c.id);
     let joined = st.voice.channel == Some((Some(guild), c.id));
     let ch = c.id;
-    let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
     if joined {
-        let mut row_tiles = row().w_full().h(112.0).gap(8.0).justify_center();
-        for (u, vs) in &people {
-            row_tiles = row_tiles.child(el().w(200.0).h(112.0).child(tile(store, st, Some(guild), Tile { user: *u, screen: false }, vs, false, p, acc)));
-        }
+        let height = compact_height(st.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
+        let me = store.my_id();
+        let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+        let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
+        let tiles_all = tiles(&visible);
+        let has_media = tiles_all.iter().any(|t| t.screen && stream_preview(store, st, Some(guild), t.user).is_some() || video(st, me, *t).is_some());
+        let mut row_tiles = row().w_full().grow(1.0).min_h(0.0).gap(8.0).justify_center().items_center();
         if people.is_empty() {
             row_tiles = row_tiles.child(
                 row().grow(1.0).center().child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55))),
             );
+        } else if !has_media {
+            // `audioAvatarLayout`: avatars instead of empty 16:9 tiles while nobody publishes.
+            for (u, vs) in &visible {
+                let user = *u;
+                let name = store.display_name(Some(guild), user);
+                let speaking = st.voice.speaking.contains(&user);
+                let mut face = col()
+                    .items_center()
+                    .gap(4.0)
+                    .px(6.0)
+                    .child(
+                        el()
+                            .size(44.0, 44.0)
+                            .radius(22.0)
+                            .clip_rounded(22.0)
+                            .child(avatar(store, st, user, 44.0, None, surface_3(), p)),
+                    )
+                    .child(
+                        row()
+                            .gap(3.0)
+                            .center_y()
+                            .child(text(name.clone()).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.9)).max_w(110.0).truncate())
+                            .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 12.0).color(danger()) } else { el() }),
+                    )
+                    .cursor(rune::Cursor::Pointer)
+                    .role("button")
+                    .label(name)
+                    .on_press(move |s: &mut S| {
+                        let sh = acc(s);
+                        sh.voice.focus = Some(user);
+                        sh.call.pin(Some(user));
+                    });
+                if speaking {
+                    face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(10.0).border(2.0, p.status_online));
+                }
+                row_tiles = row_tiles.child(face);
+            }
+        } else {
+            // Live stream previews: the screen tile subscribes when watched (`Watch stream`).
+            for t in &tiles_all {
+                let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
+                if let Some(vs) = vs {
+                    row_tiles = row_tiles.child(el().grow(1.0).w(0.0).min_w(120.0).max_w(200.0).h_full().max_h(150.0).child(tile(store, st, Some(guild), *t, vs, false, p, acc)));
+                }
+            }
         }
-        let expand = row()
-            .size(44.0, 44.0)
-            .center()
-            .radius(16.0)
-            .fill(rgba(255, 255, 255, 0.05))
-            .hover(rgba(255, 255, 255, 0.12))
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .label(t("Expand call view"))
-            .child(icon(&icons::ARROWS_OUT_SIMPLE_FILL, 22.0).color(rgba(255, 255, 255, 0.9)))
-            .on_press(move |s: &mut S| acc(s).voice.call_view = true);
-        strip = strip.child(row_tiles).child(row().gap(8.0).center_y().child(control_bar(store, st, p, acc)).child(expand));
-    } else {
-        let mut faces = row().gap(6.0).center_y();
-        for (u, _) in people.iter().take(8) {
-            faces = faces.child(avatar(store, st, *u, 32.0, None, surface_3(), p));
-        }
-        let mut left = row().gap(12.0).center_y().child(faces);
-        if !people.is_empty() {
-            left = left.child(text(format!("{} in voice", people.len())).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)));
-        }
-        let join = Button::new(t("Join voice channel"))
-            .icon(&icons::SPEAKER_HIGH_FILL)
-            .key("voice-channel-join")
-            .on_press(move |s: &mut S| acc(s).join_voice(Some(guild), ch))
-            .el(p);
-        strip = strip
-            .child(el().w_full().h(112.0).px(24.0).child(row().w_full().h_full().justify_center().gap(24.0).children([left, el().grow(1.0), join])));
+        let controls = row().gap(8.0).center_y().child(control_bar(store, st, p, acc)).child(chat_pill(store, st, ch, false, p, acc));
+        let handle = el()
+            .key(format!("compact-call-resize-{ch}"))
+            .w_full()
+            .h(8.0)
+            .cursor(rune::Cursor::ResizeRow)
+            .role("separator")
+            .label(t("Resize call view"))
+            .focusable(true)
+            .on_step(move |s: &mut S, delta, _| {
+                let sh = acc(s);
+                let h = sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT);
+                sh.prefs.compact_call_heights.insert(ch, compact_height(h + delta as f32 * 16.0));
+                let prefs = sh.prefs.clone();
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            })
+            .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+                let sh = acc(s);
+                if d.phase == rune::Phase::Down {
+                    d.data = compact_height(sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
+                }
+                sh.prefs.compact_call_heights.insert(ch, compact_height(d.data + d.dy));
+                if d.phase == rune::Phase::Up {
+                    let prefs = sh.prefs.clone();
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                }
+            });
+        return Some(
+            col()
+                .w_full()
+                .h(height)
+                .pt(12.0)
+                .pb(2.0)
+                .gap(8.0)
+                .items_center()
+                .fill(surface_1())
+                .child(row_tiles)
+                .child(controls)
+                .child(handle),
+        );
     }
+    let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
+    let mut faces = row().gap(6.0).center_y();
+    for (u, _) in people.iter().take(8) {
+        faces = faces.child(avatar(store, st, *u, 32.0, None, surface_3(), p));
+    }
+    let mut left = row().gap(12.0).center_y().child(faces);
+    if !people.is_empty() {
+        left = left.child(text(format!("{} in voice", people.len())).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)));
+    }
+    let join = Button::new(t("Join voice channel"))
+        .icon(&icons::SPEAKER_HIGH_FILL)
+        .key("voice-channel-join")
+        .on_press(move |s: &mut S| acc(s).join_voice(Some(guild), ch))
+        .el(p);
+    strip = strip.child(el().w_full().h(112.0).px(24.0).child(row().w_full().h_full().justify_center().gap(24.0).children([left, el().grow(1.0), join])));
     Some(strip)
 }
 
@@ -640,8 +1737,51 @@ fn new_device<S: 'static>(d: &super::voice::NewDevice, p: &Palette, acc: ShellAc
     crate::ui::Modal::new(t("New audio device detected!"), close).body(col().w_full().gap(16.0).child(desc).child(ignore)).footer(buttons)
 }
 
+/// `HideOwnCameraConfirmModal`: turning our own tile off only hides it for us.
+fn hide_own_camera<S: 'static>(dont_ask: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let close = move |s: &mut S| acc(s).call.hide_camera_confirm = None;
+    let toggle = move |s: &mut S| {
+        let sh = acc(s);
+        if let Some(v) = &mut sh.call.hide_camera_confirm {
+            *v = !*v;
+        }
+    };
+    let confirm = move |s: &mut S| {
+        let sh = acc(s);
+        let skip = sh.call.hide_camera_confirm == Some(true);
+        sh.call.hide_camera_confirm = None;
+        sh.call.show_own_camera = false;
+        if skip && !sh.prefs.skip_hide_own_camera_confirm {
+            let mut prefs = sh.prefs.clone();
+            prefs.skip_hide_own_camera_confirm = true;
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
+        }
+    };
+    crate::ui::Modal::new(t("Hide your own camera?"), close)
+        .body(
+            col()
+                .w_full()
+                .gap(16.0)
+                .child(body_text(
+                    t("Turning this off only hides your camera from your own view. Others in the call can still see your camera feed."),
+                    p,
+                ))
+                .child(crate::ui::Checkbox::new(dont_ask).size(18.0).label(t("Don't ask me again")).on_toggle(toggle).el(p)),
+        )
+        .footer(
+            row()
+                .gap(8.0)
+                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("hide-camera-cancel").on_press(close).el(p))
+                .child(Button::new(t("Hide")).key("hide-camera-confirm").on_press(confirm).el(p)),
+        )
+        .el(p)
+}
+
 /// The voice dialogs and the camera preview.
 pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    if let Some(dont_ask) = st.call.hide_camera_confirm {
+        layer.push(hide_own_camera(dont_ask, p, acc));
+    }
     let Some(m) = &st.voice.modal else { return };
     let close = move |s: &mut S| {
         let sh = acc(s);
@@ -797,13 +1937,14 @@ pub fn p2p_indicator(broken: bool, p: &Palette) -> El {
 /// `CameraPreviewModal`: the self view, the camera picker, then "Turn on camera".
 fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static, layer: &mut Vec<El>) -> crate::ui::Modal<S> {
     let v = &st.voice;
+    let higher = st.limits.higher_video_quality;
     let preview = el().w(400.0).h(225.0).radius(dim::RADIUS_LG).clip_rounded(dim::RADIUS_LG).fill(surface_0());
     let preview = if v.previewing { preview.pixels_fit(&v.self_view, rune::SurfaceFit::Fit) } else { preview.child(row().w_full().h_full().center().child(text(t("Camera preview")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.72)))) };
     let names = v.cameras.clone().unwrap_or_default();
     let opts: Vec<(&str, &str)> = std::iter::once(("", "Default")).chain(names.iter().map(|n| (n.as_str(), n.as_str()))).collect();
     let pick = crate::ui::Select::new("camera-device", &opts, Some(v.settings.camera.as_deref().unwrap_or("")))
         .label(t("Camera"))
-        .width(400.0)
+        .width(195.0)
         .on_choose(move |s: &mut S, val| {
             let sh = acc(s);
             sh.voice.settings.camera = (!val.is_empty()).then(|| val.to_string());
@@ -813,26 +1954,53 @@ fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>,
             sh.intents.push(Intent::Voice(Op::Preview(true)));
         })
         .el(&st.popups, pops(acc), p, layer);
+    let quality = [
+        ("low", t("480p")),
+        ("medium", t("720p")),
+        ("high", if higher { "1080p" } else { "1080p (Plutonium)" }),
+    ];
+    let q = crate::ui::Select::new("camera-quality", &quality, Some(v.settings.camera_quality.as_str()))
+        .label(t("Camera quality"))
+        .width(195.0)
+        .on_choose(move |s: &mut S, val| {
+            let sh = acc(s);
+            sh.voice.settings.camera_quality = val.to_string();
+            sh.intents.push(Intent::Voice(Op::Settings));
+            sh.intents.push(Intent::Voice(Op::Preview(false)));
+            sh.intents.push(Intent::Voice(Op::Preview(true)));
+        })
+        .el(&st.popups, pops(acc), p, layer);
+    let mirror = Switch::new(v.settings.mirror_camera).label(t("Mirror camera")).on_toggle(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.settings.mirror_camera ^= true;
+        sh.intents.push(Intent::Voice(Op::Settings));
+    });
     let can_turn_on = v.connected && !v.camera;
-    crate::ui::Modal::new(t("Camera preview"), close)
-        .body(col().w_full().gap(16.0).child(preview).child(pick))
-        .footer(
-            row()
-                .gap(8.0)
-                .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("cam-cancel").on_press(close).el(p))
-                .child(
-                    Button::new(t("Turn on camera"))
-                        .key("cam-on")
-                        .disabled(!can_turn_on)
-                        .on_press(move |s: &mut S| {
-                            let sh = acc(s);
-                            sh.voice.modal = None;
-                            sh.voice.previewing = false;
-                            sh.intents.push(Intent::Voice(Op::ToggleCamera));
-                        })
-                        .el(p),
-                ),
-        )
+    let mut body = col()
+        .w_full()
+        .gap(16.0)
+        .child(preview)
+        .child(row().w_full().gap(8.0).child(pick).child(q))
+        .child(mirror.el(p));
+    if !higher {
+        body = body.child(text(t("1080p requires Plutonium; without it the camera stays at 720p.")).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap());
+    }
+    let mut footer = row().gap(8.0).child(Button::new(if v.camera { t("Close") } else { t("Cancel") }).variant(ButtonVariant::Secondary).key("cam-cancel").on_press(close).el(p));
+    if !v.camera {
+        footer = footer.child(
+            Button::new(t("Turn on camera"))
+                .key("cam-on")
+                .disabled(!can_turn_on)
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.modal = None;
+                    sh.voice.previewing = false;
+                    sh.intents.push(Intent::Voice(Op::ToggleCamera));
+                })
+                .el(p),
+        );
+    }
+    crate::ui::Modal::new(t("Camera preview"), close).body(body).footer(footer)
 }
 
 /// Opens the screen share picker and starts listing what it offers.
@@ -1134,7 +2302,9 @@ fn menu_slider<S: 'static>(key: String, label: &str, value: f32, p: &Palette, on
 // ---- Popouts and menus ---------------------------------------------------------------------------
 
 /// `VoiceDetailsPopout`: server, room, connection, encryption and the ping graph.
-pub fn details<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+/// `VoiceDetailsPopout`: server, room, connection, duration, ping graph and the Advanced
+/// packet-loss/jitter/bitrate section.
+pub fn details<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     if !st.popups.is_open(DETAILS) {
         return;
     }
@@ -1143,7 +2313,7 @@ pub fn details<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
         row()
             .w_full()
             .gap(8.0)
-            .child(text(k.to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).w(90.0))
+            .child(text(k.to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).w(110.0))
             .child(text(val).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary).truncate().shrink())
     };
     let (host, room) = v.server.clone().unwrap_or_default();
@@ -1158,7 +2328,13 @@ pub fn details<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
         .radius(6.0)
         .fill(p.background_tertiary)
         .children(v.pings.iter().map(|&ms| el().grow(1.0).h((ms as f32 / max * 40.0).max(2.0)).radius(1.0).fill(p.status_online)));
-    let surface = col()
+    let avg = (!v.pings.is_empty()).then(|| v.pings.iter().copied().sum::<u32>() as f64 / v.pings.len() as f64);
+    let stats = st.call.stats;
+    let jitter = stats.map_or_else(|| jitter_from_pings(&v.pings), |s| s.jitter_ms);
+    let duration = st.call.connected_at.map(|t| duration_label(t.elapsed()));
+    let count = v.channel.map_or(0, |(g, c)| participants(store, g, c).len());
+    let dash = "—".to_string();
+    let mut surface = col()
         .w(300.0)
         .padding(16.0)
         .gap(8.0)
@@ -1171,10 +2347,24 @@ pub fn details<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
         .child(text(t("Voice connection")).font(font(14.0, 600.0).lh(18.0)).color(p.text_primary))
         .child(line("Server", host))
         .child(line("Room", room))
-        .child(line(t("Ping"), v.ping.map_or("—".into(), |ms| format!("{ms} ms"))))
+        .child(line(t("Ping"), v.ping.map_or(dash.clone(), |ms| format!("{ms} ms"))))
+        .child(line(t("Average ping"), avg.map_or(dash.clone(), |ms| format!("{ms:.0} ms"))))
+        .child(line(t("Duration"), duration.unwrap_or_else(|| dash.clone())))
+        .child(line(t("Participants"), count.to_string()))
         .child(line(t("Encryption"), if v.encrypted { "Encrypted (server key)".into() } else { "Transport only (DTLS-SRTP)".into() }))
         .child(graph)
+        .child(text(t("Advanced")).font(font(11.0, 600.0).lh(16.0).tracking(0.22)).color(p.text_tertiary).mt(4.0))
+        .child(line(t("Packet loss (audio)"), stats.map_or_else(|| dash.clone(), |s| stat_percent(s.audio_loss))))
+        .child(line(t("Packet loss (video)"), stats.map_or_else(|| dash.clone(), |s| stat_percent(s.video_loss))))
+        .child(line(t("Jitter"), stat_ms(jitter)))
+        .child(line(t("Send bitrate"), stats.map_or_else(|| dash.clone(), |s| stat_bitrate_kbps(s.send_bitrate))))
+        .child(line(t("Receive bitrate"), stats.map_or(dash, |s| stat_bitrate_kbps(s.recv_bitrate))))
         .modal(true, move |s: &mut S| acc(s).popups.close());
+    if st.call.stats.is_none() {
+        // shortcut: the shell has no WebRTC stats handle; values stay dashes until the engine
+        // reports them (packet loss / bitrate). Jitter falls back to RTT variation.
+        surface = surface.child(text(t("Packet loss and bitrate appear once the voice engine reports them.")).font(font(11.0, 400.0).lh(15.0)).color(p.text_primary_muted).wrap());
+    }
     layer.push(anchor(surface, DETAILS, Placement::Top, 8.0));
 }
 
@@ -1186,9 +2376,11 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let Some(super::Target::User { user, guild, .. }) = st.target else { return };
     let me = store.my_id();
     let mut m = Menu::new(TILE_MENU);
-    let focused = st.voice.focus == Some(user);
-    m = m.item(MenuItem::new("focus", if focused { t("Unfocus") } else { t("Focus") }).icon(&icons::CORNERS_OUT).on_select(move |s: &mut S| {
-        acc(s).voice.focus = (!focused).then_some(user);
+    let focused = st.call.layout == LayoutMode::Focus && st.voice.focus == Some(user);
+    m = m.item(MenuItem::new("pin", if focused { t("Unpin") } else { t("Pin") }).icon(if focused { &icons::PUSH_PIN_SIMPLE_SLASH } else { &icons::PUSH_PIN_SIMPLE }).on_select(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.focus = (!focused).then_some(user);
+        sh.call.pin((!focused).then_some(user));
     }));
     let streaming = store.voice_states.get(&(guild, user)).is_some_and(|v| v.self_stream);
     if streaming && user == me {
@@ -1322,5 +2514,69 @@ mod tests {
         let t = tiles(&people);
         assert_eq!(t.len(), 3);
         assert!(t[1].screen && t[1].user == Snowflake(1));
+    }
+
+    #[test]
+    fn compact_height_clamps_and_unread_badge_caps() {
+        assert_eq!(compact_height(10.0), COMPACT_HEIGHT_MIN);
+        assert_eq!(compact_height(999.0), COMPACT_HEIGHT_MAX);
+        assert_eq!(compact_height(200.0), 200.0);
+        assert_eq!(unread_badge(0), "0");
+        assert_eq!(unread_badge(3), "3");
+        assert_eq!(unread_badge(9), "9");
+        assert_eq!(unread_badge(10), "9+");
+        assert_eq!(unread_badge(120), "9+");
+    }
+
+    #[test]
+    fn speaking_participants_go_first_without_reordering_the_rest() {
+        let (a, b, c) = (vs(1, false), vs(2, false), vs(3, false));
+        let people = vec![(Snowflake(1), &a), (Snowflake(2), &b), (Snowflake(3), &c)];
+        let mut speaking = std::collections::HashSet::new();
+        speaking.insert(Snowflake(3));
+        let ordered = order_participants(&people, &speaking, true);
+        assert_eq!(ordered.iter().map(|(u, _)| u.0).collect::<Vec<_>>(), [3, 1, 2]);
+        let ordered = order_participants(&people, &speaking, false);
+        assert_eq!(ordered.iter().map(|(u, _)| u.0).collect::<Vec<_>>(), [1, 2, 3], "off keeps user-ID order");
+    }
+
+    #[test]
+    fn pinning_switches_layout_and_grid_clears_it() {
+        let mut ui = CallUi::default();
+        assert_eq!(ui.pinned(Some(Snowflake(7))), None, "grid hides the pin");
+        ui.pin(Some(Snowflake(7)));
+        assert_eq!((ui.layout, ui.pinned(Some(Snowflake(7)))), (LayoutMode::Focus, Some(Snowflake(7))));
+        ui.set_layout(LayoutMode::Grid);
+        assert_eq!(ui.pinned(Some(Snowflake(7))), None);
+        ui.set_layout(LayoutMode::Focus);
+        ui.pin(None);
+        assert_eq!(ui.layout, LayoutMode::Grid, "unpinning returns to the grid");
+    }
+
+    #[test]
+    fn non_video_participants_can_be_hidden_but_self_stays() {
+        let mut camera = vs(1, false);
+        camera.self_video = true;
+        let mut streaming = vs(2, false);
+        streaming.self_stream = true;
+        let silent = vs(3, false);
+        let people = vec![(Snowflake(1), &camera), (Snowflake(2), &streaming), (Snowflake(3), &silent)];
+        let videos = std::collections::HashMap::new();
+        let speaking = std::collections::HashSet::new();
+        let shown = visible_people(&people, Snowflake(9), false, &videos, &speaking);
+        assert_eq!(shown.iter().map(|(u, _)| u.0).collect::<Vec<_>>(), [1, 2], "camera and stream stay, silent goes");
+        assert_eq!(visible_people(&people, Snowflake(3), false, &videos, &speaking).len(), 3, "our own tile always stays");
+        assert_eq!(visible_people(&people, Snowflake(9), true, &videos, &speaking).len(), 3);
+    }
+
+    #[test]
+    fn stats_formatting_and_jitter() {
+        assert_eq!(stat_percent(0.44), "0.4%");
+        assert_eq!(stat_bitrate_kbps(184_000.0), "184 kbps");
+        assert!(stat_ms(7.0).starts_with("7 ms"));
+        assert_eq!(jitter_from_pings(&[]), 0.0);
+        assert_eq!(jitter_from_pings(&[42]), 0.0);
+        assert_eq!(jitter_from_pings(&[40, 44, 40]), 4.0);
+        assert_eq!(duration_label(Duration::from_secs(23 * 60 + 41)), "23:41");
     }
 }

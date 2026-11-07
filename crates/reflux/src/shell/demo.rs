@@ -922,6 +922,9 @@ fn watch_scene(st: &mut ShellState, scene: &str) {
 
 /// `--voice[=connecting|failed|watch]`: connected to Lounge (Alan speaking, sharing his screen).
 /// `call|focus|details|tile-menu|camera|share|full|refused`: the call view and voice dialogs;
+/// `menu-input|menu-output|menu-camera|menu-screen|menu-more`: the in-call gear menus;
+/// `participants|stats|fullscreen|hud-hidden|audio-only|teleport|hide-camera`: full call view
+/// features; `compact|compact-tall|compact-unread|compact-stream`: the compact call surface;
 /// `incoming|dm`: a DM call ringing us / joined; `voice-message|meter`: the composer, mic test.
 fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     use super::voice::Modal;
@@ -1025,7 +1028,9 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
     }
-    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim") {
+    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
+        | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
+        | "compact" | "compact-tall" | "compact-unread" | "compact-stream") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -1036,6 +1041,90 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         "focus" => {
             st.voice.focus = Some(Snowflake(1004));
             st.voice.watching = None;
+            st.call.layout = super::call::LayoutMode::Focus;
+        }
+        "menu-input" => {
+            (st.call.meter_on, st.voice.mic_test, st.voice.level) = (true, true, -28.0);
+            st.popups.open = Some(super::call::MENU_INPUT.into());
+        }
+        "menu-output" => st.popups.open = Some(super::call::MENU_OUTPUT.into()),
+        "menu-camera" => {
+            st.voice.cameras = Some(vec!["Integrated Camera".into(), "Virtual Camera".into()]);
+            st.popups.open = Some(super::call::MENU_CAMERA.into());
+        }
+        "menu-screen" => st.popups.open = Some(super::call::MENU_SCREEN.into()),
+        "menu-screen-active" => {
+            st.voice.screen = true;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
+            st.popups.open = Some(super::call::MENU_SCREEN.into());
+        }
+        "menu-more" => {
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001"}));
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true}));
+            apply(store, "CALL_CREATE", json!({"channel_id": "8001", "message_id": "1", "region": "eu-central", "ringing": [], "voice_states": [], "recipients": ["1001", ME.to_string()]}));
+            (st.guild, st.channel) = (None, Some(Snowflake(8001)));
+            st.voice.channel = Some((None, Snowflake(8001)));
+            (st.voice.connected, st.voice.self_mute) = (true, true);
+            st.call.region = Some("eu-central".into());
+            st.expr.fetched.insert(
+                "voice-regions-8001".into(),
+                super::expr::Fetched::Done(json!([
+                    {"id": "automatic", "name": "Automatic"},
+                    {"id": "eu-central", "name": "EU Central"},
+                    {"id": "us-east", "name": "US East"}
+                ])),
+            );
+            st.popups.open = Some(super::call::MENU_MORE.into());
+            st.popups.sub = Some("voice-region".into());
+        }
+        "participants" => {
+            store.messages.entry(Snowflake(2301)).or_default();
+            for i in 0..3u64 {
+                apply(store, "MESSAGE_CREATE", message(1_700_000_000_000 + i, i, 1001, "see you in the lounge", json!({"channel_id": "2301"})));
+            }
+            st.popups.open = Some(super::call::PARTICIPANTS.into());
+        }
+        "stats" => {
+            st.call.connected_at = Some(std::time::Instant::now() - std::time::Duration::from_secs(23 * 60 + 41));
+            st.call.stats = Some(super::call::CallStats { audio_loss: 0.4, video_loss: 1.2, jitter_ms: 7.0, send_bitrate: 96_000.0, recv_bitrate: 184_000.0 });
+            st.popups.open = Some(super::call::DETAILS.into());
+        }
+        "fullscreen" => {
+            st.call.app_fullscreen = true;
+            (st.guild, st.channel) = (Some(Snowflake(HQ)), Some(Snowflake(2301)));
+        }
+        "hud-hidden" => st.call.hud_until = Some(std::time::Instant::now() - std::time::Duration::from_millis(1)),
+        "audio-only" => {
+            st.voice.videos.clear();
+            st.voice.camera = false;
+            st.voice.watching = None;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": false}));
+        }
+        "teleport" => {
+            st.call.teleport_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(30));
+            st.call.region = Some("eu-central".into());
+        }
+        "hide-camera" => st.call.hide_camera_confirm = Some(false),
+        "compact" | "compact-tall" | "compact-unread" | "compact-stream" => {
+            (st.guild, st.channel) = (Some(Snowflake(HQ)), Some(Snowflake(2301)));
+            st.voice.call_view = false;
+            st.voice.videos.clear();
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": false}));
+            if scene == "compact-tall" {
+                st.prefs.compact_call_heights.insert(Snowflake(2301), 300.0);
+            }
+            if scene == "compact-unread" {
+                store.messages.entry(Snowflake(2301)).or_default();
+                for i in 0..3u64 {
+                    apply(store, "MESSAGE_CREATE", message(1_700_000_000_000 + i, i, 1001, "see you in the lounge", json!({"channel_id": "2301"})));
+                }
+            }
+            if scene == "compact-stream" {
+                apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));
+                let bytes = Some(std::sync::Arc::new(include_bytes!("../../../../assets/media/images/app-icon.png").to_vec()));
+                st.voice.previews.insert(format!("{HQ}:2301:c1004"), super::active_now::Preview { bytes, fetched_ms: 1, ..Default::default() });
+                st.prefs.compact_call_heights.insert(Snowflake(2301), 260.0);
+            }
         }
         "details" => st.popups.open = Some(super::call::DETAILS.into()),
         "tile-menu" => {

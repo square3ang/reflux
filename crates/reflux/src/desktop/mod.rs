@@ -112,6 +112,10 @@ pub struct Prefs {
     pub unclaimed_snoozed_until: std::collections::HashMap<Snowflake, u64>,
     /// Users offered a passkey after claiming (`fluxer.authenticator_offer_dismissed:<id>`).
     pub authenticator_offered: std::collections::HashSet<Snowflake>,
+    /// `CompactVoiceCallHeight`: remembered compact call heights per channel (`heightsByKey`).
+    pub compact_call_heights: std::collections::HashMap<Snowflake, f32>,
+    /// `VoicePrompts.skipHideOwnCameraConfirm`.
+    pub skip_hide_own_camera_confirm: bool,
 }
 
 impl Default for Prefs {
@@ -157,6 +161,8 @@ impl Default for Prefs {
             voice_restore: None,
             unclaimed_snoozed_until: Default::default(),
             authenticator_offered: Default::default(),
+            compact_call_heights: Default::default(),
+            skip_hide_own_camera_confirm: false,
         }
     }
 }

@@ -29,6 +29,8 @@ pub enum Action {
     ToggleMembers,
     ToggleMute,
     ToggleDeafen,
+    /// `voice_toggle_compact_call_view`: expand or collapse the call surface.
+    ToggleCompactCall,
     QuickSwitcher,
     ZoomIn,
     ZoomOut,
@@ -114,6 +116,7 @@ pub const BINDS: &[Bind] = &[
     b(MarkGuildRead, "Mark community as read", "chat", c(Escape, false, false, true)),
     b(ToggleMute, "Toggle mute", "voice_and_video", c(Char('m'), true, false, true)),
     b(ToggleDeafen, "Toggle deafen", "voice_and_video", c(Char('d'), true, false, true)),
+    b(ToggleCompactCall, "Expand or collapse compact call view", "voice_and_video", c(Char('v'), true, false, true)),
     // `hideFromDefaults`: "misc" isn't a listed section.
     b(ZoomIn, "Zoom in", "misc", c(Char('='), true, false, false)),
     b(ZoomOut, "Zoom out", "misc", c(Char('-'), true, false, false)),
@@ -317,6 +320,11 @@ pub fn key_name(k: &KeyEvent) -> String {
 
 /// Runs a keybind; false when it did nothing (the key goes on).
 pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
+    // Escape leaves the full-window call before it marks the channel read.
+    if a == MarkChannelRead && sh.call.app_fullscreen {
+        sh.call.app_fullscreen = false;
+        return true;
+    }
     if let ZoomIn | ZoomOut | ZoomReset = a {
         let mut p = sh.prefs.clone();
         p.zoom = if a == ZoomReset { 1.0 } else { crate::desktop::window::step_zoom(p.zoom, a == ZoomIn) };
@@ -363,6 +371,13 @@ pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
         ToggleMembers => sh.member_list = !sh.member_list,
         ToggleMute => sh.toggle_mute(),
         ToggleDeafen => sh.toggle_deaf(),
+        ToggleCompactCall => {
+            let Some((guild, _)) = sh.voice.channel else { return false };
+            if guild.is_none() {
+                return false;
+            }
+            sh.voice.call_view = !sh.voice.call_view;
+        }
         QuickSwitcher => sh.toggle_switcher(),
         ZoomIn | ZoomOut | ZoomReset => unreachable!("handled above"),
     }
@@ -435,6 +450,20 @@ mod tests {
         assert_eq!(find(&l, Some(Snowflake(1)), true, |c| c == Snowflake(1)), None);
         assert_eq!(find(&l, None, false, |_| true), Some(Snowflake(3)));
         assert_eq!(find(&[], None, true, |_| true), None);
+    }
+
+    #[test]
+    fn compact_call_keybind_toggles_the_guild_call_view() {
+        let store = Store::default();
+        let mut st = ShellState::default();
+        assert!(!run(&store, &mut st, ToggleCompactCall), "no call: nothing to toggle");
+        st.voice.channel = Some((None, Snowflake(2)));
+        assert!(!run(&store, &mut st, ToggleCompactCall), "DM calls have no full call view");
+        st.voice.channel = Some((Some(Snowflake(1)), Snowflake(2)));
+        assert!(run(&store, &mut st, ToggleCompactCall));
+        assert!(st.voice.call_view);
+        assert!(run(&store, &mut st, ToggleCompactCall));
+        assert!(!st.voice.call_view);
     }
 
     #[test]

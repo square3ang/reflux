@@ -891,6 +891,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.personal_notes = community.is_none_or(|c| c.personal_notes_enabled != Some(false));
     // The Voice & video tab lists devices once it opens.
     let sh = &mut s.app.shell;
+    crate::shell::call::poll(sh);
     if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.devices.is_none() && !s.app.voice.devices_loading {
         s.app.voice.devices_loading = true;
         sh.intents.push(crate::shell::Intent::LoadDevices);

@@ -49,6 +49,7 @@ fn command(a: Action) -> String {
         ToggleMembers => "chat_toggle_member_list",
         ToggleMute => "voice_toggle_mute",
         ToggleDeafen => "voice_toggle_deafen",
+        ToggleCompactCall => "voice_toggle_compact_call_view",
         QuickSwitcher => "nav_quick_switcher",
         ZoomIn => "system_zoom_in",
         ZoomOut => "system_zoom_out",

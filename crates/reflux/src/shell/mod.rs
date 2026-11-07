@@ -337,6 +337,8 @@ pub struct ShellState {
     /// Member list rows on screen (drives the lazy list subscription).
     pub member_rows: std::ops::Range<usize>,
     pub voice: voice::Voice,
+    /// In-call UI (settings menus' meter, layout, pins, compact height, fullscreen, HUD).
+    pub call: call::CallUi,
     /// `ConfirmModal` before joining a voice channel (`confirmBeforeJoiningVoiceChannels`).
     pub join_confirm: Option<(Option<Snowflake>, Snowflake)>,
     /// The open community management dialog and its form.
@@ -465,6 +467,7 @@ impl Default for ShellState {
             confirm_leave: None,
             member_rows: 0..0,
             voice: voice::Voice::default(),
+            call: Default::default(),
             join_confirm: None,
             dialog: None,
             form: Default::default(),
@@ -735,6 +738,20 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         voice::layer(store, st, p, acc, &mut layer);
         return rune_kit::root(v, layer);
     }
+    // `useVoiceCallAppFullscreen`: the call fills the app window.
+    // shortcut: Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+    if st.call.app_fullscreen
+        && st.voice.call_view
+        && st.voice.channel.is_some()
+    {
+        let main = call::view(store, st, p, acc).unwrap_or_else(el);
+        let mut layer = Vec::new();
+        call::modals(store, st, p, acc, &mut layer);
+        call::details(store, st, p, acc, &mut layer);
+        call::menus(store, st, p, acc, &mut layer);
+        call::tile_menu(store, st, p, acc, &mut layer);
+        return rune_kit::root(main, layer);
+    }
     let divider = over(p.user_area_divider_color, p.background_secondary);
     // Personal notes: a channel whose ID is the user's own, which READY may leave out.
     let notes = Channel { id: store.my_id(), kind: ChannelType::DM_PERSONAL_NOTES, name: Some("Personal Notes".into()), ..Default::default() };
@@ -817,7 +834,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(crate::desktop::top_bars::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);
     layer.extend(voice_join::modal(store, st, p, acc));
-    call::details(st, p, acc, &mut layer);
+    call::details(store, st, p, acc, &mut layer);
+    call::menus(store, st, p, acc, &mut layer);
     call::tile_menu(store, st, p, acc, &mut layer);
     voice::layer(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
