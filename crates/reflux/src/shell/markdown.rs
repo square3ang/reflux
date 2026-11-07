@@ -13,7 +13,7 @@ use rune::{Color, El, Pixels, col, el, rich, row, text};
 
 use crate::i18n::t;
 use crate::media::Load;
-use crate::theme::{Palette, font};
+use crate::theme::{Palette, dim, font};
 use crate::ui::mix;
 
 /// What copying each selectable message text takes, by the text's key: its message and, for
@@ -186,6 +186,8 @@ struct Run {
     plain_emoji: bool,
     /// Link byte ranges and their URLs.
     links: Vec<(Range<usize>, String)>,
+    /// The "(edited)" label's bytes (`user-select: none`: copies as nothing).
+    edited: Option<Range<usize>>,
 }
 
 impl Run {
@@ -257,7 +259,7 @@ impl Run {
             }
             t = f(t);
         }
-        let subs = self.emoji.iter().map(|e| (e.range.clone(), e.copy.clone())).collect();
+        let subs = self.emoji.iter().map(|e| (e.range.clone(), e.copy.clone())).chain(self.edited.clone().map(|r| (r, String::new()))).collect();
         if self.emoji.is_empty() {
             return Some(md.text(t, subs).0);
         }
@@ -296,8 +298,32 @@ fn is_block(n: &Node) -> bool {
 
 /// The message body: blocks stacked, inline runs as rich text (16/22, `text-chat`).
 pub fn render(content: &str, md: &Md) -> El {
+    render_edited(content, md, None)
+}
+
+/// [`render`] with `edited` ("(edited)") inline after the last paragraph, or on a line of its
+/// own after a trailing block or jumbo emoji.
+pub fn render_edited(content: &str, md: &Md, edited: Option<&str>) -> El {
     let nodes = reflux_markdown::parse(content, &Options { flags: presets::STANDARD, emoji: super::emoji::context(content) });
-    jumbo(&nodes, md).unwrap_or_else(|| blocks(&nodes, md, md.p.text_chat))
+    match jumbo(&nodes, md) {
+        Some(j) => match edited {
+            Some(label) => col().w_full().child(j).children(edited_run(Run::default(), label, md)),
+            None => j,
+        },
+        None => blocks(&nodes, md, md.p.text_chat, edited),
+    }
+}
+
+/// `.editedLabel`: a space, then the label at `--message-edited-label-font-size` in
+/// `--text-chat-muted`, after `run`'s text.
+fn edited_run(mut run: Run, label: &str, md: &Md) -> Option<El> {
+    let (size, lh) = body_size();
+    let start = run.text.len();
+    run.text.push(' ');
+    run.text.push_str(label);
+    run.spans.push(Span::new(start, run.text.len()).size(dim::MESSAGE_EDITED_LABEL_FONT_SIZE).color(md.p.text_chat_muted));
+    run.edited = Some(start..run.text.len());
+    run.el(size, lh, 400.0, md.p.text_chat, md)
 }
 
 /// An emoji's image: custom ones from the media proxy, unicode ones from the bundled
@@ -371,7 +397,7 @@ fn body_size() -> (f32, f32) {
     (16.0 * k, (22.0 * k).round())
 }
 
-fn blocks(nodes: &[Node], md: &Md, color: Color) -> El {
+fn blocks(nodes: &[Node], md: &Md, color: Color, edited: Option<&str>) -> El {
     let (size, lh) = body_size();
     let mut out = col().w_full();
     let mut run = Run::default();
@@ -386,10 +412,11 @@ fn blocks(nodes: &[Node], md: &Md, color: Color) -> El {
         }
         out = out.child(block(node, md, color, i == 0, i + 1 == n));
     }
-    if let Some(e) = run.el(size, lh, 400.0, color, md) {
-        out = out.child(e);
-    }
-    out
+    let last = match edited {
+        Some(label) => edited_run(run, label, md),
+        None => run.el(size, lh, 400.0, color, md),
+    };
+    out.children(last)
 }
 
 fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
@@ -431,7 +458,7 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
             .w_full()
             .my(4.0)
             .child(el().w(4.0).self_stretch().radius(4.0).fill(p.interactive_muted).mr(12.0))
-            .child(col().grow(1.0).min_w(0.0).py(4.0).child(blocks(children, md, p.text_chat_muted))),
+            .child(col().grow(1.0).min_w(0.0).py(4.0).child(blocks(children, md, p.text_chat_muted, None))),
         Node::Alert { children, alert_type } => {
             // `AlertRenderer`: a 4px bar in the alert's colour, its icon and title, then the body.
             use reflux_markdown::AlertType as A;
@@ -449,7 +476,7 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                 .mt(4.0)
                 .mb(if last { 0.0 } else { 4.0 })
                 .child(el().w(4.0).self_stretch().radius(4.0).fill(c).mr(12.0))
-                .child(col().grow(1.0).min_w(0.0).py(6.0).pr(12.0).child(title).child(col().w_full().mt(4.0).child(blocks(children, md, color))))
+                .child(col().grow(1.0).min_w(0.0).py(6.0).pr(12.0).child(title).child(col().w_full().mt(4.0).child(blocks(children, md, color, None))))
         }
         Node::List { ordered, items } => {
             // margin 4 0 0 20; items 4 apart; the marker hangs in the left margin.
@@ -468,13 +495,13 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
                                 .pr(6.0)
                                 .child(text(marker).font(font(body_size().0, 400.0).lh(body_size().1)).color(color)),
                         )
-                        .child(col().grow(1.0).min_w(0.0).child(blocks(&item.children, md, color))),
+                        .child(col().grow(1.0).min_w(0.0).child(blocks(&item.children, md, color, None))),
                 );
             }
             list
         }
         Node::Spoiler { children, .. } => {
-            col().w_full().padding(4.0).radius(6.0).fill(mix(color, Color::TRANSPARENT, 16.0)).child(blocks(children, md, Color::TRANSPARENT))
+            col().w_full().padding(4.0).radius(6.0).fill(mix(color, Color::TRANSPARENT, 16.0)).child(blocks(children, md, Color::TRANSPARENT, None))
         }
         Node::Table { header, rows, alignments } => {
             // `TableRenderer`: 14px cells padded 8×12, at least 80 wide, a 600-weight header on

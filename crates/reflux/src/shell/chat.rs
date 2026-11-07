@@ -627,11 +627,11 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 
 fn start_reply(st: &mut ShellState, store_me: Snowflake, m: &Message) {
     // `getDefaultReplyMention`: the author's "Reply mention preference" (their community one
-    // first), else on; never for my own messages.
-    // shortcut: DM replies also default to mentioning (Fluxer leaves the toggle off there).
+    // first), else on; never for my own messages or outside a community.
     let member = m.member.as_ref().and_then(|g| g.mention_flags).map_or(0, |f| f.0);
     let pref = if member != 0 { member } else { m.author.mention_flags.map_or(0, |f| f.0) };
-    let mention = m.author.id != store_me && pref != 2;
+    let in_guild = m.guild_id.or(st.guild).is_some();
+    let mention = m.author.id != store_me && in_guild && pref != 2;
     st.reply = Some(ReplyTo { channel: m.channel_id, message: m.id, mention });
     st.editing = None;
     st.composer.focused = true;
@@ -666,8 +666,6 @@ fn message_link(st: &ShellState, c: &Channel, m: &Message) -> String {
 
 /// `MessageActionBar`: quick reactions, add reaction, edit (own) or reply, forward, thread and
 /// More; with Shift held, the full layout. 28px items in a 2px-padded toolbar, its bottom 10px into the message.
-// shortcut: the Shift-held full layout (copy ID/link, pin, mark unread, delete) isn't shown;
-// those stay in More.
 fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let thread_from = perms.thread_from.filter(|_| is_user_message(m));
     let id = m.id;
@@ -773,7 +771,8 @@ fn action_bar<S: 'static>(m: &Message, c: &Channel, perms: Perms, st: &ShellStat
 /// `MessageContextMenu`, for a right-click and the action bar's More.
 // Forward, bookmarks, suppress embeds, publish, alt text and report come from
 // `social::message_items`.
-// shortcut: no speak or media items (copy/save image).
+// shortcut: no media items (copy/save image, open link) when the right-click lands on an
+// attachment; they need hooks in `shell/attachments.rs`.
 fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel, perms: Perms, st: &ShellState, acc: ShellAccess<S>) -> Menu<S> {
     let mut menu = Menu::new(menu).placement(Placement::LeftStart);
     let (id, ch) = (m.id, m.channel_id);
@@ -799,6 +798,18 @@ fn message_menu<S: 'static>(store: &Store, menu: &str, m: &Message, c: &Channel,
     if !m.content.is_empty() {
         let t = m.content.clone();
         menu = menu.item(MenuItem::new("copy-text", crate::i18n::t("Copy text")).icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |_: &mut S, tx| tx.copy(t.clone())));
+    }
+    // `speakMessage`: reads the raw content; a second press while speaking stops.
+    if !m.content.trim().is_empty() {
+        let (label, glyph) = if crate::desktop::tts::speaking() { ("Stop speaking", &icons::STOP_CIRCLE_FILL) } else { ("Speak message", &icons::SPEAKER_HIGH_FILL) };
+        let text = m.content.clone();
+        menu = menu.item(MenuItem::new("speak", t(label)).icon(glyph).on_select(move |_: &mut S| {
+            if crate::desktop::tts::speaking() {
+                crate::desktop::tts::stop();
+            } else {
+                crate::desktop::tts::speak(&text, crate::look::with(|l| l.tts_rate));
+            }
+        }));
     }
     if perms.pin && is_user_message(m) {
         let pin = !m.pinned;
@@ -1034,12 +1045,8 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
     }
     if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         content = content.child(editor(edit, m, p, acc));
-    } else if !m.content.is_empty() {
-        content = content.child(markdown::render(&m.content, md));
-    }
-    if m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
-        // shortcut: "(edited)" sits on its own line under the body instead of inline after it.
-        content = content.child(text(t("(edited)")).font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
+    } else if !m.content.is_empty() || m.edited_timestamp.is_some() {
+        content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))));
     }
     let acc_el = accessories(store, st, m, p, acc);
     if let Some(a) = acc_el {

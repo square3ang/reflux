@@ -65,9 +65,7 @@ pub struct Voice {
     pub call_view: bool,
     /// The tile shown large (`focusedParticipant`), `None` = the grid.
     pub focus: Option<Snowflake>,
-    /// Users muted locally.
-    // shortcut: no per-user volume slider; the Rust SDK has no remote track volume (WebRTC's
-    // AudioSourceInterface::SetVolume isn't bound). Add it when webrtc-sys exposes it.
+    /// Users muted locally (volumes live in `settings`; both feed our mixer).
     pub local_mutes: HashSet<Snowflake>,
     /// The room's media is encrypted (`e2ee_key`).
     pub encrypted: bool,
@@ -779,8 +777,6 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
 /// The screen share being watched, in place of the chat column (`WatchStreamOverlay`): full
 /// window toggle and the spectators (`StreamSpectatorsPopout`: voice states whose
 /// `viewer_stream_keys` hold this stream).
-// shortcut: no stream volume; the Rust SDK has no per-track volume and stream audio isn't
-// published by anyone on Linux yet.
 pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let user = st.voice.watching?;
     let guild = st.voice.channel.and_then(|(g, _)| g);
