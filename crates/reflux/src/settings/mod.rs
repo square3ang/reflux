@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn metrics_at_1280x800() {
         let m = metrics(1280.0, 800.0);
-        assert_eq!(m.pad, [20.0, 76.8]);
+        assert!((m.pad[0] - 20.0).abs() < 0.01 && (m.pad[1] - 76.8).abs() < 0.01, "{:?}", m.pad);
         assert!((m.card_w - 1124.4).abs() < 0.01 && (m.sidebar_w - 307.2).abs() < 0.01, "{}", m.card_w);
         assert_eq!(m.gutter, 48.0);
     }
