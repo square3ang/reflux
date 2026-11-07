@@ -175,40 +175,48 @@ fn close_dm(st: &mut ShellState, c: Snowflake) {
     st.intents.push(Intent::CloseDm(c));
 }
 
-/// `GuildContextMenu` (`useGuildMenuData`).
-// shortcut: privacy, the community profile, hide muted channels and delete-my-messages are only
-// in the header menu.
+/// `GuildContextMenu` (`useGuildMenuData`, the header menu's groups): quick actions; the
+/// notification, privacy and community-profile settings; mute and "Hide muted channels"; the
+/// destructive ones; then debug and the ID in developer mode.
 fn guild_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, acc: ShellAccess<S>) -> Menu<S> {
+    use crate::guild::Dialog;
     let channels = store.channels.values().filter(|c| c.guild_id == Some(g) && store.can_view(c.id)).map(|c| c.id);
     let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == store.my_id());
-    let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, channels), acc)).separator();
+    let mut m = Menu::new("ctx-menu").item(mark_read(unread(store, channels), acc));
     if let Some(ch) = crate::guild::invitable_channel(store, st, g) {
-        m = m.item(MenuItem::new("invite", t("Invite members")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), ch))).separator();
+        m = m.item(MenuItem::new("invite", t("Invite members")).icon(&icons::USER_PLUS_FILL).on_select(move |s: &mut S| crate::guild::open_invite(acc(s), ch)));
     }
-    m = m
-        .entry(crate::social::mute_entry(store, st, Some(g), None, "community", acc))
-        .item(MenuItem::new("notifications", t("Notification settings")).icon(&icons::BELL_FILL).on_select(move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::Notifications(g))))
-        .separator();
     if let Some(tab) = crate::guild::first_settings_tab(store, g) {
         m = m.item(MenuItem::new("settings", t("Community settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
     }
     if crate::guild::can(store, g, reflux_model::Permissions::MANAGE_CHANNELS) {
-        let create = move |category: bool| move |s: &mut S| acc(s).open_dialog(crate::guild::Dialog::CreateChannel { guild: g, parent: None, category });
+        let create = move |category: bool| move |s: &mut S| acc(s).open_dialog(Dialog::CreateChannel { guild: g, parent: None, category });
         m = m
             .item(MenuItem::new("create-channel", t("Create channel")).icon(&icons::PLUS_CIRCLE_FILL).on_select(create(false)))
             .item(MenuItem::new("create-category", t("Create category")).icon(&icons::FOLDER_PLUS_FILL).on_select(create(true)));
     }
-    m = m.separator().item(MenuItem::new("delete-mine", "Delete my messages").icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).nav.confirm_purge = Some(g)));
+    let hide = store.guild_settings.get(&Some(g)).is_some_and(|s| s.hide_muted_channels);
+    m = m
+        .separator()
+        .item(MenuItem::new("notifications", t("Notification settings")).icon(&icons::BELL_FILL).on_select(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))))
+        .item(MenuItem::new("privacy", t("Privacy settings")).icon(&icons::SHIELD_FILL).on_select(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))))
+        .item(MenuItem::new("community-profile", t("Edit community profile")).icon(&icons::USER_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).open_community_profile(g)))
+        .separator()
+        .entry(crate::social::mute_entry(store, st, Some(g), None, "community", acc))
+        .item(MenuItem::new("hide-muted", t("Hide muted channels")).checkbox(hide).on_select(move |s: &mut S| {
+            acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: serde_json::json!({ "hide_muted_channels": !hide }) })
+        }))
+        .separator()
+        .item(MenuItem::new("delete-mine", t("Delete my messages")).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).nav.confirm_purge = Some(g)));
     if !owner {
         let r = crate::social::Modal::Report { target: "guild", guild: Some(g), channel: None, id: g };
-        m = m.item(MenuItem::new("report-guild", "Report community").icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| crate::social::open_report(acc(s), r.clone())));
+        m = m.item(MenuItem::new("report-guild", t("Report community")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| crate::social::open_report(acc(s), r.clone())));
         m = m.item(MenuItem::new("leave", t("Leave community")).icon(&icons::SIGN_OUT_FILL).danger().on_select(move |s: &mut S| acc(s).confirm_leave = Some(g)));
     }
     if store.settings.developer_mode {
-        m = m.separator().item(copy_id(t("Copy community ID"), g));
-        m = m.item(super::debug::item("debug-guild", t("Debug community"), super::debug::Subject::Guild(g), acc));
+        m = m.separator().item(super::debug::item("debug-guild", t("Debug community"), super::debug::Subject::Guild(g), acc));
     }
-    m
+    m.separator().item(copy_id(t("Copy community ID"), g))
 }
 
 /// `ChannelContextMenu` (`useChannelMenuData`): guild channels and group DMs.
