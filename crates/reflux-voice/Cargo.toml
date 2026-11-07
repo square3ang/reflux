@@ -19,6 +19,10 @@ nnnoiseless = { version = "0.5", default-features = false }
 # The PipeWire screen capture portal talks GDBus, which needs a running GLib main loop.
 [target.'cfg(target_os = "linux")'.dependencies]
 livekit = { workspace = true, features = ["glib-main-loop"] }
+# The system's real sinks/sources and their streams. cpal's only Linux host is ALSA, which sees
+# raw PCM plugins; PipeWire/PulseAudio devices live on the PulseAudio protocol instead.
+libpulse-binding = "2.30"
+libpulse-simple-binding = "2.29"
 
 [dev-dependencies]
 log = "0.4"

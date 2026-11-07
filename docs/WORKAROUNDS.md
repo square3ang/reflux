@@ -67,6 +67,10 @@ Rules:
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
 | Mic and remote audio go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise), not LiveKit's playout | device selection, volumes, noise suppression and voice-activity need it | `reflux-voice/src/audio.rs` | — |
+| Linux device lists and call audio use libpulse (`libpulse-binding` + `libpulse-simple-binding`); cpal stays the fallback when no PulseAudio server answers | cpal's only Linux host is ALSA, whose "devices" are raw plugin/PCM names (default, pipewire, every HDA profile), so PipeWire's real sinks/sources never showed up in the pickers | `reflux-voice/src/audio.rs`, `audio/pulse.rs` | cpal gets a PipeWire/PulseAudio host, or we talk to PipeWire directly |
+| Call playback asks the Pulse server for an 80 ms queue with a 40 ms prefill (10 ms request size), not the ALSA plugin's small default buffer | the old cpal stream underran when a mixer lock or scheduler hiccup delayed a callback; `pw-top` now shows ERR 0 for the stream | `reflux-voice/src/audio/pulse.rs` | cpal/ALSA exposes a reliable larger buffer, or the mixer runs lock-free |
+| The mic test meter and voice-message recording still record through cpal, so a non-default Pulse input pick applies to the call but not to them | `voice_input::Mic` is a cpal stream shared by the meter, voice-activity outside calls and the voice-message recorder | `crates/reflux/src/voice_input.rs` | that path gets a pulse-backed `Mic` |
+| Device selection is persisted by the Pulse description label (duplicates get `" (name)"`), not by an immutable device id | the shared picker/session stores one plain string per side (`Saved::voice_input`/`voice_output`) | `reflux-voice/src/audio/pulse.rs`, `session.rs` | the device lists carry `(id, label)` pairs |
 | H.264 profile `42e01f` for NVENC | the hardware factory rejects other profiles | `reflux-voice` | — |
 | Screen-share "content hint" maps to libwebrtc's degradation preference | the Rust SDK has no content-hint setter | `reflux-voice`, `settings/advanced.rs` | SDK exposes `contentHint` |
 | "No hardware encoder was found" never shows on the encoder setting | webrtc-sys doesn't expose its encoder factory probe | `settings/advanced.rs` | the SDK exposes the probe |
@@ -131,6 +135,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 
 ## Appendix: every `shortcut:` comment in the code
 
+- `crates/reflux-voice/src/audio.rs:253` the mic test meter and voice-message recording (`voice_input::Mic`) still open cpal, so a non-default Pulse pick applies to the call but not to them. Upgrade when that path gets a pulse-backed `Mic`.
+- `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux/src/app/voice.rs:1007` no ETag / 304 and no ×4 slower polling while the window is hidden.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the

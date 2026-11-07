@@ -44,7 +44,10 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             let (ins, outs) = (options(inputs), options(outputs));
             let mut pick = |id: &str, name: &str, opts: &[(String, String)], value: &Option<String>, output: bool| {
                 let refs: Vec<(&str, &str)> = opts.iter().map(|(v, l)| (v.as_str(), l.as_str())).collect();
-                Select::new(id, &refs, Some(value.as_deref().unwrap_or("")))
+                // A device that disappeared (or a pre-Pulse cpal name) reads as Default, which
+                // is what the engine falls back to.
+                let selected = value.as_deref().filter(|v| opts.iter().any(|(id, _)| id == v)).unwrap_or("");
+                Select::new(id, &refs, Some(selected))
                     .label(name)
                     .width(340.0)
                     .on_choose(move |s: &mut S, v| {

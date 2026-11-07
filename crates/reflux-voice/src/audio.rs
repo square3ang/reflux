@@ -22,6 +22,9 @@ use livekit::webrtc::native::apm::AudioProcessingModule;
 
 pub use cpal;
 
+#[cfg(target_os = "linux")]
+mod pulse;
+
 /// The rate everything inside runs at (WebRTC's and RNNoise's).
 pub const RATE: u32 = 48_000;
 /// 10 ms at [`RATE`]: one APM / RNNoise / WebRTC frame.
@@ -217,8 +220,8 @@ impl Default for Processing {
 }
 
 /// Keeps a cpal stream alive on its own thread (cpal streams aren't `Send` everywhere).
-struct IoThread {
-    stop: Arc<AtomicBool>,
+pub(super) struct IoThread {
+    pub(super) stop: Arc<AtomicBool>,
 }
 
 impl Drop for IoThread {
@@ -245,8 +248,18 @@ fn run_stream(open: impl FnOnce() -> Option<cpal::Stream> + Send + 'static) -> O
     rx.recv().unwrap_or(false).then_some(IoThread { stop })
 }
 
-/// Names of the microphones and speakers cpal sees (what the device pickers list).
+/// Names of the microphones and speakers (what the device pickers list): the PulseAudio
+/// server's sinks/sources on Linux (PipeWire), else cpal's devices.
+// shortcut: the mic test meter and voice-message recording (`voice_input::Mic`) still open cpal, so a non-default Pulse pick applies to the call but not to them. Upgrade when that path gets a pulse-backed `Mic`.
 pub fn devices() -> (Vec<String>, Vec<String>) {
+    #[cfg(target_os = "linux")]
+    if let Some((sinks, sources)) = pulse::enumerate() {
+        let names = |v: Vec<(String, String)>| v.into_iter().map(|(_, label)| label).collect::<Vec<_>>();
+        let (input, output) = (names(sources), names(sinks));
+        if !input.is_empty() || !output.is_empty() {
+            return (input, output);
+        }
+    }
     let host = cpal::default_host();
     let input = host.input_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
     let output = host.output_devices().map(|d| d.map(|d| d.to_string()).collect()).unwrap_or_default();
@@ -317,7 +330,13 @@ impl Engine {
     pub fn open_output(&self, name: Option<&str>) -> bool {
         let mut slot = self.output.lock().unwrap();
         *slot = None;
-        let (mixer, apm, name) = (self.mixer.clone(), self.apm.clone(), name.map(str::to_string));
+        let (mixer, apm) = (self.mixer.clone(), self.apm.clone());
+        #[cfg(target_os = "linux")]
+        if let Some(thread) = pulse::open_output(name, mixer.clone(), apm.clone()) {
+            *slot = Some(thread);
+            return true;
+        }
+        let name = name.map(str::to_string);
         *slot = run_stream(move || {
             let device = output_device(name.as_deref())?;
             let cfg = config(device.supported_output_configs().ok()?.collect(), device.default_output_config().ok()?);
@@ -355,6 +374,11 @@ impl Engine {
                 }
             });
             *slot = Some(IoThread { stop });
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone())) {
+            *slot = Some(thread);
             return true;
         }
         *slot = run_stream(move || {
