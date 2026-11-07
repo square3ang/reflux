@@ -205,8 +205,9 @@ pub fn demo(sh: &mut ShellState, store: &Store, scene: &str) {
                 m.keybinds.push(keys::Custom { action: Some(Action::ToggleMembers), combo: j, enabled: true });
                 m.keybinds.push(keys::Custom { action: None, combo: None, enabled: false });
             });
-            sh.nav.recording = Some(2);
             sh.open_settings(Some("keybinds"));
+            sh.nav.recording = Some(2);
+            sh.popups.toggle("kb-recorder-2");
             if scene == "keybinds-menu" {
                 sh.nav.recording = None;
                 sh.nav.key_menu = Some(keys::RowMenu::Default(vec![Action::ToggleMembers]));

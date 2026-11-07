@@ -80,6 +80,10 @@ pub fn label(a: Action) -> String {
 /// while recording"), and the first Tab with nothing focused turning on keyboard mode.
 // shortcut: a Tab inside a field moves focus without showing the intro.
 pub fn on_key(sh: &mut ShellState, k: &KeyEvent) -> bool {
+    // The popout closed some other way (a press outside): recording ends with it.
+    if sh.nav.recording.is_some_and(|i| !sh.popups.is_open(&editor_id(i))) {
+        sh.nav.recording = None;
+    }
     if let Some(i) = sh.nav.recording {
         if k.key == Key::Escape && k.mods == rune::Mods::default() {
             sh.nav.recording = None;
@@ -151,6 +155,7 @@ pub fn tab<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer:
         .left(icon(&icons::MAGNIFYING_GLASS_BOLD, 16.0).color(p.text_tertiary))
         .el(p)
         .label(t("Search keybinds"));
+    tab_layer(st, p, acc, layer);
     let mut out = col().w_full().gap(24.0).child(search).child(custom_list(st, &m, &q, p, acc, layer));
     let mut first = true;
     for &(id, heading) in SECTIONS {
@@ -274,35 +279,111 @@ fn custom_row<S: 'static>(st: &ShellState, i: usize, c: &Custom, clash: Option<&
     r.key(format!("kb-custom-row-{i}"))
 }
 
-/// `KeybindRecorder`'s trigger: the combo's caps (or "No keybind set"); a press starts
-/// recording, shown in the danger colour until a key lands.
-// shortcut: records in place instead of in a popout.
+/// `KeybindRecorder`'s trigger: a pencil, then the combo's caps (or "No keybind set"); a press
+/// opens the [`editor`] popout.
 fn recorder<S: 'static>(st: &ShellState, i: usize, combo: Option<Combo>, p: &Palette, acc: ShellAccess<S>) -> El {
-    let rec = st.nav.recording == Some(i);
-    let inner = match (rec, combo) {
-        (true, _) => text(t("Press a key combination…")).font(font(14.0, 600.0).lh(18.0)).color(p.status_danger),
-        (false, Some(c)) => caps(&c, p),
-        (false, None) => text(t("No keybind set")).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted),
+    let id = editor_id(i);
+    let open = st.popups.is_open(&id);
+    let inner = match combo {
+        Some(c) => caps(&c, p),
+        None => text(t("No keybind set")).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted),
     };
     row()
-        .key(format!("kb-recorder-{i}"))
+        .key(id.clone())
         .min_h(34.0)
         .px(10.0)
         .gap(8.0)
         .center_y()
         .radius(8.0)
-        .border(1.0, if rec { p.status_danger } else { p.background_modifier_accent })
-        .fill(if rec { p.control_button_danger_hover_bg } else { p.form_surface_background })
-        .hover(if rec { p.control_button_danger_hover_bg } else { p.form_surface_background })
+        .border(1.0, if open { p.brand_primary } else { p.background_modifier_accent })
+        .fill(p.form_surface_background)
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(if combo.is_some() { t("Edit keybind") } else { t("Record keybind") })
-        .child(icon(&icons::KEYBOARD, 16.0).color(if rec { p.status_danger } else { p.text_primary_muted }).opacity(0.7))
+        .label(t("Edit keybind"))
+        .child(icon(&icons::PENCIL_SIMPLE_BOLD, 12.0).color(p.text_primary_muted))
         .child(inner)
         .on_press(move |s: &mut S| {
             let sh = acc(s);
-            sh.nav.recording = if rec { None } else { Some(i) };
+            let was = sh.popups.is_open(&id);
+            sh.popups.toggle(&id);
+            // The popout opens recording (`useState(true)`).
+            sh.nav.recording = (!was).then_some(i);
         })
+}
+
+fn editor_id(i: usize) -> String {
+    format!("kb-recorder-{i}")
+}
+
+/// `KeybindEditorPopout` for the custom row whose recorder is open: the recorder box (a press
+/// records again), Clear and Done. Escape stops recording; a second Escape closes it.
+fn editor<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let m = mine(st);
+    let Some(i) = (0..m.keybinds.len()).find(|&i| st.popups.is_open(&editor_id(i))) else { return };
+    let combo = m.keybinds[i].combo;
+    let rec = st.nav.recording == Some(i);
+    let close = move |s: &mut S| {
+        let sh = acc(s);
+        sh.popups.close();
+        sh.nav.recording = None;
+    };
+    let inner = match (rec, combo) {
+        (true, _) => text(t("Press a keybind…")).font(font(14.0, 600.0).lh(18.0)).color(p.status_danger),
+        (false, Some(c)) => caps(&c, p),
+        (false, None) => text(t("Click to record")).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted),
+    };
+    let rbox = row()
+        .w_full()
+        .min_h(40.0)
+        .px(12.0)
+        .gap(8.0)
+        .center_y()
+        .radius(8.0)
+        .border(1.0, if rec { p.status_danger } else { p.background_modifier_accent })
+        .fill(if rec { p.control_button_danger_hover_bg } else { p.background_secondary })
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(t("Record keybind"))
+        .child(icon(&icons::KEYBOARD_BOLD, 20.0).color(if rec { p.status_danger } else { p.text_primary_muted }))
+        .child(inner)
+        .on_press(move |s: &mut S| acc(s).nav.recording = Some(i));
+    let clear = combo.is_some().then(|| {
+        Button::new(t("Clear"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Small)
+            .icon(&icons::X_BOLD)
+            .on_press(move |s: &mut S| {
+                let sh = acc(s);
+                sh.nav.recording = None;
+                update_mine(sh, |m| {
+                    if let Some(c) = m.keybinds.get_mut(i) {
+                        c.combo = None;
+                    }
+                });
+            })
+            .el(p)
+    });
+    let bg = p.background_primary;
+    let surface = col()
+        .w(320.0)
+        .padding(16.0)
+        .gap(12.0)
+        .radius(8.0)
+        .fill(bg)
+        .border(1.0, crate::ui::over(p.background_modifier_accent, bg))
+        .box_shadow(crate::ui::overlay::popout_shadow(p, 0.24, 0.14))
+        .role("dialog")
+        .label(t("Edit keybind"))
+        .child(
+            col()
+                .gap(4.0)
+                .child(text(t("Edit keybind")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
+                .child(text(t("Press a key to bind. Escape cancels.")).font(font(13.0, 400.0).lh(18.0)).color(p.text_secondary).wrap()),
+        )
+        .child(rbox)
+        .child(row().w_full().gap(8.0).center_y().child(row().grow(1.0).children(clear)).child(Button::new(t("Done")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("kb-done").on_press(close).el(p)))
+        .modal(true, close);
+    layer.push(crate::ui::overlay::anchor(surface, &editor_id(i), crate::ui::Placement::Bottom, 8.0));
 }
 
 /// `DefaultKeybindsList` for one section: rows merged by label, their built-in chips (dimmed
@@ -407,9 +488,11 @@ fn row_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer
     }
 }
 
-/// The overlays: row menus, the reset confirmation, the keybind list and the keyboard intro.
-pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+/// The tab's overlays (drawn with the settings modal, above it): row menus, the recorder popout
+/// and the reset confirmation.
+fn tab_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     row_menu(st, p, acc, layer);
+    editor(st, p, acc, layer);
     if st.nav.confirm_reset_keys {
         let close = move |s: &mut S| acc(s).nav.confirm_reset_keys = false;
         let reset = move |s: &mut S| {
@@ -428,6 +511,10 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
         let body = text(t("This removes every custom keybind and re-enables all built-in keybinds. This cannot be undone.")).font(font(16.0, 400.0).lh(24.0)).color(p.text_primary).wrap();
         layer.push(crate::ui::Modal::new(t("Reset all keybinds?"), close).body(body).footer(footer).el(p));
     }
+}
+
+/// The shell's overlays: the keybind list and the keyboard intro.
+pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     if st.nav.cheatsheet {
         layer.push(cheatsheet(st, p, acc));
     }
@@ -629,9 +716,14 @@ mod tests {
         let mut st = ShellState::default();
         update_mine(&mut st, |m| m.keybinds.push(Custom { action: Some(Action::ToggleMute), combo: None, enabled: true }));
         st.nav.recording = Some(0);
+        st.popups.toggle(&editor_id(0));
         assert!(on_key(&mut st, &ev(Key::Text("x".into()), false)), "typing is swallowed while recording");
         assert!(on_key(&mut st, &ev(Key::Command('l'), true)));
         assert_eq!(st.nav.recording, None);
         assert_eq!(mine(&st).keybinds[0].combo.map(|c| c.caps().len()), Some(2));
+        st.nav.recording = Some(0);
+        st.popups.close();
+        assert!(!on_key(&mut st, &ev(Key::Text("x".into()), false)), "a closed popout stops recording");
+        assert_eq!(st.nav.recording, None);
     }
 }
