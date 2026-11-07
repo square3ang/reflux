@@ -88,9 +88,9 @@ pub(super) fn run(s: &mut State, i: Intent) {
             }
         }),
         Intent::OpenDm(user) => with_dm(s, inst, user, |s, c| s.app.shell.select_guild(None, Some(c))),
-        Intent::DmCall(user) => with_dm(s, inst, user, |s, c| {
+        Intent::DmCall(user, video) => with_dm(s, inst, user, move |s, c| {
             s.app.shell.select_guild(None, Some(c));
-            crate::shell::call::request_call(&s.app.store, &mut s.app.shell, c, false);
+            crate::shell::call::request_call(&s.app.store, &mut s.app.shell, c, video);
         }),
         Intent::InviteToGuild { user, guild, channel } => {
             let store = &s.app.store;

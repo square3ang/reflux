@@ -388,6 +388,14 @@ impl Demo {
                     "all" => super::FriendsTab::All,
                     "pending" => super::FriendsTab::Pending,
                     "add" => super::FriendsTab::Add,
+                    "empty" => {
+                        shell.friends_query = rune::TextEdit::new("zzz");
+                        super::FriendsTab::All
+                    }
+                    "all-menu" => {
+                        shell.popups.open = Some("friend-more-1001".into());
+                        super::FriendsTab::All
+                    }
                     _ => super::FriendsTab::Online,
                 };
                 // `--friends=stream`: Active Now with a stream preview (any image will do).

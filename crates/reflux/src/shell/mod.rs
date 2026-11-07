@@ -114,8 +114,9 @@ pub enum Intent {
     Voice(voice::Op),
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
-    /// `startCallWithUser`: open the DM with a user and start (or confirm) a voice call there.
-    DmCall(Snowflake),
+    /// `startCallWithUser`: open the DM with a user and start (or confirm) a call there; video
+    /// when true.
+    DmCall(Snowflake, bool),
     /// `InviteToCommunityMenuItem`: send a user an invite link to `guild` (via `channel`, or
     /// the vanity link) in their DM.
     InviteToGuild { user: Snowflake, guild: Snowflake, channel: Snowflake },

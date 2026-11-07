@@ -166,15 +166,15 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
             (FriendsTab::Online, true) => (t("Your friends are stuck in another timeline"), "When they come online, they'll appear right here."),
             _ => (t("This friends list needs more power"), t("Where we're going, we need more friends.")),
         };
-        // shortcut: the empty state's illustration isn't drawn, only its title and subtitle.
+        // `EmptyStateView`: a 64px UsersThree (fill, tertiary), the 20/600 title, the subtitle.
         return col()
             .w_full()
             .grow(1.0)
             .center()
-            .gap(8.0)
-            .pb(48.0)
-            .child(text(title).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary))
-            .child(text(sub).font(font(15.0, 400.0).lh(22.0)).color(p.text_secondary));
+            .padding(32.0)
+            .child(icon(&icons::USERS_THREE_FILL, 64.0).color(p.text_tertiary).mb(16.0))
+            .child(text(title).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary).mb(8.0))
+            .child(text(sub).max_w(448.0).align(rune::Align::Center).font(font(16.0, 400.0).lh(24.0)).color(p.text_tertiary).wrap());
     }
     let mut c = col().w_full().padding(16.0);
     let n = sections.iter().filter(|s| !s.1.is_empty()).count();
@@ -291,8 +291,17 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
     let actions = row().gap(8.0).center_y().children(buttons);
     let more = format!("friend-more-{id}");
     if st.popups.is_open(&more) {
-        // shortcut: the voice and video call items aren't listed until calls exist.
-        Menu::new(more)
+        // Start voice / video call (not with bots or while a call with them runs), then Remove.
+        let bot = store.users.get(&id).is_some_and(|u| u.bot);
+        let in_call = store.private_channels().into_iter().any(|c| c.kind == reflux_model::ChannelType::DM && c.recipients.iter().any(|r| r.id == id) && store.calls.contains_key(&c.id));
+        let mut menu = Menu::new(more);
+        if !bot && !in_call {
+            menu = menu
+                .item(MenuItem::new("call", t("Start voice call")).icon(&icons::PHONE).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, false))))
+                .item(MenuItem::new("video", t("Start video call")).icon(&icons::VIDEO_CAMERA).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, true))))
+                .separator();
+        }
+        menu
             .item(MenuItem::new("remove", t("Remove friend")).icon(&icons::USER_MINUS_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::RemoveRelationship(id))))
             .el(&st.popups, pops(acc), p, layer);
     }
