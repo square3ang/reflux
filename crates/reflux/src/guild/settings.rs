@@ -795,6 +795,20 @@ fn audit_path(g: Snowflake, f: &Form, before: Option<Snowflake>) -> String {
     q
 }
 
+/// The sentence's links: `user:<id>` opens the full profile, `copy:<id>` copies the ID.
+fn audit_links<S: 'static>(e: El, g: Snowflake, acc: ShellAccess<S>) -> El {
+    e.on_link(move |s: &mut S, id: &str, tx: &mut rune::Tx| {
+        let sh = acc(s);
+        if let Some(u) = id.strip_prefix("user:").and_then(|u| u.parse().ok()) {
+            sh.account.profile_modal = Some((Snowflake(u), Some(g), "overview"));
+            sh.fetch_profile(Snowflake(u), Some(g));
+        } else if let Some(c) = id.strip_prefix("copy:") {
+            tx.copy(c.to_string());
+            crate::desktop::toast(&mut sh.desktop, t("Copied to clipboard"), true);
+        }
+    })
+}
+
 fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let pops = popup_access(move |s: &mut S| &mut acc(s).popups);
     let refilter = move |key: &'static str| {
@@ -875,7 +889,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                 None => row().size(32.0, 32.0).radius(16.0).fill(c.hover),
             };
             let when = id.parse().map(|i| crate::shell::format_relative(Snowflake(i).timestamp_ms(), st.now_ms)).unwrap_or_default();
-            let words = col().grow(1.0).min_w(0.0).gap(2.0).child(super::audit::sentence(&pres.summary, &names, 14.0, p.text_primary_muted, p)).child(small(when, p));
+            let words = col().grow(1.0).min_w(0.0).gap(2.0).child(audit_links(super::audit::sentence(&pres.summary, &names, 14.0, p.text_primary_muted, p), g, acc)).child(small(when, p));
             let mut header = row().w_full().min_h(56.0).px(16.0).py(8.0).gap(12.0).center_y().child(badge).child(face).child(words);
             if expandable {
                 let id = id.clone();
@@ -915,7 +929,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                             None => (c.hover, p.background_modifier_accent, p.text_primary),
                         };
                         let bullet = row().size(20.0, 20.0).center().radius(10.0).fill(bg).border(1.0, over(border, bg)).child(icon(glyph, 12.0).color(fg));
-                        row().w_full().min_h(28.0).gap(8.0).center_y().child(bullet).child(super::audit::sentence(&r.s, &names, 14.0, p.text_primary_muted, p).grow(1.0).min_w(0.0))
+                        row().w_full().min_h(28.0).gap(8.0).center_y().child(bullet).child(audit_links(super::audit::sentence(&r.s, &names, 14.0, p.text_primary_muted, p), g, acc).grow(1.0).min_w(0.0))
                     })));
                 }
                 entry = entry.child(details);

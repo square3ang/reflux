@@ -1,8 +1,9 @@
 //! Activity log presentation (`features/guild/utils/guild_tabs/audit_log/*`): each entry becomes
 //! a summary sentence, detail rows with a tone and text blocks (reasons), rendered like
 //! `GuildAuditLogSentence` with the placeholders in bold (free text as inline code).
-// shortcut: users in sentences are bold names (Fluxer's `ClickableUser` opens a profile), and
-// channel/role names don't copy their ID on click; custom emojis show as `:name:` without the image.
+//! Known users open their profile (`ClickableUser`) and channels / roles copy their ID
+//! (`CopyIdInline`): the sentence's links are `user:<id>` and `copy:<id>`.
+// shortcut: custom emojis show as `:name:` without the image.
 
 mod channel;
 mod expr;
@@ -374,8 +375,17 @@ fn placeholder(p: &Ph, n: &Names) -> (String, bool, Option<Color>) {
 
 /// The sentence as text plus its styled spans: plurals resolved from `count`, then every other
 /// `{name}` replaced with its placeholder in bold (text as inline code, colours with a dot).
-/// A styled range of a composed sentence: (bytes, reads as code, dot colour).
-pub type Styled = (std::ops::Range<usize>, bool, Option<Color>);
+/// A styled range of a composed sentence: (bytes, reads as code, dot colour, link id).
+pub type Styled = (std::ops::Range<usize>, bool, Option<Color>, Option<String>);
+
+/// What pressing a placeholder does: open a known user's profile, copy a channel's or role's ID.
+fn link_of(p: &Ph, n: &Names) -> Option<String> {
+    match p {
+        Ph::User(id) if (n.user)(id).is_some() => Some(format!("user:{id}")),
+        Ph::Channel(id, ..) | Ph::Role(id, _) => Some(format!("copy:{id}")),
+        _ => None,
+    }
+}
 
 pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
     let count = st.vals.iter().find_map(|(k, v)| match v {
@@ -398,10 +408,10 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
                 let (txt, code, dot) = placeholder(p, n);
                 let start = out.len();
                 out.push_str(&txt);
-                spans.push((start..out.len(), code, None));
+                spans.push((start..out.len(), code, None, link_of(p, n)));
                 if let Some(c) = dot {
                     out.push_str(" ●");
-                    spans.push((out.len() - "●".len()..out.len(), false, Some(c)));
+                    spans.push((out.len() - "●".len()..out.len(), false, Some(c), None));
                 }
             }
             None => out.push_str(&rest[i..=i + end]),
@@ -416,14 +426,20 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
 pub fn sentence(st: &Sentence, n: &Names, size: f32, color: Color, p: &Palette) -> El {
     let (txt, ranges) = compose(st, n);
     let spans = ranges
-        .into_iter()
-        .map(|(r, code, dot)| match (code, dot) {
-            (_, Some(c)) => Span::new(r.start, r.end).color(c),
+        .iter()
+        .map(|(r, code, dot, _)| match (code, dot) {
+            (_, Some(c)) => Span::new(r.start, r.end).color(*c),
             (true, _) => Span::new(r.start, r.end).mono().size(size - 1.0).bg(p.bg_code_block, 2.0),
             _ => Span::new(r.start, r.end).bold().color(p.text_primary),
         })
         .collect();
-    rich(txt, spans).font(font(size, 400.0).lh(size * 1.45)).color(color).wrap()
+    let mut e = rich(txt, spans).font(font(size, 400.0).lh(size * 1.45)).color(color).wrap();
+    for (r, _, _, link) in ranges {
+        if let Some(id) = link {
+            e = e.link(rune::Link::new(r, id).hover(rune::LinkPaint::new().underline(p.text_primary)));
+        }
+    }
+    e
 }
 
 #[cfg(test)]
