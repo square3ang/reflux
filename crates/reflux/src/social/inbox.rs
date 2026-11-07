@@ -194,10 +194,10 @@ fn empty(glyph: &'static Icon, title: &str, line: &str, p: &Palette) -> El {
         .child(text(line.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
 }
 
-/// `ChannelSourcePreview`'s avatar: a community channel's glyph, else the DM/group face.
+/// `ChannelSourcePreview`'s avatar: a community's face, else the DM/group face.
 fn source_icon(store: &Store, st: &ShellState, c: &Channel, size: f32, p: &Palette) -> El {
     match (c.guild_id, c.kind == ChannelType::GROUP_DM) {
-        (Some(_), _) => icon(crate::shell::channel_icon(c.kind), size).color(p.text_primary_muted),
+        (Some(g), _) => crate::shell::guild_face(store, st, g, size, false, p),
         (None, true) => crate::shell::group_avatar(store, st, c, size, p.form_surface_background, p),
         (None, false) => {
             let me = store.my_id();
@@ -205,6 +205,32 @@ fn source_icon(store: &Store, st: &ShellState, c: &Channel, size: f32, p: &Palet
             crate::shell::avatar(store, st, user, size, None, p.form_surface_background, p)
         }
     }
+}
+
+/// `ChannelSourcePreview` + `InboxMessageHeader`: the 32 px face with the channel name and, under
+/// it, the community (or "Direct Message" / "Group").
+fn source_preview(store: &Store, st: &ShellState, c: &Channel, p: &Palette) -> El {
+    let name = match c.guild_id {
+        Some(_) => c.name.clone().unwrap_or_default(),
+        None => crate::shell::channel_title(store, c),
+    };
+    let subtext = match c.guild_id {
+        Some(g) => super::guild_name(store, g),
+        None if c.kind == ChannelType::GROUP_DM => t("Group").to_string(),
+        None if c.kind == ChannelType::DM_PERSONAL_NOTES => t("Personal Notes").to_string(),
+        None => t("Direct Message").to_string(),
+    };
+    let mut name_row = row().gap(6.0).center_y().min_w(0.0);
+    if c.guild_id.is_some() {
+        name_row = name_row.child(icon(crate::shell::channel_icon(c.kind), 16.0).color(p.text_primary_muted));
+    }
+    name_row = name_row.child(text(name).font(font(15.2, 700.0).lh(20.0)).color(p.text_primary).truncate().shrink());
+    row()
+        .gap(10.0)
+        .center_y()
+        .min_w(0.0)
+        .child(source_icon(store, st, c, 32.0, p))
+        .child(col().gap(0.0).min_w(0.0).child(name_row).child(text(subtext).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).truncate()))
 }
 
 fn where_of(store: &Store, c: Snowflake) -> String {
@@ -369,7 +395,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, m: &Message, remove: Option<
         .key(format!("inbox-card-{id}"))
         .mb(8.0)
         .gap(4.0)
-        .child(row().gap(6.0).center_y().px(4.0).children(store.channels.get(&ch).map(|c| source_icon(store, st, c, 14.0, p))).child(text(where_of(store, ch)).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).truncate()))
+        .child(row().w_full().px(4.0).children(store.channels.get(&ch).map(|c| source_preview(store, st, c, p))))
         .child(
             col()
                 .w_full()
