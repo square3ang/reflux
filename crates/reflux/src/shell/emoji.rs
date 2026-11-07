@@ -106,7 +106,7 @@ fn surrogates() -> &'static (std::collections::HashMap<String, &'static str>, us
 
 /// `buildEmojiContext` (`MarkdownParserWasm.ts`): where `input` has unicode emoji (longest
 /// match first; ™ © ® stay text), and the emoji its `:shortcodes:` and their skin tones name.
-pub fn context(input: &str) -> reflux_markdown::EmojiContext {
+pub fn context(input: &str) -> std::sync::Arc<reflux_markdown::EmojiContext> {
     let (map, longest) = surrogates();
     let mut lines = String::new();
     let mut at = 0;
@@ -139,7 +139,7 @@ pub fn context(input: &str) -> reflux_markdown::EmojiContext {
             lines += &format!("K\t{name}\t{}\t{skin}\t{}\n", tone + 1, codepoints(skin));
         }
     }
-    reflux_markdown::EmojiContext::parse(&lines)
+    reflux_markdown::EmojiContext::parse(&lines).into()
 }
 
 /// Emoji whose name contains `q` or a keyword starts with it (case-insensitive).

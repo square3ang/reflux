@@ -33,10 +33,10 @@ pub struct MarkdownParser {
 }
 
 impl MarkdownParser {
-    pub fn new(flags: u32, emoji_context: EmojiContext) -> Self {
+    pub fn new(flags: u32, emoji_context: impl Into<Arc<EmojiContext>>) -> Self {
         Self {
             flags,
-            emoji_context: Arc::new(emoji_context),
+            emoji_context: emoji_context.into(),
             node_count: 0,
         }
     }

@@ -9,7 +9,7 @@ fn nodes(input: &str, flags: u32, emoji_context: &str) -> Vec<Node> {
         input,
         &Options {
             flags,
-            emoji: EmojiContext::parse(emoji_context),
+            emoji: EmojiContext::parse(emoji_context).into(),
         },
     )
 }

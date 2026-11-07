@@ -27,14 +27,15 @@ pub use plaintext::{PlaintextOptions, render_ast_to_plaintext};
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     pub flags: u32,
-    pub emoji: EmojiContext,
+    /// Shared so a parse doesn't copy it.
+    pub emoji: std::sync::Arc<EmojiContext>,
 }
 
 impl Options {
     pub fn new(flags: u32) -> Self {
         Self {
             flags,
-            emoji: EmojiContext::default(),
+            emoji: Default::default(),
         }
     }
 }
@@ -65,7 +66,6 @@ pub mod presets {
 }
 
 pub fn parse(input: &str, opts: &Options) -> Vec<Node> {
-    // shortcut: clones the emoji table per call (upstream API takes it by value); share an Arc if it gets large.
     let mut parser = MarkdownParser::new(opts.flags, opts.emoji.clone());
     match parser.parse(input) {
         Ok(nodes) => nodes,
