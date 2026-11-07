@@ -304,11 +304,10 @@ mod tests {
 
     #[test]
     fn korean_catalog_translates_and_falls_back() {
-        // The only test that switches the locale (it's global).
-        set_locale("ko");
-        assert_eq!(t("Welcome back"), "다시 오신 것을 환영합니다");
-        assert_eq!(t("No such string in Fluxer"), "No such string in Fluxer");
-        set_locale("en-US");
+        // Reads the catalog directly: switching the global locale races other tests' `t()` calls.
+        let ko = load("ko").expect("ko catalog");
+        assert_eq!(ko.get("Welcome back").copied(), Some("다시 오신 것을 환영합니다"));
+        assert_eq!(ko.get("No such string in Fluxer"), None);
         assert_eq!(t("Welcome back"), "Welcome back");
     }
 
