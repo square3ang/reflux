@@ -29,6 +29,8 @@ struct Report {
     channel_types: BTreeMap<u16, u32>,
     message_types: BTreeMap<u16, u32>,
     dropped: BTreeSet<String>,
+    /// The quick switcher's op 8 member search: (members returned, chunks seen).
+    member_search: Option<(usize, u32)>,
 }
 
 fn dropped(raw: &Value, ser: &Value, path: &str, out: &mut BTreeSet<String>) {
@@ -199,10 +201,18 @@ async fn main() {
                 if let DispatchEvent::RateLimited(r) = &e {
                     rep.failures.push(format!("gateway RATE_LIMITED: {r:?}"));
                 }
+                if let DispatchEvent::GuildMembersChunk(c) = &e
+                    && c.nonce.as_deref() == Some(SEARCH_NONCE)
+                {
+                    let (n, chunks) = rep.member_search.get_or_insert((0, 0));
+                    *n += c.members.len();
+                    *chunks += 1;
+                }
                 store.apply(&e, now_ms());
                 if matches!(e, DispatchEvent::Ready(_)) && !probed {
                     probed = true;
                     probe_rest(&rest, &http, &d.endpoints.media, &mut store, &gw, &mut rep).await;
+                    search_members(&store, &gw);
                 }
             }
             GatewayEvent::Malformed { t, d, error } => {
@@ -255,11 +265,31 @@ async fn main() {
     println!("\n== store invariants");
     let broken = invariants(&store);
     println!("{}", if broken.is_empty() { "ok".into() } else { broken.join("\n") });
+    println!("\n== member search (op 8, the quick switcher's `@` query)");
+    match rep.member_search {
+        Some((n, chunks)) => println!("{n} member(s) in {chunks} chunk(s)"),
+        None => {
+            println!("no GUILD_MEMBERS_CHUNK answered");
+            rep.failures.push("op 8 member search: no reply".into());
+        }
+    }
     println!("\n== fields the model drops\n{:?}", rep.dropped);
     println!("\n== failures ({})", rep.failures.len());
     for f in &rep.failures {
         println!("- {f}");
     }
+}
+
+const SEARCH_NONCE: &str = "reflux-probe-search";
+
+/// The quick switcher's `@` search (`app/actions.rs`): op 8 with a query, limit 25 and presences,
+/// in the first community; the query is our own username's first letter, so it matches someone.
+fn search_members(store: &Store, gw: &Gateway) {
+    let Some(guild) = store.guilds.keys().next().copied() else { return };
+    let me = store.my_id();
+    let query = store.users.get(&me).and_then(|u| u.username.chars().next()).map(String::from).unwrap_or_default();
+    let req = reflux_model::RequestGuildMembers { guild_ids: vec![guild], query, limit: 25, presences: true, nonce: Some(SEARCH_NONCE.into()), ..Default::default() };
+    let _ = gw.commands.send(Command::Send(reflux_model::GatewayPayload::command(reflux_model::OpCode::REQUEST_GUILD_MEMBERS, req)));
 }
 
 /// Messages of up to 3 guild channels and 2 DMs, a member list subscription, and avatars.
