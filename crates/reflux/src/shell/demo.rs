@@ -648,6 +648,24 @@ fn account_scene(sh: &mut ShellState, store: &mut Store, scene: &str) {
             sh.open_settings(Some("advanced_settings"));
             sh.open_account_modal(crate::settings::AccountModal::EncoderControls);
         }
+        "advanced-media" | "advanced-autocomplete" | "advanced-preview" => {
+            sh.open_settings(Some("advanced_settings"));
+            let id = match scene {
+                "advanced-media" => "chat-settings-media-buttons",
+                "advanced-autocomplete" => "chat-settings-expression-autocomplete",
+                _ => "voice-video-screen-share-preview-behavior",
+            };
+            sh.open_account_modal(crate::settings::AccountModal::SwitchGroup(id));
+        }
+        "advanced-neko" => {
+            sh.prefs.look.show_neko = true;
+            sh.neko.at = Some((620.0, 420.0));
+            crate::look::set(&sh.prefs.look);
+        }
+        "advanced-trust" => {
+            sh.open_settings(Some("advanced_settings"));
+            sh.confirm_trust_all = true;
+        }
         "bluesky" => {
             sh.bluesky = true;
             sh.open_settings(Some("linked_accounts"));

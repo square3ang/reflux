@@ -121,7 +121,9 @@ pub fn menu_items<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate
         out.push(MenuEntry::Item(MenuItem::new("media-copy", copy).icon(&icons::COPY).on_select(move |s: &mut S| acc(s).media.copy_image(png.clone()))));
     }
     let (url, name) = (m.url.clone(), m.filename.clone());
-    out.push(MenuEntry::Item(MenuItem::new("media-download", download).icon(&icons::DOWNLOAD_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))));
+    if crate::look::with(|l| l.media_download_button) {
+        out.push(MenuEntry::Item(MenuItem::new("media-download", download).icon(&icons::DOWNLOAD_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))));
+    }
     let url = m.url.clone();
     out.push(MenuEntry::Item(MenuItem::new("media-copy-link", copy_link).icon(&icons::LINK).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(url.clone()))));
     let url = m.url;
@@ -636,7 +638,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
                 .child(icon(&icons::PLAY_FILL, 28.0).color(p.text_on_dark))
                 .on_press(move |s: &mut S| super::clip::start(acc(s), key.clone(), url.clone(), false)),
         ));
-    } else if t.animated && !auto && !hovered {
+    } else if t.animated && !auto && !hovered && crate::look::with(|l| l.media_gif_indicator) {
         // `GifIndicator` while the GIF waits for a hover.
         tile = tile.child(row().absolute(8.0, 8.0).py(4.0).px(8.0).radius(4.0).fill(rgba(0, 0, 0, 0.6)).child(text("GIF").font(font(14.0, 600.0).lh(14.0)).color(p.text_on_dark)));
     }
@@ -762,8 +764,14 @@ fn media_tools<S: 'static>(
         }),
         None => tool(&icons::STAR_BOLD, crate::i18n::t("Add to favorites"), 20.0, Tool::Plain, p, move |s: &mut S, _: &mut Tx| crate::social::open_add_meme(acc(s), channel, message, &att)),
     };
-    let mut tools = vec![download, star];
-    if t.deletable {
+    let mut tools = Vec::new();
+    if crate::look::with(|l| l.media_favorite_button) {
+        tools.push(star);
+    }
+    if crate::look::with(|l| l.media_download_button) {
+        tools.insert(0, download);
+    }
+    if t.deletable && crate::look::with(|l| l.media_delete_button) {
         let target = (channel, message, a.id);
         tools.insert(
             0,
@@ -777,7 +785,7 @@ fn media_tools<S: 'static>(
             ),
         );
     }
-    Some(hover_tools(tools, p))
+    (!tools.is_empty()).then(|| hover_tools(tools, p))
 }
 
 /// Starts `clip` as the one clip playing inline (pausing the last).
@@ -983,7 +991,14 @@ fn download_button<S: 'static>(a: &Attachment, size: f32, p: &Palette, acc: Shel
     let b = row().size(size, size).center().radius(8.0);
     let url = a.proxy_url.clone().or_else(|| a.url.clone());
     match url.filter(|_| !a.expired) {
-        None => b.fill(p.brand_primary).opacity(0.4).label(t("Attachment expired")).child(icon(&icons::WARNING_CIRCLE_BOLD, 20.0).color(p.text_on_brand_primary)),
+        None => {
+            let b = b.fill(p.brand_primary).opacity(0.4);
+            if crate::look::with(|l| l.media_expiry_indicator) {
+                b.label(t("Attachment expired")).child(icon(&icons::WARNING_CIRCLE_BOLD, 20.0).color(p.text_on_brand_primary))
+            } else {
+                b.child(icon(&icons::DOWNLOAD_SIMPLE_BOLD, 20.0).color(p.text_on_brand_primary))
+            }
+        }
         Some(url) => {
             let name = a.filename.clone();
             b.fill(p.brand_primary)

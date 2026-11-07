@@ -1136,6 +1136,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
 /// enter to save".
 pub(super) fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
     let (ch, id, original) = (m.channel_id, m.id, m.content.clone());
+    let has_attachments = !m.attachments.is_empty();
     let field = text_input(edit, font(16.0, 400.0).lh(22.0))
         .key("edit-field")
         .w_full()
@@ -1154,7 +1155,7 @@ pub(super) fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc:
         })
         .on_submit({
             let original = original.clone();
-            move |s: &mut S, _| save_edit(acc(s), ch, id, &original)
+            move |s: &mut S, _| save_edit(acc(s), ch, id, &original, has_attachments)
         });
     let small = font(12.0, 400.0).lh(16.0);
     let footer = row()
@@ -1164,7 +1165,7 @@ pub(super) fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc:
         .child(text("cancel").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).editing = None))
         .child(el().size(4.0, 4.0).radius(2.0).fill(p.text_chat_muted).mx(4.0))
         .child(text("enter to ").font(small).color(p.text_chat))
-        .child(text("save").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| save_edit(acc(s), ch, id, &original)));
+        .child(text("save").font(small).color(p.text_link).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| save_edit(acc(s), ch, id, &original, has_attachments)));
     col()
         .w_full()
         .pt(4.0)
@@ -1184,15 +1185,25 @@ pub(super) fn editor<S: 'static>(edit: &TextEdit, m: &Message, p: &Palette, acc:
 
 /// Enter or "save": an emptied edit asks to delete the message instead, as in Fluxer; an
 /// unchanged one just closes.
-fn save_edit(st: &mut ShellState, channel: Snowflake, id: Snowflake, original: &str) {
+fn save_edit(st: &mut ShellState, channel: Snowflake, id: Snowflake, original: &str, has_attachments: bool) {
     let Some((_, e)) = st.editing.take() else { return };
     st.composer.focused = true;
     let content = e.text.trim().to_string();
     if content.is_empty() {
-        st.confirm_delete = Some(id);
+        // `canSubmitEmptyMessageEdit`: keep the attachments instead of deleting the message.
+        if has_attachments && crate::look::with(|l| l.keep_attachments_on_empty_edit) {
+            st.intents.push(Intent::Edit { channel, message: id, content });
+        } else {
+            st.confirm_delete = Some(id);
+        }
     } else if content != original.trim() {
-        st.intents.push(Intent::Edit { channel, message: id, content });
+        st.intents.push(Intent::Edit { channel, message: id, content: strip(&content) });
     }
+}
+
+/// `sanitizeTrackingUrls` on an outgoing message when the setting is on.
+fn strip(content: &str) -> String {
+    if crate::look::with(|l| l.strip_tracking) { crate::look::strip_tracking(content) } else { content.to_string() }
 }
 
 /// What a reply's bar shows (fluxer `MessageReferences.getMessageReference`).
@@ -1701,6 +1712,7 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
     if crate::look::with(|l| l.convert_emoticons) {
         content = super::emoticons::convert(&content);
     }
+    content = strip(&content);
     let sticker = st.pending_sticker.is_some_and(|(c, _)| c == channel);
     if (content.is_empty() && st.uploads.is_empty() && !sticker) || st.cooldowns.get(&channel).is_some_and(|t| *t > st.now_ms) || st.prefs.dev.mock_slowmode_active {
         return;
@@ -1713,6 +1725,9 @@ fn send(st: &mut ShellState, channel: Snowflake, limit: usize, slowmode: u32) {
     let reply = st.reply.take().filter(|r| r.channel == channel).map(|r| (r.message, r.mention));
     let attachments = std::mem::take(&mut st.uploads);
     st.intents.push(Intent::SendMessage { channel, content, reply, attachments });
+    if crate::look::with(|l| l.scroll_to_bottom_on_send) {
+        st.scroll_to = Some("msgs-end".into());
+    }
     if slowmode > 0 {
         st.cooldowns.insert(channel, st.now_ms + slowmode as u64 * 1000);
     }
@@ -1965,13 +1980,13 @@ mod tests {
     fn saving_an_edit() {
         let mut st = ShellState { channel: Some(Snowflake(5)), ..Default::default() };
         st.editing = Some((Snowflake(9), TextEdit::new(" hi ")));
-        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi", false);
         assert!(st.intents.is_empty() && st.editing.is_none(), "unchanged closes");
         st.editing = Some((Snowflake(9), TextEdit::new("  ")));
-        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi", false);
         assert_eq!(st.confirm_delete, Some(Snowflake(9)), "emptied asks to delete");
         st.editing = Some((Snowflake(9), TextEdit::new("hey")));
-        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi");
+        save_edit(&mut st, Snowflake(5), Snowflake(9), "hi", false);
         assert_eq!(st.intents, [Intent::Edit { channel: Snowflake(5), message: Snowflake(9), content: "hey".into() }]);
     }
 

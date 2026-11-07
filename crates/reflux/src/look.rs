@@ -62,6 +62,49 @@ pub struct Prefs {
     pub hide_blocked: bool,
     /// `AdvancedSettings.expressionCloneShortcutsEnabled`: "Clone to…" on emoji and stickers.
     pub clone_shortcuts: bool,
+    /// `Accessibility.enableTextSelection`: message text can be selected and copied.
+    pub text_selection: bool,
+    /// `Accessibility.showNeko` / `keepNekoStill`.
+    pub show_neko: bool,
+    pub keep_neko_still: bool,
+    /// `Accessibility.hideKeyboardHints`: no Ctrl+K badge next to the quick switcher.
+    pub hide_keyboard_hints: bool,
+    /// `Accessibility.showFavorites`, and the rail's help / download buttons
+    /// (`HiddenGuildListButtons`).
+    pub show_favorites: bool,
+    pub show_help_button: bool,
+    pub show_download_button: bool,
+    /// `Accessibility.autoSendKlipyGifs`: picking a GIF sends it, else it's inserted.
+    pub auto_send_gifs: bool,
+    /// `FavoriteGif.saveGifFavoritesAsSavedMedia`: star GIFs through `/users/@me/memes`.
+    pub save_gif_favorites: bool,
+    /// `UserSettings.sanitizeUrls`: remove tracking parameters from links sent.
+    pub strip_tracking: bool,
+    /// `Accessibility.show*InExpressionAutocomplete`.
+    pub autocomplete_emojis: bool,
+    pub autocomplete_custom_emojis: bool,
+    pub autocomplete_stickers: bool,
+    pub autocomplete_memes: bool,
+    /// `AdvancedSettings.keepAttachmentsOnEmptyMessageEdit`.
+    pub keep_attachments_on_empty_edit: bool,
+    /// `Accessibility.scrollToBottomOnMessageSend`.
+    pub scroll_to_bottom_on_send: bool,
+    /// `Inbox.skipMarkAllAsReadConfirmation`.
+    pub skip_mark_all_read: bool,
+    /// `NewDeviceMonitoring.suppressAlerts` (stored inverted: alerts on).
+    pub new_device_alerts: bool,
+    /// `VoiceSettings.pauseOwnScreenSharePreviewOnUnfocus`,
+    /// `disablePictureInPicturePopoutScreenShare`, `PrivacyPreferences.disableStreamPreviews`.
+    pub pause_preview_unfocused: bool,
+    pub disable_screen_pip: bool,
+    pub hide_stream_preview: bool,
+    /// `Accessibility.showMedia*Button`, `showGifIndicator`, `showAttachmentExpiryIndicator`.
+    pub media_favorite_button: bool,
+    pub media_download_button: bool,
+    pub media_delete_button: bool,
+    pub media_suppress_embeds: bool,
+    pub media_gif_indicator: bool,
+    pub media_expiry_indicator: bool,
     /// `AccountTheme.syncAcrossDevices` and `localTheme`: off, this device keeps its own base
     /// theme instead of the account's.
     pub theme_sync: bool,
@@ -152,6 +195,33 @@ impl Default for Prefs {
             double_click_actions: false,
             hide_blocked: false,
             clone_shortcuts: false,
+            text_selection: false,
+            show_neko: false,
+            keep_neko_still: false,
+            hide_keyboard_hints: false,
+            show_favorites: true,
+            show_help_button: true,
+            show_download_button: true,
+            auto_send_gifs: true,
+            save_gif_favorites: false,
+            strip_tracking: false,
+            autocomplete_emojis: true,
+            autocomplete_custom_emojis: true,
+            autocomplete_stickers: true,
+            autocomplete_memes: true,
+            keep_attachments_on_empty_edit: false,
+            scroll_to_bottom_on_send: true,
+            skip_mark_all_read: false,
+            new_device_alerts: true,
+            pause_preview_unfocused: true,
+            disable_screen_pip: false,
+            hide_stream_preview: false,
+            media_favorite_button: true,
+            media_download_button: true,
+            media_delete_button: true,
+            media_suppress_embeds: true,
+            media_gif_indicator: true,
+            media_expiry_indicator: true,
             theme_sync: true,
             show_gif_button: true,
             show_memes_button: true,
@@ -173,6 +243,61 @@ impl Default for Prefs {
             theme_folders: Vec::new(),
         }
     }
+}
+
+/// `TrackingUrlRules`' global parameter names (the prefixes handled in [`tracking`] aside).
+const TRACKING_PARAMS: &[&str] = &[
+    "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "yclid", "twclid", "ttclid", "igshid",
+    "mc_cid", "mc_eid", "oly_enc_id", "oly_anon_id", "vero_id", "wickedid", "rb_clickid",
+    "s_cid", "mkt_tok", "trk", "trkCampaign", "_hsenc", "_hsmi", "hsCtaTracking", "ref_src",
+    "ref_url", "li_fat_id", "epik", "s_kwcid", "spm", "scm", "si", "pp", "feature",
+];
+
+/// `TrackingUrlRules`' global rules: known analytics/referral parameters.
+fn tracking(name: &str) -> bool {
+    TRACKING_PARAMS.contains(&name)
+        || ["utm_", "itm_", "int_", "pk_", "piwik_", "mtm_", "matomo_", "hsa_", "share_", "ss_"]
+            .iter()
+            .any(|p| name.starts_with(p))
+}
+
+/// `sanitizeTrackingUrls`: removes tracking parameters from every http(s) link in `text`.
+pub fn strip_tracking(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut start = 0;
+    for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        if !c.is_whitespace() {
+            continue;
+        }
+        if i > start {
+            let token = &text[start..i];
+            let (open, close) = (token.starts_with('<'), token.ends_with('>'));
+            let url = token.trim_start_matches('<').trim_end_matches('>');
+            let cleaned = url::Url::parse(url).ok().filter(|u| matches!(u.scheme(), "http" | "https")).and_then(|mut u| {
+                let pairs: Vec<(String, String)> = u.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+                let kept: Vec<(String, String)> = pairs.iter().filter(|(k, _)| !tracking(k)).cloned().collect();
+                if kept.len() == pairs.len() {
+                    return None;
+                }
+                let query = (!kept.is_empty()).then(|| url::form_urlencoded::Serializer::new(String::new()).extend_pairs(&kept).finish());
+                u.set_query(query.as_deref());
+                Some(u.to_string())
+            });
+            match cleaned {
+                Some(u) => {
+                    if open { out.push('<'); }
+                    out.push_str(&u);
+                    if close { out.push('>'); }
+                }
+                None => out.push_str(token),
+            }
+        }
+        if i < text.len() {
+            out.push(c);
+        }
+        start = i + c.len_utf8();
+    }
+    out
 }
 
 impl Prefs {
@@ -241,6 +366,17 @@ pub fn set_reduced_motion(on: bool) {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn tracking_parameters_are_stripped_from_links() {
+        assert_eq!(
+            strip_tracking("see https://example.com/a?utm_source=x&id=7&fbclid=y now"),
+            "see https://example.com/a?id=7 now"
+        );
+        assert_eq!(strip_tracking("<https://example.com/a?utm_medium=z>"), "<https://example.com/a>");
+        assert_eq!(strip_tracking("https://example.com/a?q=1"), "https://example.com/a?q=1", "nothing tracking");
+        assert_eq!(strip_tracking("not a url ?utm_source=x"), "not a url ?utm_source=x");
+    }
 
     #[test]
     fn theme_follows_sync() {

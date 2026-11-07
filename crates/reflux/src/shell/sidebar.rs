@@ -346,7 +346,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                 .radius(dim::RADIUS_MD)
                 .hover(p.background_modifier_hover)
                 .child(text(t("Quick switcher")).font(font(13.0, 500.0)).color(p.text_primary_muted).group_color(p.text_primary).truncate().grow(1.0).shrink())
-                .child(row().gap(2.0).child(kbd("Ctrl")).child(kbd("K"))),
+                .children((!crate::look::with(|l| l.hide_keyboard_hints)).then(|| row().gap(2.0).child(kbd("Ctrl")).child(kbd("K")))),
         )
         .child(header_bar(p));
     let me = store.my_id();

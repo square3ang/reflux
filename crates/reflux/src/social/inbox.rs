@@ -299,7 +299,12 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                     .child(icon(&icons::CHECK_BOLD, 18.0).color(p.text_primary_muted))
                     .on_press(move |s: &mut S| {
                         if !off {
-                            acc(s).intents.push(Intent::MarkRead(acks2.clone()));
+                            let st = acc(s);
+                            if crate::look::with(|l| l.skip_mark_all_read) {
+                                st.intents.push(Intent::MarkRead(acks2.clone()));
+                            } else {
+                                st.social.confirm_read_all = Some(acks2.clone());
+                            }
                         }
                     }),
             )
@@ -334,6 +339,32 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .child(content)
         .modal(true, move |s: &mut S| acc(s).social.inbox_open = false);
     layer.push(surface);
+}
+
+/// `Inbox`'s "mark all as read" confirmation.
+pub fn confirm_read_all<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    let acks = st.social.confirm_read_all.clone()?;
+    let cancel = move |s: &mut S| acc(s).social.confirm_read_all = None;
+    let cancel2 = cancel;
+    let go = {
+        let acks = acks.clone();
+        move |s: &mut S| {
+            let st = acc(s);
+            st.social.confirm_read_all = None;
+            st.intents.push(Intent::MarkRead(acks.clone()));
+        }
+    };
+    Some(
+        Dialog::new(t("Mark all as read?"), cancel)
+            .body(text(t("This marks every unread channel as read.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap())
+            .footer(
+                row()
+                    .gap(8.0)
+                    .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("read-all-cancel").on_press(cancel2).el(p))
+                    .child(Button::new(t("Mark all as read")).key("read-all-confirm").on_press(go).el(p)),
+            )
+            .el(p),
+    )
 }
 
 /// The mentions filter menu, over the popout.
@@ -688,7 +719,7 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
         })
     }));
     let own = m.author.id == me;
-    if !m.embeds.is_empty() && (own || perms.contains(P::MANAGE_MESSAGES)) {
+    if !m.embeds.is_empty() && (own || perms.contains(P::MANAGE_MESSAGES)) && crate::look::with(|l| l.media_suppress_embeds) {
         let hidden = m.flags.contains(MessageFlags::SUPPRESS_EMBEDS);
         let flags = if hidden { m.flags.bits() & !MessageFlags::SUPPRESS_EMBEDS.bits() } else { m.flags.bits() | MessageFlags::SUPPRESS_EMBEDS.bits() };
         out.push(MenuEntry::Item(MenuItem::new("suppress-embeds", if hidden { t("Show embeds") } else { t("Suppress embeds") }).icon(&icons::EYE_SLASH_FILL).on_select(move |s: &mut S| {

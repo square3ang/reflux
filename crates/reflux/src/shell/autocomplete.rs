@@ -133,6 +133,7 @@ pub fn completions(store: &Store, st: &ShellState, c: &Channel, t: &Trigger) -> 
             }
         }
         ':' => {
+            let (custom_ok, emoji_ok) = crate::look::with(|l| (l.autocomplete_custom_emojis, l.autocomplete_emojis));
             let mut order = super::expr::guild_order(store, st);
             if let Some(i) = c.guild_id.and_then(|g| order.iter().position(|x| *x == g)) {
                 let g = order.remove(i);
@@ -140,6 +141,9 @@ pub fn completions(store: &Store, st: &ShellState, c: &Channel, t: &Trigger) -> 
             }
             let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             for gid in order {
+                if !custom_ok {
+                    break;
+                }
                 let Some(g) = store.guilds.get(&gid) else { continue };
                 for e in &g.emojis {
                     let n = seen.entry(e.name.clone()).or_insert_with(|| usize::from(emoji::by_name(&e.name).is_some()));
@@ -154,8 +158,10 @@ pub fn completions(store: &Store, st: &ShellState, c: &Channel, t: &Trigger) -> 
                     }
                 }
             }
-            for e in emoji::search(&q).into_iter().take(MAX) {
-                out.push((rank(&e.name).unwrap_or(1), Completion { glyph: Glyph::Emoji(e.glyph.clone()), label: format!(":{}:", e.name), detail: String::new(), insert: format!("{} ", e.glyph) }));
+            if emoji_ok {
+                for e in emoji::search(&q).into_iter().take(MAX) {
+                    out.push((rank(&e.name).unwrap_or(1), Completion { glyph: Glyph::Emoji(e.glyph.clone()), label: format!(":{}:", e.name), detail: String::new(), insert: format!("{} ", e.glyph) }));
+                }
             }
         }
         '/' => {

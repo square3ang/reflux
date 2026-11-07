@@ -140,6 +140,10 @@ fn tile(t: &Tile) -> El {
 /// Opens (or brings forward) the pop-out on a participant's stream (`screen`) or camera, or the
 /// whole call; a call pop-out for another channel closes (`openCallPopout`).
 pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
+    // `disablePictureInPicturePopoutScreenShare`: streams stay in the call, no PiP window.
+    if screen && pip && crate::look::with(|l| l.disable_screen_pip) {
+        return;
+    }
     let v = &s.app.shell.voice;
     let k = key(user, screen, v.channel.map_or(Snowflake(0), |(_, c)| c));
     let me = s.app.store.my_id();

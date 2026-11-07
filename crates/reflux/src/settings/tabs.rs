@@ -23,7 +23,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
         "themes" => super::look_tabs::themes(store, st, p, acc, layer),
         "chat_settings" => super::look_tabs::chat(store, st, p, acc),
         "accessibility" => super::look_tabs::accessibility(store, st, p, acc, layer),
-        "advanced_settings" => super::advanced::tab(store, st, &ui.searched, p, acc),
+        "advanced_settings" => super::advanced::tab(store, st, &ui.searched, p, acc, layer),
         "voice_video" => super::voice_tabs::tab(store, st, p, acc, layer),
         "notifications" => super::look_tabs::notifications(store, st, p, acc),
         "keybinds" => crate::nav::keys::tab(st, p, acc, layer),

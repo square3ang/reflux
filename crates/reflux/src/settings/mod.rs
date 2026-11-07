@@ -360,6 +360,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     if st.nav.timezone {
         layer.push(timezone::modal(store, st, p, acc));
     }
+    layer.extend(advanced::trust_all_modal(st, p, acc));
     if let Some(c) = &st.nav.crop {
         layer.push(crop::modal(st, c, p, acc));
     }

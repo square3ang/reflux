@@ -53,23 +53,37 @@ fn entries(top: u32) -> Vec<Entry> {
         1 => vec![
             d!(1, saturation),
             b!(2, true, underline_links),
+            b!(3, text_selection),
             b!(4, show_send_button),
             b!(5, focus_ring),
+            b!(6, true, hide_keyboard_hints),
             b!(7, escape_exits_keyboard),
             b!(8, sync_motion),
             b!(9, reduce_motion),
             d!(10, group_spacing),
             d!(12, font_size),
             b!(13, compact_avatars),
+            b!(20, true, auto_send_gifs),
             b!(21, show_gif_button),
             b!(22, show_memes_button),
             b!(23, show_stickers_button),
             b!(24, show_emoji_button),
+            b!(25, media_favorite_button),
+            b!(26, media_download_button),
+            b!(27, media_delete_button),
+            b!(28, media_suppress_embeds),
+            b!(29, media_gif_indicator),
+            b!(30, media_expiry_indicator),
             e!(32, typing_indicator),
             b!(34, action_bar),
             b!(35, action_bar_quick_reactions),
             b!(36, action_bar_shift_expand),
             b!(37, action_bar_more_only),
+            b!(38, autocomplete_emojis),
+            b!(39, autocomplete_custom_emojis),
+            b!(40, autocomplete_stickers),
+            b!(41, autocomplete_memes),
+            b!(46, show_favorites),
             e!(48, dm_previews),
             b!(49, tts_command),
             d!(50, tts_rate),
@@ -78,6 +92,7 @@ fn entries(top: u32) -> Vec<Entry> {
             b!(53, confirm_calls),
             b!(58, announce_messages),
             d!(60, compact_group_spacing),
+            b!(61, scroll_to_bottom_on_send),
             b!(62, dim_strikethrough),
             b!(66, double_click_actions),
         ],
@@ -230,7 +245,7 @@ mod tests {
         p.sounds_off.insert("message".into(), true);
         p.sound_volumes.insert("mention".into(), 150.0);
         let mut remote = Vec::new();
-        synced::uint(&mut remote, 6, 1); // hide_keyboard_hints: not ours, kept
+        synced::uint(&mut remote, 59, 1); // first_click_pass_through: not ours, kept
         synced::uint(&mut remote, 12, 9); // a stale font_size of the wrong wire type: replaced
         let acc = encode(1, &p, &remote);
         let fs = synced::fields(&acc).unwrap();

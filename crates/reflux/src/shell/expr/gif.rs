@@ -61,10 +61,16 @@ pub(super) fn preview(g: &Value) -> Option<(String, f32, f32)> {
     Some((url.to_string(), f["width"].as_f64().unwrap_or(200.0) as f32, f["height"].as_f64().unwrap_or(200.0) as f32))
 }
 
-/// Sends the GIF (and any reply in progress), then tells the provider.
+/// Sends the GIF (and any reply in progress), then tells the provider. With auto-send off the
+/// page URL goes into the composer instead (`useTextareaExpressionHandlers`).
 fn pick(st: &mut ShellState, g: &Value) {
     let Some(For::Composer(channel)) = st.expr.target else { return };
     let Some(url) = g["url"].as_str().filter(|u| !u.is_empty()) else { return };
+    if !crate::look::with(|l| l.auto_send_gifs) {
+        st.composer.insert(&format!("{url} "));
+        close(st);
+        return;
+    }
     let reply = st.reply.take().filter(|r| r.channel == channel).map(|r| (r.message, r.mention));
     st.intents.push(Intent::SendMessage { channel, content: url.to_string(), reply, attachments: vec![] });
     if let Some(id) = g["id"].as_str() {
@@ -74,7 +80,39 @@ fn pick(st: &mut ShellState, g: &Value) {
     close(st);
 }
 
+/// `FavoriteGifUtils.findFavoriteMemeForGif`: the saved-media entry a GIF was starred as.
+fn saved_meme(st: &ShellState, g: &Value) -> Option<Value> {
+    let list = match st.expr.fetched.get("memes") {
+        Some(Fetched::Done(Value::Array(l))) => l,
+        _ => return None,
+    };
+    let (slug, url) = (g["id"].as_str(), g["url"].as_str());
+    list.iter()
+        .find(|m| {
+            (m["url"].as_str().is_some() && m["url"].as_str() == url)
+                || (slug.is_some() && m["gif_slug"].as_str() == slug && m["gif_provider"].as_str() == Some(st.gif_provider.as_str()))
+        })
+        .cloned()
+}
+
 fn toggle_favorite(st: &mut ShellState, g: &Value) {
+    if crate::look::with(|l| l.save_gif_favorites) {
+        if let Some(id) = saved_meme(st, g).and_then(|m| m["id"].as_str().map(str::to_owned)) {
+            if let Some(Fetched::Done(Value::Array(l))) = st.expr.fetched.get_mut("memes") {
+                l.retain(|m| m["id"].as_str() != Some(id.as_str()));
+            }
+            super::send(st, reqwest::Method::DELETE, format!("/users/@me/memes/{id}"), None);
+        } else {
+            let body = serde_json::json!({
+                "url": g["url"],
+                "gif_slug": g["id"],
+                "gif_provider": st.gif_provider,
+                "media": g["media"],
+            });
+            super::send(st, reqwest::Method::POST, "/users/@me/memes".into(), Some(body));
+        }
+        return;
+    }
     let favs = &mut st.expr.saved.favorite_gifs;
     match favs.iter().position(|f| f["url"] == g["url"]) {
         Some(i) => drop(favs.remove(i)),
@@ -171,7 +209,11 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
         Tile::Gif(g) => {
             let (url, gw, gh) = preview(g).unwrap_or_default();
             let h = (w * gh / gw.max(1.0)).round().max(40.0);
-            let fav = st.expr.saved.favorite_gifs.iter().any(|f| f["url"] == g["url"]);
+            let fav = if crate::look::with(|l| l.save_gif_favorites) {
+                saved_meme(st, g).is_some()
+            } else {
+                st.expr.saved.favorite_gifs.iter().any(|f| f["url"] == g["url"])
+            };
             let (g1, g2) = (g.clone(), g.clone());
             let star = row()
                 .pin(None, Some(6.0), Some(6.0), None)
@@ -430,6 +472,18 @@ pub fn import_layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_media_matches_a_gif_by_url_or_provider_slug() {
+        let mut st = ShellState { gif_provider: "Klipy".into(), ..Default::default() };
+        st.expr.fetched.insert("memes".into(), Fetched::Done(serde_json::json!([
+            {"id": "1", "url": "https://klipy/one.gif", "gif_provider": "Klipy", "gif_slug": "one"},
+            {"id": "2", "url": "https://klipy/two.gif", "gif_provider": "Klipy", "gif_slug": "two"}
+        ])));
+        assert_eq!(saved_meme(&st, &serde_json::json!({"url": "https://klipy/one.gif"})).unwrap()["id"], "1");
+        assert_eq!(saved_meme(&st, &serde_json::json!({"url": "https://klipy/two.gif", "id": "two"})).unwrap()["id"], "2");
+        assert!(saved_meme(&st, &serde_json::json!({"url": "https://klipy/three.gif", "id": "three"})).is_none());
+    }
 
     #[test]
     fn preview_prefers_decodable_formats() {

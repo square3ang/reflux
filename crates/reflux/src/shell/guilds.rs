@@ -27,7 +27,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .pt(dim::SPACING_1)
         .pb(user_area_overlay(st) + dim::SPACING_2)
         .child(home(store, st, p, acc))
-        .child(crate::nav::favorites::rail_button(st, p, acc))
+        .children(crate::look::with(|l| l.show_favorites).then(|| crate::nav::favorites::rail_button(st, p, acc)))
         .child(divider(p));
     for item in store.guild_list() {
         list = match item {
@@ -36,6 +36,17 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         };
     }
     list = list.child(add_button(p, acc)).child(explore_button(st, p, acc));
+    if crate::look::with(|l| l.show_download_button) {
+        list = list.child(rail_action(&icons::DOWNLOAD_SIMPLE_BOLD, t("Download desktop app"), "rail-download", p, move |_: &mut S| {
+            crate::settings::open_url("https://fluxer.com/download");
+        }));
+    }
+    if crate::look::with(|l| l.show_help_button)
+        && let Some(base) = st.marketing_base.as_deref()
+    {
+        let url = format!("{}/help", base.trim_end_matches('/'));
+        list = list.child(rail_action(&icons::QUESTION_BOLD, t("Help center"), "rail-help", p, move |_: &mut S| crate::settings::open_url(&url)));
+    }
     let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false }).key("guild-rail-list");
     scroller(viewport.child(list), false, p).key("guild-rail")
 }
@@ -442,6 +453,26 @@ fn explore_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
                 crate::social::open_discovery(st);
             })
             .child(icon(&icons::COMPASS_FILL, 22.0).color(if on { rune::Color::WHITE } else { p.text_primary }).group_color(rune::Color::WHITE)),
+    )
+}
+
+/// The help / download rail rows: a circle with the glyph, opening `url` in the browser.
+fn rail_action<S: 'static>(glyph: &'static rune::Icon, label: &str, key: &'static str, p: &Palette, go: impl Fn(&mut S) + 'static) -> El
+{
+    row().w_full().h(dim::GUILD_LIST_ITEM_BOX_SIZE).center().child(
+        row()
+            .size(ICON, ICON)
+            .center()
+            .radius(ICON / 2.0)
+            .fill(p.background_tertiary)
+            .hover(p.brand_primary)
+            .hover_group()
+            .cursor(rune::Cursor::Pointer)
+            .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
+            .label(label.to_string())
+            .key(key)
+            .on_press(move |s: &mut S| go(s))
+            .child(icon(glyph, 22.0).color(p.text_primary).group_color(rune::Color::WHITE)),
     )
 }
 

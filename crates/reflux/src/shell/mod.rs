@@ -34,6 +34,7 @@ pub(crate) mod markdown;
 mod members;
 pub mod members_page;
 mod menus;
+mod neko;
 pub mod pins;
 pub(crate) mod local_time;
 pub(crate) mod profile;
@@ -274,6 +275,8 @@ pub struct ShellState {
     pub default_avatars: Vec<Image>,
     /// Avatars, icons, attachments and emoji from the media proxy.
     pub media: crate::media::Media,
+    /// The Neko easter egg's position (`Accessibility.showNeko`).
+    pub neko: neko::Neko,
     pub intents: Vec<Intent>,
     /// The verification nagbar's "Resend email" was used this session.
     pub verify_sent: bool,
@@ -296,6 +299,8 @@ pub struct ShellState {
     pub editing: Option<(Snowflake, TextEdit)>,
     /// The message waiting on the delete confirmation.
     pub confirm_delete: Option<Snowflake>,
+    /// The trust-all-links confirmation is open (Advanced).
+    pub confirm_trust_all: bool,
     /// The expression pickers, who-reacted and the expression info card.
     pub expr: expr::Expr,
     /// The instance's GIF provider name (`Klipy`); empty when GIFs are off.
@@ -435,6 +440,7 @@ impl Default for ShellState {
             shift_held: false,
             default_avatars: Vec::new(),
             media: Default::default(),
+            neko: Default::default(),
             intents: Vec::new(),
             verify_sent: false,
             devtools: Default::default(),
@@ -446,6 +452,7 @@ impl Default for ShellState {
             reply: None,
             editing: None,
             confirm_delete: None,
+            confirm_trust_all: false,
             expr: expr::Expr::default(),
             gif_provider: String::new(),
             typing: None,
@@ -604,7 +611,17 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 /// Once a frame, where the store and a `Tx` are at hand: runs a requested search, settles jumps
 /// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    // `NewDeviceMonitoring.suppressAlerts`: the device cards stay known, but no prompt opens.
+    if !crate::look::with(|l| l.new_device_alerts)
+        && matches!(st.voice.modal, Some(voice::Modal::NewDevice(_)))
+    {
+        st.voice.modal = None;
+    }
     let mut changed = expr::poll(store, st, tx);
+    if !crate::look::with(|l| l.show_favorites) && st.nav.favorites {
+        st.nav.favorites = false;
+        changed = true;
+    }
     changed |= crate::nav::poll(store, st);
     changed |= members_page::poll(st, tx);
     changed |= switcher::poll(store, st, tx);
@@ -846,7 +863,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     birthday::view(store, st, p, acc, &mut layer);
     layer.extend(badges::list_modal(st, p, acc));
     badges::tip_layer(st, p, &mut layer);
-    let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
+    layer.extend(neko::view(st, p, acc));
+    let body = body.on_pointer_move(move |s: &mut S, at| neko::track(acc(s), at.x, at.y)).on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
         let sh = acc(s);
         let key = crate::keybinds::key_name(k);
         if sh.voice.ptt_held && sh.voice.settings.ptt_key.as_deref() == Some(key.as_str()) {

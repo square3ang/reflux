@@ -52,6 +52,18 @@ const DIRECT: &[&str] = &[
 /// Settings Reflux has no such feature for, so their "Open" would lead nowhere.
 const MISSING: &[&str] = &["advanced-minimize-to-tray"];
 
+/// Direct controls the desktop build can't honour; [docs/WORKAROUNDS.md] explains each.
+const UNAVAILABLE: &[&str] = &[
+    "accessibility-video-seek-thumbnails", // no frame-at-time snapshot API in the players
+    "accessibility-smooth-scrolling", // Rune's wheel scroll is immediate
+    "accessibility-middle-click-autoscroll", // no browser autoscroll
+    "accessibility-stay-interactive-unfocused", // the OS gives clicks to the focused window
+    "chat-settings-preupload-attachments", // uploads start when the message is sent
+    "voice-video-connection-volume-controls", // the in-call volume menu is in shell/call.rs
+    "advanced-native-title-bar", // Rune always draws the system titlebar
+    "desktop-source-maps", // a Rust build has no JS source maps
+];
+
 /// `getAdvancedSettingsCategory`: the item's tag, else its source tab's category.
 fn category(id: &str, tab: &str) -> &'static str {
     match id {
@@ -88,8 +100,26 @@ fn look_switch<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
     .el(p)
 }
 
+/// A bare switch for a voice setting (the tab row already shows its label).
+fn voice_switch<S: 'static>(
+    st: &ShellState,
+    p: &Palette,
+    acc: ShellAccess<S>,
+    get: fn(&crate::shell::voice::Settings) -> bool,
+    put: fn(&mut crate::shell::voice::Settings, bool),
+) -> El {
+    let on = get(&st.voice.settings);
+    Switch::new(on)
+        .on_toggle(move |s: &mut S| {
+            let sh = acc(s);
+            put(&mut sh.voice.settings, !on);
+            sh.intents.push(Intent::Voice(crate::shell::voice::Op::Settings));
+        })
+        .el(p)
+}
+
 /// `AdvancedSettingControl` for the items Reflux has.
-fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> Option<El> {
     Some(match id {
         "advanced-expression-clone-shortcuts" => look_switch(
             st,
@@ -186,6 +216,87 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
         "advanced-automatic-updates" => look_switch(st, p, acc, None, false, |p| p.no_auto_update, |p, v| p.no_auto_update = v),
         // Rune always renders on the GPU (wgpu); there's no software path to fall back to.
         "advanced-hardware-acceleration" => Switch::<S>::new(true).disabled(true).el(p),
+        "accessibility-text-selection" => look_switch(st, p, acc, None, false, |p| p.look.text_selection, |p, v| p.look.text_selection = v),
+        "appearance-show-neko" => look_switch(st, p, acc, None, false, |p| p.look.show_neko, |p, v| p.look.show_neko = v),
+        "appearance-keep-neko-still" => look_switch(st, p, acc, None, !st.prefs.look.show_neko, |p| p.look.keep_neko_still, |p, v| p.look.keep_neko_still = v),
+        "appearance-hide-keyboard-hints" => look_switch(st, p, acc, None, false, |p| !p.look.hide_keyboard_hints, |p, v| p.look.hide_keyboard_hints = !v),
+        "appearance-enable-favorites" => look_switch(st, p, acc, None, false, |p| p.look.show_favorites, |p, v| p.look.show_favorites = v),
+        "appearance-show-help-center-button" => look_switch(st, p, acc, None, false, |p| p.look.show_help_button, |p, v| p.look.show_help_button = v),
+        "appearance-show-download-button" => look_switch(st, p, acc, None, false, |p| p.look.show_download_button, |p, v| p.look.show_download_button = v),
+        "chat-settings-auto-send-gifs" => look_switch(st, p, acc, None, false, |p| p.look.auto_send_gifs, |p, v| p.look.auto_send_gifs = v),
+        "chat-settings-save-gif-favorites" => look_switch(st, p, acc, None, false, |p| p.look.save_gif_favorites, |p, v| p.look.save_gif_favorites = v),
+        "chat-settings-strip-tracking" => look_switch(st, p, acc, None, false, |p| p.look.strip_tracking, |p, v| p.look.strip_tracking = v),
+        "chat-settings-keep-attachments-on-empty-edit" => look_switch(st, p, acc, None, false, |p| p.look.keep_attachments_on_empty_edit, |p, v| p.look.keep_attachments_on_empty_edit = v),
+        "chat-settings-scroll-to-bottom-on-send" => look_switch(st, p, acc, None, false, |p| p.look.scroll_to_bottom_on_send, |p, v| p.look.scroll_to_bottom_on_send = v),
+        "chat-settings-skip-mark-all-as-read-confirmation" => look_switch(st, p, acc, None, false, |p| p.look.skip_mark_all_read, |p, v| p.look.skip_mark_all_read = v),
+        "voice-video-new-device-alerts" => look_switch(st, p, acc, None, false, |p| p.look.new_device_alerts, |p, v| p.look.new_device_alerts = v),
+        "chat-settings-trust-domains" => {
+            let on = store.settings.trusted_domains.iter().any(|d| d == "*");
+            Switch::new(on)
+                .on_toggle(move |s: &mut S| {
+                    let sh = acc(s);
+                    if on {
+                        sh.media_ui.trusted.clear();
+                        sh.intents.push(Intent::PatchSettings(json!({ "trusted_domains": [] })));
+                    } else {
+                        sh.confirm_trust_all = true;
+                    }
+                })
+                .el(p)
+        }
+        // `UserSettings.defaultHideMutedChannels`: the server applies it to communities joined
+        // from now on; an existing community's toggle stays in its own settings.
+        "chat-settings-hide-muted-channels" => {
+            let on = store.settings.default_hide_muted_channels;
+            Switch::new(on)
+                .on_toggle(move |s: &mut S| {
+                    acc(s).intents.push(Intent::PatchSettings(json!({ "default_hide_muted_channels": !on })));
+                })
+                .el(p)
+        }
+        "chat-settings-media-buttons" | "chat-settings-expression-autocomplete" | "voice-video-screen-share-preview-behavior" => {
+            let id: &'static str = match id {
+                "chat-settings-media-buttons" => "chat-settings-media-buttons",
+                "chat-settings-expression-autocomplete" => "chat-settings-expression-autocomplete",
+                _ => "voice-video-screen-share-preview-behavior",
+            };
+            crate::ui::Button::new(t("Configure"))
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Compact)
+                .icon(&icons::GEAR_BOLD)
+                .key(format!("advanced-configure-{id}"))
+                .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::SwitchGroup(id)))
+                .el(p)
+        }
+        "voice-video-screen-share-codec" => {
+            let v = &st.voice.settings;
+            Select::new(
+                "advanced-codec-direct",
+                &[
+                    ("auto", "Automatic"),
+                    ("av1", "AV1 (requires opt-in)"),
+                    ("h265", "H.265 (requires opt-in)"),
+                    ("h264", "H.264"),
+                    ("vp9", "VP9"),
+                    ("vp8", "VP8"),
+                ],
+                Some(&v.screen_codec),
+            )
+            .compact()
+            .width(200.0)
+            .on_choose(move |s: &mut S, val| {
+                let sh = acc(s);
+                sh.voice.settings.screen_codec = val.to_string();
+                sh.intents.push(Intent::Voice(crate::shell::voice::Op::Settings));
+            })
+            .el(&st.popups, crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups), p, layer)
+        }
+        "voice-video-screen-share-av1-opt-in" => voice_switch(st, p, acc, |s| s.screen_av1_opt_in, |s, v| s.screen_av1_opt_in = v),
+        "voice-video-screen-share-hevc-opt-in" => voice_switch(st, p, acc, |s| s.screen_hevc_opt_in, |s, v| s.screen_hevc_opt_in = v),
+        // Reflux always draws in Fluxer Sans, so the Windows fallback is already off.
+        "advanced-windows-fluxer-sans" => Switch::<S>::new(true).disabled(true).el(p),
+        // One message carries every attachment, so their order is already the pick order.
+        "chat-settings-sequential-file-send" => Switch::<S>::new(true).disabled(true).el(p),
         _ => return None,
     })
 }
@@ -194,6 +305,36 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
 /// account was created (all ISO 8601 UTC with milliseconds, so they compare as strings).
 fn is_new(id: &str, now: &str, month_ago: &str, created: &str) -> bool {
     ADDED.iter().find(|a| a.0 == id).is_some_and(|&(_, at)| at <= now && at >= month_ago && at > created)
+}
+
+/// `TrustAllExternalLinksControl`'s confirmation before every domain is trusted.
+pub fn trust_all_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    if !st.confirm_trust_all {
+        return None;
+    }
+    let cancel = move |s: &mut S| acc(s).confirm_trust_all = false;
+    let go = move |s: &mut S| {
+        let sh = acc(s);
+        sh.confirm_trust_all = false;
+        sh.media_ui.trusted = vec!["*".into()];
+        sh.intents.push(Intent::PatchSettings(json!({ "trusted_domains": ["*"] })));
+    };
+    Some(
+        Modal::new(t("Trust all external links?"), cancel)
+            .body(
+                text("This skips the external-link warning for every domain and replaces your existing trusted domains. This is less secure.")
+                    .font(font(14.0, 400.0).lh(20.0))
+                    .color(p.text_primary_muted)
+                    .wrap(),
+            )
+            .footer(
+                row()
+                    .gap(8.0)
+                    .child(crate::ui::Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("trust-all-cancel").on_press(cancel).el(p))
+                    .child(crate::ui::Button::new(t("Trust all")).variant(ButtonVariant::Danger).key("trust-all-confirm").on_press(go).el(p)),
+            )
+            .el(p),
+    )
 }
 
 /// `SwitchGroupSettingsModal`: the item's switches (`MessageActionBarContent`, `InputButtonsContent`).
@@ -208,6 +349,33 @@ pub fn switch_group_modal<S: 'static>(st: &ShellState, id: &str, p: &Palette, ac
             .child(look_switch(st, p, acc, Some("Show stickers button"), false, |p| p.look.show_stickers_button, |p, v| p.look.show_stickers_button = v))
             .child(look_switch(st, p, acc, Some("Show emoji button"), false, |p| p.look.show_emoji_button, |p, v| p.look.show_emoji_button = v))
             .child(look_switch(st, p, acc, Some("Show send button"), false, |p| p.look.show_send_button, |p, v| p.look.show_send_button = v))
+    } else if id == "chat-settings-media-buttons" {
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Show GIF indicator"), false, |p| p.look.media_gif_indicator, |p, v| p.look.media_gif_indicator = v))
+            .child(look_switch(st, p, acc, Some("Show attachment expiration indicator"), false, |p| p.look.media_expiry_indicator, |p, v| p.look.media_expiry_indicator = v))
+            .child(look_switch(st, p, acc, Some("Show delete button"), false, |p| p.look.media_delete_button, |p, v| p.look.media_delete_button = v))
+            .child(look_switch(st, p, acc, Some("Show download button"), false, |p| p.look.media_download_button, |p, v| p.look.media_download_button = v))
+            .child(look_switch(st, p, acc, Some("Show favorite button"), false, |p| p.look.media_favorite_button, |p, v| p.look.media_favorite_button = v))
+            .child(look_switch(st, p, acc, Some("Show suppress embeds button"), false, |p| p.look.media_suppress_embeds, |p, v| p.look.media_suppress_embeds = v))
+    } else if id == "chat-settings-expression-autocomplete" {
+        // shortcut: only default and custom emoji are in the composer's `:` autocomplete; the
+        // sticker and saved-media switches are kept for Fluxer parity.
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Show default emojis in expression autocomplete"), false, |p| p.look.autocomplete_emojis, |p, v| p.look.autocomplete_emojis = v))
+            .child(look_switch(st, p, acc, Some("Show custom emojis in expression autocomplete"), false, |p| p.look.autocomplete_custom_emojis, |p, v| p.look.autocomplete_custom_emojis = v))
+            .child(look_switch(st, p, acc, Some("Show stickers in expression autocomplete"), false, |p| p.look.autocomplete_stickers, |p, v| p.look.autocomplete_stickers = v))
+            .child(look_switch(st, p, acc, Some("Show saved media in expression autocomplete"), false, |p| p.look.autocomplete_memes, |p, v| p.look.autocomplete_memes = v))
+    } else if id == "voice-video-screen-share-preview-behavior" {
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Pause my screen share preview in the background"), false, |p| p.look.pause_preview_unfocused, |p, v| p.look.pause_preview_unfocused = v))
+            .child(look_switch(st, p, acc, Some("Disable picture-in-picture popout for screen shares"), false, |p| p.look.disable_screen_pip, |p, v| p.look.disable_screen_pip = v))
+            .child(look_switch(st, p, acc, Some("Hide my stream preview thumbnail"), false, |p| p.look.hide_stream_preview, |p, v| p.look.hide_stream_preview = v))
     } else if id == "appearance-voice-channel-join-behavior" {
         let double = st.prefs.look.join_double_click;
         col().w_full().gap(12.0)
@@ -284,7 +452,7 @@ fn search_field<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -
 
 /// The tab; `query` (the settings search) filters it like `filterAdvancedSettingItems`. As its own
 /// tab (no settings search), its search field filters it instead.
-pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let inline = !query.is_empty();
     let own = st.form.text.get("advanced-search").map_or("", |e| e.text.as_str());
     let query = if inline { query } else { own };
@@ -294,10 +462,10 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
     let (now, month_ago, created) = (iso(st.now_ms), iso(st.now_ms.saturating_sub(30 * 86_400_000)), iso(store.my_id().timestamp_ms()));
     let rows: Vec<(&str, El)> = ITEMS
         .iter()
-        .filter(|i| i.6 && !MISSING.contains(&i.0))
+        .filter(|i| i.6 && !MISSING.contains(&i.0) && !UNAVAILABLE.contains(&i.0))
         .filter(|&&(_, _, _, label, keywords, desc, _)| words.is_empty() || super::search::score(label, keywords, desc, &words) > 0)
         .filter_map(|&(id, tab, _, label, _, desc, _)| {
-            let action = match control(id, store, st, p, acc) {
+            let action = match control(id, store, st, p, acc, layer) {
                 Some(c) => c,
                 None if DIRECT.contains(&id) => return None,
                 None if tab != "advanced_settings" && super::visible_id(tab, store, st.premium) => crate::ui::Button::new(t("Open"))
@@ -522,8 +690,38 @@ mod tests {
             "chat-settings-reverse-image-search",
         ] {
             assert!(ITEMS.iter().find(|i| i.0 == id).is_some_and(|i| i.6), "{id} is not an advanced item");
-            assert!(control(id, &store, &st, p, access).is_some(), "{id} has no control");
+            let mut layer = Vec::new();
+            assert!(control(id, &store, &st, p, access, &mut layer).is_some(), "{id} has no control");
         }
+    }
+
+    #[test]
+    fn every_direct_control_is_shown_or_documented() {
+        let (store, st) = (Store::default(), ShellState::default());
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        for id in DIRECT {
+            let mut layer = Vec::new();
+            assert!(
+                control(id, &store, &st, p, access, &mut layer).is_some() || UNAVAILABLE.contains(id),
+                "{id} is neither implemented nor in UNAVAILABLE"
+            );
+        }
+        for id in UNAVAILABLE {
+            assert!(DIRECT.contains(id), "{id} is not a direct control");
+        }
+    }
+
+    #[test]
+    fn advanced_settings_defaults_match_fluxer() {
+        let l = crate::look::Prefs::default();
+        assert!(!l.text_selection && !l.hide_keyboard_hints && !l.keep_attachments_on_empty_edit);
+        assert!(l.show_favorites && l.show_help_button && l.show_download_button);
+        assert!(l.auto_send_gifs && !l.save_gif_favorites && !l.strip_tracking);
+        assert!(l.autocomplete_emojis && l.autocomplete_custom_emojis);
+        assert!(l.scroll_to_bottom_on_send && !l.skip_mark_all_read);
+        assert!(l.new_device_alerts);
+        assert!(l.pause_preview_unfocused && !l.disable_screen_pip);
+        assert!(l.media_favorite_button && l.media_download_button && l.media_delete_button);
     }
 
     #[test]

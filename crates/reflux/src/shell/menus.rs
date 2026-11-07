@@ -250,7 +250,7 @@ fn channel_menu<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, acc: S
         if ch.kind == ChannelType::GUILD_ANNOUNCEMENT {
             m = m.item(MenuItem::new("follow-channel", t("Follow channel")).icon(&icons::BELL_RINGING_FILL).on_select(move |s: &mut S| acc(s).open_social(crate::social::Modal::Follow(c))));
         }
-        if !category {
+        if !category && crate::look::with(|l| l.show_favorites) {
             let fav = crate::nav::favorites::is_favorite(st, c);
             m = m.item(
                 MenuItem::new("favorite", if fav { "Remove from favorites" } else { "Add to favorites" })

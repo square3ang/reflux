@@ -17,6 +17,11 @@ Rules:
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
 | System titlebar instead of Fluxer's custom one | Rune has no frameless window / custom titlebar on Linux and Windows | `main.rs` window setup | Rune gets frameless windows with hit-testing |
+| Advanced hides eight direct controls instead of faking them: video seek thumbnails, smooth scrolling, middle-click autoscroll, stay interactive unfocused, pre-upload attachments, connection volume controls, native title bar and source maps | Rune's wheel/pointer input has no browser smooth-scroll, autoscroll or focus guard; the inline player has no frame-at-time snapshot API; uploads only start at send (`Intent::SendMessage`); the per-user volume menu lives in `shell/call.rs` (platform-audio work); Rune always uses the system titlebar; a Rust build has no JS source maps | `settings/advanced.rs` (`UNAVAILABLE`), `shell/chat.rs`, `shell/attachments.rs` | the Rune/platform pieces above exist |
+| Neko draws only its idle and four look frames, without oneko's walk/scratch physics | the shell has no per-frame animation clock for a purely decorative overlay; a pointer-driven sprite is enough for the easter egg | `shell/neko.rs`, `media.rs` | a shell animation tick |
+| Advanced's "Enable text selection" gates message bodies; IDs, keys and logs stay selectable | Rune sets selection per text, and those debug values are meant to be copied even with message selection off | `shell/markdown.rs`, `shell/chat.rs` | Rune gets a window-wide selection switch |
+| Sequential file send is shown on and disabled: one message carries every attachment | Reflux has no per-file message sequence to reorder; the pick order is already the send order | `settings/advanced.rs` | file messages are sent one by one |
+| "Pause my screen share preview in the background" and "Hide my stream preview thumbnail" are kept for parity; only the PiP switch is enforced | the preview thumbnail is drawn in `shell/call.rs`, which the platform-audio work owns; the `look` flags are ready for that view | `settings/advanced.rs`, `shell/call.rs` | the platform-audio work reads the two flags |
 | Inline custom emoji: a no-break-space gap in the text plus an image overlay placed with `rune::memo::layout(key)`; copying maps back through `El::selection_copy` | Rune text runs can't hold inline images | `shell/markdown.rs` | Rune supports inline boxes in text |
 | Custom emoji pills in the composer show `:name:` | pill chips take only a vector `Icon` and no pill rect is exposed | `compose.rs` | Rune exposes pill rects or image pills |
 | Format toolbar centres on the caret end | Rune exposes the caret's rect, not the selection's | `compose.rs` | a selection rect API |
@@ -175,7 +180,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:231` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
-- `crates/reflux/src/settings/advanced.rs:382` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+- `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
+- `crates/reflux/src/settings/advanced.rs:550` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
@@ -192,10 +198,11 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
-- `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
-- `crates/reflux/src/shell/markdown.rs:364` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
-- `crates/reflux/src/shell/markdown.rs:395` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:744` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/markdown.rs:93` a scaled span keeps its half-leading even, so the line's baseline lands where that
+- `crates/reflux/src/shell/markdown.rs:366` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
+- `crates/reflux/src/shell/markdown.rs:397` emoji in one-line previews stay text (Fluxer draws 1.25em images).
+- `crates/reflux/src/shell/mod.rs:761` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or

@@ -57,7 +57,9 @@ impl<'a> Md<'a> {
         let key = format!("{}-t{n}", self.key);
         let mut t = t.key(key.clone());
         if let Some((msg, map)) = self.copy {
-            t = t.selectable(true).selection_color(self.p.text_selection);
+            if crate::look::with(|l| l.text_selection) {
+                t = t.selectable(true).selection_color(self.p.text_selection);
+            }
             map.borrow_mut().insert(key.clone(), (msg, subs));
         }
         (t, key)

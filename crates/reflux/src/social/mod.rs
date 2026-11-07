@@ -70,6 +70,8 @@ pub struct Social {
     pub pending_send: (usize, u32),
     /// The community members page, while it shows.
     pub members: Option<crate::shell::members_page::MembersPage>,
+    /// "Mark all as read" waiting for the confirmation (`Inbox`).
+    pub confirm_read_all: Option<Vec<(Snowflake, Snowflake)>>,
 }
 
 impl Social {
@@ -282,6 +284,7 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
 /// Every overlay this module draws for the shell.
 pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     inbox::popout(store, st, p, acc, layer);
+    layer.extend(inbox::confirm_read_all(st, p, acc));
     channel::bell_layer(store, st, p, acc, layer);
     channel::mass_popout(st, p, acc, layer);
     inbox::filter_menu(st, p, acc, layer);

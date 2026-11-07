@@ -212,6 +212,21 @@ fn is_svg(bytes: &[u8]) -> bool {
     head.starts_with("<svg") || (head.starts_with("<?xml") && head.contains("<svg"))
 }
 
+/// A 32px cell of `assets/media/images/neko.png` (11×4 oneko frames).
+fn neko_cell(cache: &ImageCache, col: u8, row: u8) -> Result<Image, String> {
+    static SHEET: OnceLock<Option<image::RgbaImage>> = OnceLock::new();
+    const PNG: &[u8] = include_bytes!("../../../assets/media/images/neko.png");
+    let sheet = SHEET
+        .get_or_init(|| image::load_from_memory_with_format(PNG, image::ImageFormat::Png).ok().map(|i| i.into_rgba8()))
+        .as_ref()
+        .ok_or("Neko sheet failed to decode")?;
+    let (x, y) = (col as u32 * 32, row as u32 * 32);
+    if x + 32 > sheet.width() || y + 32 > sheet.height() {
+        return Err("Neko cell is off the sheet".into());
+    }
+    Ok(cache.rgba(32, 32, image::imageops::crop_imm(sheet, x, y, 32, 32).to_image().into_raw()))
+}
+
 /// `EMOJI_SPRITES.BasePerRow` cells of 64 device px in `spritesheet-emoji@2x.png`; the
 /// skin-tone sheets (`spritesheet-1f3fb@2x.png` …) have `SkinTonePerRow` (10).
 const SPRITE_COLUMNS: u32 = 42;
@@ -393,9 +408,27 @@ impl Media {
         })
     }
 
+    /// A 32px cell of Fluxer's Neko sheet (`NekoSprite`), by `(column, row)`.
+    pub fn neko(&self, cell: (u8, u8)) -> Load {
+        let key = format!("neko:{}:{}", cell.0, cell.1);
+        self.entry(&key, |cache| {
+            let crop = move |cache: &ImageCache| neko_cell(cache, cell.0, cell.1).map(Decoded::Still);
+            if self.0.fixture.get().is_some() {
+                return crop(cache).map_or(Slot::Failed, |d| match d {
+                    Decoded::Still(img) => {
+                        let _ = img.wait();
+                        Slot::Ready(img)
+                    }
+                    Decoded::Anim(frames, _) => Slot::Anim(frames, vec![0]),
+                });
+            }
+            self.decode_later(key.clone(), crop);
+            Slot::Pending
+        })
+    }
+
     /// A local file or pasted image (upload previews), read and decoded off the UI thread.
-    pub fn local(&self, key: &str, read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static) -> Load {
-        self.entry(key, |cache| {
+    pub fn local(&self, key: &str, read: impl FnOnce() -> Result<Vec<u8>, String> + Send + 'static) -> Load {        self.entry(key, |cache| {
             if self.0.fixture.get().is_some() {
                 return read().and_then(|b| decode(cache, b)).map_or(Slot::Failed, |img| {
                     let _ = img.wait();
