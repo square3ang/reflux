@@ -2,7 +2,7 @@
 //! `YourThemesSection.FolderRow`, desktop `ThemeFolderWatch.ts`): every `.css` file under a
 //! folder becomes a theme that follows the file, polled every 2 s like the desktop watcher's
 //! fallback.
-// shortcut: "Stop watching" confirms inline (like "Reset data") instead of a ConfirmModal.
+//! Single linked files (`ThemeLibrary.startLinkedFileSync`) are polled here too.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 use rune::{El, Tx, col, row, text};
-use serde_json::json;
 
 use super::look_tabs::update;
 use crate::i18n::{t, tf, tp};
@@ -115,8 +114,7 @@ fn apply(l: &mut Prefs, folder: &str, files: &[(String, String, String)], at: i6
             Some(th) => {
                 matched.push(th.id.clone());
                 if th.css != *css {
-                    th.css = css.clone();
-                    th.updated_at = at;
+                    *th = super::theme_menu::from_css(th, css.clone(), name, at);
                     n += 1;
                 }
             }
@@ -135,9 +133,7 @@ fn apply(l: &mut Prefs, folder: &str, files: &[(String, String, String)], at: i6
                 l.themes.last_mut().expect("pushed")
             }
         };
-        th.name = name.strip_suffix(".css").unwrap_or(name).to_string();
-        th.file_name = name.clone();
-        th.css = css.clone();
+        *th = super::theme_menu::from_css(th, css.clone(), name, at);
         th.linked_path = Some(path.clone());
         th.folder_path = Some(folder.to_string());
         th.updated_at = at;
@@ -155,7 +151,8 @@ fn now() -> i64 {
 
 /// The watcher: rescans the folders every 2 s and saves the library when a CSS file changed.
 pub fn poll(st: &mut ShellState, tx: &mut Tx) -> bool {
-    if st.prefs.look.theme_folders.is_empty() {
+    let linked = st.prefs.look.themes.iter().any(|t| t.linked_path.is_some() && t.folder_path.is_none());
+    if st.prefs.look.theme_folders.is_empty() && !linked {
         return false;
     }
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
@@ -183,10 +180,40 @@ pub fn poll(st: &mut ShellState, tx: &mut Tx) -> bool {
         }
         seen.insert(folder.clone(), now_seen);
     }
+    save |= poll_linked(&mut prefs.look, now());
     if save {
         st.intents.push(crate::shell::Intent::Prefs(Box::new(prefs)));
     }
-    redraw
+    redraw || save
+}
+
+static FILES: Mutex<Option<HashMap<String, (Option<SystemTime>, u64)>>> = Mutex::new(None);
+
+/// `startLinkedFileSync`: a linked file that changed on disk replaces its theme (details
+/// re-read from the header); a missing or unreadable one keeps the last loaded version.
+fn poll_linked(l: &mut Prefs, at: i64) -> bool {
+    let mut files = FILES.lock().unwrap_or_else(|e| e.into_inner());
+    let files = files.get_or_insert_with(HashMap::new);
+    let mut changed = false;
+    for th in l.themes.iter_mut().filter(|t| t.folder_path.is_none()) {
+        let Some(path) = th.linked_path.clone() else { continue };
+        let Ok(m) = std::fs::metadata(&path) else { continue };
+        let sig = (m.modified().ok(), m.len());
+        if files.get(&path) == Some(&sig) || m.len() > MAX_BYTES {
+            continue;
+        }
+        files.insert(path.clone(), sig);
+        let Ok(css) = std::fs::read_to_string(&path) else { continue };
+        if css != th.css {
+            let file = Path::new(&path).file_name().map_or_else(|| th.file_name.clone(), |f| f.to_string_lossy().into_owned());
+            *th = super::theme_menu::from_css(th, css, &file, at);
+            changed = true;
+        }
+    }
+    if changed {
+        l.themes.sort_by_key(|t| t.name.to_lowercase());
+    }
+    changed
 }
 
 /// "Import folder": watch a folder and load its CSS files.
@@ -261,33 +288,12 @@ pub fn rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
             if truncated {
                 info = info.child(text(t("Only the first 200 CSS files in this folder are loaded.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).wrap());
             }
-            let key = format!("theme-folder-stop:{folder}");
-            let control = if st.form.data.contains_key(&key) {
-                let (k1, k2, f) = (key.clone(), key.clone(), folder.clone());
-                col()
-                    .gap(6.0)
-                    .items_end()
-                    .child(text(t("Stop watching this folder?")).font(font(13.0, 600.0).lh(18.0)).color(p.text_primary))
-                    .child(text(t("Themes from this folder will be removed from \"Your themes\".")).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary))
-                    .child(
-                        row()
-                            .gap(8.0)
-                            .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| drop(acc(s).form.data.remove(&k1))).el(p))
-                            .child(
-                                Button::new(t("Stop watching"))
-                                    .variant(ButtonVariant::Danger)
-                                    .size(ButtonSize::Small)
-                                    .on_press(move |s: &mut S| {
-                                        acc(s).form.data.remove(&k2);
-                                        let f = f.clone();
-                                        update(s, acc, move |l| stop_watching(l, &f));
-                                    })
-                                    .el(p),
-                            ),
-                    )
-            } else {
-                Button::new(t("Stop watching")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| drop(acc(s).form.data.insert(key.clone(), json!(true)))).el(p)
-            };
+            let f = folder.clone();
+            let control = Button::new(t("Stop watching"))
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Small)
+                .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::ThemeStopWatching(f.clone())))
+                .el(p);
             row()
                 .w_full()
                 .px(12.0)
@@ -305,7 +311,7 @@ pub fn rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
 }
 
 /// `stopWatchingFolder`: forgets the folder and drops its themes (the files stay on disk).
-fn stop_watching(l: &mut Prefs, folder: &str) {
+pub(super) fn stop_watching(l: &mut Prefs, folder: &str) {
     l.theme_folders.retain(|f| f != folder);
     let gone: Vec<String> = l.themes.iter().filter(|t| t.folder_path.as_deref() == Some(folder)).map(|t| t.id.clone()).collect();
     l.themes.retain(|t| !gone.contains(&t.id));
@@ -329,11 +335,11 @@ mod tests {
         let mut l = Prefs::default();
         let f = |p: &str, css: &str| (format!("/t/{p}"), p.to_string(), css.to_string());
         assert_eq!(apply(&mut l, "/t", &[f("a.css", "a"), f("b.css", "b")], 1), 2);
-        let b = l.themes.iter().find(|t| t.name == "b").unwrap().id.clone();
+        let b = l.themes.iter().find(|t| t.name == "B").unwrap().id.clone();
         l.enabled_themes.push(b.clone());
         // a changed, b renamed to c (same CSS keeps the ID), nothing else.
         assert_eq!(apply(&mut l, "/t", &[f("a.css", "a2"), f("c.css", "b")], 2), 2);
-        assert_eq!(l.themes.iter().map(|t| (t.name.as_str(), t.css.as_str())).collect::<Vec<_>>(), [("a", "a2"), ("c", "b")]);
+        assert_eq!(l.themes.iter().map(|t| (t.name.as_str(), t.css.as_str())).collect::<Vec<_>>(), [("A", "a2"), ("C", "b")]);
         assert_eq!(l.themes[1].id, b);
         assert_eq!(apply(&mut l, "/t", &[f("a.css", "a2")], 3), 1);
         assert!(l.enabled_themes.is_empty());

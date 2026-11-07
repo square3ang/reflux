@@ -16,6 +16,9 @@ use crate::ui::{Button, ButtonSize, ButtonVariant};
 #[derive(Default)]
 pub struct Editor {
     edit: TextEdit,
+    /// A library theme's ID and name when editing that theme (`openQuickCssEditor(themeId)`),
+    /// and whether it follows a file (View CSS: no Save).
+    theme: Option<(String, String, bool)>,
     /// The main window's palette when it opened.
     palette: Option<Palette>,
 }
@@ -35,14 +38,23 @@ pub fn register(app: &mut rune::App<State>) {
     WINDOW.with(|w| *w.borrow_mut() = Some(handles));
 }
 
-/// Opens (or brings forward) the editor on `css`, drawn in `p`.
+/// Opens (or brings forward) the editor on the quick CSS `css`, drawn in `p`.
 pub fn open(css: &str, p: &Palette) {
+    show(css, None, p);
+}
+
+/// Opens the editor on a library theme's CSS (read-only for a linked file).
+pub fn open_theme(th: &crate::look::LibraryTheme, read_only: bool, p: &Palette) {
+    show(&th.css, Some((th.id.clone(), th.name.clone(), read_only)), p);
+}
+
+fn show(css: &str, theme: Option<(String, String, bool)>, p: &Palette) {
     let (css, p) = (css.to_string(), *p);
     WINDOW.with(|w| {
         let Some((app, win)) = &*w.borrow() else { return };
         app.update(move |e, tx| {
-            tx.set_title(t("Quick CSS"));
-            (e.edit, e.palette) = (TextEdit::new(css), Some(p));
+            tx.set_title(theme.as_ref().map_or_else(|| t("Quick CSS").to_string(), |th| th.1.clone()));
+            (e.edit, e.palette, e.theme) = (TextEdit::new(css), Some(p), theme);
             e.edit.focused = true;
         });
         win.open();
@@ -58,13 +70,23 @@ fn hide() {
     });
 }
 
-/// Hands the text to the main window, which saves it as the in-tab Save does.
-fn save(css: String) {
+/// Hands the text to the main window, which saves it as the in-tab Save does (or into the
+/// library theme, `updateThemeDetails` with the CSS).
+fn save(css: String, theme: Option<String>) {
     crate::app::update(move |s| {
         let sh = &mut s.app.shell;
         let mut prefs = sh.prefs.clone();
-        prefs.look.css = css;
-        sh.form.text.remove("quick-css");
+        match theme {
+            Some(id) => {
+                let Some(th) = prefs.look.themes.iter_mut().find(|x| x.id == id) else { return };
+                (th.css, th.updated_at) = (css, crate::app::now_ms() as i64);
+                crate::desktop::toast(&mut sh.desktop, t("Theme saved."), true);
+            }
+            None => {
+                prefs.look.css = css;
+                sh.form.text.remove("quick-css");
+            }
+        }
         sh.intents.push(crate::shell::Intent::Prefs(Box::new(prefs)));
     });
 }
@@ -78,7 +100,7 @@ fn view(e: &Editor, _cx: &mut Cx<Editor>) -> El {
         .px(16.0)
         .gap(8.0)
         .center_y()
-        .child(text(t("Quick CSS")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
+        .child(text(e.theme.as_ref().map_or_else(|| t("Quick CSS").to_string(), |th| th.1.clone())).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
         .child(
             Button::new(t("Move back into Fluxer"))
                 .variant(ButtonVariant::Secondary)
@@ -87,21 +109,21 @@ fn view(e: &Editor, _cx: &mut Cx<Editor>) -> El {
                 .on_press(|_: &mut Editor| hide())
                 .el(p),
         )
-        .child(
+        .children((!e.theme.as_ref().is_some_and(|th| th.2)).then(|| {
             Button::new(t("Save"))
                 .size(ButtonSize::Small)
                 .key("quick-css-window-save")
-                .on_press(|e: &mut Editor| save(e.edit.text.to_string()))
-                .el(p),
-        );
+                .on_press(|e: &mut Editor| save(e.edit.text.to_string(), e.theme.as_ref().map(|th| th.0.clone())))
+                .el(p)
+        }));
     let editor = text_input(&e.edit, font(13.0, 400.0).mono().lh(18.0))
         .key("quick-css-window")
         .w_full()
         .h_full()
         .color(p.text_primary)
         .caret(p.text_primary, p.background_modifier_selected)
-        .placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary)
-        .on_edit(|e: &mut Editor| -> &mut TextEdit { &mut e.edit });
+        .placeholder(":root { --text-link: #00a8fc; }", p.text_tertiary);
+    let editor = if e.theme.as_ref().is_some_and(|th| th.2) { editor } else { editor.on_edit(|e: &mut Editor| -> &mut TextEdit { &mut e.edit }) };
     let (applied, ignored) = crate::theme::custom::overrides(&e.edit.text);
     let note = crate::i18n::tf(
         "Reflux applies only theme variable overrides inside :root {…} ({applied} applied, {ignored} ignored).",

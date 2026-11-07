@@ -26,6 +26,8 @@ pub(crate) mod search;
 mod search_engines;
 pub mod theme_folder;
 mod theme_library;
+mod theme_menu;
+mod theme_meta;
 mod search_index;
 pub mod sudo;
 pub(crate) mod tabs;
@@ -338,7 +340,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
         let mut pops = Vec::new();
         if *m == AccountModal::EncoderControls {
             layer.push(advanced::encoder_modal(st, p, acc, &mut pops));
-        } else if search_engines::modal(store, st, m, p, acc, &mut pops) {
+        } else if search_engines::modal(store, st, m, p, acc, &mut pops) || theme_menu::modal(st, m, p, acc, &mut pops) {
         } else {
             layer.extend(account::modal(store, st, m, p, acc));
         }

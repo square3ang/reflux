@@ -51,6 +51,11 @@ pub enum AccountModal {
     ReverseImageSearch,
     RisEngine(Option<String>),
     RisRemove(String),
+    /// A library theme's `ThemeDetailsModal` and delete confirmation, and a watched folder's
+    /// "Stop watching" confirmation ([`super::theme_menu`]).
+    ThemeDetails(String),
+    ThemeDelete(String),
+    ThemeStopWatching(String),
 }
 
 pub(super) fn txt(s: impl Into<String>, size: f32, weight: f32, c: rune::Color) -> El {
@@ -579,7 +584,10 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
         AccountModal::EncoderControls
         | AccountModal::ReverseImageSearch
         | AccountModal::RisEngine(_)
-        | AccountModal::RisRemove(_) => return None,
+        | AccountModal::RisRemove(_)
+        | AccountModal::ThemeDetails(_)
+        | AccountModal::ThemeDelete(_)
+        | AccountModal::ThemeStopWatching(_) => return None,
         AccountModal::RecoveryKitReplace | AccountModal::RecoveryKit => return super::recovery_kit::modal(store, st, m, p, acc),
         other => return super::privacy::modal(store, st, other, p, acc),
     })

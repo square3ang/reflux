@@ -334,6 +334,9 @@ impl Demo {
                 let mut lib = super::voice::EntranceLibrary { sounds: vec![sound(1, "airhorn"), sound(2, "door chime")], ..Default::default() };
                 lib.selections.insert("global".into(), Snowflake(1));
                 shell.voice.entrance = Some(lib);
+            } else if let Some(id) = a.strip_prefix("--popup=") {
+                // Opens a popout menu by its ID (snapshots of row menus).
+                shell.popups.toggle(id);
             } else if let Some(q) = a.strip_prefix("--settings-search=")
                 && let Some(u) = shell.settings.as_mut()
             {

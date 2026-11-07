@@ -19,7 +19,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
         "linked_accounts" => super::privacy::connections(st, p, acc),
         "blocked_users" => section(crate::i18n::t("Blocked users"), super::account::blocked(store, st, p, acc), true, p),
         "appearance" => super::look_tabs::appearance(store, st, p, acc, layer),
-        "themes" => super::look_tabs::themes(store, st, p, acc),
+        "themes" => super::look_tabs::themes(store, st, p, acc, layer),
         "chat_settings" => super::look_tabs::chat(store, st, p, acc),
         "accessibility" => super::look_tabs::accessibility(store, st, p, acc, layer),
         "advanced_settings" => super::advanced::tab(store, st, &ui.searched, p, acc),

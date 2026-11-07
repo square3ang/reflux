@@ -1,9 +1,8 @@
 //! The theme library (`theme/state/ThemeLibrary.ts`, `YourThemesSection.tsx`,
 //! `ShareAndBackUpSection.tsx`): CSS files saved on this device that can be turned on over the
 //! base theme, and the library backup file (`fluxer-theme-library.json`, export version 1).
-// shortcut: each row has a delete button instead of Fluxer's options menu (edit details/CSS, move
-// up/down, export one, duplicate); single CSS files aren't linked (folders are, see `theme_folder`); theme names come from the
-// file name, not the CSS header metadata.
+//! Each row's options are in [`super::theme_menu`]; names and details come from the CSS header
+//! ([`super::theme_meta`]).
 
 use rune::{El, Tx, col, row, text};
 use serde_json::{Value, json};
@@ -19,10 +18,10 @@ fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-/// `createThemeFromCss`: a new theme named after its file.
+/// `createThemeFromCss`: a new theme, its details from the CSS header, else named after its file.
 pub(super) fn theme(css: String, file_name: &str, at: i64, n: usize) -> LibraryTheme {
-    let name = file_name.strip_suffix(".css").unwrap_or(file_name).to_string();
-    LibraryTheme { id: format!("theme-{at}-{n}"), name, css, file_name: file_name.to_string(), created_at: at, updated_at: at, ..Default::default() }
+    let blank = LibraryTheme { id: format!("theme-{at}-{n}"), created_at: at, ..Default::default() };
+    super::theme_menu::from_css(&blank, css, file_name, at)
 }
 
 /// `buildExportPayload`.
@@ -63,8 +62,9 @@ pub fn import(l: &mut Prefs, v: &Value) -> Option<(usize, usize)> {
 }
 
 /// "Your themes": the saved themes, turned-on ones first in their order, each with a switch.
-pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let l = &st.prefs.look;
+    super::theme_menu::menu(st, p, acc, layer);
     let import = Button::new(t("Import CSS"))
         .variant(ButtonVariant::Secondary)
         .size(ButtonSize::Small)
@@ -116,7 +116,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
     themes.sort_by_key(|th| order(th));
     for th in themes {
         let on = l.enabled_themes.contains(&th.id);
-        let (id, id2) = (th.id.clone(), th.id.clone());
+        let id = th.id.clone();
         let label = tf("Enable {themeName}", &[("themeName", &th.name)]);
         let toggle = Switch::new(on).on_toggle(move |s: &mut S| {
             let id = id.clone();
@@ -128,19 +128,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                 }
             })
         });
-        let (sub, deletable) = super::theme_folder::subtitle(th);
-        let delete = rune::icon(&crate::icons::TRASH_BOLD, 18.0)
-            .color(p.text_tertiary)
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .label(t("Delete theme"))
-            .on_press(move |s: &mut S| {
-                let id = id2.clone();
-                update(s, acc, move |l| {
-                    l.themes.retain(|x| x.id != id);
-                    l.enabled_themes.retain(|x| *x != id);
-                })
-            });
+        let (sub, _) = super::theme_folder::subtitle(th);
         c = c.child(
             row()
                 .w_full()
@@ -160,7 +148,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                         .child(text(sub).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).truncate()),
                 )
                 .child(toggle.el(p).label(label))
-                .children(deletable.then_some(delete)),
+                .child(super::theme_menu::button(th, p, acc)),
         );
     }
     c
@@ -272,7 +260,7 @@ mod tests {
         let file = export(&a);
         let mut b = Prefs::default();
         assert_eq!(import(&mut b, &file), Some((1, 1)));
-        assert_eq!((b.themes[0].name.as_str(), b.themes[0].css.as_str()), ("red", ":root { --text-link: #f00 }"));
+        assert_eq!((b.themes[0].name.as_str(), b.themes[0].css.as_str()), ("Red", ":root { --text-link: #f00 }"));
         assert_eq!(import(&mut b, &json!({ "version": 2, "themes": [] })), None);
         b.enabled_themes.push(b.themes[0].id.clone());
         b.css = ":root { --text-link: #0f0 }".into();

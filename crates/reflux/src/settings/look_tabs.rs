@@ -571,7 +571,7 @@ fn group_of(name: &str) -> &'static str {
     GROUPS.iter().find(|(_, pre)| pre.iter().any(|p| name.starts_with(p))).map_or(t("Other"), |(g, _)| g)
 }
 
-pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let current = store.settings.theme.as_str();
     let buttons = row().gap(12.0).role("radiogroup").label(t("Theme")).children(THEMES.iter().map(|&(value, label, [r, g, b])| {
         let selected = current == value || (value == "dark" && !THEMES.iter().any(|(v, ..)| *v == current));
@@ -600,7 +600,7 @@ pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     col()
         .w_full()
         .child(section(t("Base theme"), buttons, true, p))
-        .child(section(t("Your themes"), super::theme_library::your_themes(st, p, acc), false, p))
+        .child(section(t("Your themes"), super::theme_library::your_themes(st, p, acc, layer), false, p))
         .child(colors(store, st, p, acc))
         .child(quick_css(st, p, acc))
         .child(share(st, p, acc))
