@@ -3,7 +3,7 @@
 //! in-tab editor and the editor window.
 // shortcut: only the variable completions; selector, `data-flx`, property and snippet completions,
 // hover info, swatches, lint and the outline target the DOM, which Reflux doesn't have (only
-// `:root` variables apply). Ctrl+Space doesn't force the list open.
+// `:root` variables apply).
 
 use std::cell::Cell;
 use std::ops::Range;
@@ -261,11 +261,13 @@ pub struct List {
     pub decl: bool,
 }
 
-/// The highlighted row, and the name start the list was dismissed at (Escape).
+/// The highlighted row, the name start the list was dismissed at (Escape), and the one it was
+/// asked for at (Ctrl+Space, `startCompletion`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pick {
     pub selected: usize,
     pub dismissed: Option<usize>,
+    pub explicit: Option<usize>,
 }
 
 thread_local! {
@@ -285,7 +287,13 @@ pub fn list(e: &TextEdit, which: usize) -> Option<List> {
     let token_len = before.bytes().rev().take_while(|&c| ident_char(c)).count();
     let token = &before[caret - token_len..];
     let head = before[..caret - token_len].trim_end_matches([' ', '\t']);
+    let from = caret - token_len;
+    let explicit = PICK.with(|p| p[which].get().explicit) == Some(from);
     let decl = if head.ends_with("var(") {
+        // Typing only lists right after `var(` or once a name started; Ctrl+Space anywhere in it.
+        if token.is_empty() && !before.ends_with('(') && !explicit {
+            return None;
+        }
         false
     } else if token.starts_with("--") && (head.is_empty() || head.ends_with(['{', ';', '\n'])) {
         let line_start = before.rfind('\n').map_or(0, |n| n + 1);
@@ -297,7 +305,6 @@ pub fn list(e: &TextEdit, which: usize) -> Option<List> {
     } else {
         return None;
     };
-    let from = caret - token_len;
     if PICK.with(|p| p[which].get().dismissed) == Some(from) {
         return None;
     }
@@ -335,8 +342,15 @@ pub fn accept(e: &mut TextEdit, l: &List, i: usize) {
     e.insert(&if l.decl { format!("{name}: ") } else { name.clone() });
 }
 
-/// Arrow keys, Enter/Tab and Escape while the list is open; `true` when handled.
+/// Ctrl+Space opens the list; arrow keys, Enter/Tab and Escape while it's open. `true` when
+/// handled.
 pub fn key(e: &mut TextEdit, which: usize, k: &rune::KeyEvent) -> bool {
+    if k.mods.ctrl && matches!(&k.key, Key::Text(t) if t == " ") || k.is_command(' ') && !cfg!(target_os = "macos") {
+        let (_, caret) = e.range();
+        let from = caret - e.text[..caret].bytes().rev().take_while(|&c| ident_char(c)).count();
+        PICK.with(|p| p[which].set(Pick { selected: 0, dismissed: None, explicit: Some(from) }));
+        return true;
+    }
     let Some(l) = list(e, which) else { return false };
     let n = l.items.len();
     PICK.with(|p| {
@@ -437,6 +451,12 @@ mod tests {
         let l = list(&at("a { color: var(--brand-pr"), 0).unwrap();
         assert!(!l.decl && l.items[0].starts_with("--brand-primary"));
         assert!(list(&at("a { color: red"), 0).is_none());
+        // `var( ` with a space lists only when asked (Ctrl+Space).
+        let mut e = at("a { color: var( ");
+        assert!(list(&e, 0).is_none());
+        let ctrl_space = rune::KeyEvent { key: Key::Text(" ".into()), mods: rune::Mods { ctrl: true, ..Default::default() } };
+        assert!(key(&mut e, 0, &ctrl_space));
+        assert!(list(&e, 0).is_some_and(|l| !l.decl));
         let mut e = at(":root { --text-li");
         let l = list(&e, 0).unwrap();
         accept(&mut e, &l, 0);

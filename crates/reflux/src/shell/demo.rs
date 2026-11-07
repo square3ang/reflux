@@ -491,7 +491,7 @@ fn account_fixtures(sh: &mut ShellState, store: &Store, now: u64) {
     }
 }
 
-/// `--account-ui=<scene>`: `menu` (user area), `status`, `status-emoji` (with a draft and the picker), `crop` / `crop-banner` (the crop modal), `timezone`, `accounts`, `nickname`, `sudo`,
+/// `--account-ui=<scene>`: `menu` (user area), `status`, `status-emoji` (with a draft and the picker), `crop` / `crop-banner` / `crop-guild-banner` (the crop modal), `timezone`, `accounts`, `nickname`, `sudo`,
 /// `profile` (the full profile modal).
 fn account_scene(sh: &mut ShellState, scene: &str) {
     use crate::settings::ShellModal;
@@ -504,12 +504,18 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
             sh.birthday.confirm_logout = scene == "birthday-logout";
         }
         "status" => super::status::open(sh, ShellModal::CustomStatus),
-        "crop" | "crop-banner" => {
+        "crop" | "crop-banner" | "crop-guild-banner" => {
             sh.open_settings(Some("my_profile"));
-            let img = image::RgbaImage::from_fn(900, 600, |x, y| image::Rgba([(x / 4) as u8, (y / 3) as u8, 160, 255]));
+            // The community banner is 16:9 and small enough to keep as is ("Skip cropping").
+            let (w, h) = if scene == "crop-guild-banner" { (1280, 720) } else { (900, 600) };
+            let img = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba([(x / 4) as u8, (y / 3) as u8, 160, 255]));
             let mut png = Vec::new();
             let _ = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
-            let asset = if scene == "crop" { crate::settings::crop::Asset::Avatar } else { crate::settings::crop::Asset::ProfileBanner };
+            let asset = match scene {
+                "crop" => crate::settings::crop::Asset::Avatar,
+                "crop-guild-banner" => crate::settings::crop::Asset::GuildBanner,
+                _ => crate::settings::crop::Asset::ProfileBanner,
+            };
             sh.nav.crop = crate::settings::crop::Crop::new("p.avatar", asset, png);
         }
         "timezone" => {
@@ -582,6 +588,35 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
             sh.account.profiles.insert((Snowflake(1001), Some(Snowflake(HQ))), Ok(json!({"user_profile": {"bio": "Building **Reflux**.", "pronouns": "she/her"}, "mutual_guilds": [{"id": HQ.to_string()}]})));
             sh.account.profile_modal = Some((Snowflake(1001), Some(Snowflake(HQ)), "overview"));
         }
+        // `UserProfileBadges` with ten badges: the popout shows 7 and "+3"; `-tip` hovers the
+        // detailed one, `-list` opens `BadgeListModal`, `-full` the full profile (all ten).
+        "profile-badges" | "profile-badges-tip" | "profile-badges-list" | "profile-badges-full" => {
+            let b = |i: usize| {
+                let mut v = json!({"key": format!("custom:{i}"), "kind": "custom", "label": format!("Badge {i}"), "asset": null,
+                    "asset_url": format!("https://media.fluxer.app/emojis/{}.webp", 76 + i), "caption": null, "href": null, "quote": null});
+                if i == 1 {
+                    v["details"] = json!({"title": "Early Supporter", "lines": ["Joined before launch", "Since March 2025"]});
+                    v["quote"] = json!("Here from day one");
+                }
+                if i == 2 {
+                    v = json!({"key": "visionary_number", "kind": "visionary_number", "label": "Visionary #42", "asset": null, "asset_url": null, "caption": "#42", "href": null});
+                }
+                v
+            };
+            let badges: Vec<Value> = (1..=10).map(b).collect();
+            let g = Some(Snowflake(HQ));
+            sh.account.profiles.insert((Snowflake(1001), g), Ok(json!({"user_profile": {"bio": "Building **Reflux**.", "pronouns": "she/her"}, "profile_badges": badges})));
+            match scene {
+                "profile-badges-full" => sh.account.profile_modal = Some((Snowflake(1001), g, "overview")),
+                _ => sh.open_profile(Snowflake(1001), g, String::new(), "member-1001".into(), crate::ui::overlay::Placement::LeftStart),
+            }
+            if scene == "profile-badges-tip" {
+                sh.popups.tip = Some("profile-1001-false-badge-0".into());
+            }
+            if scene == "profile-badges-list" {
+                sh.media_ui.badge_list = Some(badges.iter().map(|v| super::badges::from_profile(sh, v)).collect());
+            }
+        }
         _ => {}
     }
 }
@@ -600,6 +635,21 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
         "add" => st.open_dialog(Dialog::Add(AddView::Landing)),
         "create" => st.open_dialog(Dialog::Add(AddView::Create)),
         "join" => st.open_dialog(Dialog::Add(AddView::Join)),
+        "template" => st.open_dialog(Dialog::Add(AddView::Import(crate::guild::template::Step::Url))),
+        "template-json" => {
+            st.open_dialog(Dialog::Add(AddView::Import(crate::guild::template::Step::Json)));
+            st.form.data.insert("tpl-api".into(), json!("https://discord.com/api/guilds/templates/abcd1234"));
+            st.form.data.insert("tpl-failed".into(), json!(true));
+        }
+        "template-create" => {
+            st.open_dialog(Dialog::Add(AddView::Import(crate::guild::template::Step::Url)));
+            let v = json!({"code": "abcd1234", "name": "Gaming Community", "serialized_source_guild": {"name": "Gaming Hub",
+                "roles": [{"id": 0, "name": "@everyone"}, {"id": 1, "name": "Mods"}, {"id": 2, "name": "Members"}],
+                "channels": [{"id": 3, "type": 4, "name": "Text", "position": 0}, {"id": 4, "type": 0, "name": "general", "position": 0, "parent_id": 3},
+                    {"id": 5, "type": 0, "name": "clips", "position": 1, "parent_id": 3}, {"id": 6, "type": 2, "name": "Lounge", "position": 2}]}});
+            let (name, g) = crate::guild::template::parse_response(&v).expect("demo template");
+            crate::guild::template::apply(st, name, g, true);
+        }
         "invite" | "invite-edit" => {
             st.open_dialog(Dialog::Invite(Snowflake(GENERAL), scene == "invite-edit"));
             st.invite_base = "https://fluxer.gg".into();
@@ -1233,7 +1283,7 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             msgs.push(message(t(3), 0, 1003, "https://tenor.com/x.gif", json!({"embeds": [{"type": "gifv", "url": "https://tenor.com/x.gif",
                 "thumbnail": ext(498, 280), "video": {"url": "https://media.tenor.com/x.mp4", "proxy_url": "https://media.fluxer.app/external/sig/x.mp4", "width": 498, "height": 280}}]})));
         }
-        "invite" => {
+        "invite" | "invite-tip" | "invite-list" => {
             msgs.push(message(t(1), 0, 1001, "come hang out https://fluxer.gg/rustlang and https://fluxer.gg/gone", json!({})));
             msgs.push(message(t(2), 0, 1003, "also https://fluxer.gg/hq and https://fluxer.gg/closed", json!({})));
             let inv = |code: &str, id: u64, name: &str, extra: Value| -> super::invite_embed::Preview {
@@ -1250,6 +1300,15 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 .collect();
             st.media_ui.invites.insert("hq".into(), inv("hq", HQ, "Fluxer HQ", json!({"features": ["PARTNERED"], "badge_ids": ["501", "502", "503", "504", "505"]})));
             st.media_ui.invites.insert("closed".into(), inv("closed", 9901, "Quiet Corner", json!({"features": ["INVITES_DISABLED", "DISCOVERABLE"]})));
+            if let Some(b) = st.media_ui.guild_badges.get_mut(0) {
+                b.description = Some("Awarded to communities that helped test Fluxer".into());
+            }
+            if scene.ends_with("-tip") {
+                st.popups.tip = Some("guild-badge-501".into());
+            }
+            if scene.ends_with("-list") {
+                st.media_ui.badge_list = Some(st.media_ui.guild_badges.iter().map(super::badges::from_guild).collect());
+            }
         }
         "system" => {
             let call = |end: Option<u64>, who: &[u64]| json!({"type": 3, "call": {"participants": who.iter().map(|u| u.to_string()).collect::<Vec<_>>(),
@@ -1265,6 +1324,7 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             msgs.push(message(t(10), 0, 1002, "", call(None, &[1002])));
         }
         "markup" => {
+            msgs.push(message(t(30), 0, 1004, "Skin tones: 👍🏽 👋🏿 🧑🏻‍💻", json!({})));
             msgs.push(message(t(1), 0, 1001, "> [!NOTE]\n> Useful information.\n\n> [!TIP]\n> Helpful advice.\n\n> [!IMPORTANT]\n> Key information.\n\n> [!WARNING]\n> Needs attention.\n\n> [!CAUTION]\n> Negative outcomes.", json!({})));
             msgs.push(message(t(2), 0, 1002, "| Name | Role | Lines |\n|:-----|:----:|------:|\n| Ada | **Docs** | 12 |\n| Grace | Compiler | 3400 |\n| Alan | `tests` | 7 |", json!({})));
         }

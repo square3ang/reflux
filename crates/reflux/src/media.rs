@@ -185,6 +185,10 @@ fn frame_at(delays: &[u32], t: u64) -> (usize, u64) {
 /// workers. Bounded to [`MAX_SIDE`] since the bytes come from the network.
 pub fn decode(cache: &ImageCache, bytes: Vec<u8>) -> Result<Image, String> {
     use image::{ImageFormat, ImageReader, Limits};
+    // Twemoji SVGs, rasterised for the largest (48pt jumbo) emoji at 2×.
+    if is_svg(&bytes) {
+        return Ok(cache.svg(bytes, 48.0, 2.0));
+    }
     let mut reader = ImageReader::new(std::io::Cursor::new(&bytes[..])).with_guessed_format().map_err(|e| e.to_string())?;
     let format = reader.format().ok_or("unknown image format")?;
     let mut limits = Limits::default();
@@ -200,6 +204,12 @@ pub fn decode(cache: &ImageCache, bytes: Vec<u8>) -> Result<Image, String> {
     }
     let img = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
     Ok(cache.rgba(img.width(), img.height(), img.into_raw()))
+}
+
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
+    let head = head.trim_start_matches('\u{FEFF}').trim_start();
+    head.starts_with("<svg") || (head.starts_with("<?xml") && head.contains("<svg"))
 }
 
 /// `EMOJI_SPRITES.BasePerRow` cells of 64 device px in `spritesheet-emoji@2x.png`; the
@@ -273,6 +283,8 @@ struct Inner {
     fixture: OnceLock<Fixture>,
     http: reqwest::Client,
     base: Mutex<String>,
+    /// `endpoints.static_cdn` (twemoji SVGs).
+    static_base: Mutex<String>,
     /// `f32` bits of the window scale; 0 = unset (1×).
     scale: AtomicU32,
     entries: Mutex<Entries>,
@@ -306,6 +318,21 @@ impl Media {
     /// `endpoints.media` from discovery.
     pub fn set_base(&self, base: &str) {
         *self.0.base.lock().unwrap_or_else(|e| e.into_inner()) = base.to_owned();
+    }
+
+    /// `endpoints.static_cdn` from discovery.
+    pub fn set_static_base(&self, base: &str) {
+        *self.0.static_base.lock().unwrap_or_else(|e| e.into_inner()) = base.trim_end_matches('/').to_owned();
+    }
+
+    /// `getTwemojiURL`: a unicode emoji's twemoji SVG on the static host (`codepoints` as
+    /// `convertToCodePoints` writes them); `Failed` before discovery named the host.
+    pub fn twemoji(&self, codepoints: &str) -> Load {
+        let base = self.0.static_base.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if base.is_empty() || codepoints.is_empty() {
+            return Load::Failed;
+        }
+        self.get(&format!("{base}/emoji/{codepoints}.svg?v=2"))
     }
 
     /// The media client, for one-off fetches through [`get_capped`].

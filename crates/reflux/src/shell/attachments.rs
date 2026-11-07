@@ -45,6 +45,8 @@ pub struct MediaUi {
     pub guild_badges: Vec<reflux_model::GuildBadge>,
     pub badge_images: reflux_model::BuiltInGuildBadgeImages,
     pub badges_version: Option<String>,
+    /// The open `BadgeListModal`'s badges.
+    pub badge_list: Option<Vec<super::badges::Item>>,
     /// The (guild, channel) of the invite card whose message menu is open.
     pub invite_menu: (Option<Snowflake>, Option<Snowflake>),
     /// The attachment a message menu was opened on (`MediaMenuData`'s items).

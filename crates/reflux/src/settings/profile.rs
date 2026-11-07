@@ -343,7 +343,9 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         avatar_size: 80.0,
         custom_status: None,
         status_emoji: None,
-        badges: if guild.is_none() { super::badges::shown(st) } else { vec![] },
+        badges: vec![],
+        badge_row: if guild.is_none() { crate::shell::badges::profile_row(st, "profile-preview", &super::badges::shown(st), crate::shell::badges::POPOUT_VISIBLE, false, p, acc) } else { None },
+        badges_inline: false,
         guild,
         local_time: if guild.is_none() { super::timezone::preview_offset(store, st) } else { None },
     };

@@ -332,9 +332,8 @@ fn edited_run(mut run: Run, label: &str, md: &Md) -> Option<El> {
 }
 
 /// An emoji's image: custom ones from the media proxy, unicode ones from the bundled
-/// spritesheet (Fluxer draws twemoji for both). `Failed` when there is none.
-// shortcut: skin-tone variants and emoji missing from the base sheet fall back to the font
-// glyph; Fluxer loads their twemoji SVG from its static host.
+/// spritesheets (skin tones from their tone's sheet), else their twemoji SVG from the static
+/// host, as Fluxer draws them. `Failed` when there is none.
 fn emoji_image(kind: &EmojiKind, md: &Md) -> Load {
     match kind {
         // `AnimateEmoji`: animated emoji move unless the user turned it off.
@@ -342,7 +341,13 @@ fn emoji_image(kind: &EmojiKind, md: &Md) -> Load {
             md.media.asset(|b, _| crate::media::emoji_url_animated(b, id))
         }
         EmojiKind::Custom { id, .. } => md.media.asset(|b, _| crate::media::emoji_url(b, id)),
-        EmojiKind::Standard { raw, .. } => super::emoji::sprite_index(raw).map_or(Load::Failed, |i| md.media.sprite(i)),
+        EmojiKind::Standard { raw, .. } => match super::emoji::sprite_index(raw) {
+            Some(i) => md.media.sprite(i),
+            None => match super::emoji::skin_sprite(raw) {
+                Some((i, tone)) => md.media.skin_sprite(i, tone),
+                None => md.media.twemoji(&super::emoji::codepoints(raw)),
+            },
+        },
     }
 }
 

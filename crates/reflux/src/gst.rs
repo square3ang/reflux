@@ -253,16 +253,15 @@ mod imp {
                 .field("pixel-aspect-ratio", gst::Fraction::new(1, 1))
                 .build();
             // Paced here, not by `videorate` + caps: those hand the rate upstream, and pipewiresrc
-            // fails to negotiate one the camera lacks (15 fps on a 10/20/30/60 one, tested).
-            // shortcut: dropped frames were converted and scaled first; pace with a pad probe on the
-            // source if capture CPU use matters.
-            let (mut pacer, start) = (crate::camera::pick::Pacer::new(fps), std::time::Instant::now());
-            let mut sink = sink;
-            let appsink = rgba_sink(caps, move |w, h, rgba| {
-                if pacer.due(start.elapsed()) {
-                    sink(w, h, rgba);
-                }
-            });
+            // fails to negotiate one the camera lacks (15 fps on a 10/20/30/60 one, tested). The
+            // probe drops frames at the source, before they are converted and scaled.
+            let pacer = std::sync::Mutex::new((crate::camera::pick::Pacer::new(fps), std::time::Instant::now()));
+            src.static_pad("src")?.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+                let mut p = pacer.lock().unwrap_or_else(|e| e.into_inner());
+                let at = p.1.elapsed();
+                if p.0.due(at) { gst::PadProbeReturn::Ok } else { gst::PadProbeReturn::Drop }
+            })?;
+            let appsink = rgba_sink(caps, sink);
             // Capture, not playback: hand frames over as they come instead of waiting on the clock.
             appsink.set_sync(false);
             let pipeline = gst::Pipeline::new();

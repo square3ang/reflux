@@ -21,6 +21,7 @@ mod modals;
 pub(crate) mod perms;
 mod settings;
 mod stickers;
+pub(crate) mod template;
 
 use std::collections::HashMap;
 
@@ -67,6 +68,8 @@ pub enum AddView {
     Landing,
     Create,
     Join,
+    /// "Import Discord template", at its step.
+    Import(template::Step),
 }
 
 /// A destructive action waiting on its confirmation.

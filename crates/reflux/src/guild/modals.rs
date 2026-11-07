@@ -79,7 +79,7 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
     };
     let back = Button::new(t("Back")).variant(ButtonVariant::Secondary).on_press(go(AddView::Landing)).el(p);
     match v {
-        // shortcut: "Import template" (a third-party platform's template API) isn't offered.
+        AddView::Import(step) => super::template::view(st, step, p, acc),
         AddView::Landing => Modal::new(t("Add a community"), close(acc))
             .body(
                 col()
@@ -87,56 +87,19 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                     .gap(24.0)
                     .child(desc(t("Create a new community or join an existing one."), p))
                     .child(
-                        row()
-                            .w_full()
-                            .gap(12.0)
-                            .child(action(&icons::HOUSE, t("Create community"), p, go(AddView::Create)))
-                            .child(action(&icons::LINK_BOLD, t("Join community"), p, go(AddView::Join))),
+                        col().w_full().gap(12.0).child(
+                            row()
+                                .w_full()
+                                .gap(12.0)
+                                .child(action(&icons::HOUSE, t("Create community"), p, go(AddView::Create)))
+                                .child(action(&icons::LINK_BOLD, t("Join community"), p, go(AddView::Join))),
+                        )
+                        .child(super::template::landing_tile(p, acc)),
                     ),
             )
             .el(p),
         AddView::Create => {
-            let name = st.form.value("name", "");
-            let icon_set = st.form.data.get("icon").is_some_and(Value::is_string);
-            // `.iconPlaceholder`: an 80px ring with the acronym of the name typed so far.
-            let mut face = row()
-                .size(80.0, 80.0)
-                .center()
-                .radius(40.0)
-                .fill(p.background_tertiary)
-                .border(1.0, over(p.background_modifier_accent, p.background_tertiary));
-            let picked = st.form.data.get("icon").and_then(Value::as_str).and_then(|u| crate::settings::profile::picked_px(st, u));
-            face = if let Some(px) = picked {
-                // The picked image, cropped to the circle.
-                face.clip_rounded(40.0).child(rune::el().size(80.0, 80.0).pixels_fit(&px, rune::SurfaceFit::Fill))
-            } else if icon_set {
-                face
-            } else if !name.trim().is_empty() {
-                let a = crate::shell::acronym(&name);
-                face.child(text(a).font(font(24.0, 500.0)).color(p.text_primary))
-            } else {
-                face
-            };
-            let mut icon_buttons = row().gap(8.0).child(
-                Button::<S>::new(if icon_set { t("Change icon") } else { t("Upload icon") }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(pick_image(acc, "icon")),
-            );
-            if icon_set {
-                icon_buttons = icon_buttons.child(
-                    Button::new(t("Remove icon"))
-                        .variant(ButtonVariant::Secondary)
-                        .size(ButtonSize::Small)
-                        .on_press(move |s: &mut S| {
-                            acc(s).form.data.remove("icon");
-                        })
-                        .el(p),
-                );
-            }
-            let mut body = col()
-                .w_full()
-                .gap(16.0)
-                .child(col().gap(8.0).child(label(t("Community icon"), 500.0, p)).child(row().gap(16.0).center_y().child(face).child(icon_buttons)))
-                .child(field(st, acc, "name", "", t("Community name"), "", p))
-                .child(text("By creating a community, you agree to follow and uphold the community guidelines.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap());
+            let mut body = create_fields(st, p, acc);
             if let Some(e) = error(st, p) {
                 body = body.child(e);
             }
@@ -180,6 +143,51 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                 .el(p)
         }
     }
+}
+
+/// `renderGuildCreateFields`: the icon picker, the name and the guidelines line.
+pub(super) fn create_fields<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let name = st.form.value("name", "");
+    let icon_set = st.form.data.get("icon").is_some_and(Value::is_string);
+    // `.iconPlaceholder`: an 80px ring with the acronym of the name typed so far.
+    let mut face = row()
+        .size(80.0, 80.0)
+        .center()
+        .radius(40.0)
+        .fill(p.background_tertiary)
+        .border(1.0, over(p.background_modifier_accent, p.background_tertiary));
+    let picked = st.form.data.get("icon").and_then(Value::as_str).and_then(|u| crate::settings::profile::picked_px(st, u));
+    face = if let Some(px) = picked {
+        // The picked image, cropped to the circle.
+        face.clip_rounded(40.0).child(rune::el().size(80.0, 80.0).pixels_fit(&px, rune::SurfaceFit::Fill))
+    } else if icon_set {
+        face
+    } else if !name.trim().is_empty() {
+        let a = crate::shell::acronym(&name);
+        face.child(text(a).font(font(24.0, 500.0)).color(p.text_primary))
+    } else {
+        face
+    };
+    let mut icon_buttons = row().gap(8.0).child(
+        Button::<S>::new(if icon_set { t("Change icon") } else { t("Upload icon") }).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(pick_image(acc, "icon")),
+    );
+    if icon_set {
+        icon_buttons = icon_buttons.child(
+            Button::new(t("Remove icon"))
+                .variant(ButtonVariant::Secondary)
+                .size(ButtonSize::Small)
+                .on_press(move |s: &mut S| {
+                    acc(s).form.data.remove("icon");
+                })
+                .el(p),
+        );
+    }
+    col()
+        .w_full()
+        .gap(16.0)
+        .child(col().gap(8.0).child(label(t("Community icon"), 500.0, p)).child(row().gap(16.0).center_y().child(face).child(icon_buttons)))
+        .child(field(st, acc, "name", "", t("Community name"), "", p))
+        .child(text("By creating a community, you agree to follow and uphold the community guidelines.").font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap())
 }
 
 /// The code of an invite link (`https://fluxer.gg/AbCd`, `…/invite/AbCd`) or a bare code.

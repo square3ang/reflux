@@ -36,7 +36,12 @@ pub struct Card {
     pub custom_status: Option<String>,
     /// The custom status emoji, drawn before its text.
     pub status_emoji: Option<El>,
-    pub badges: Vec<String>,
+    /// `profile_badges` as the API sends them.
+    pub badges: Vec<Value>,
+    /// The badge row the caller built from `badges` ([`with_badges`]); inline under the names
+    /// in the full profile, else over the header's corner.
+    pub badge_row: Option<El>,
+    pub badges_inline: bool,
     pub guild: Option<Snowflake>,
     /// The shared UTC offset in minutes (`timezone_offset`), shown as "Local time".
     pub local_time: Option<i32>,
@@ -79,7 +84,7 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         _ => None,
     };
     let cs = store.presences.get(&user).and_then(|pr| pr.custom_status.as_ref());
-    let badges = prof.and_then(|v| v["profile_badges"].as_array()).map(|a| a.iter().filter_map(|b| b["label"].as_str().or(b["description"].as_str()).or(b["kind"].as_str()).map(str::to_string)).collect()).unwrap_or_default();
+    let badges = prof.and_then(|v| v["profile_badges"].as_array()).cloned().unwrap_or_default();
     Card {
         user,
         name: store.display_name(guild, user),
@@ -93,9 +98,21 @@ pub fn card_for(store: &Store, st: &ShellState, user: Snowflake, guild: Option<S
         custom_status: cs.and_then(|c| c.text.clone()).filter(|t| !t.is_empty()),
         status_emoji: cs.and_then(|c| super::forum::forum_emoji(st, c.emoji_id, c.emoji_name.as_deref(), 16.0)),
         badges,
+        badge_row: None,
+        badges_inline: false,
         guild,
         local_time: prof.and_then(|v| v["timezone_offset"].as_i64()).map(|m| m as i32),
     }
+}
+
+/// Builds `c`'s badge row (`UserProfileBadges`): the full profile shows 15 inline, the
+/// popout 7 over the header. The pencil shows on the viewer's own badges.
+pub fn with_badges<S: 'static>(store: &Store, st: &ShellState, mut c: Card, inline: bool, p: &Palette, acc: ShellAccess<S>) -> Card {
+    let own = c.user == store.my_id() && !c.badges.is_empty();
+    let limit = if inline { super::badges::MODAL_VISIBLE } else { super::badges::POPOUT_VISIBLE };
+    c.badge_row = super::badges::profile_row(st, &format!("profile-{}-{inline}", c.user), &c.badges, limit, own, p, acc);
+    c.badges_inline = inline;
+    c
 }
 
 fn section_title(t: &str, p: &Palette) -> El {
@@ -111,12 +128,21 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
         Some(px) => banner.pixels_fit(px, rune::SurfaceFit::Fill),
         None => banner.fill(c.accent),
     };
+    let head_h = banner_h - 50.0 + c.avatar_size + 12.0 - 7.0;
+    let (corner, inline) = match c.badge_row {
+        Some(r) if c.badges_inline => (None, Some(r)),
+        // `.containerPopout`: its bottom edge 145px down the card, 10px in from the right.
+        // A wrapped row grows downward from where it was placed, so a 145-tall column bottom-aligns it.
+        Some(r) => (Some(col().pin(None, Some(0.0), Some(10.0), None).w(w - 112.0).h(145.0).justify_end().items_end().child(super::badges::popout_plate(r, w, p))), None),
+        None => (None, None),
+    };
     let head = el()
         .w_full()
         // The ringed avatar (6px ring) hangs 50px into the banner.
-        .h(banner_h - 50.0 + c.avatar_size + 12.0 - 7.0)
+        .h(head_h)
         .child(banner)
-        .child(el().absolute(10.0, banner_h - 50.0).padding(6.0).radius(999.0).fill(p.background_primary).child(c.avatar));
+        .child(el().absolute(10.0, banner_h - 50.0).padding(6.0).radius(999.0).fill(p.background_primary).child(c.avatar))
+        .children(corner);
     let mut names = col()
         .w_full()
         .child(text(c.name).font(font(20.0, 500.0).lh(24.0)).color(p.text_primary).truncate())
@@ -124,12 +150,7 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
     if let Some(pr) = c.pronouns {
         names = names.child(text(pr).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted).truncate());
     }
-    let mut content = col().w_full().gap(8.0).pt(8.0).px(16.0).child(names);
-    if !c.badges.is_empty() {
-        content = content.child(row().w_full().flex_wrap().gaps(4.0, 4.0).children(c.badges.into_iter().map(|b| {
-            row().h(22.0).px(6.0).center_y().radius(4.0).fill(p.background_secondary_alt).child(text(b).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))
-        })));
-    }
+    let mut content = col().w_full().gap(8.0).pt(8.0).px(16.0).child(names.children(inline.map(|r| r.mt(4.0))));
     if c.custom_status.is_some() || c.status_emoji.is_some() {
         let mut r = row().w_full().gap(4.0).center_y().children(c.status_emoji);
         if let Some(s) = c.custom_status {
@@ -169,7 +190,7 @@ pub fn preview(store: &Store, st: &ShellState, c: Card, p: &Palette) -> El {
 pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (key, placement) = st.profile_anchor.clone()?;
     let me = store.my_id();
-    let c = card_for(store, st, user, guild, 80.0, p);
+    let c = with_badges(store, st, card_for(store, st, user, guild, 80.0, p), false, p, acc);
     let border = c.accent;
     let mut extra = Vec::new();
     // `UserProfileRoles`: shown when the member has roles.
@@ -271,7 +292,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
 pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, tab: &'static str, p: &Palette, acc: ShellAccess<S>) -> El {
     let close = move |s: &mut S| acc(s).account.profile_modal = None;
     let prof = fetched(st, user, guild);
-    let c = card_for(store, st, user, guild, 120.0, p);
+    let c = with_badges(store, st, card_for(store, st, user, guild, 120.0, p), true, p, acc);
     let accent = c.accent;
     let left = col().w(340.0).h_full().child(card_body(store, st, c, 340.0, vec![], p));
     let guilds = prof.and_then(|v| v["mutual_guilds"].as_array()).cloned().unwrap_or_default();

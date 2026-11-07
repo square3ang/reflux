@@ -82,24 +82,15 @@ fn set(sh: &mut ShellState, d: &Draft) {
     sh.api(Method::POST, PATH, Some(Value::Object(d.body())), Then::Keep(PREVIEW.into()));
 }
 
-/// The labels the preview card shows (`profile_badges`), if previewed.
-pub(super) fn shown(st: &ShellState) -> Vec<String> {
-    let list = st.form.data.get(PREVIEW).and_then(|v| v["profile_badges"].as_array());
-    list.map(|a| a.iter().filter_map(|b| b["label"].as_str().map(str::to_string)).collect()).unwrap_or_default()
-}
-
-/// `profileBadgeImageUrl`.
-fn art_url(st: &ShellState, b: &Value) -> Option<String> {
-    if let Some(a) = b["asset"].as_str() {
-        return Some(format!("{}/badges/{a}.webp", st.static_base.trim_end_matches('/')));
-    }
-    b["asset_url"].as_str().map(str::to_string)
+/// The badges the preview card shows (`profile_badges`), if previewed.
+pub(super) fn shown(st: &ShellState) -> Vec<Value> {
+    st.form.data.get(PREVIEW).and_then(|v| v["profile_badges"].as_array()).cloned().unwrap_or_default()
 }
 
 /// `BadgeArt` in its 40×24 slot.
 fn art(st: &ShellState, b: &Value, p: &Palette) -> El {
     let slot = row().size(40.0, 24.0).center();
-    match art_url(st, b) {
+    match crate::shell::badges::image_url(st, b) {
         Some(url) => {
             let w = b["aspect_ratio"].as_f64().map_or(24.0, |r| 24.0 * r as f32);
             let img = el().size(w.min(40.0), 24.0);

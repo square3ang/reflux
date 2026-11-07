@@ -57,7 +57,6 @@ Rules:
 | App-audio capture on Linux: `pw-dump` to find the node + `pipewiresrc`; appsink with `sync=false` (with sync it dropped ~70% of the audio) | no PipeWire API in libwebrtc | `gst.rs`, `reflux-voice` | — |
 | Recovery kit PDF: text outside Windows-1252 (CJK, Cyrillic…) is written in English | the PDF uses the built-in Helvetica; Fluxer rasterises the page | `settings/recovery_pdf.rs` | embed a font |
 | Animated WebP avatars/banners crop to their first frame | the `image` crate has no animated WebP encoder | `settings/crop.rs` | an encoder |
-| Skin-tone and other emoji missing from the base spritesheet use the font glyph | Fluxer loads those twemoji SVGs from its static host; we ship only the sheet | `shell/markdown.rs` | bundle or fetch the SVGs |
 | Camera and inline video on Linux go through GStreamer (`gst` feature, default) | libwebrtc's capture isn't exposed by the Rust SDK; Rune has no Linux player | `gst.rs` | — |
 | Camera capture is ours per OS behind one `camera::{available, cameras, CameraCapture}` interface: GStreamer on Linux, Media Foundation `IMFSourceReader` over the device source (native mode picked by `camera::pick::mode`, RGB32 through the reader's video processor) on Windows, `AVCaptureSession` + `AVCaptureVideoDataOutput` (BGRA, session preset by height) on macOS; all pace frames to the fps setting with `camera::pick::Pacer` instead of asking the device for the rate | libwebrtc's own capture modules aren't exposed by the LiveKit Rust SDK; asking GStreamer/PipeWire for a rate the camera lacks fails to negotiate (15 fps on a 10/20/30/60 fps device) | `camera/`, `gst.rs` | the SDK exposes libwebrtc's `VideoCaptureModule` |
 | Windows playback pump: one decode thread per clip reads the source reader synchronously and paces samples against a wall clock (pause/seek/rate move the clock); sound goes to rodio (`Player` per clip, rebuilt on seek, ~0.5 s queued ahead, rate = rodio speed so the pitch shifts), frames RGB32 → RGBA | Media Foundation's own renderers (EVR/SAR, Media Engine) draw into a window, not into Rune's `Pixels`; rodio is already the app's sound output | `mf.rs` | Rune `Player` on Windows |
@@ -90,11 +89,9 @@ Rules:
 
 | What | Why it's still open | Where | Remove when |
 |---|---|---|---|
-| "Import template" in Add a community | a multi-step form (template link → pasted JSON → create) built on another platform's template API | `guild/modals.rs` | port `TemplateImportForm` |
-| Invite embeds: the `+N` badge pill doesn't open a badge list; a custom badge's tooltip has its description on a second line | `BadgeListModal` isn't ported | `shell/invite_embed.rs` | port it |
 | Quick switcher: other accounts show a letter and no unread/channel rows | Reflux keeps one account connected | `shell/switcher_extra.rs` | per-account connections |
 | No staff "Developer tools" header menu (state summary, general/premium/mocking overrides, forced nagbars, runtime utilities); a read-only inspector (state, user settings, `/experiments`) sits in the own-user menu instead | a staff/developer-mode surface whose overrides mock state across the whole web client | `shell/debug.rs` | port `DeveloperToolsContextMenu` |
-| Quick CSS editor: syntax colours and variable completions only (no selector/property/snippet completions, hover, lint; Ctrl+Space doesn't open the list) | those target the DOM; only `:root` variables apply here | `quick_css_syntax.rs` | — |
+| Quick CSS editor: syntax colours and variable completions (typed or Ctrl+Space) only (no selector/property/snippet completions, hover, lint) | those target the DOM; only `:root` variables apply here | `quick_css_syntax.rs` | — |
 | UI strings: literals go through `t`; text only Reflux has stays English | it has no Fluxer msgid to translate from | `i18n.rs` | — |
 
 ## Session / tokens
@@ -132,8 +129,6 @@ Rules:
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
-- `crates/reflux/src/gst.rs:257` dropped frames were converted and scaled first; pace with a pad probe on the
-- `crates/reflux/src/guild/modals.rs:82` "Import template" (a third-party platform's template API) isn't offered.
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
 - `crates/reflux/src/i18n.rs:11` Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
 - `crates/reflux/src/mf.rs:100` rodio's speed shifts the pitch (no `preservesPitch` like playbin's scaletempo);
@@ -145,7 +140,7 @@ Rules:
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:216` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:331` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
-- `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`); no "Skip"
+- `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
@@ -153,11 +148,9 @@ Rules:
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/debug.rs:5` no staff "Developer tools" header menu (`DeveloperToolsContextMenu`: overrides,
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
-- `crates/reflux/src/shell/invite_embed.rs:304` the `+N` pill doesn't open the badge list (`BadgeListModal` isn't ported) and a
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
-- `crates/reflux/src/shell/markdown.rs:336` skin-tone variants and emoji missing from the base sheet fall back to the font
-- `crates/reflux/src/shell/markdown.rs:359` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
-- `crates/reflux/src/shell/markdown.rs:390` emoji in one-line previews stay text (Fluxer draws 1.25em images).
+- `crates/reflux/src/shell/markdown.rs:364` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
+- `crates/reflux/src/shell/markdown.rs:395` emoji in one-line previews stay text (Fluxer draws 1.25em images).
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or

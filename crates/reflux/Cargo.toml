@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-rune = { workspace = true, features = ["native-file-dialog"] }
+rune = { workspace = true, features = ["native-file-dialog", "svg"] }
 rune-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true

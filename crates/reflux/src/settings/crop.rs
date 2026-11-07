@@ -3,8 +3,7 @@
 //! to zoom (1–3×), rotate a quarter turn, then save the framed part, scaled down to the asset's
 //! maximum, into the form as a data URL. An animated GIF is cropped frame by frame and stays an
 //! animated GIF (Fluxer's `AnimatedImageCropWorker`).
-// shortcut: animated WebP crops to its first frame (no WebP animation encoder in `image`); no "Skip"
-// button or community banner height slider (Fluxer's minHeightRatio), upgrade if asked.
+// shortcut: animated WebP crops to its first frame (no WebP animation encoder in `image`).
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -51,6 +50,26 @@ impl Asset {
             Asset::GuildBanner | Asset::Splash | Asset::EmbedSplash => 16.0 / 9.0,
             _ => 1.0,
         }
+    }
+    /// `minHeightRatio`/`maxHeightRatio`: community banners and backgrounds may be cut down to
+    /// half their height.
+    fn height_range(self) -> (f32, f32) {
+        match self {
+            Asset::GuildBanner | Asset::Splash | Asset::EmbedSplash => (0.5, 1.0),
+            _ => (1.0, 1.0),
+        }
+    }
+    /// `canSkipOriginalAssetImage`: the original fits the maximum size and the aspect range
+    /// (1% tolerance); a role icon also needs the minimum size.
+    fn can_skip(self, (w, h): (f32, f32)) -> bool {
+        let (mw, mh) = self.max();
+        let (nw, nh) = self.min();
+        if w <= 0.0 || h <= 0.0 || w > mw as f32 || h > mh as f32 || (self == Asset::RoleIcon && (w < nw as f32 || h < nh as f32)) {
+            return false;
+        }
+        let (lo, hi) = self.height_range();
+        let a = w / h;
+        a >= self.aspect() / hi * 0.99 && a <= self.aspect() / lo * 1.01
     }
     fn max(self) -> (u32, u32) {
         match self {
@@ -119,6 +138,8 @@ pub struct Crop {
     zoom: f32,
     off: (f32, f32),
     grab: (f32, f32),
+    /// `heightRatio`: the frame's height against the asset's aspect (1 = full).
+    height: f32,
 }
 
 impl Crop {
@@ -127,14 +148,14 @@ impl Crop {
         let (w, h) = image::load_from_memory(&bytes).ok().map(|i| (i.width(), i.height()))?;
         let mut hs = std::collections::hash_map::DefaultHasher::new();
         bytes.hash(&mut hs);
-        Some(Crop { key, asset, src: Arc::new(bytes), id: hs.finish(), nat: (w as f32, h as f32), zoom: 1.0, off: (0.0, 0.0), grab: (0.0, 0.0) })
+        Some(Crop { key, asset, src: Arc::new(bytes), id: hs.finish(), nat: (w as f32, h as f32), zoom: 1.0, off: (0.0, 0.0), grab: (0.0, 0.0), height: 1.0 })
     }
 
     /// The image contained in the stage, and the crop frame (`computeCropRect`) inside it.
     fn layout(&self) -> ((f32, f32), (f32, f32)) {
         let s = (STAGE_W / self.nat.0).min(STAGE_H / self.nat.1);
         let fit = (self.nat.0 * s, self.nat.1 * s);
-        let a = self.asset.aspect();
+        let a = self.asset.aspect() / self.height;
         let frame = if fit.0 / fit.1 > a { (fit.1 * a, fit.1) } else { (fit.0, fit.0 / a) };
         (fit, frame)
     }
@@ -152,12 +173,33 @@ impl Crop {
         self.off = self.clamp(self.off.0, self.off.1);
     }
 
+    fn set_height(&mut self, h: f32) {
+        let (lo, hi) = self.asset.height_range();
+        self.height = h.clamp(lo, hi);
+        self.off = self.clamp(self.off.0, self.off.1);
+    }
+
+    fn edited(&self) -> bool {
+        self.zoom != 1.0 || self.off != (0.0, 0.0) || self.height != 1.0
+    }
+
+    /// `cropCoversDisplayedImage`: the frame shows the whole image (within a point).
+    fn covers_image(&self) -> bool {
+        let (fit, frame) = self.layout();
+        (frame.0 - fit.0 * self.zoom).abs() <= 1.0 && (frame.1 - fit.1 * self.zoom).abs() <= 1.0
+    }
+
+    /// The original image as it was picked (`onSkip`).
+    fn original(&self) -> &[u8] {
+        &self.src
+    }
+
     /// A quarter turn clockwise (the image itself turns; the frame stays).
     fn rotate(&mut self) {
         if let Ok(out) = map_frames(&self.src, |i| i.rotate90())
             && let Some(c) = Crop::new(self.key, self.asset, out)
         {
-            *self = Crop { zoom: self.zoom, ..c };
+            *self = Crop { zoom: self.zoom, height: self.height, ..c };
             self.off = self.clamp(0.0, 0.0);
         }
     }
@@ -297,14 +339,26 @@ pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAcces
             }
         })
         .child(icon(&icons::ARROW_CLOCKWISE, 24.0).color(p.text_primary));
-    let controls = row()
-        .w_full()
-        .px(24.0)
-        .py(16.0)
-        .gap(24.0)
-        .center_y()
-        .child(col().grow(1.0).gap(8.0).child(text(t("Zoom")).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary)).child(zoom))
-        .child(rotate);
+    let (lo, hi) = c.asset.height_range();
+    let slider_label = |s: &str| text(t(s).to_string()).font(font(12.0, 500.0).lh(16.0)).color(p.text_secondary);
+    let mut sliders = row().grow(1.0).min_w(0.0).gap(16.0).items_start().child(col().grow(1.0).w(0.0).gap(4.0).child(slider_label("Zoom")).child(zoom));
+    if !round && lo < hi {
+        // `.heightIconShort` / `.heightIconTall`: 12-wide bars, 6 and 16 tall.
+        let bar = |h: f32, o: f32| el().size(12.0, h).radius(2.0).fill(p.text_tertiary).opacity(o);
+        let height = row()
+            .grow(1.0)
+            .gap(10.0)
+            .center_y()
+            .child(bar(6.0, 0.6))
+            .child(el().grow(1.0).min_w(120.0).child(Slider::new("crop-height", c.height, lo, hi).step(0.01).on_change(move |s: &mut S, v| {
+                if let Some(c) = crop_of(acc, s) {
+                    c.set_height(v);
+                }
+            }).el(p)))
+            .child(bar(16.0, 0.9));
+        sliders = sliders.child(col().grow(1.0).w(0.0).gap(4.0).child(slider_label("Height")).child(height));
+    }
+    let controls = row().w_full().px(24.0).py(16.0).gap(24.0).center_y().child(sliders).child(rotate);
     let body = col()
         .w_full()
         .gap(16.0)
@@ -312,10 +366,31 @@ pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAcces
         .child(stage)
         .child(controls);
     let close = move |s: &mut S| acc(s).nav.crop = None;
-    let edited = c.zoom != 1.0 || c.off != (0.0, 0.0);
+    let edited = c.edited();
+    let skip_ok = c.asset.can_skip(c.nat);
+    // `onSkip`: keep the picked file as it is.
+    let keep = move |sh: &mut ShellState, c: &Crop| {
+        let ext = image::guess_format(c.original()).ok().and_then(|f| f.extensions_str().first().copied()).unwrap_or("png");
+        let name = format!("a.{ext}");
+        if c.asset == Asset::RoleIcon {
+            sh.form.data.remove("role-emoji");
+        }
+        sh.form.data.insert(c.key.into(), Value::String(crate::guild::data_url(std::path::Path::new(&name), c.original())));
+    };
+    let skip = move |s: &mut S| {
+        let sh = acc(s);
+        if let Some(c) = sh.nav.crop.take() {
+            keep(sh, &c);
+        }
+    };
     let apply = move |s: &mut S| {
         let sh = acc(s);
         let Some(c) = sh.nav.crop.take() else { return };
+        // Saving an untouched frame that shows the whole picture keeps the original.
+        if !c.edited() && skip_ok && c.covers_image() {
+            keep(sh, &c);
+            return;
+        }
         match c.export() {
             Ok(out) => {
                 let name = if out.starts_with(b"GIF8") { "a.gif" } else { "a.png" };
@@ -335,13 +410,14 @@ pub fn modal<S: 'static>(st: &ShellState, c: &Crop, p: &Palette, acc: ShellAcces
                 .disabled(!edited)
                 .on_press(move |s: &mut S| {
                     if let Some(c) = crop_of(acc, s) {
-                        (c.zoom, c.off) = (1.0, (0.0, 0.0));
+                        (c.zoom, c.off, c.height) = (1.0, (0.0, 0.0), 1.0);
                     }
                 })
                 .el(p),
         )
         .child(el().grow(1.0))
         .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p))
+        .children(skip_ok.then(|| Button::new(t("Skip cropping")).variant(ButtonVariant::Secondary).key("crop-skip").on_press(skip).el(p)))
         .child(Button::new(save).key("crop-save").on_press(apply).el(p));
     Modal::new(title, close).size(ModalSize::Medium).body(body).footer(footer).el(p)
 }
@@ -354,6 +430,27 @@ mod tests {
         let mut out = Vec::new();
         image::RgbaImage::new(w, h).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
         out
+    }
+
+    #[test]
+    fn height_ratio_and_skip_follow_the_asset_config() {
+        let mut c = Crop::new("k", Asset::GuildBanner, png(1600, 900)).unwrap();
+        assert!(c.covers_image() && !c.edited());
+        c.set_height(0.2);
+        assert_eq!(c.height, 0.5, "community banners go down to half height");
+        let (fit, frame) = c.layout();
+        assert_eq!((frame.0, (frame.1 * 10.0).round() / 10.0), (fit.0, (fit.1 / 2.0 * 10.0).round() / 10.0));
+        assert!(c.edited() && !c.covers_image());
+        let mut a = Crop::new("k", Asset::Avatar, png(400, 400)).unwrap();
+        a.set_height(0.5);
+        assert_eq!(a.height, 1.0, "no height slider for round assets");
+        assert!(Asset::GuildBanner.can_skip((1600.0, 900.0)));
+        assert!(Asset::GuildBanner.can_skip((1600.0, 450.0)), "a half-height (32:9) banner is in range");
+        assert!(!Asset::GuildBanner.can_skip((1600.0, 400.0)), "flatter than half height");
+        assert!(!Asset::GuildBanner.can_skip((4000.0, 2250.0)), "larger than the maximum");
+        assert!(!Asset::Avatar.can_skip((400.0, 300.0)), "not square");
+        assert!(Asset::Avatar.can_skip((400.0, 400.0)));
+        assert!(!Asset::RoleIcon.can_skip((32.0, 32.0)), "role icons need the minimum size");
     }
 
     #[test]

@@ -83,7 +83,7 @@ pub fn sprite_index(raw: &str) -> Option<usize> {
 
 /// `convertToCodePoints`: lowercase hex code points joined by `-`, without U+FE0F unless it's
 /// a ZWJ sequence.
-fn codepoints(raw: &str) -> String {
+pub fn codepoints(raw: &str) -> String {
     let keep = raw.contains('\u{200D}');
     raw.chars().filter(|&c| keep || c != '\u{FE0F}').map(|c| format!("{:x}", c as u32)).collect::<Vec<_>>().join("-")
 }
@@ -159,6 +159,15 @@ pub fn skin_index(e: &Emoji) -> Option<usize> {
     INDEX.get_or_init(|| all().iter().flat_map(|(_, v)| v).filter(|e| !e.skins.is_empty()).enumerate().map(|(i, e)| (e.name.as_str(), i)).collect()).get(e.name.as_str()).copied()
 }
 
+/// A skin-tone variant's cell on its tone's sheet: ([`skin_index`], tone 1..=5).
+pub fn skin_sprite(raw: &str) -> Option<(usize, u8)> {
+    let canon = |s: &str| s.replace('\u{FE0F}', "");
+    let raw = canon(raw);
+    let e = by_name(name_of(&raw)?)?;
+    let tone = e.skins.iter().position(|s| canon(s) == raw)?;
+    Some((skin_index(e)?, tone as u8 + 1))
+}
+
 /// The name of the emoji a surrogate (or a skin-tone variant) draws.
 pub fn name_of(glyph: &str) -> Option<&'static str> {
     surrogates().0.get(glyph).copied()
@@ -171,6 +180,15 @@ pub fn by_name(name: &str) -> Option<&'static Emoji> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skin_tone_variants_find_their_sheet_cell() {
+        let base = super::by_name("thumbsup").expect("thumbsup");
+        let (i, tone) = super::skin_sprite(&base.skins[2]).expect("a skin-tone variant");
+        assert_eq!((Some(i), tone), (super::skin_index(base), 3));
+        assert_eq!(super::skin_sprite(&base.glyph), None, "the base glyph is on the base sheet");
+        assert_eq!(super::codepoints("👍🏽"), "1f44d-1f3fd");
+    }
+
     #[test]
     fn data_loads_and_searches() {
         let all = super::all();

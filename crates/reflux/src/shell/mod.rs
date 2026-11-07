@@ -18,7 +18,7 @@ pub(crate) mod embeds;
 pub(crate) mod highlight;
 pub mod invite_embed;
 pub mod lightbox;
-mod links;
+pub(crate) mod links;
 pub mod demo;
 pub(crate) mod emoji;
 mod emoticons;
@@ -52,6 +52,7 @@ pub mod system_msg;
 pub mod queue;
 pub mod typing;
 mod unread_badges;
+pub(crate) mod badges;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;
@@ -735,7 +736,6 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         }
     }
     crate::settings::view_shell_modals(store, st, p, acc, &mut layer);
-    invite_embed::tip_layer(st, p, &mut layer);
     layer.extend(crate::settings::sudo::view(st, p, acc));
     layer.extend(upload::edit_modal(st, p, acc));
     layer.extend(switcher::view(store, st, p, acc));
@@ -751,6 +751,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     voice_message::volume_layer(st, p, acc, &mut layer);
     layer.extend(call::incoming(store, st, p, acc));
     birthday::view(store, st, p, acc, &mut layer);
+    layer.extend(badges::list_modal(st, p, acc));
+    badges::tip_layer(st, p, &mut layer);
     let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
         let sh = acc(s);
         let key = format!("{:?}", k.key);

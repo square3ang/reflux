@@ -164,19 +164,29 @@ pub fn tooltip_surface(label: &str, placement: Placement, kind: TooltipKind, lar
             mix(p.status_danger, p.text_primary, 78.0),
         ),
     };
-    let edge = over(border, surface);
     let (py, px, style) =
         if large { (10.0, 14.0, font(15.0, 500.0).lh(20.0)) } else { (7.0, 10.0, font(13.0, 500.0).lh(18.0)) };
-    // max-width 11.875rem is the border box; Rune's border takes no space, so pad by its 1px.
+    tooltip_card(text(label).font(style).color(fg).align(Align::Center).wrap().py(py).px(px), 190.0, placement, surface, border, p)
+}
+
+/// A tooltip whose content is built by the caller (`text={() => …}`), `max_w` wide at most
+/// (`maxWidth`: 190 default, 350 `xl`); `content` brings `.tooltipContent`'s 7/10 padding.
+pub fn tooltip_custom(content: El, max_w: f32, placement: Placement, p: &Palette) -> El {
+    tooltip_card(content, max_w, placement, p.form_surface_background, p.background_modifier_accent, p)
+}
+
+fn tooltip_card(content: El, max_w: f32, placement: Placement, surface: Color, border: Color, p: &Palette) -> El {
+    let edge = over(border, surface);
+    // max-width is the border box; Rune's border takes no space, so pad by its 1px.
     col()
-        .max_w(190.0)
+        .max_w(max_w)
         .padding(1.0)
         .radius(8.0)
         .fill(surface)
         .border(1.0, edge)
         .box_shadow(popout_shadow(p, 0.22, 0.12))
         .inert()
-        .child(text(label).font(style).color(fg).align(Align::Center).wrap().py(py).px(px))
+        .child(content)
         .child(pointer(placement, surface, edge))
 }
 

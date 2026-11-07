@@ -247,17 +247,12 @@ fn ready<S: 'static>(store: &Store, st: &ShellState, inv: &Invite, p: &Palette, 
     card(splash, face, header, Some(button), p)
 }
 
-thread_local! {
-    /// Tooltip texts of the badges drawn this frame, by trigger key ([`tip_layer`] draws the open one).
-    static TIPS: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
 /// `DEFAULT_VISIBLE_CUSTOM_BADGES`.
 const VISIBLE_CUSTOM: usize = 3;
 
 /// `customBadgeImageUrl`.
 fn badge_image(st: &ShellState, asset_url: &str) -> Option<rune::Pixels> {
-    match st.media.get(&format!("{asset_url}?size=96")) {
+    match st.media.get(&super::badges::custom_url(asset_url)) {
         Load::Ready(px) => Some(px),
         _ => None,
     }
@@ -300,9 +295,7 @@ fn ids_key(st: &ShellState, ids: &[String]) -> Option<String> {
 
 /// `GuildBadge` (`large`, `linkable`, `onLightSurface`): the built-in badge (partnered over
 /// verified over discoverable, or the instance's replacement image), then up to three custom
-/// badges and a `+N` pill; each has its tooltip.
-// shortcut: the `+N` pill doesn't open the badge list (`BadgeListModal` isn't ported) and a
-// custom badge's tooltip puts its description on a second line, not under a bold name.
+/// badges and a `+N` pill opening `GuildBadgesModal`; each has its tooltip.
 pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let has = |f: &str| features.iter().any(|x| x == f) && !st.media_ui.hidden_badges.iter().any(|h| h == &f.to_ascii_lowercase());
     let (verified, partnered) = (has("VERIFIED"), has("PARTNERED"));
@@ -315,18 +308,7 @@ pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &S
     } else {
         None
     };
-    let tip = move |key: String, label: String, trigger: El| {
-        TIPS.with_borrow_mut(|t| t.push((key.clone(), label)));
-        let id = key.clone();
-        trigger.key(key).on_hover_change(move |s: &mut S, inside, _| {
-            let t = &mut acc(s).popups.tip;
-            if inside {
-                *t = Some(id.clone());
-            } else if t.as_deref() == Some(id.as_str()) {
-                *t = None;
-            }
-        })
-    };
+    let tip = move |key: String, content: El, trigger: El| super::badges::tip(key, content, 190.0, trigger, acc);
     // `.badgeOnLightSurface`: the light theme swaps seal and glyph colours.
     let (seal, glyph_c) = if crate::ui::is_light(p) { (p.brand_primary, p.brand_primary_fill) } else { (p.brand_primary_fill, p.brand_primary) };
     let mut items = Vec::new();
@@ -338,7 +320,7 @@ pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &S
             },
             None => el().size(24.0, 24.0).child(icon(&SEAL, 24.0).color(seal)).child(icon(glyph, 24.0).color(glyph_c).absolute(0.0, 0.0)),
         };
-        items.push(tip(format!("guild-badge-{}-builtin", badge_ids.join("-")), label.to_string(), face.label(label)));
+        items.push(tip(format!("guild-badge-{}-builtin", badge_ids.join("-")), super::badges::label_tip(label, p), face.label(label)));
     }
     let custom = custom_badges(st, badge_ids).unwrap_or_default();
     for b in custom.iter().take(VISIBLE_CUSTOM) {
@@ -350,39 +332,23 @@ pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &S
         if let Some(href) = b.href.clone() {
             face = face.cursor(rune::Cursor::Pointer).on_press_tx(move |s: &mut S, tx| super::links::open(acc(s), &href, tx));
         }
-        let label = match &b.description {
-            Some(d) => format!("{}\n{d}", b.name),
-            None => b.name.clone(),
+        // `.customBadgeTooltip`: the name in 600, the description under it.
+        let line = |s: &str, w: f32| text(s.to_string()).font(font(13.0, w).lh(18.0)).color(p.text_primary).align(rune::Align::Center).wrap();
+        let content = match &b.description {
+            Some(d) => col().max_w(256.0).gap(2.0).py(7.0).px(10.0).child(line(&b.name, 600.0)).child(line(d, 500.0)),
+            None => super::badges::label_tip(&b.name, p),
         };
-        items.push(tip(format!("guild-badge-{}", b.id), label, face));
+        items.push(tip(format!("guild-badge-{}", b.id), content, face));
     }
     if custom.len() > VISIBLE_CUSTOM {
-        let n = (custom.len() - VISIBLE_CUSTOM).to_string();
-        // `.morePill`.
-        items.push(
-            row()
-                .min_w(20.0)
-                .h(20.0)
-                .px(6.0)
-                .center()
-                .radius(10.0)
-                .fill(p.background_modifier_accent)
-                .child(text(crate::i18n::tf("+{count}", &[("count", &n)])).font(font(12.0, 600.0).lh(12.0)).color(p.text_primary)),
-        );
+        let all = custom.iter().map(super::badges::from_guild).collect();
+        let pill = super::badges::more_pill(custom.len() - VISIBLE_CUSTOM, 20.0, 20.0, 10.0, all, p, acc);
+        items.push(tip(format!("guild-badge-{}-more", badge_ids.join("-")), super::badges::label_tip(t("Show all badges"), p), pill));
     }
     match items.len() {
         0 => None,
         1 => items.pop(),
         _ => Some(row().gap(4.0).center_y().children(items)),
-    }
-}
-
-/// The open badge tooltip, over its badge.
-pub fn tip_layer(st: &ShellState, p: &Palette, layer: &mut Vec<El>) {
-    let tips = TIPS.with_borrow_mut(std::mem::take);
-    if let Some((key, label)) = st.popups.tip.as_ref().and_then(|open| tips.into_iter().find(|(k, _)| k == open)) {
-        let place = crate::ui::overlay::Placement::Top;
-        layer.push(crate::ui::overlay::anchor(crate::ui::overlay::tooltip_surface(&label, place, crate::ui::overlay::TooltipKind::Normal, false, p), &key, place, 8.0));
     }
 }
 
