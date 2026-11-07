@@ -4,7 +4,8 @@
 use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, el, row, text};
+use rune::{El, col, el, row};
+use crate::ui::mark::marked as text;
 use serde_json::{Value, json};
 
 use super::account::{AccountModal, card, card_row, day, muted, open, small_button, txt};

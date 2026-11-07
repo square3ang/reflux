@@ -178,6 +178,9 @@ pub fn stringify(store: &Store, m: &Message) -> Option<String> {
     })
 }
 
+/// `icons::PHONE_FILL` mirrored horizontally: the missed-call phone (Fluxer's `scaleX(-1)`).
+static PHONE_MIRRORED: rune::Icon = rune::Icon { name: "phone_fill_mirrored", view: 256.0, body: r#"<path d="M24.12,175.08 A56.26,56.26,0,0,0,80,224 C159.4,224,224,159.4,224,80 A56.26,56.26,0,0,0,175.08,24.12 a16,16,0,0,0,-16.62,9.52 l-21.12,47.15 0,0.12 A16,16,0,0,0,138.61,96 c0.18,0.27,0.37,0.52,0.57,0.77 L160,121.45 c-7.49,15.22,-23.41,31,-38.83,38.51 l-24.34,-20.71 a8.12,8.12,0,0,0,-0.75,-0.56 16,16,0,0,0,-15.17,-1.4 l-0.13,0.06 -47.11,21.11 A16,16,0,0,0,24.12,175.08 Z"/>"# };
+
 /// The message's icon and its colour (`None` = the default, at 60%).
 fn glyph(m: &Message, missed: bool, p: &Palette) -> (&'static rune::Icon, Option<Color>) {
     match m.kind {
@@ -188,8 +191,7 @@ fn glyph(m: &Message, missed: bool, p: &Palette) -> (&'static rune::Icon, Option
         MessageType::CHANNEL_NAME_CHANGE => (&icons::PENCIL_SIMPLE_BOLD, None),
         MessageType::CHANNEL_ICON_CHANGE => (&icons::IMAGE_SQUARE_BOLD, None),
         MessageType::CHANNEL_FOLLOW_ADD => (&icons::ARROW_RIGHT_BOLD, None),
-        // shortcut: Fluxer mirrors the missed-call phone (`scaleX(-1)`); Rune icons can't flip.
-        MessageType::CALL if missed => (&icons::PHONE_FILL, Some(p.text_tertiary_muted)),
+        MessageType::CALL if missed => (&PHONE_MIRRORED, Some(p.text_tertiary_muted)),
         MessageType::CALL => (&icons::PHONE_FILL, Some(p.status_online)),
         _ => (&icons::INFO_BOLD, None),
     }

@@ -5,7 +5,8 @@
 //! Items whose feature Reflux doesn't have are left out.
 
 use reflux_store::Store;
-use rune::{El, TextEdit, col, el, row, text};
+use rune::{El, TextEdit, col, el, row};
+use crate::ui::mark::marked as text;
 use serde_json::json;
 
 use super::search_index::{ADDED, ITEMS};

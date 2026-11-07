@@ -9,7 +9,8 @@
 use reflux_model::{AuthenticatorType, RelationshipType, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, el, row, text};
+use rune::{El, col, el, row};
+use crate::ui::mark::marked as text;
 use serde_json::{Value, json};
 
 use super::tabs::{not_available, section};

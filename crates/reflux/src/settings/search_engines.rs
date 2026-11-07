@@ -4,7 +4,8 @@
 //! [`crate::shell::expr::image_search`].
 
 use reflux_store::Store;
-use rune::{El, col, icon, row, text};
+use rune::{El, col, icon, row};
+use crate::ui::mark::marked as text;
 
 use super::AccountModal;
 use crate::i18n::{t, tf};

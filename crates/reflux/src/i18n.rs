@@ -126,6 +126,18 @@ pub fn locale() -> &'static str {
     CURRENT.read().unwrap().code
 }
 
+/// `Intl.DisplayNames(locale, {type: 'region'}).of(code)` (Fluxer's `RegionFormatting`): a
+/// two-letter region's name in `loc`, from `assets/regions.json` (`scripts/regions-extract.mjs`).
+pub fn region_name_in(loc: &str, code: &str) -> Option<String> {
+    type Table = HashMap<String, HashMap<String, String>>;
+    static NAMES: LazyLock<Table> = LazyLock::new(|| serde_json::from_str(include_str!("../../../assets/regions.json")).unwrap_or_default());
+    let code = code.trim().to_ascii_uppercase();
+    if code.len() != 2 || !code.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    NAMES.get(loc).and_then(|m| m.get(&code)).or_else(|| NAMES.get("en-US")?.get(&code)).cloned()
+}
+
 /// `Intl.ListFormat(locale, {type: 'conjunction', style: 'long'})`: "a, b and c" in `loc`.
 /// Separators (between middle items, of two items, before the last) as V8's ICU gives them.
 pub fn list_and_in(loc: &str, items: &[impl AsRef<str>]) -> String {

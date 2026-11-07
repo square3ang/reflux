@@ -3,7 +3,8 @@
 //! Device preferences go to [`crate::look::Prefs`]; account ones are `PatchSettings`.
 
 use reflux_store::Store;
-use rune::{El, TextEdit, Tx, col, el, row, text, text_input};
+use rune::{El, TextEdit, Tx, col, el, row, text_input};
+use crate::ui::mark::marked as text;
 use serde_json::json;
 
 use super::desktop_tabs;

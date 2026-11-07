@@ -3,7 +3,8 @@
 //! (`DesktopSettingsTab.tsx`), and Appearance's Scaling and Streaming privacy sections
 //! (`appearance_tab/{ScalingTab,StreamerModeTab}.tsx`).
 
-use rune::{El, col, row, text};
+use rune::{El, col, row};
+use crate::ui::mark::marked as text;
 
 use super::tabs::section;
 use crate::desktop::Prefs;

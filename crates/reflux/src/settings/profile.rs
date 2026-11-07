@@ -9,7 +9,8 @@ use std::hash::{Hash, Hasher};
 use reflux_model::{Permissions, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, TextEdit, col, el, row, text, text_input};
+use rune::{El, TextEdit, col, el, row, text_input};
+use crate::ui::mark::marked as text;
 use serde_json::{Map, Value};
 
 use super::account::{AccountModal, muted, open, small_button, txt};

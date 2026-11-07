@@ -1,9 +1,9 @@
 //! Settings search highlight (`::highlight(settings-search-highlight)` over
 //! `createRangesForSection`): while the search results render their inline tabs, the shared text
 //! helpers paint every case-insensitive occurrence of the query.
-// shortcut: Rune keeps the element tree private, so only text built by the shared helpers
-// (settings rows, cards, section titles, switch/checkbox/select/input labels) is marked; text a
-// tab builds with a bare `text()` isn't.
+// shortcut: Rune keeps the element tree private, so text is marked where it's built: the shared
+// helpers and every tab file's `text()` (imported as [`marked`]). `rich()` runs (texts with an
+// inline link) aren't.
 
 use std::cell::RefCell;
 

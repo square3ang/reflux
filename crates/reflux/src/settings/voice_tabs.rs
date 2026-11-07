@@ -3,7 +3,8 @@
 //! channel display, camera and screen share quality.
 
 use reflux_model::Snowflake;
-use rune::{El, col, el, row, text};
+use rune::{El, col, el, row};
+use crate::ui::mark::marked as text;
 
 use super::tabs::section;
 use crate::shell::voice::{Modal, Op, Settings};

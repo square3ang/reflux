@@ -4,7 +4,8 @@
 use reflux_model::Message;
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, el, icon, rich, row, text};
+use rune::{El, col, el, icon, rich, row};
+use crate::ui::mark::marked as text;
 use serde_json::{Value, json};
 
 use super::account::{card, card_row, muted, small_button};

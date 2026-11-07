@@ -1,7 +1,8 @@
 //! The content of each settings tab.
 
 use reflux_store::Store;
-use rune::{El, col, el, text};
+use rune::{El, col, el};
+use crate::ui::mark::marked as text;
 
 use super::SettingsUi;
 use crate::shell::{ShellAccess, ShellState};

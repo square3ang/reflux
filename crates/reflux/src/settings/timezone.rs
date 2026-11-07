@@ -5,7 +5,8 @@
 
 use reflux_model::ProfileFieldPrivacyFlags as F;
 use reflux_store::Store;
-use rune::{El, col, row, text};
+use rune::{El, col, row};
+use crate::ui::mark::marked as text;
 use serde_json::Value;
 
 use super::account::muted;

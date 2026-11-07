@@ -202,12 +202,37 @@ fn geo(st: &ShellState) -> Option<(String, Option<String>)> {
     Some((s("countryCode")?, s("regionCode")))
 }
 
+/// `UserGeo.getRegionDisplayName`: the country's localized name ("your region" without one), with
+/// the state first for the US.
+fn region_display_name(country: Option<&str>, region: Option<&str>) -> String {
+    let Some(c) = country else { return t("your region").into() };
+    let name = crate::i18n::region_name_in(crate::i18n::locale(), c);
+    match (c, region) {
+        ("US", Some(r)) => format!("{}, {}", us_state(r), name.as_deref().unwrap_or("United States")),
+        _ => name.unwrap_or_else(|| c.to_string()),
+    }
+}
+
+/// `US_STATE_DESCRIPTORS`: a state's name, else its code.
+fn us_state(code: &str) -> String {
+    const STATES: [(&str, &str); 51] = [
+        ("AL", "Alabama"), ("AK", "Alaska"), ("AZ", "Arizona"), ("AR", "Arkansas"), ("CA", "California"), ("CO", "Colorado"), ("CT", "Connecticut"),
+        ("DE", "Delaware"), ("FL", "Florida"), ("GA", "Georgia"), ("HI", "Hawaii"), ("ID", "Idaho"), ("IL", "Illinois"), ("IN", "Indiana"), ("IA", "Iowa"),
+        ("KS", "Kansas"), ("KY", "Kentucky"), ("LA", "Louisiana"), ("ME", "Maine"), ("MD", "Maryland"), ("MA", "Massachusetts"), ("MI", "Michigan"),
+        ("MN", "Minnesota"), ("MS", "Mississippi"), ("MO", "Missouri"), ("MT", "Montana"), ("NE", "Nebraska"), ("NV", "Nevada"), ("NH", "New Hampshire"),
+        ("NJ", "New Jersey"), ("NM", "New Mexico"), ("NY", "New York"), ("NC", "North Carolina"), ("ND", "North Dakota"), ("OH", "Ohio"), ("OK", "Oklahoma"),
+        ("OR", "Oregon"), ("PA", "Pennsylvania"), ("RI", "Rhode Island"), ("SC", "South Carolina"), ("SD", "South Dakota"), ("TN", "Tennessee"), ("TX", "Texas"),
+        ("UT", "Utah"), ("VT", "Vermont"), ("VA", "Virginia"), ("WA", "Washington"), ("WV", "West Virginia"), ("WI", "Wisconsin"), ("WY", "Wyoming"),
+        ("DC", "District of Columbia"),
+    ];
+    STATES.iter().find(|(c, _)| *c == code).map_or_else(|| code.to_string(), |(_, n)| t(n).to_string())
+}
+
 /// `expr.fetched` key of the `/ip` lookup.
 pub const GEO: &str = "geoip";
 
 /// `MatureContentChannelGate`: the reason's title and text; for consent, the scope's warning
 /// and a danger "Proceed" that remembers the agreement.
-// shortcut: the region shows as its ISO code, and the age-check texts have no "Learn more" link.
 pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let reason = gate_reason(store, st, c)?;
     let parent = c.parent_id.and_then(|p| store.channels.get(&p)).filter(|p| p.kind == ChannelType::GUILD_CATEGORY);
@@ -218,16 +243,24 @@ pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     } else {
         ("community", c.guild_id.unwrap_or(c.id))
     };
+    let (mut learn_more, mut link_range) = (None::<String>, 0..0);
     let (title, body, button) = match reason {
         Gate::Geo => {
-            let region = geo(st).map(|(c, r)| r.map_or(c.clone(), |r| format!("{r}, {c}"))).unwrap_or_default();
+            let region = geo(st).map_or_else(|| region_display_name(None, None), |(c, r)| region_display_name(Some(&c), r.as_deref()));
             (t("Mature content").to_string(), tf("Due to mature content laws in {regionName}, mature content is not available from here.", &[("regionName", &region)]), None)
         }
-        Gate::Check => match scope {
-            "community" => (t("Mature community").into(), t("This mature community is not available to your account.").into(), None),
-            "category" => (t("Mature category").into(), t("This mature category is not available to your account.").into(), None),
-            _ => (t("Mature channel").into(), t("This mature channel is not available to your account.").into(), None),
-        },
+        // With a help center, the text ends in a "Learn more" link (`HelpCenterArticleSlug.ChangeDateOfBirth`).
+        Gate::Check => {
+            let (title, linked, plain) = match scope {
+                "community" => ("Mature community", "This mature community is not available to your account. <0>Learn more</0>", "This mature community is not available to your account."),
+                "category" => ("Mature category", "This mature category is not available to your account. <0>Learn more</0>", "This mature category is not available to your account."),
+                _ => ("Mature channel", "This mature channel is not available to your account. <0>Learn more</0>", "This mature channel is not available to your account."),
+            };
+            learn_more = st.marketing_base.as_ref().map(|b| format!("{}/help/change-date-of-birth", b.trim_end_matches('/')));
+            let body = if learn_more.is_some() { crate::i18n::tf_marked(linked, &[]) } else { (t(plain).to_string(), 0..0) };
+            link_range = body.1;
+            (t(title).to_string(), body.0, None)
+        }
         Gate::Consent => {
             let proceed = crate::ui::Button::new(t("Proceed"))
                 .variant(crate::ui::ButtonVariant::Danger)
@@ -247,7 +280,19 @@ pub fn mature_gate<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
                 .padding(32.0)
                 .items_center()
                 .child(text(title).font(font(24.0, 600.0).lh(32.0)).color(p.text_primary).mb(12.0))
-                .child(text(body).font(font(16.0, 400.0).lh(24.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center).max_w(448.0).mb(16.0))
+                .child(match learn_more {
+                    Some(url) => {
+                        let spans = vec![rune::Span::new(link_range.start, link_range.end).color(p.text_link)];
+                        rich(body, spans).link(rune::Link::new(link_range, url)).on_link(|_: &mut S, url: &str, tx: &mut rune::Tx| drop(tx.open_url(url)))
+                    }
+                    None => text(body),
+                }
+                .font(font(16.0, 400.0).lh(24.0))
+                .color(p.text_primary_muted)
+                .wrap()
+                .align(rune::Align::Center)
+                .max_w(448.0)
+                .mb(16.0))
                 .children(button),
         ),
     )
@@ -1008,6 +1053,16 @@ mod tests {
         assert_eq!(with_max_w(275.0, || capped((200.0, 100.0))), (200.0, 100.0));
         // Restored afterwards.
         assert_eq!(capped((550.0, 309.0)), (550.0, 309.0));
+    }
+
+    #[test]
+    fn region_names_like_user_geo() {
+        assert_eq!(super::region_display_name(None, None), "your region");
+        assert_eq!(super::region_display_name(Some("GB"), Some("ENG")), "United Kingdom");
+        assert_eq!(super::region_display_name(Some("US"), Some("TX")), "Texas, United States");
+        assert_eq!(super::region_display_name(Some("US"), Some("ZZ")), "ZZ, United States");
+        assert_eq!(crate::i18n::region_name_in("ko", "kr").as_deref(), Some("대한민국"));
+        assert_eq!(crate::i18n::region_name_in("ko", "123"), None);
     }
 
     #[test]
