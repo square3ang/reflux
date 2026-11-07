@@ -135,6 +135,8 @@ pub enum Then {
     /// A toast: the first text on success (none if empty), the second on failure (dialog-less
     /// actions).
     Toast(&'static str, &'static str),
+    /// Open the response's `field` URL in the browser (an OAuth start).
+    Browse(&'static str),
 }
 
 impl ShellState {

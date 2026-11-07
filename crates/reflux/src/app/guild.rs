@@ -137,6 +137,11 @@ pub(super) fn run(s: &mut State, c: Call) {
                 }
                 Then::SignOut => super::sign_out(s, None),
                 // An empty success text toasts only failures.
+                Then::Browse(field) => {
+                    if let Some(url) = v.get(field).and_then(Value::as_str) {
+                        crate::settings::open_url(url);
+                    }
+                }
                 Then::Toast(ok, _) => {
                     if !ok.is_empty() {
                         crate::desktop::toast(&mut sh.desktop, crate::i18n::t(ok), true)

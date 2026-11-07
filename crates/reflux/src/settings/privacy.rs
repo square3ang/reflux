@@ -4,7 +4,7 @@
 use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, col, row, text};
+use rune::{El, col, el, row, text};
 use serde_json::{Value, json};
 
 use super::account::{AccountModal, card, card_row, day, muted, open, small_button, txt};
@@ -369,10 +369,23 @@ pub(super) fn connections<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
         Ok(v) => v,
         Err(e) => return e,
     };
-    let add = small_button(t("Add domain"), false, "conn-add", open(acc, AccountModal::AddConnection), p);
+    // `handleAddConnection(type)`: the dialog opens on that connection type.
+    let add_kind = move |kind: &'static str| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            sh.open_account_modal(AccountModal::AddConnection);
+            sh.form.data.insert("m.ctype".into(), json!(kind));
+        }
+    };
+    let mut add = row().gap(8.0);
+    if st.bluesky {
+        add = add.child(small_button(&crate::i18n::tf("Add {blueskyProviderName} connection", &[("blueskyProviderName", "Bluesky")]), false, "conn-add-bsky", add_kind("bsky"), p));
+    }
+    let add = add.child(small_button(t("Add domain connection"), !st.bluesky, "conn-add", add_kind("domain"), p));
     let mut rows = Vec::new();
     if list.is_empty() {
-        rows.push(row().w_full().px(16.0).py(12.0).child(muted(t("No connections yet. Prove you own a domain to show it on your profile."), p)));
+        let hint = if st.bluesky { crate::i18n::tf("Link your {blueskyProviderName} account or verify domain ownership to display them on your profile.", &[("blueskyProviderName", "Bluesky")]) } else { t("Verify domain ownership to display it on your profile.").to_string() };
+        rows.push(row().w_full().px(16.0).py(12.0).child(muted(hint, p)));
     }
     for c in &list {
         let (kind, id) = (c["type"].as_str().unwrap_or_default().to_string(), c["id"].as_str().unwrap_or_default().to_string());
@@ -395,8 +408,6 @@ pub(super) fn connections<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
             p,
         ));
     }
-    // shortcut: Bluesky connections need atproto OAuth in a browser and a redirect back; only
-    // domain connections are offered.
     section(t("Connections"), card(Some((t("Connections"), Some(t("Show accounts and domains you own on your profile.")), Some(add))), rows, p), true, p)
 }
 
@@ -442,12 +453,42 @@ pub(super) fn modal<S: 'static>(_store: &Store, st: &ShellState, m: &AccountModa
         }
         AccountModal::AddConnection => match st.form.data.get("m.verify") {
             None => {
+                let bsky = st.bluesky && st.form.data.get("m.ctype").and_then(Value::as_str) != Some("domain");
                 let go: Box<dyn Fn(&mut S)> = Box::new(move |s: &mut S| {
                     let sh = acc(s);
-                    let domain = sh.form.text.get("m.domain").map(|t| t.text.trim().to_string()).unwrap_or_default();
-                    sh.api(Method::POST, "/users/@me/connections", Some(json!({ "type": "domain", "identifier": domain })), Then::Keep("m.verify".into()));
+                    let id = sh.form.text.get("m.domain").map(|t| t.text.trim().to_string()).unwrap_or_default();
+                    if bsky {
+                        // `authorizeBlueskyConnection`: the browser does the OAuth; the dialog
+                        // closes when USER_CONNECTIONS_UPDATE arrives.
+                        let handle = id.trim_start_matches("https://bsky.app/profile/").trim_start_matches("http://bsky.app/profile/").trim_start_matches('@').to_string();
+                        sh.form.data.insert("m.bsky".into(), json!(handle.to_lowercase()));
+                        sh.api(Method::POST, "/users/@me/connections/bluesky/authorize", Some(json!({ "handle": handle })), Then::Browse("authorize_url"));
+                    } else {
+                        sh.api(Method::POST, "/users/@me/connections", Some(json!({ "type": "domain", "identifier": id })), Then::Keep("m.verify".into()));
+                    }
                 });
-                build(t("Add domain"), vec![input(st, acc, "m.domain", "", t("Domain"), "example.com", false, p)], Some((t("Continue"), false, go)))
+                let mut body = Vec::new();
+                let mut layer = Vec::new();
+                if st.bluesky {
+                    let opts = [("bsky", "Bluesky"), ("domain", t("Domain"))];
+                    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+                    body.push(
+                        Select::new("conn-type", &opts, Some(if bsky { "bsky" } else { "domain" }))
+                            .label(t("Connection type"))
+                            .on_choose(move |s: &mut S, v| {
+                                acc(s).form.data.insert("m.ctype".into(), json!(v));
+                            })
+                            .el(&st.popups, pops, p, &mut layer),
+                    );
+                }
+                let (label, ph) = if bsky { (t("Handle"), "username.bsky.social") } else { (t("Domain"), "example.com") };
+                body.push(input(st, acc, "m.domain", "", label, ph, false, p));
+                if bsky && st.form.data.contains_key("m.bsky") && st.form.error.is_none() {
+                    body.push(desc(t("Finish in your browser. This closes once the connection is added.")));
+                }
+                let primary = if bsky { crate::i18n::tf("Connect with {providerName}", &[("providerName", "Bluesky")]) } else { t("Continue").to_string() };
+                let dialog = build(t("Add connection"), body, Some((&primary, false, go)));
+                if layer.is_empty() { dialog } else { el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(dialog).children(layer) }
             }
             Some(v) => {
                 let token = v["initiation_token"].as_str().unwrap_or_default().to_string();

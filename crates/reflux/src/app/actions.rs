@@ -246,6 +246,7 @@ pub(super) fn tick(s: &mut State) -> bool {
         s.app.shell.gift_base = inst.discovery.endpoints.gift.clone();
         s.app.shell.static_base = inst.discovery.endpoints.static_cdn.clone();
         s.app.shell.username_sign_in = inst.discovery.features.account_identity == "username";
+        s.app.shell.bluesky = inst.discovery.services.bluesky_enabled;
         s.app.shell.media_ui.age_geos = inst.discovery.age_policy.geos.iter().map(|g| (g.country_code.clone(), g.region_code.clone())).collect();
         crate::shell::expr::fetch(&mut s.app.shell, crate::shell::attachments::GEO, "/ip");
         s.app.shell.media_ui.hidden_badges = inst.discovery.hidden_built_in_guild_badges.clone();

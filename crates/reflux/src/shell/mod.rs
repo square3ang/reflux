@@ -295,6 +295,8 @@ pub struct ShellState {
     pub static_base: String,
     /// The instance signs in with usernames (`features.account_identity`).
     pub username_sign_in: bool,
+    /// `services.bluesky_enabled`.
+    pub bluesky: bool,
     /// The local desktop preferences, mirrored for the settings views.
     pub prefs: crate::desktop::Prefs,
     /// Nagbars, toasts and the spelling menu (`crate::desktop::nagbar`).
@@ -400,6 +402,7 @@ impl Default for ShellState {
             gift_base: String::new(),
             static_base: String::new(),
             username_sign_in: false,
+            bluesky: false,
             prefs: Default::default(),
             desktop: Default::default(),
             uploads: Vec::new(),

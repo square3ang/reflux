@@ -503,6 +503,13 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
                 sh.form.data.insert("m.rk_ack".into(), json!(true));
             }
         }
+        "bluesky" => {
+            sh.bluesky = true;
+            sh.open_settings(Some("linked_accounts"));
+            sh.form.data.insert("connections".into(), json!([]));
+            sh.open_account_modal(crate::settings::AccountModal::AddConnection);
+            sh.form.data.insert("m.ctype".into(), json!("bsky"));
+        }
         "badges" => {
             sh.open_settings(Some("my_profile"));
             sh.form.data.insert("p.timezone".into(), json!("Asia/Seoul"));

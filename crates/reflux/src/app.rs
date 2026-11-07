@@ -706,6 +706,14 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                     crate::shell::expr::on_meme(&mut s.app.shell, &m.id.to_string(), serde_json::to_value(m).ok())
                 }
                 reflux_model::DispatchEvent::FavoriteMemeDelete(d) => crate::shell::expr::on_meme(&mut s.app.shell, &d.meme_id.to_string(), None),
+                // A Bluesky authorization finished in the browser.
+                reflux_model::DispatchEvent::UserConnectionsUpdate(_) if s.app.shell.settings.as_ref().is_some_and(|u| u.tab == "linked_accounts") => {
+                    let sh = &mut s.app.shell;
+                    if sh.form.data.contains_key("m.bsky") {
+                        sh.close_account_modals();
+                    }
+                    sh.load("connections", "/users/@me/connections");
+                }
                 _ => {}
             }
             if let reflux_model::DispatchEvent::Ready(r) = &d {
