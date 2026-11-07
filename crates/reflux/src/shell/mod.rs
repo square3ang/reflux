@@ -84,6 +84,8 @@ pub enum Intent {
     Nick { guild: Snowflake, channel: Snowflake, nick: Option<String> },
     /// `/msg`: open the DM, send `message` and show it; a DM that can't open is noted in `from`.
     MsgCommand { from: Snowflake, user: Snowflake, message: String },
+    /// `openCustomerPortalWithErrorModal`: open the billing portal in the browser.
+    CustomerPortal,
     /// The list reached its oldest loaded message: fetch the page before it.
     LoadOlder { channel: Snowflake },
     /// The list reached its newest loaded message while in history: fetch the page after it.

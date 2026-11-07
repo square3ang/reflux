@@ -831,6 +831,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             Intent::DropLocal { channel, nonce } => chat::drop_local(s, channel, nonce),
             Intent::Nick { guild, channel, nick } => commands::nick(s, guild, channel, nick),
             Intent::MsgCommand { from, user, message } => commands::msg(s, from, user, message),
+            Intent::CustomerPortal => commands::customer_portal(s),
             i @ (Intent::LoadNewer { .. } | Intent::JumpTo { .. } | Intent::JumpToPresent(_) | Intent::LoadPins { .. } | Intent::Search(_)) => chat::run(s, i),
             Intent::LoadOlder { channel } => act(s, Action::LoadOlder(channel)),
             Intent::PatchSettings(v) => crate::settings::patch(s, v),

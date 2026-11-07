@@ -69,3 +69,23 @@ pub fn msg(s: &mut State, from: Snowflake, user: Snowflake, message: String) {
         });
     });
 }
+
+/// `createCustomerPortalSession`, then the URL in the browser; a failure says so in a modal.
+pub fn customer_portal(s: &mut State) {
+    let Some(inst) = s.app.instance.clone() else { return };
+    spawn(async move {
+        let r = inst.rest.request_with_reason::<Value, Value>(Method::POST, "/premium/customer-portal", None, None).await;
+        update(move |s| match r.map(|v| v["url"].as_str().map(str::to_string)) {
+            Ok(Some(url)) => crate::settings::open_url(&url),
+            r => {
+                if let Err(e) = r {
+                    eprintln!("reflux: customer portal: {e}");
+                }
+                s.app.shell.notice = Some((
+                    crate::i18n::t("Couldn't open the billing portal").into(),
+                    crate::i18n::t("Something went wrong while opening the billing portal. Please try again in a moment.").into(),
+                ));
+            }
+        });
+    });
+}

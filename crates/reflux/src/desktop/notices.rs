@@ -226,8 +226,8 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
             sh.intents.push(Intent::Desktop(super::Request::OpenUrl(url)));
         }
     };
-    // shortcut: "Manage subscription" / "Reactivate" open the web Plutonium page instead of
-    // Stripe's customer portal.
+    // "Manage subscription" / "Reactivate": the billing portal.
+    let portal = move |s: &mut S| acc(s).intents.push(Intent::CustomerPortal);
     if let (Some(u), Some(g)) = (until, grace_end)
         && kind != PremiumType::LIFETIME
     {
@@ -239,14 +239,14 @@ pub fn premium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
                 "Your {premiumProductName} subscription failed to renew. You still have access to all {premiumProductName} features until {formattedGraceDate}. Update your payment method before then to keep your access.",
                 &[("premiumProductName", PRODUCT), ("formattedGraceDate", &super::time::long_date(&date, crate::i18n::locale()))],
             );
-            out.push(super::nagbar::bar("nagbar-premium-grace", rgb(0xf9, 0x73, 0x16), msg, vec![super::nagbar::button("nagbar-premium-manage", t("Manage subscription"), p, web("/channels/@premium"))], Some(dismiss(acc, "premium-grace".into()))));
+            out.push(super::nagbar::bar("nagbar-premium-grace", rgb(0xf9, 0x73, 0x16), msg, vec![super::nagbar::button("nagbar-premium-manage", t("Manage subscription"), p, portal)], Some(dismiss(acc, "premium-grace".into()))));
         }
         if expired && !dismissed(st, "premium-expired") {
             let msg = tf(
                 "Your {premiumProductName} subscription has expired, and you no longer have access to {premiumProductName} features. Reactivate your subscription to get access again.",
                 &[("premiumProductName", PRODUCT)],
             );
-            out.push(super::nagbar::bar("nagbar-premium-expired", p.status_danger, msg, vec![super::nagbar::button("nagbar-premium-reactivate", t("Reactivate"), p, web("/channels/@premium"))], Some(dismiss(acc, "premium-expired".into()))));
+            out.push(super::nagbar::bar("nagbar-premium-expired", p.status_danger, msg, vec![super::nagbar::button("nagbar-premium-reactivate", t("Reactivate"), p, portal)], Some(dismiss(acc, "premium-expired".into()))));
         }
     }
     let premium_now = kind == PremiumType::LIFETIME || (kind != PremiumType::default() && until.is_none_or(|u| u > now));
