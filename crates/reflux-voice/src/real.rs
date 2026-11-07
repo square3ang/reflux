@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{FutureExt, StreamExt};
-use livekit::options::{TrackPublishOptions, VideoCodec};
+use livekit::options::TrackPublishOptions;
+
+/// The screen-share codec choices (`preferredScreenShareCodec`).
+pub use livekit::options::VideoCodec;
 use livekit::prelude::*;
 use livekit::webrtc::desktop_capturer::{CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions, DesktopFrame};
 use livekit::webrtc::native::yuv_helper;
@@ -556,11 +559,13 @@ pub struct ScreenQuality {
     pub ceiling: u64,
     pub content_hint: ContentHint,
     pub svc: Svc,
+    /// `preferredScreenShareCodec`; `None` = automatic.
+    pub codec: Option<VideoCodec>,
 }
 
 impl Default for ScreenQuality {
     fn default() -> Self {
-        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default() }
+        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default(), codec: None }
     }
 }
 
@@ -619,7 +624,8 @@ impl ScreenQuality {
     /// VP9, and the NVENC / VA-API factories here encode H.264 only.
     pub fn publish_options(&self, width: u32, height: u32) -> TrackPublishOptions {
         let svc = self.svc != Svc::Auto;
-        let codec = if svc { VideoCodec::VP9 } else { VideoCodec::H264 };
+        // The preferred codec wins; automatic keeps H.264 (hardware) unless SVC needs VP9.
+        let codec = self.codec.unwrap_or(if svc { VideoCodec::VP9 } else { VideoCodec::H264 });
         TrackPublishOptions {
             source: TrackSource::Screenshare,
             video_codec: codec,

@@ -457,6 +457,10 @@ pub struct CameraQuality {
 
 /// Screen share quality (`StreamSettings`). Kept so the picker's settings compile.
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Mirrors `livekit::options::VideoCodec` for the no-WebRTC build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCodec { VP8, H264, VP9, AV1, H265 }
+
 pub struct ScreenQuality {
     pub fps: u32,
     pub max_height: Option<u32>,
@@ -464,11 +468,12 @@ pub struct ScreenQuality {
     pub ceiling: u64,
     pub content_hint: ContentHint,
     pub svc: Svc,
+    pub codec: Option<VideoCodec>,
 }
 
 impl Default for ScreenQuality {
     fn default() -> Self {
-        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default() }
+        Self { fps: 30, max_height: Some(720), bitrate: None, ceiling: MAX_SCREEN_SHARE_BITRATE, content_hint: ContentHint::default(), svc: Svc::default(), codec: None }
     }
 }
 

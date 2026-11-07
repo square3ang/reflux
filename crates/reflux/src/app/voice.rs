@@ -1214,6 +1214,9 @@ fn screen_settings_changed(a: &Settings, b: &Settings) -> bool {
         || a.screen_bitrate != b.screen_bitrate
         || a.screen_content_hint != b.screen_content_hint
         || a.screen_svc != b.screen_svc
+        || a.screen_codec != b.screen_codec
+        || a.screen_av1_opt_in != b.screen_av1_opt_in
+        || a.screen_hevc_opt_in != b.screen_hevc_opt_in
         || a.encoder != b.encoder
         || a.stream_audio != b.stream_audio
 }

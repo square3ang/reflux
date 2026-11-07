@@ -149,8 +149,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:16` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
 - `crates/reflux/src/app/voice.rs:1061` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1529` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1538` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1532` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1541` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -173,7 +173,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:217` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
-- `crates/reflux/src/settings/advanced.rs:348` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+- `crates/reflux/src/settings/advanced.rs:382` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
@@ -199,7 +199,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-- `crates/reflux/src/shell/voice.rs:1359` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+- `crates/reflux/src/shell/voice.rs:1376` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:216` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.

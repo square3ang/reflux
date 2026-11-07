@@ -343,6 +343,40 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
     out
 }
 
+/// A boolean voice setting row in the encoder modal.
+fn codec_switch<S: 'static>(
+    st: &ShellState,
+    p: &Palette,
+    acc: ShellAccess<S>,
+    _id: &'static str,
+    label: &str,
+    get: fn(&crate::shell::voice::Settings) -> bool,
+    put: fn(&mut crate::shell::voice::Settings, bool),
+) -> El {
+    let on = get(&st.voice.settings);
+    row()
+        .w_full()
+        .min_h(44.0)
+        .py(4.0)
+        .gap(16.0)
+        .center_y()
+        .child(
+            text(t(label).to_string())
+                .font(font(14.0, 500.0).lh(20.0))
+                .color(p.text_primary)
+                .grow(1.0),
+        )
+        .child(
+            crate::ui::Switch::new(on)
+                .on_toggle(move |s: &mut S| {
+                    let sh = acc(s);
+                    put(&mut sh.voice.settings, !on);
+                    sh.intents.push(Intent::Voice(crate::shell::voice::Op::Settings));
+                })
+                .el(p),
+        )
+}
+
 /// `ScreenShareEncoderControlsModal`: encoder path, SVC mode and content hint
 /// (`CompactComboboxRow`s), saved with the voice settings and used by the next screen share.
 // shortcut: Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
@@ -405,6 +439,24 @@ pub fn encoder_modal<S: 'static>(
     let body = col()
         .w_full()
         .gap(12.0)
+        .child(combo(
+            "advanced-codec",
+            "Preferred screen share codec",
+            "Automatic uses H.264 (hardware) unless SVC needs VP9. AV1 and H.265 stay off until opted in.",
+            &[
+                ("auto", "Automatic"),
+                ("av1", "AV1 (requires opt-in)"),
+                ("h265", "H.265 (requires opt-in)"),
+                ("h264", "H.264"),
+                ("vp9", "VP9"),
+                ("vp8", "VP8"),
+            ],
+            &v.screen_codec,
+            200.0,
+            |s, v| s.screen_codec = v,
+        ))
+        .child(codec_switch(st, p, acc, "advanced-av1-opt-in", "Allow AV1 for screen sharing", |s| s.screen_av1_opt_in, |s, v| s.screen_av1_opt_in = v))
+        .child(codec_switch(st, p, acc, "advanced-hevc-opt-in", "Allow H.265 (HEVC) for screen sharing", |s| s.screen_hevc_opt_in, |s, v| s.screen_hevc_opt_in = v))
         .child(combo(
             "advanced-encoder-path",
             "Encoder path",

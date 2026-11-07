@@ -374,6 +374,11 @@ pub struct Settings {
     /// `screenShareScalabilityMode`: `auto` (H.264 / hardware), `single_layer` or `temporal`
     /// (VP9 + software, so the layers apply).
     pub screen_svc: String,
+    /// `preferredScreenShareCodec`: `auto`, `av1`, `h265`, `h264`, `vp9` or `vp8`.
+    pub screen_codec: String,
+    /// `screenShareAv1OptIn` / `screenShareHevcOptIn`: AV1 and H.265 are off unless opted in.
+    pub screen_av1_opt_in: bool,
+    pub screen_hevc_opt_in: bool,
     /// `ParticipantVolume`: per-user volume (0..200 %).
     pub user_volumes: HashMap<u64, f32>,
     /// `StreamAudioPrefs`: per-streamer volume (0..200 %) and mutes.
@@ -413,6 +418,9 @@ impl Default for Settings {
             encoder: "auto".into(),
             screen_content_hint: "text".into(),
             screen_svc: "auto".into(),
+            screen_codec: "auto".into(),
+            screen_av1_opt_in: false,
+            screen_hevc_opt_in: false,
             user_volumes: HashMap::new(),
             stream_volumes: HashMap::new(),
             stream_mutes: HashSet::new(),
@@ -492,6 +500,14 @@ impl Settings {
             "temporal" => Svc::Temporal,
             _ => Svc::Auto,
         };
+        let codec = match self.screen_codec.as_str() {
+            "av1" if self.screen_av1_opt_in => Some(reflux_voice::VideoCodec::AV1),
+            "h265" if self.screen_hevc_opt_in => Some(reflux_voice::VideoCodec::H265),
+            "h264" => Some(reflux_voice::VideoCodec::H264),
+            "vp9" => Some(reflux_voice::VideoCodec::VP9),
+            "vp8" => Some(reflux_voice::VideoCodec::VP8),
+            _ => None,
+        };
         reflux_voice::ScreenQuality {
             fps,
             max_height,
@@ -499,6 +515,7 @@ impl Settings {
             ceiling: limits.screen_share_bitrate,
             content_hint,
             svc,
+            codec,
         }
     }
 
@@ -1582,6 +1599,26 @@ mod tests {
         assert_eq!(st.intents, [Intent::SelectChannel(Snowflake(2)), Intent::JoinVoice { guild: Some(Snowflake(1)), channel: Snowflake(2) }]);
         st.leave_voice();
         assert_eq!(st.intents.last(), Some(&Intent::LeaveVoice));
+    }
+
+    #[test]
+    fn screen_codec_preference_maps_and_needs_its_opt_in() {
+        use reflux_voice::VideoCodec;
+        let limits = crate::shell::upload::Limits { higher_video_quality: true, screen_share_bitrate: 16_000_000, ..Default::default() };
+        let mut set = Settings::default();
+        assert_eq!(set.screen_quality(&limits, true).codec, None, "automatic");
+        set.screen_codec = "vp9".into();
+        assert_eq!(set.screen_quality(&limits, true).codec, Some(VideoCodec::VP9));
+        set.screen_codec = "h264".into();
+        assert_eq!(set.screen_quality(&limits, true).codec, Some(VideoCodec::H264));
+        set.screen_codec = "av1".into();
+        assert_eq!(set.screen_quality(&limits, true).codec, None, "AV1 is off until opted in");
+        set.screen_av1_opt_in = true;
+        assert_eq!(set.screen_quality(&limits, true).codec, Some(VideoCodec::AV1));
+        set.screen_codec = "h265".into();
+        assert_eq!(set.screen_quality(&limits, true).codec, None);
+        set.screen_hevc_opt_in = true;
+        assert_eq!(set.screen_quality(&limits, true).codec, Some(VideoCodec::H265));
     }
 
     #[test]
