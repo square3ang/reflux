@@ -14,7 +14,7 @@ use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 use crate::ui::overlay::popout_shadow;
-use crate::ui::{Button, ButtonSize, ButtonVariant, Checkbox, MenuEntry, MenuItem, Modal as Dialog, Select, over, popup_access, scroller, spinner};
+use crate::ui::{Checkbox, MenuEntry, MenuItem, Modal as Dialog, Select, over, popup_access, scroller, spinner};
 use crate::i18n::t;
 
 pub const INBOX: &str = "header-inbox";
@@ -88,7 +88,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     }
     let bg = p.form_surface_background;
     let tab = st.social.inbox_tab;
-    let tabs = col().w(46.0).h_full().py(8.0).gap(8.0).items_center().child(rune::el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(p.background_header_secondary)).children(TABS.iter().enumerate().map(|(i, (name, glyph))| {
+    let tab_row = |i: usize, name: &'static str, glyph: &'static rune::Icon| {
         let on = tab == i as u8;
         row()
             .size(30.0, 30.0)
@@ -106,24 +106,54 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                 st.social.inbox_tab = i as u8;
                 load(st, i as u8);
             })
-    }));
-    let (title, action): (&str, Option<El>) = match tab {
+    };
+    let mut tabs = col()
+        .w(46.0)
+        .h_full()
+        .py(8.0)
+        .gap(8.0)
+        .items_center()
+        .child(rune::el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(p.background_header_secondary))
+        .children(TABS.iter().enumerate().map(|(i, (name, glyph))| tab_row(i, name, glyph)))
+        .child(rune::el().grow(1.0));
+    // `sidebarFooterActions`: the tab's action lives at the bottom of the sidebar.
+    let footer = match tab {
         0 => {
             let unread = unread_channels(store);
             let acks: Vec<(Snowflake, Snowflake)> = unread.iter().filter_map(|c| Some((c.id, c.last_message_id?))).collect();
-            let b = (!acks.is_empty()).then(|| Button::new(t("Mark all as read")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).key("inbox-read-all").on_press(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone()))).el(p));
-            ("Unread", b)
+            let off = acks.is_empty();
+            let acks2 = acks.clone();
+            Some(
+                row()
+                    .size(30.0, 30.0)
+                    .center()
+                    .radius(6.0)
+                    .hover(p.background_modifier_hover)
+                    .cursor(if off { rune::Cursor::Default } else { rune::Cursor::Pointer })
+                    .role("button")
+                    .label(t("Mark all as read"))
+                    .key("inbox-read-all")
+                    .opacity(if off { 0.4 } else { 1.0 })
+                    .child(icon(&icons::CHECK_BOLD, 18.0).color(p.text_primary_muted))
+                    .on_press(move |s: &mut S| {
+                        if !off {
+                            acc(s).intents.push(Intent::MarkRead(acks2.clone()));
+                        }
+                    }),
+            )
         }
-        1 => (t("Bookmarks"), None),
-        _ => (t("Mentions"), Some(filter_button(p, acc))),
+        2 => Some(filter_button(p, acc)),
+        _ => None,
     };
-    let head = row().w_full().h(48.0).px(16.0).gap(8.0).center_y().child(rune::el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary)).child(text(title).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0)).children(action);
+    if let Some(f) = footer {
+        tabs = tabs.child(row().w_full().pt(8.0).center().child(f));
+    }
     let list = match tab {
         0 => unread_list(store, st, p, acc),
         1 => bookmark_list(store, st, p, acc),
         _ => mention_list(store, st, p, acc),
     };
-    let content = col().grow(1.0).min_w(0.0).h_full().child(head).child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
+    let content = col().grow(1.0).min_w(0.0).h_full().child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
     let surface = row()
         .pin(None, Some(56.0), Some(16.0), Some(8.0))
         .w(600.0)
