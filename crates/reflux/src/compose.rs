@@ -398,8 +398,7 @@ mod tests {
 
     #[test]
     fn run_clears_and_queues() {
-        let mut st = ShellState::default();
-        st.composer = TextEdit::new("/kick <@5>");
+        let mut st = ShellState { composer: TextEdit::new("/kick <@5>"), ..Default::default() };
         assert!(run(&mut st, Snowflake(1), Some(Snowflake(2)), "/kick <@5>"));
         assert!(st.composer.text.is_empty());
         assert!(matches!(&st.intents[..], [Intent::Social(r)] if r.path == "/guilds/2/members/5"));
