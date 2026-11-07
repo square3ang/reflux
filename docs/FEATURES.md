@@ -75,7 +75,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Browser login handoff | MISSING | | BrowserLoginHandoffModal.tsx |
 | Multi-account switcher | DONE | | AccountSwitcherModal.tsx |
 | Sudo verification | DONE | | SudoVerificationModal.tsx |
-| Account restriction / age gate / new-device | PARTIAL | age gate, new-device prompt; rule links are plain text | AccountRestrictionScreen.tsx |
+| Account restriction / age gate / new-device | DONE | no "Why we ask" help link on the birthday gate; its "Sign out" skips the logout confirm; audio devices are polled every 10 s (no devicechange event) and grouped by card name | AccountRestrictionScreen.tsx, DateOfBirthGate.tsx, NewDeviceMonitoring.tsx |
 | OAuth2 authorize | PARTIAL | scopes can't be unticked; bot permissions not listed; no group DM destination | OAuthAuthorizeModal.tsx |
 | Terms acceptance | DONE | | TermsAcceptanceModal.tsx |
 | Token in OS keyring | DONE | falls back to the 0600 file when no keyring | D/DesktopAppStorage.ts |
@@ -199,7 +199,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Watch stream | DONE |  | WatchStreamOverlay.tsx |
 | Camera | PARTIAL | Linux only (GStreamer); no background effects; never tested in a real call | CameraPreviewModal.tsx |
 | Call view grid | DONE |  | VoiceCallView.tsx |
-| DM calls / ringing / P2P | PARTIAL | P2P (mesh) calls refused with a notice: Fluxer's mesh engine + op 13 signalling not ported; DM calls untested against a server | IncomingCallUI.tsx |
+| DM calls / ringing / P2P | PARTIAL | P2P mesh (op 13, STUN-only) verified by a loopback test only, never against a real peer; no conversion watchdog or oversized-signal check; rollout read once per session; DM calls untested against a server | IncomingCallUI.tsx, VoiceMeshEngine.ts |
 | Per-user volume / local mute | DONE |  | VoiceParticipantMenuItems.tsx |
 | Noise suppression | DONE |  | | AudioProcessingModal.tsx |
 | Voice details popout | DONE | | VoiceDetailsPopout.tsx |

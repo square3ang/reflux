@@ -7,9 +7,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use reflux_model::{GatewayError, GatewayPayload, OpCode, Permissions, Snowflake, UpdateVoiceState, VoiceServerUpdate, VoiceState};
+use reflux_model::{GatewayError, GatewayPayload, OpCode, Permissions, Snowflake, UpdateVoiceState, VoiceServerUpdate, VoiceSignal, VoiceState};
 use reflux_net::Command;
 use reflux_voice::livekit::prelude::{RemoteTrack, RoomEvent, TrackSource};
+use reflux_voice::mesh::{self, Src};
 use reflux_voice::{Call, Camera, ScreenShare, StreamAudio};
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -55,6 +56,8 @@ pub struct VoiceRt {
     audio: HashMap<String, tokio::task::AbortHandle>,
     /// Screen share audio (Linux: a PipeWire application stream) and its capture.
     stream_audio: Option<(Arc<StreamAudio>, crate::gst::AudioCapture)>,
+    /// `VoiceP2pConsent`: the channel whose peer-to-peer call the user agreed to.
+    p2p_agreed: Option<Snowflake>,
 }
 
 /// Our voice connection ID (live tests compare the gateway's echo with it).
@@ -69,7 +72,10 @@ pub(super) fn call(s: &State) -> Option<Arc<Call>> {
 pub(super) fn run(s: &mut State, i: Intent) {
     match i {
         Intent::JoinVoice { guild, channel } => join(s, guild, channel),
-        Intent::LeaveVoice => leave(s, true),
+        Intent::LeaveVoice => {
+            s.app.voice.p2p_agreed = None;
+            leave(s, true);
+        }
         Intent::VoiceSelf => {
             send_state(s);
             apply_self(s);
@@ -95,6 +101,12 @@ pub(super) fn run(s: &mut State, i: Intent) {
 
 fn run_op(s: &mut State, op: Op) {
     match op {
+        Op::IgnoreDevice(card) => {
+            if !s.app.saved.ignored_devices.contains(&card) {
+                s.app.saved.ignored_devices.push(card);
+                crate::session::save(&s.app.saved);
+            }
+        }
         Op::ToggleCamera => toggle_camera(s),
         Op::Preview(on) => {
             s.app.shell.voice.previewing = on;
@@ -116,6 +128,15 @@ fn run_op(s: &mut State, op: Op) {
             apply_self(s);
         }
         Op::StartCall(channel) => start_call(s, channel),
+        Op::P2pConsent { guild, channel, p2p, start } => {
+            s.app.voice.p2p_agreed = p2p.then_some(channel);
+            if start { start_call(s, channel) } else { s.app.shell.join_voice(guild, channel) }
+        }
+        Op::SwitchToStandard => {
+            if let Some(ch) = s.app.shell.voice.channel {
+                send(s, UpdateVoiceState { p2p: Some(false), ..payload(s, Some(ch)) });
+            }
+        }
         Op::AcceptCall(channel) => {
             s.app.shell.voice.dismissed_calls.remove(&channel);
             s.app.shell.join_voice(None, channel);
@@ -383,6 +404,8 @@ fn payload(s: &State, channel: Option<(Option<Snowflake>, Snowflake)>) -> Update
         self_video: v.camera && s.app.voice.camera.is_some(),
         self_stream: v.screen && s.app.voice.share.is_some(),
         viewer_stream_keys: channel.map(|_| watching.map(|k| vec![k])),
+        // Only `true` agrees; leaving it out never switches a call.
+        p2p: channel.filter(|(_, c)| s.app.voice.p2p_agreed == Some(*c)).map(|_| true),
         ..Default::default()
     }
 }
@@ -414,9 +437,31 @@ fn join(s: &mut State, guild: Option<Snowflake>, channel: Snowflake) {
         return;
     }
     s.app.voice.confirmed = None;
+    // `checkP2pConsent`: a P2P call (or an empty "P2P calls only" channel) needs agreement.
+    let others = s.app.store.voice_states.iter().any(|((g, u), v)| *g == guild && *u != me && v.channel_id == Some(channel));
+    let pinned = guild.is_some() && !others && s.app.shell.voice.p2p_rollout.0 && s.app.store.channels.get(&channel).is_some_and(|c| c.rtc_p2p);
+    if (pinned || crate::shell::voice::is_p2p(&s.app.store, guild, channel)) && !p2p_consent(s, guild, channel, pinned) {
+        return;
+    }
     drop_call(s);
     s.app.voice.connection_id = None;
     send(s, payload(s, Some((guild, channel))));
+}
+
+/// `requestP2pConsent`: true when already agreed (or "Join P2P calls without asking"); else
+/// asks and abandons this join (the dialog's answer joins again).
+fn p2p_consent(s: &mut State, guild: Option<Snowflake>, channel: Snowflake, start: bool) -> bool {
+    if s.app.voice.p2p_agreed == Some(channel) {
+        return true;
+    }
+    if crate::look::with(|l| l.skip_p2p_join) {
+        s.app.voice.p2p_agreed = Some(channel);
+        return true;
+    }
+    let v = &mut s.app.shell.voice;
+    v.channel = None;
+    v.modal = Some(Modal::P2pConsent { guild, channel, start, allow_standard: false, video: false, always: false });
+    false
 }
 
 /// The confirm modal's "Join anyway".
@@ -443,6 +488,10 @@ pub(super) fn leave(s: &mut State, tell_gateway: bool) {
     drop_call(s);
     s.app.voice.connection_id = None;
     let v = &mut s.app.shell.voice;
+    v.p2p_failed.clear();
+    if matches!(v.modal, Some(Modal::P2pFailed { .. })) {
+        v.modal = None;
+    }
     (v.channel, v.connected, v.screen, v.ping, v.watching, v.camera, v.call_view) = (None, false, false, None, None, false, false);
     (v.encrypted, v.server, v.reconnecting, v.focus, v.transmitting) = (false, None, false, None, false);
     v.speaking.clear();
@@ -476,14 +525,14 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     if s.app.shell.voice.channel != Some((v.guild_id, v.channel_id)) {
         return;
     }
-    // shortcut: peer-to-peer calls (`p2p` grants: one WebRTC peer connection per pair, signalled
-    // over op 13) aren't implemented; we never send `p2p: true`, so this only comes from a
-    // misbehaving server. A LiveKit implementation would need webrtc-sys's raw PeerConnection.
+    if v.p2p {
+        return start_mesh(s, v);
+    }
+    // A LiveKit grant (also when a P2P call switched to LiveKit) ends any P2P agreement.
+    s.app.voice.p2p_agreed = None;
     let (Some(endpoint), Some(token)) = (v.endpoint.clone(), v.token.clone()) else {
-        eprintln!("reflux: voice: peer-to-peer grants aren't supported");
-        fail(s);
-        s.app.shell.voice.modal = Some(Modal::Refused("This call is peer-to-peer, which Reflux can't join yet.".into()));
-        return;
+        eprintln!("reflux: voice: a grant without a LiveKit endpoint or token");
+        return fail(s);
     };
     drop_call(s);
     s.app.voice.connection_id = Some(v.connection_id.clone());
@@ -546,7 +595,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                     match (track, user, publication.source()) {
                         (RemoteTrack::Video(t), Some(user), TrackSource::Camera) => update(move |s| {
                             if s.app.voice.generation == generation {
-                                render_camera(s, user, t);
+                                render_camera(s, user, t.rtc_track());
                             }
                         }),
                         (RemoteTrack::Audio(t), _, source) => {
@@ -604,8 +653,265 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     });
 }
 
+// ---- Peer-to-peer calls -----------------------------------------------------------------------
+
+/// A peer-to-peer grant: our audio path and a [`mesh::Mesh`] instead of a LiveKit room. Peers
+/// come from the voice states ([`sync_roster`]) and talk over op 13.
+fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
+    drop_call(s);
+    s.app.voice.connection_id = Some(v.connection_id.clone());
+    let generation = s.app.voice.generation;
+    let target = mesh::Target {
+        guild_id: v.guild_id.map(|g| g.0),
+        channel_id: v.channel_id.0,
+        connection_id: v.connection_id.clone(),
+        ice_servers: v.ice_servers.iter().map(|i| i.urls.clone()).collect(),
+    };
+    let speak = crate::shell::voice::can(&s.app.store, &s.app.shell.voice, Permissions::SPEAK);
+    spawn(async move {
+        let (call, mut events) = Call::connect_mesh(target);
+        let call = Arc::new(call);
+        if speak && let Err(e) = call.publish_mic(true).await {
+            eprintln!("reflux: publish mic: {e}");
+        }
+        let c = call.clone();
+        update(move |s| {
+            if s.app.voice.generation != generation {
+                return spawn(async move {
+                    let _ = c.leave().await;
+                });
+            }
+            let v = &mut s.app.shell.voice;
+            (v.connected, v.encrypted, v.server) = (true, false, None);
+            c.set_mic_gate(false);
+            s.app.shell.voice.transmitting = false;
+            s.app.voice.call = Some(c);
+            apply_self(s);
+            apply_devices(s);
+            sync_roster(s);
+            play_own_entrance(s);
+            if let Some((channel, users)) = s.app.voice.pending_ring.take().filter(|(ch, _)| s.app.shell.voice.channel.is_some_and(|(_, c)| c == *ch)) {
+                api(s, Method::POST, format!("/channels/{channel}/call/ring"), json!({ "recipients": users }));
+                s.app.voice.rang = Some((channel, users));
+            }
+        });
+        spawn(ping_loop(Arc::downgrade(&call), generation));
+        spawn(self_speaking(Arc::downgrade(&call), generation));
+        while let Some(ev) = events.recv().await {
+            on_mesh_event(&call, generation, ev);
+        }
+    });
+}
+
+/// No server reports who speaks in a P2P call: we're speaking while the gate is open and the mic
+/// is loud (300 ms hang).
+async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
+    let (mut on, mut quiet) = (false, u32::MAX);
+    loop {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let Some(call) = call.upgrade() else { return };
+        quiet = if call.mic_level() > 0.01 { 0 } else { quiet.saturating_add(1) };
+        if on != (quiet < 6) {
+            on = !on;
+            update(move |s| {
+                if s.app.voice.generation == generation {
+                    let me = s.app.store.my_id();
+                    let v = &mut s.app.shell.voice;
+                    if on && v.transmitting { v.speaking.insert(me) } else { v.speaking.remove(&me) };
+                }
+            });
+        }
+    }
+}
+
+fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
+    let current = move |s: &State| s.app.voice.generation == generation;
+    match ev {
+        mesh::Event::Signal { to, data } => update(move |s| {
+            let Some((guild, channel)) = s.app.shell.voice.channel.filter(|_| current(s)) else { return };
+            let sig = VoiceSignal { guild_id: guild, channel_id: channel, to: Some(to), from: None, user_id: None, data };
+            if let Some(gw) = &s.app.gateway {
+                let _ = gw.send(Command::Send(GatewayPayload::command(OpCode::VOICE_SIGNAL, sig)));
+            }
+        }),
+        mesh::Event::Status { user, status, .. } => update(move |s| {
+            if current(s) {
+                on_peer_status(s, Snowflake(user), status);
+            }
+        }),
+        mesh::Event::Remote { conn, user, src, track } => {
+            let key = format!("{conn}:{}", src.name());
+            match (src, track) {
+                (Src::Microphone | Src::ScreenShareAudio, Some(reflux_voice::livekit::webrtc::prelude::MediaStreamTrack::Audio(t))) => {
+                    let kind = if src == Src::Microphone { reflux_voice::Kind::Voice } else { reflux_voice::Kind::Stream };
+                    let source = reflux_voice::Source { kind, user, conn: conn.clone() };
+                    let speaking = move |on: bool| {
+                        if src == Src::Microphone {
+                            update(move |s| {
+                                if current(s) {
+                                    let v = &mut s.app.shell.voice;
+                                    if on { v.speaking.insert(Snowflake(user)) } else { v.speaking.remove(&Snowflake(user)) };
+                                }
+                            });
+                        }
+                    };
+                    if let (Some(play), Some(b)) = (call.play_rtc(t, source, speaking), super::BRIDGE.get()) {
+                        let h = b.rt.spawn(play).abort_handle();
+                        update(move |s| {
+                            if !current(s) {
+                                return h.abort();
+                            }
+                            if let Some(old) = s.app.voice.audio.insert(key, h) {
+                                old.abort();
+                            }
+                        });
+                    }
+                }
+                (Src::Camera, Some(reflux_voice::livekit::webrtc::prelude::MediaStreamTrack::Video(t))) => update(move |s| {
+                    if current(s) {
+                        render_camera(s, Snowflake(user), t);
+                    }
+                }),
+                (Src::Camera, None) => update(move |s| {
+                    if let Some(h) = s.app.voice.videos.remove(&Snowflake(user)) {
+                        h.abort();
+                    }
+                    s.app.shell.voice.videos.remove(&Snowflake(user));
+                }),
+                (Src::ScreenShare, Some(_)) => update(move |s| {
+                    if current(s) && s.app.shell.voice.watching == Some(Snowflake(user)) {
+                        watch(s, Some(Snowflake(user)));
+                    }
+                }),
+                (_, None) => update(move |s| {
+                    if let Some(h) = s.app.voice.audio.remove(&key) {
+                        h.abort();
+                    }
+                }),
+                _ => {}
+            }
+        }
+        mesh::Event::Report(r) => update(move |s| {
+            if current(s) {
+                api(s, Method::POST, "/voice/p2p/connection-reports".into(), json!({ "reports": [r] }));
+            }
+        }),
+    }
+}
+
+/// `VoiceMeshPeers` + `showP2pPeerFailedModal`: a new failure opens the dialog; it closes once
+/// nobody's failed.
+fn on_peer_status(s: &mut State, user: Snowflake, status: mesh::Status) {
+    let v = &mut s.app.shell.voice;
+    let was = v.p2p_failed.contains(&user);
+    v.p2p_failed.retain(|u| *u != user);
+    if status != mesh::Status::Failed {
+        if v.p2p_failed.is_empty() && matches!(v.modal, Some(Modal::P2pFailed { .. })) {
+            v.modal = None;
+        }
+        return;
+    }
+    v.p2p_failed.push(user);
+    if was {
+        return;
+    }
+    let Some((guild, channel)) = v.channel else { return };
+    let names = v.p2p_failed.iter().map(|u| s.app.store.display_name(guild, *u)).collect();
+    let allow_switch = guild.is_none() || s.app.store.channels.get(&channel).is_none_or(|c| !c.rtc_p2p);
+    s.app.shell.voice.modal = Some(Modal::P2pFailed { names, allow_switch });
+}
+
+/// `syncRoster`: the other connections in our channel that send peer-to-peer (and ones already
+/// connected), once our own state says we're in the mesh; and their server mutes.
+fn sync_roster(s: &State) {
+    let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) else { return };
+    let Some((guild, channel)) = s.app.shell.voice.channel else { return };
+    let own = s.app.voice.connection_id.as_deref();
+    let states = || s.app.store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel));
+    let own_p2p = states().find(|(_, v)| v.connection_id.as_deref() == own).map(|(_, v)| v.p2p);
+    let mut roster = Vec::new();
+    for ((_, user), v) in states() {
+        let Some(conn) = v.connection_id.clone().filter(|c| Some(c.as_str()) != own) else { continue };
+        if own_p2p.is_some() && (mesh.has(&conn) || (own_p2p == Some(true) && v.p2p)) {
+            mesh.server_mute(&conn, v.mute);
+            roster.push((conn, user.0));
+        }
+    }
+    mesh.set_roster(&roster);
+}
+
+/// VOICE_SIGNAL for our peer-to-peer call.
+pub(super) fn on_signal(s: &State, sig: &VoiceSignal) {
+    let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) else { return };
+    if s.app.shell.voice.channel != Some((sig.guild_id, sig.channel_id)) {
+        return;
+    }
+    if let (Some(from), Some(user)) = (&sig.from, sig.user_id) {
+        mesh.signal(from, user.0, &sig.data);
+    }
+}
+
+/// The gateway is back: re-send what peers may have missed.
+pub(super) fn on_reconnected(s: &State) {
+    if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
+        mesh.resume();
+    }
+}
+
+/// `NewDeviceMonitoring`: lists audio devices every 10 s while signed in and offers to switch to
+/// a newly plugged-in one. Started once, on the first READY.
+pub(super) fn watch_devices() {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    spawn(async move {
+        loop {
+            if let Ok((inputs, outputs)) = tokio::task::spawn_blocking(reflux_voice::devices).await {
+                update(move |s| on_devices(s, inputs, outputs));
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    });
+}
+
+fn on_devices(s: &mut State, inputs: Vec<String>, outputs: Vec<String>) {
+    if s.app.route != super::Route::Main {
+        return;
+    }
+    let v = &s.app.shell.voice;
+    let saved = &mut s.app.saved;
+    let before = saved.known_devices.len();
+    let found = crate::shell::voice::new_devices(&inputs, &outputs, &mut saved.known_devices, &saved.ignored_devices, [v.input.as_deref(), v.output.as_deref()]);
+    if saved.known_devices.len() != before {
+        crate::session::save(saved);
+    }
+    // Several at once is a new machine or a driver reload, not a plug-in: don't ask.
+    if (1..=2).contains(&found.len()) && v.modal.is_none() {
+        let pick = found.iter().find(|d| d.input.is_some()).unwrap_or(&found[0]).clone();
+        s.app.shell.voice.modal = Some(Modal::NewDevice(pick));
+    }
+    s.app.shell.voice.devices = Some((inputs, outputs));
+}
+
+/// `VoiceP2pRollout`: whether to offer P2P calls, and their cap, from `GET /experiments`.
+// shortcut: read once per session; Fluxer polls every `poll_interval_seconds`.
+pub(super) fn load_rollout(s: &State) {
+    let Some(inst) = s.app.instance.clone() else { return };
+    spawn(async move {
+        match inst.rest.get::<Value>("/experiments").await {
+            Ok(v) => {
+                let a = &v["assignments"]["voice_p2p"];
+                let rollout = (a["enabled"].as_bool().unwrap_or(false), a["max_participants"].as_u64().unwrap_or(2) as usize);
+                update(move |s| s.app.shell.voice.p2p_rollout = rollout);
+            }
+            Err(e) => eprintln!("reflux: experiments: {e}"),
+        }
+    });
+}
+
 /// Draws a remote camera into `voice.videos[user]`.
-fn render_camera(s: &mut State, user: Snowflake, track: reflux_voice::livekit::prelude::RemoteVideoTrack) {
+fn render_camera(s: &mut State, user: Snowflake, track: reflux_voice::livekit::webrtc::prelude::RtcVideoTrack) {
     let pixels = s.app.shell.voice.videos.entry(user).or_default().clone();
     if let Some(b) = super::BRIDGE.get() {
         let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| pixels.set(w, h, rgba)));
@@ -642,20 +948,32 @@ fn fail(s: &mut State) {
 
 /// Op 12 refused the join (`VOICE_CHANNEL_FULL`, P2P consent, ...).
 pub(super) fn on_error(s: &mut State, e: &GatewayError) {
-    if s.app.shell.voice.channel.is_some() && !s.app.shell.voice.connected {
-        eprintln!("reflux: voice join refused: {} {}", e.code, e.message);
-        leave(s, false);
-        s.app.shell.voice.modal = Some(match e.code.as_str() {
-            "VOICE_CHANNEL_FULL" => Modal::ChannelFull,
-            "VOICE_P2P_CONSENT_REQUIRED" | "VOICE_P2P_UNAVAILABLE" => Modal::Refused("This call is peer-to-peer, which Reflux can't join yet.".into()),
-            _ => Modal::Refused(e.message.clone()),
-        });
+    let Some((guild, channel)) = s.app.shell.voice.channel.filter(|_| !s.app.shell.voice.connected) else { return };
+    eprintln!("reflux: voice join refused: {} {}", e.code, e.message);
+    let agreed = s.app.voice.p2p_agreed == Some(channel);
+    leave(s, false);
+    // `handleP2pRefusal`: a P2P call we hadn't agreed to asks, then joins again.
+    if e.code == "VOICE_P2P_CONSENT_REQUIRED" && !agreed {
+        if p2p_consent(s, guild, channel, false) {
+            s.app.shell.join_voice(guild, channel);
+        }
+        return;
     }
+    if e.code.starts_with("VOICE_P2P_") {
+        s.app.voice.p2p_agreed = None;
+    }
+    s.app.shell.voice.modal = Some(match e.code.as_str() {
+        "VOICE_CHANNEL_FULL" => Modal::ChannelFull,
+        "VOICE_P2P_CONSENT_REQUIRED" => Modal::Refused(t("Couldn't join the P2P call. Try again.").into()),
+        "VOICE_P2P_UNAVAILABLE" => Modal::Refused(t("P2P calls are unavailable right now.").into()),
+        _ => Modal::Refused(e.message.clone()),
+    });
 }
 
 /// Our own voice state changed: a moderator moved us (follow it; the new grant arrives as a
 /// VOICE_SERVER_UPDATE) or disconnected us, or another session took over.
 pub(super) fn on_state(s: &mut State, v: &VoiceState) {
+    sync_roster(s);
     let me = s.app.store.my_id();
     let ours = v.connection_id.is_some() && v.connection_id == s.app.voice.connection_id;
     if v.user_id != Some(me) || !ours {
@@ -767,10 +1085,17 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if user.is_none() {
         crate::popout::stream_ended();
     }
+    // A P2P peer only sends its screen share to those who want it.
+    if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
+        mesh.set_watching(user.map(|u| u.0));
+    }
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
     let Some(track) = call.screen_track(user.0) else {
-        eprintln!("reflux: no screen share from {user} to watch");
-        s.app.shell.voice.watching = None;
+        // In a P2P call it arrives once the peer starts sending (`Event::Remote` watches again).
+        if call.mesh().is_none() {
+            eprintln!("reflux: no screen share from {user} to watch");
+            s.app.shell.voice.watching = None;
+        }
         return;
     };
     let pixels = s.app.shell.voice.stream.clone();

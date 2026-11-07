@@ -85,6 +85,10 @@ pub struct Login {
     pub passkey_cancel: Option<crate::passkey::Cancel>,
     /// The date of birth selects.
     pub popups: Popups,
+    /// The age gate just removed the account (`takeAgeBlockedAccountRemoved`).
+    pub age_removed: bool,
+    /// "Sign in to existing account" past the age-blocked notice.
+    pub age_dismissed: bool,
 }
 
 /// Register form fields besides `Login::email` / `password`, which it shares.
@@ -94,12 +98,33 @@ pub struct Register {
     pub username: TextEdit,
     pub confirm: TextEdit,
     pub show_confirm: bool,
-    /// Date of birth parts as the selects' values ("1".."12", "1".."31", "1990").
+    pub dob: Dob,
+    /// The account waits for an admin's approval.
+    pub pending: bool,
+}
+
+/// Date of birth parts as the selects' values ("1".."12", "1".."31", "1990").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dob {
     pub month: Option<String>,
     pub day: Option<String>,
     pub year: Option<String>,
-    /// The account waits for an admin's approval.
-    pub pending: bool,
+}
+
+impl Dob {
+    fn parts(&self) -> Option<(i32, u32, u32)> {
+        Some((self.year.as_deref()?.parse().ok()?, self.month.as_deref()?.parse().ok()?, self.day.as_deref()?.parse().ok()?))
+    }
+
+    /// `YYYY-MM-DD` once all three are picked and plausible.
+    pub fn iso(&self, today: chrono::NaiveDate) -> Option<String> {
+        let (y, m, d) = self.parts().filter(|&(y, m, d)| plausible_birth_date(y, m, d, today))?;
+        Some(format!("{y:04}-{m:02}-{d:02}"))
+    }
+
+    pub fn complete(&self) -> bool {
+        self.month.is_some() && self.day.is_some() && self.year.is_some()
+    }
 }
 
 /// Messages under the inputs, and one for the whole form.
@@ -258,7 +283,59 @@ pub(crate) fn title(t: &str, p: &Palette) -> El {
     text(t).w_full().align(Align::Center).font(font(20.0, 600.0).lh(30.0).tracking(0.5)).color(p.text_primary).mb(20.0)
 }
 
+/// `isAgeBlocked`: a date of birth below the minimum age was entered on this instance in the
+/// last day.
+pub fn age_blocked(s: &State) -> bool {
+    let inst = if s.app.saved.instance.is_empty() { crate::session::DEFAULT_INSTANCE } else { &s.app.saved.instance };
+    s.app.saved.age_blocked_until.get(inst).is_some_and(|&until| until > crate::app::now_ms())
+}
+
+/// `markAgeBlocked`: refuse sign-up here for a day.
+pub fn mark_age_blocked(s: &mut State) {
+    let inst = if s.app.saved.instance.is_empty() { crate::session::DEFAULT_INSTANCE.to_owned() } else { s.app.saved.instance.clone() };
+    s.app.saved.age_blocked_until.insert(inst, crate::app::now_ms() + 24 * 60 * 60 * 1000);
+    crate::session::save(&s.app.saved);
+}
+
+/// `QuietButton`: a 14/600 link-coloured text button.
+fn quiet(label: &str, key: &str, p: &Palette, f: fn(&mut State)) -> El {
+    text(label)
+        .key(key)
+        .py(2.0)
+        .px(4.0)
+        .font(font(14.0, 600.0).lh(20.0))
+        .color(p.text_link)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .on_press(move |s: &mut State| f(s))
+}
+
+/// `AgeBlockedNotice` with the "Sign in to existing account" action, in place of the sign-in
+/// methods.
+fn age_blocked_step(s: &State, p: &Palette) -> El {
+    let body = if s.login.age_removed {
+        t("You need to be a little older to have an account. We've signed you out, and this account and the date you entered will be deleted.")
+    } else {
+        t("You need to be a little older to have an account.")
+    };
+    let product = s.app.instance.as_ref().map(|i| i.discovery.app_public.branding.product_name.as_str()).filter(|n| !n.is_empty()).unwrap_or("Fluxer");
+    col()
+        .w_full()
+        .role("status")
+        .child(title(&crate::i18n::tf("You can't use {productName} yet", &[("productName", product)]), p))
+        .child(text(body).w_full().mt(-12.0).mb(20.0).align(Align::Center).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap())
+        .child(row().w_full().mt(16.0).justify_center().child(quiet(t("Sign in to existing account"), "age-blocked-sign-in", p, |s| {
+            s.login.age_dismissed = true;
+            s.login.age_removed = false;
+            to(s, Step::Credentials);
+            s.login.email.focused = true;
+        })))
+}
+
 fn method_step(s: &State, p: &Palette) -> El {
+    if age_blocked(s) && !s.login.age_dismissed {
+        return age_blocked_step(s, p);
+    }
     let disabled = s.login.submitting;
     col()
         .w_full()
@@ -511,7 +588,7 @@ fn days_in_month(y: i32, m: u32) -> u32 {
 }
 
 /// Drops a day the new month/year doesn't have, like `DateOfBirthField`.
-fn clamp_day(r: &mut Register) {
+fn clamp_day(r: &mut Dob) {
     let (Some(y), Some(m), Some(d)) = (&r.year, &r.month, &r.day) else { return };
     if let (Ok(y), Ok(m), Ok(d)) = (y.parse(), m.parse(), d.parse::<u32>())
         && d > days_in_month(y, m)
@@ -521,9 +598,20 @@ fn clamp_day(r: &mut Register) {
 }
 
 /// `DateOfBirthField`: month / day / year selects (flex 2 : 1.5 : 1.5, gap 8) under a label.
-fn date_of_birth(l: &crate::login::Login, width: f32, p: &Palette, layer: &mut Vec<El>) -> El {
+/// `key` prefixes the selects' popup ids; `get` reaches the parts in the app state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn date_of_birth<S: 'static>(
+    key: &str,
+    r: &Dob,
+    error: Option<String>,
+    width: f32,
+    popups: &Popups,
+    access: impl crate::ui::PopupAccess<S>,
+    get: impl Fn(&mut S) -> &mut Dob + Copy + 'static,
+    p: &Palette,
+    layer: &mut Vec<El>,
+) -> El {
     use chrono::Datelike;
-    let r = &l.register;
     let today = chrono::Local::now().date_naive();
     let years: Vec<String> = (today.year() - MAX_AGE..=today.year()).rev().map(|y| y.to_string()).collect();
     let days_n = match (r.year.as_deref().and_then(|y| y.parse().ok()), r.month.as_deref().and_then(|m| m.parse().ok())) {
@@ -536,44 +624,39 @@ fn date_of_birth(l: &crate::login::Login, width: f32, p: &Palette, layer: &mut V
     let day_opts: Vec<(&str, &str)> = days.iter().map(|d| (d.as_str(), d.as_str())).collect();
     let year_opts: Vec<(&str, &str)> = years.iter().map(|y| (y.as_str(), y.as_str())).collect();
     let unit = (width - 16.0) / 5.0;
-    let access = crate::ui::popup_access(|s: &mut State| &mut s.login.popups);
+    let ids = [format!("{key}-month"), format!("{key}-day"), format!("{key}-year")];
     let row_ = row()
         .w_full()
         .gap(8.0)
         .child(
-            Select::new("register-dob-month", &month_opts, r.month.as_deref())
+            Select::new(&ids[0], &month_opts, r.month.as_deref())
                 .placeholder(t("Month"))
                 .width(unit * 2.0)
-                .on_choose(|s: &mut State, v| {
-                    s.login.register.month = Some(v.to_owned());
-                    clamp_day(&mut s.login.register);
+                .on_choose(move |s: &mut S, v| {
+                    get(s).month = Some(v.to_owned());
+                    clamp_day(get(s));
                 })
-                .el(&l.popups, access, p, layer),
+                .el(popups, access, p, layer),
         )
         .child(
-            Select::new("register-dob-day", &day_opts, r.day.as_deref())
+            Select::new(&ids[1], &day_opts, r.day.as_deref())
                 .placeholder(t("Day"))
                 .width(unit * 1.5)
-                .on_choose(|s: &mut State, v| s.login.register.day = Some(v.to_owned()))
-                .el(&l.popups, access, p, layer),
+                .on_choose(move |s: &mut S, v| get(s).day = Some(v.to_owned()))
+                .el(popups, access, p, layer),
         )
         .child(
-            Select::new("register-dob-year", &year_opts, r.year.as_deref())
+            Select::new(&ids[2], &year_opts, r.year.as_deref())
                 .placeholder(t("Year"))
                 .width(unit * 1.5)
-                .on_choose(|s: &mut State, v| {
-                    s.login.register.year = Some(v.to_owned());
-                    clamp_day(&mut s.login.register);
+                .on_choose(move |s: &mut S, v| {
+                    get(s).year = Some(v.to_owned());
+                    clamp_day(get(s));
                 })
-                .el(&l.popups, access, p, layer),
+                .el(popups, access, p, layer),
         );
-    let implausible = match (&r.year, &r.month, &r.day) {
-        (Some(y), Some(m), Some(d)) => {
-            !matches!((y.parse(), m.parse(), d.parse()), (Ok(y), Ok(m), Ok(d)) if plausible_birth_date(y, m, d, today))
-        }
-        _ => false,
-    };
-    let error = l.errors.date_of_birth.clone().or_else(|| implausible.then(|| t("Enter your real date of birth.").to_owned()));
+    let implausible = r.complete() && r.iso(today).is_none();
+    let error = error.or_else(|| implausible.then(|| t("Enter your real date of birth.").to_owned()));
     col()
         .w_full()
         .gap(8.0)
@@ -651,7 +734,7 @@ pub fn register_missing(s: &State) -> bool {
     l.email.text.trim().is_empty()
         || l.password.text.is_empty()
         || r.confirm.text.is_empty()
-        || (sign_up(s).collect_date_of_birth && (r.month.is_none() || r.day.is_none() || r.year.is_none()))
+        || (sign_up(s).collect_date_of_birth && !r.dob.complete())
 }
 
 /// `USERNAME_PATTERN` / `MAX_USERNAME_LENGTH`.
@@ -691,6 +774,7 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
             .w_full()
             .gap(20.0)
             .children(l.errors.form.as_deref().map(|e| notice(e, p)))
+            .children(age_blocked(s).then(|| notice(t("You need to be a little older to have an account."), p)))
             .child(Input::new("register-email", &l.email, |s: &mut State| &mut s.login.email).label(t("Email")).error(l.errors.email.as_deref()).el(p))
             .child(
                 Input::new("register-global-name", &r.global_name, |s: &mut State| &mut s.login.register.global_name)
@@ -715,14 +799,15 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
                     .el(p),
             );
         if su.collect_date_of_birth {
-            form = form.child(date_of_birth(l, 430.0, p, layer));
+            let access = crate::ui::popup_access(|s: &mut State| &mut s.login.popups);
+            form = form.child(date_of_birth("register-dob", &r.dob, l.errors.date_of_birth.clone(), 430.0, &l.popups, access, |s: &mut State| &mut s.login.register.dob, p, layer));
         }
         let slow = l.slow.then(|| text("Verifying you're human…").w_full().font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary));
         form.children(legal_notice(&su, p)).children(slow).child(
             Button::new(t("Create account"))
                 .fit_container()
                 .submitting(l.submitting)
-                .disabled(register_missing(s) || username_problem(&r.username.text).is_some())
+                .disabled(register_missing(s) || username_problem(&r.username.text).is_some() || age_blocked(s))
                 .key("register-submit")
                 .on_press(crate::app::submit_register)
                 .el(p)
@@ -903,7 +988,7 @@ pub mod scenes {
         l.password = TextEdit::new("hunter22hunter22".to_owned());
         l.register.confirm = TextEdit::new("hunter22hunter2".to_owned());
         l.register.username = TextEdit::new("not valid!".to_owned());
-        (l.register.month, l.register.day, l.register.year) = (Some("2".into()), Some("29".into()), Some("2001".into()));
+        l.register.dob = Dob { month: Some("2".into()), day: Some("29".into()), year: Some("2001".into()) };
         l.errors.email = Some("Email is already in use.".into());
         l.errors.confirm = Some(t("The passwords don't match.").into());
         l.errors.form = Some("You're going too fast. Try again in 5s.".into());
@@ -911,7 +996,7 @@ pub mod scenes {
 
     pub fn register_dob(s: &mut State) {
         register(s);
-        s.login.register.month = Some("3".into());
+        s.login.register.dob.month = Some("3".into());
         s.login.popups.open = Some("register-dob-year".into());
     }
 
@@ -948,6 +1033,38 @@ pub mod scenes {
 
     pub fn passkey_pin(s: &mut State) {
         s.login.step = Step::Passkey(Passkey { mfa: Some(mfa()), prompt: Prompt::Pin { wrong: true, attempts: Some(7) } });
+    }
+
+    fn restricted(s: &mut State, code: &str, body: serde_json::Value) {
+        s.login.step = Step::Restricted(crate::restrict::from_error(code, body.as_object().unwrap()).unwrap());
+    }
+
+    pub fn restricted_notice(s: &mut State) {
+        let notice = serde_json::json!({"notice": {
+            "kind": "suspension", "permanent": false,
+            "summary": "We suspended your account for 7 days.",
+            "effects": ["You can't sign in or send messages until Nov 14, 2026."],
+            "rule": {"title": "Spam and platform manipulation", "url": "https://fluxer.com/guidelines"},
+            "facts": ["You sent the same link to 40 people you don't share a community with in [#general](https://fluxer.com/channels/1/2)."],
+            "statement": null,
+            "how_we_decided": ["An automated system flagged the messages, and a person on our team reviewed them."],
+            "appeal": {"email": "appeals@fluxer.com", "deadline": "Dec 7, 2026.", "account_has_email": true},
+            "redress": ["You can also ask an out-of-court dispute settlement body to review this decision."],
+            "decision_id": "1428571428571428571",
+        }});
+        restricted(s, "ACCOUNT_SUSPENDED_TEMPORARILY", notice);
+    }
+
+    pub fn restricted_network(s: &mut State) {
+        let body = serde_json::json!({"ip_address": "203.0.113.7", "appeal_email": "abuse@fluxer.com", "expires_at": "2026-11-08T09:30:00Z", "reason": {"title": "Spam and platform manipulation", "url": "https://fluxer.com/guidelines"}, "product_name": "Fluxer"});
+        restricted(s, "GLOBAL_IP_TEMPORARILY_BANNED", body);
+    }
+
+    pub fn age_blocked(s: &mut State) {
+        instance(s);
+        // Not `mark_age_blocked`: a scene mustn't write the session file.
+        s.app.saved.age_blocked_until.insert(crate::session::DEFAULT_INSTANCE.into(), u64::MAX);
+        s.login.age_removed = true;
     }
 }
 

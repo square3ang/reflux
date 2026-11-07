@@ -9,6 +9,8 @@ livekit.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 # Our own audio I/O: mic capture into a NativeAudioSource and the remote mix out to the speakers.
 cpal = "0.18"
 # RNNoise in pure Rust: noise suppression on the mic path.

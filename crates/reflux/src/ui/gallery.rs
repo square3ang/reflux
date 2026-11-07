@@ -67,6 +67,9 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     ("passkey", crate::login::scenes::passkey),
     ("passkey-failed", crate::login::scenes::passkey_failed),
     ("passkey-pin", crate::login::scenes::passkey_pin),
+    ("restricted-notice", crate::login::scenes::restricted_notice),
+    ("restricted-network", crate::login::scenes::restricted_network),
+    ("age-blocked", crate::login::scenes::age_blocked),
     // `--shell-demo` with an unverified account: the email verification nagbar.
     ("unverified", |s| {
         if let Some(me) = s.shell_demo.as_mut().and_then(|d| d.store.me.as_mut()) {

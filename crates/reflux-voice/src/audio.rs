@@ -8,7 +8,7 @@
 //! (decoding) remote audio, and nothing else plays it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -247,6 +247,8 @@ type Apm = Arc<Mutex<Option<AudioProcessingModule>>>;
 pub struct Engine {
     pub mixer: Arc<Mutex<Mixer>>,
     pub source: NativeAudioSource,
+    /// Peak of the last frame sent (`f32` bits).
+    level: Arc<AtomicU32>,
     processing: Arc<Mutex<Processing>>,
     apm: Apm,
     input: Mutex<Option<IoThread>>,
@@ -263,9 +265,13 @@ impl Engine {
     pub fn new() -> Self {
         // No WebRTC processing on the source: ours runs before it; queue 0 = 10 ms frames, sync.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), RATE, 1, 0);
-        let engine = Self { mixer: Arc::default(), source, processing: Arc::default(), apm: Arc::default(), input: Mutex::default(), output: Mutex::default() };
+        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), input: Mutex::default(), output: Mutex::default() };
         engine.set_processing(Processing::default());
         engine
+    }
+
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
     }
 
     pub fn set_processing(&self, p: Processing) {
@@ -301,8 +307,9 @@ impl Engine {
         let mut slot = self.input.lock().unwrap();
         *slot = None;
         let (source, apm, processing, name) = (self.source.clone(), self.apm.clone(), self.processing.clone(), name.map(str::to_string));
+        let level = self.level.clone();
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let mut chain = MicChain::new(RATE, source, apm, processing);
+            let mut chain = MicChain::new(RATE, source, apm, processing, level);
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -321,7 +328,7 @@ impl Engine {
         *slot = run_stream(move || {
             let device = input_device(name.as_deref())?;
             let cfg = config(device.supported_input_configs().ok()?.collect(), device.default_input_config().ok()?);
-            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing);
+            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level);
             match cfg.sample_format() {
                 cpal::SampleFormat::F32 => build_input::<f32>(&device, &cfg, chain),
                 cpal::SampleFormat::I16 => build_input::<i16>(&device, &cfg, chain),
@@ -406,6 +413,11 @@ pub fn test_tone(n: u64) -> f32 {
     0.3 * voice * env
 }
 
+/// Whether a 10 ms frame (−1..1) is louder than room noise: peak above −40 dBFS.
+pub fn is_speech(frame: &[f32]) -> bool {
+    frame.iter().any(|s| s.abs() > 0.01)
+}
+
 fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * 32767.0) as i16
 }
@@ -418,11 +430,12 @@ struct MicChain {
     apm: Apm,
     processing: Arc<Mutex<Processing>>,
     denoise: Box<nnnoiseless::DenoiseState<'static>>,
+    level: Arc<AtomicU32>,
 }
 
 impl MicChain {
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>) -> Self {
-        Self { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new() }
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>) -> Self {
+        Self { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), level }
     }
 
     fn feed(&mut self, mono: impl Iterator<Item = f32>) {
@@ -441,6 +454,8 @@ impl MicChain {
                 self.denoise.process_frame(&mut frame, &scaled);
                 pcm = frame.iter().map(|&s| s.clamp(-32768.0, 32767.0) as i16).collect();
             }
+            let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0;
+            self.level.store(peak.to_bits(), Ordering::Relaxed);
             let af = AudioFrame { data: pcm.into(), sample_rate: RATE, num_channels: 1, samples_per_channel: FRAME as u32 };
             // Queue 0: the frame goes straight to the sinks, so this future is already done.
             let _ = self.source.capture_frame(&af).now_or_never();

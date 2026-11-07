@@ -342,7 +342,12 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     } else {
         Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p)
     };
-    Some(col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer))
+    let mut strip = col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer);
+    if super::voice::is_p2p(store, None, ch) {
+        // shortcut: the explanation is the accessible label, not a hover tooltip (no overlay layer here).
+        strip = strip.child(p2p_indicator(joined && !st.voice.p2p_failed.is_empty(), p));
+    }
+    Some(strip)
 }
 
 /// `CallButtons`: start a voice / video call from the DM header (join it when one runs).
@@ -353,9 +358,14 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
     if joined {
         return el_.opacity(0.5);
     }
+    // `canOfferP2pCall`: the rollout is on and everyone fits in a P2P call.
+    let (p2p_on, cap) = st.voice.p2p_rollout;
+    let offer_p2p = !active && p2p_on && c.recipients.iter().filter(|u| u.id != store.my_id()).count() < cap;
     el_.on_press(move |s: &mut S| {
         let sh = acc(s);
-        if !active && crate::look::with(|l| l.confirm_calls) {
+        if offer_p2p {
+            sh.voice.modal = Some(Modal::P2pConsent { guild: None, channel: ch, start: true, allow_standard: true, video, always: false });
+        } else if !active && crate::look::with(|l| l.confirm_calls) {
             // shortcut: Shift-click doesn't skip the confirmation.
             sh.voice.modal = Some(Modal::StartCall { channel: ch, video });
         } else {
@@ -367,6 +377,10 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
 fn start_call(sh: &mut ShellState, ch: Snowflake, active: bool, video: bool) {
     let o = if active { Op::AcceptCall(ch) } else { Op::StartCall(ch) };
     sh.intents.push(Intent::Voice(o));
+    camera_after_join(sh, video);
+}
+
+fn camera_after_join(sh: &mut ShellState, video: bool) {
     if video {
         // The camera turns on once connected (`startCall` with video).
         sh.voice.modal = Some(Modal::CameraPreview);
@@ -465,6 +479,51 @@ fn body_text(s: &str, p: &Palette) -> El {
     text(s.to_string()).font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap()
 }
 
+/// `NewDeviceMonitoring`'s `ConfirmModal`: the device name in bold, "Don't suggest … again"
+/// under it.
+fn new_device<S: 'static>(d: &super::voice::NewDevice, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static) -> crate::ui::Modal<S> {
+    use rune::text::Span;
+    let msg = match (&d.input, &d.output) {
+        (Some(_), Some(_)) => "{PRODUCT_NAME} has found a new audio device called <0>{deviceName}</0>. Do you want to switch to it?",
+        (Some(_), None) => "{PRODUCT_NAME} has found a new audio input device called <0>{deviceName}</0>. Do you want to switch to it?",
+        _ => "{PRODUCT_NAME} has found a new audio output device called <0>{deviceName}</0>. Do you want to switch to it?",
+    };
+    let msg = crate::i18n::tf(msg, &[("PRODUCT_NAME", "Fluxer"), ("deviceName", &d.name)]);
+    let (before, rest) = msg.split_once("<0>").unwrap_or((&msg, ""));
+    let (name, after) = rest.split_once("</0>").unwrap_or((rest, ""));
+    let body = format!("{before}{name}{after}");
+    let bold = Span::new(before.len(), before.len() + name.len()).weight(600.0).color(p.text_primary);
+    let desc = rune::rich(body, vec![bold]).w_full().font(font(14.0, 400.0).lh(19.6)).color(p.text_primary_muted).wrap();
+    let card = d.name.clone();
+    let ignore = text(crate::i18n::tf("Don't suggest {deviceName} again", &[("deviceName", &d.name)]))
+        .key("new-device-ignore")
+        .font(font(14.0, 400.0).lh(19.6))
+        .color(p.text_link)
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.modal = None;
+            sh.intents.push(Intent::Voice(Op::IgnoreDevice(card.clone())));
+        });
+    let (input, output) = (d.input.clone(), d.output.clone());
+    let buttons = row()
+        .gap(8.0)
+        .child(Button::new(t("Not now")).variant(ButtonVariant::Secondary).key("new-device-not-now").on_press(close).el(p))
+        .child(Button::new(t("Switch device")).key("new-device-switch").on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.modal = None;
+            if input.is_some() {
+                sh.voice.input = input.clone();
+            }
+            if output.is_some() {
+                sh.voice.output = output.clone();
+            }
+            sh.intents.push(Intent::VoiceDevices);
+        }).el(p));
+    crate::ui::Modal::new(t("New audio device detected!"), close).body(col().w_full().gap(16.0).child(desc).child(ignore)).footer(buttons)
+}
+
 /// The voice dialogs and the camera preview.
 pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let Some(m) = &st.voice.modal else { return };
@@ -515,6 +574,32 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                         }).el(p)),
                 )
         }
+        Modal::P2pConsent { guild, channel, start, allow_standard, video, always } => p2p_consent(st, p, acc, close, (*guild, *channel), *start, *allow_standard, *video, *always),
+        Modal::P2pFailed { names, allow_switch } => {
+            // shortcut: names are joined with ", ", not `Intl.ListFormat`'s localized "a, b and c".
+            let title = crate::i18n::tf("Couldn't connect to {names}", &[("names", &names.join(", "))]);
+            let mut desc = t("A direct connection couldn't be made. You can't hear or see each other.").to_string();
+            if *allow_switch {
+                desc = format!("{desc} {}", t("A standard call goes through a server and works for everyone."));
+            }
+            let mut buttons = row()
+                .gap(8.0)
+                .child(Button::new(t("Stay")).variant(ButtonVariant::Secondary).key("p2p-failed-stay").on_press(close).el(p))
+                .child(Button::new(t("Leave call")).variant(ButtonVariant::Danger).key("p2p-failed-leave").on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.modal = None;
+                    sh.intents.push(Intent::LeaveVoice);
+                }).el(p));
+            if *allow_switch {
+                buttons = buttons.child(Button::new(t("Switch to standard call")).key("p2p-failed-switch").on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    sh.voice.modal = None;
+                    sh.intents.push(Intent::Voice(Op::SwitchToStandard));
+                }).el(p));
+            }
+            crate::ui::Modal::new(title, close).body(body_text(&desc, p)).footer(buttons)
+        }
+        Modal::NewDevice(d) => new_device(d, p, acc, close),
         Modal::CameraPreview => camera_preview(st, p, acc, close, layer),
         Modal::ScreenShare => screen_picker(st, p, acc, close, layer),
         Modal::AudioProcessing => audio_processing(st, p, acc, close),
@@ -522,6 +607,71 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     };
     let _ = store;
     layer.push(modal.el(p));
+}
+
+/// `VoiceP2pConsentModal`: what a P2P call means, then start / join it (or a standard call).
+#[allow(clippy::too_many_arguments)]
+fn p2p_consent<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static, (guild, channel): (Option<Snowflake>, Snowflake), start: bool, allow_standard: bool, video: bool, always: bool) -> crate::ui::Modal<S> {
+    let cap = st.voice.p2p_rollout.1.max(2).to_string();
+    let points = [
+        t("Lower latency.").to_string(),
+        t("Everyone in the call gets Plutonium stream quality for free, with up to 4K source resolution and 60 fps.").into(),
+        t("Other participants can see your IP address.").into(),
+        crate::i18n::tf("Up to {maxParticipants, plural, one {# person} other {# people}}.", &[("maxParticipants", &cap)]),
+        t("Anyone who cannot connect directly cannot take part until someone switches the call to a standard call.").into(),
+    ];
+    // `.points`: a disc list, gap 6, 20 in, text-primary, line-height 1.45.
+    let list = col().w_full().gap(6.0).children(points.into_iter().map(|s| {
+        row()
+            .w_full()
+            .items_start()
+            .child(row().w(20.0).h(20.3).center().child(el().size(5.0, 5.0).radius(2.5).fill(p.text_primary)))
+            .child(text(s).font(font(14.0, 400.0).lh(20.3)).color(p.text_primary).wrap().grow(1.0).min_w(0.0))
+    }));
+    let mut body = col().w_full().gap(16.0).child(body_text(t("Audio and video go directly between participants."), p)).child(list);
+    if !start {
+        body = body.child(
+            crate::ui::Checkbox::new(always)
+                .size(18.0)
+                .label(t("Do not ask again, always agree"))
+                .on_toggle(move |s: &mut S| {
+                    if let Some(Modal::P2pConsent { always, .. }) = &mut acc(s).voice.modal {
+                        *always = !*always;
+                    }
+                })
+                .el(p),
+        );
+    }
+    let answer = move |p2p: bool| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            if p2p && !start && always {
+                let mut prefs = sh.prefs.clone();
+                prefs.look.skip_p2p_join = true;
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            }
+            sh.voice.modal = None;
+            sh.intents.push(Intent::Voice(Op::P2pConsent { guild, channel, p2p, start }));
+            camera_after_join(sh, video);
+        }
+    };
+    let mut buttons = row().gap(8.0).child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("p2p-cancel").on_press(close).el(p));
+    if start && allow_standard {
+        buttons = buttons.child(Button::new(t("Start standard call")).variant(ButtonVariant::Secondary).key("p2p-standard").on_press(answer(false)).el(p));
+    }
+    let confirm = if start { t("Start in P2P mode") } else { t("Join") };
+    buttons = buttons.child(Button::new(confirm).key("p2p-confirm").on_press(answer(true)).el(p));
+    crate::ui::Modal::new(t(if start { "Start in P2P mode?" } else { "Join a P2P call?" }), close).body(body).footer(buttons)
+}
+
+/// `VoiceE2EEIndicator` for a peer-to-peer call: "P2P" (red once a direct connection failed),
+/// with what it means on hover.
+pub fn p2p_indicator(broken: bool, p: &Palette) -> El {
+    text(t("P2P"))
+        .font(font(13.0, 500.0).lh(16.9).tracking(0.065))
+        .color(if broken { p.status_danger } else { p.status_online })
+        .role("status")
+        .label(t("Direct connection. Audio and video go directly between the people in the call, who can see each other's IP address."))
 }
 
 /// `CameraPreviewModal`: the self view, the camera picker, then "Turn on camera".

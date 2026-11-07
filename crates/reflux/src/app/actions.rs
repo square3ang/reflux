@@ -131,6 +131,29 @@ pub(super) fn run(s: &mut State, i: Intent) {
             });
         }
         Intent::ResendVerification => call(inst, |i| async move { i.rest.resend_verification().await }, "resend verification email"),
+        Intent::SetDateOfBirth(date) => spawn(async move {
+            let body = serde_json::json!({ "date_of_birth": date });
+            let r = inst.rest.request::<serde_json::Value, _>(reqwest::Method::PUT, "/users/@me/date-of-birth", Some(&body)).await;
+            update(move |s| {
+                s.app.shell.birthday.submitting = false;
+                match r {
+                    Ok(_) => {
+                        if let Some(me) = &mut s.app.store.me {
+                            me.date_of_birth_required = false;
+                        }
+                    }
+                    // The server removes the account: sign out without telling it, and refuse
+                    // sign-up here for a day.
+                    Err(e) if e.code() == Some("ACCOUNT_BELOW_MINIMUM_AGE") => {
+                        crate::login::mark_age_blocked(s);
+                        s.app.saved.token = None;
+                        super::sign_out(s, None);
+                        s.login.age_removed = true;
+                    }
+                    Err(e) => s.app.shell.birthday.error = Some(crate::login::Errors::from_error(&e).form.unwrap_or_else(|| e.to_string())),
+                }
+            });
+        }),
         Intent::MarkRead(acks) => {
             for &(c, m) in &acks {
                 ack_locally(s, c, m, false);

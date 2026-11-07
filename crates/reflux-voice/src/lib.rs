@@ -24,9 +24,11 @@ use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
+use livekit::webrtc::prelude::RtcVideoTrack;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 pub mod audio;
+pub mod mesh;
 pub use audio::{Engine, Kind, Mixer, Processing, Source};
 pub use livekit;
 
@@ -38,8 +40,14 @@ pub enum Error {
     Capture,
 }
 
+/// Where the media goes: a LiveKit room, or peer connections to each participant.
+enum Link {
+    Room(Room),
+    Mesh(mesh::Mesh),
+}
+
 pub struct Call {
-    pub room: Room,
+    link: Link,
     /// Our own audio I/O (see [`audio`]); `None` = no audio at all.
     audio: Option<Engine>,
     mic: Mutex<Option<LocalAudioTrack>>,
@@ -77,8 +85,73 @@ impl Call {
         if e2ee_key.is_some() {
             room.e2ee_manager().set_enabled(true);
         }
-        let call = Self { room, audio, mic: Mutex::new(None), input: Mutex::new(None), encrypted: e2ee_key.is_some(), rt: tokio::runtime::Handle::current() };
+        let call = Self { link: Link::Room(room), audio, mic: Mutex::new(None), input: Mutex::new(None), encrypted: e2ee_key.is_some(), rt: tokio::runtime::Handle::current() };
         Ok((call, events))
+    }
+
+    /// A peer-to-peer call ([`mesh`]) with our audio path; feed it the roster and signals
+    /// through [`Call::mesh`].
+    pub fn connect_mesh(target: mesh::Target) -> (Self, UnboundedReceiver<mesh::Event>) {
+        let audio = Engine::new();
+        if !audio.open_output(None) {
+            eprintln!("reflux-voice: no speaker; call audio is silent");
+        }
+        let rt = tokio::runtime::Handle::current();
+        let (mesh, events) = mesh::Mesh::new(target, rt.clone());
+        mesh.set_encoder(encoder_backend());
+        let call = Self { link: Link::Mesh(mesh), audio: Some(audio), mic: Mutex::new(None), input: Mutex::new(None), encrypted: false, rt };
+        (call, events)
+    }
+
+    pub fn mesh(&self) -> Option<&mesh::Mesh> {
+        match &self.link {
+            Link::Mesh(m) => Some(m),
+            Link::Room(_) => None,
+        }
+    }
+
+    fn room(&self) -> Option<&Room> {
+        match &self.link {
+            Link::Room(r) => Some(r),
+            Link::Mesh(_) => None,
+        }
+    }
+
+    /// Publishes `track` as `source` on whichever link this is, returning its track SID.
+    async fn publish(&self, track: LocalTrack, opts: TrackPublishOptions, size: (u32, u32)) -> Result<TrackSid, Error> {
+        match &self.link {
+            Link::Room(room) => Ok(room.local_participant().publish_track(track, opts).await?.sid()),
+            Link::Mesh(mesh) => {
+                let src = mesh_src(opts.source);
+                let bitrate = opts.video_encoding.map(|e| e.max_bitrate);
+                let rtc: livekit::webrtc::prelude::MediaStreamTrack = match &track {
+                    LocalTrack::Audio(a) => a.rtc_track().into(),
+                    LocalTrack::Video(v) => v.rtc_track().into(),
+                };
+                mesh.publish(src, Some(rtc), false, size, bitrate);
+                Ok(TrackSid::try_from(mesh::track_sid(mesh.connection_id(), src)).expect("TR_ prefix"))
+            }
+        }
+    }
+
+    async fn unpublish(&self, sid: &TrackSid) -> Result<(), Error> {
+        match &self.link {
+            Link::Room(room) => {
+                room.local_participant().unpublish_track(sid).await?;
+            }
+            Link::Mesh(mesh) => {
+                if let Some(src) = mesh::Src::of_sid(sid.as_str()) {
+                    mesh.publish(src, None, false, (0, 0), None);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The level of the last 10 ms the microphone sent (0..1 peak), for speaking rings when
+    /// no server reports them.
+    pub fn mic_level(&self) -> f32 {
+        self.audio.as_ref().map_or(0.0, |a| a.level())
     }
 
     /// Mic processing (echo cancellation, RNNoise, gain control) and input volume.
@@ -109,9 +182,12 @@ impl Call {
         }
         let track = LocalAudioTrack::create_audio_track("microphone", RtcAudioSource::Native(audio.source.clone()));
         let opts = TrackPublishOptions { source: TrackSource::Microphone, ..Default::default() };
-        self.room.local_participant().publish_track(LocalTrack::Audio(track.clone()), opts).await?;
+        self.publish(LocalTrack::Audio(track.clone()), opts, (0, 0)).await?;
         if muted {
             track.mute();
+            if let Some(m) = self.mesh() {
+                m.set_muted(mesh::Src::Microphone, true);
+            }
         }
         *self.mic.lock().unwrap() = Some(track);
         Ok(())
@@ -121,24 +197,41 @@ impl Call {
         if let Some(t) = &*self.mic.lock().unwrap() {
             let _rt = self.rt.enter();
             if muted { t.mute() } else { t.unmute() }
+            if let Some(m) = self.mesh() {
+                m.set_muted(mesh::Src::Microphone, muted);
+            }
         }
     }
 
     /// Plays a subscribed remote audio track through the mixer until it ends. Run it as a task;
     /// abort it on unsubscribe.
     pub fn play(&self, track: RemoteAudioTrack, participant: &RemoteParticipant, source: TrackSource) -> Option<impl Future<Output = ()> + Send + 'static> {
-        let mixer = self.mixer()?;
         let kind = if source == TrackSource::ScreenshareAudio { Kind::Stream } else { Kind::Voice };
         let src = Source { kind, user: user_of(&participant.identity().0)?, conn: participant.identity().0 };
+        self.play_rtc(track.rtc_track(), src, |_| {})
+    }
+
+    /// Plays a remote audio track through the mixer as `src` until it ends; `speaking` hears
+    /// when its voice activity starts and stops (300 ms hang).
+    pub fn play_rtc(&self, track: livekit::webrtc::prelude::RtcAudioTrack, src: Source, mut speaking: impl FnMut(bool) + Send + 'static) -> Option<impl Future<Output = ()> + Send + 'static> {
+        let mixer = self.mixer()?;
         Some(async move {
-            let mut stream = NativeAudioStream::new(track.rtc_track(), audio::RATE as i32, 1);
-            let mut buf = Vec::new();
+            let mut stream = NativeAudioStream::new(track, audio::RATE as i32, 1);
+            let (mut buf, mut quiet_for, mut on) = (Vec::new(), u32::MAX, false);
             while let Some(frame) = stream.next().await {
                 buf.clear();
                 buf.extend(frame.data.iter().map(|&s| s as f32 / 32768.0));
+                quiet_for = if audio::is_speech(&buf) { 0 } else { quiet_for.saturating_add(1) };
+                if on != (quiet_for < 30) {
+                    on = !on;
+                    speaking(on);
+                }
                 mixer.lock().unwrap().push(src.clone(), &buf);
             }
             mixer.lock().unwrap().remove(&src);
+            if on {
+                speaking(false);
+            }
         })
     }
 
@@ -162,18 +255,21 @@ impl Call {
         let source = NativeAudioSource::new(AudioSourceOptions::default(), audio::RATE, 2, 0);
         let track = LocalAudioTrack::create_audio_track("screen_share_audio", RtcAudioSource::Native(source.clone()));
         let opts = TrackPublishOptions { source: TrackSource::ScreenshareAudio, ..Default::default() };
-        let publication = self.room.local_participant().publish_track(LocalTrack::Audio(track), opts).await?;
-        Ok(StreamAudio { sid: publication.sid(), source, pending: Mutex::default() })
+        let sid = self.publish(LocalTrack::Audio(track), opts, (0, 0)).await?;
+        Ok(StreamAudio { sid, source, pending: Mutex::default() })
     }
 
     pub async fn unpublish_stream_audio(&self, audio: &StreamAudio) -> Result<(), Error> {
-        self.room.local_participant().unpublish_track(&audio.sid).await?;
-        Ok(())
+        self.unpublish(&audio.sid).await
     }
 
     /// Round-trip time to the media server from the selected ICE candidate pair.
     pub async fn rtt_ms(&self) -> Option<u32> {
-        let stats = self.room.get_stats().await.ok()?;
+        let room = match &self.link {
+            Link::Room(r) => r,
+            Link::Mesh(m) => return m.rtt_ms().await,
+        };
+        let stats = room.get_stats().await.ok()?;
         stats
             .publisher_stats
             .iter()
@@ -210,33 +306,36 @@ impl Call {
             video_encoding: quality.bitrate.map(|b| livekit::options::VideoEncoding { max_bitrate: b, max_framerate: quality.fps as f64 }),
             ..Default::default()
         };
-        let publication = match self.room.local_participant().publish_track(LocalTrack::Video(track), opts).await {
-            Ok(p) => p,
+        let sid = match self.publish(LocalTrack::Video(track), opts, (width, height)).await {
+            Ok(sid) => sid,
             Err(e) => {
                 stop.store(true, Ordering::Relaxed);
-                return Err(e.into());
+                return Err(e);
             }
         };
         *slot.lock().unwrap() = Some(source);
-        Ok(ScreenShare { sid: publication.sid(), stop })
+        Ok(ScreenShare { sid, stop })
     }
 
     pub async fn stop_screen(&self, share: ScreenShare) -> Result<(), Error> {
         share.stop.store(true, Ordering::Relaxed);
-        self.room.local_participant().unpublish_track(&share.sid).await?;
-        Ok(())
+        self.unpublish(&share.sid).await
     }
 
     /// The first subscribed screen share of `user`.
-    pub fn screen_track(&self, user: u64) -> Option<RemoteVideoTrack> {
+    pub fn screen_track(&self, user: u64) -> Option<RtcVideoTrack> {
         self.video_track(user, TrackSource::Screenshare)
     }
 
     /// The first subscribed video track of `user` from `source` (camera or screen share).
-    pub fn video_track(&self, user: u64, source: TrackSource) -> Option<RemoteVideoTrack> {
-        self.room.remote_participants().values().filter(|p| user_of(&p.identity().0) == Some(user)).find_map(|p| {
+    pub fn video_track(&self, user: u64, source: TrackSource) -> Option<RtcVideoTrack> {
+        let room = match &self.link {
+            Link::Room(r) => r,
+            Link::Mesh(m) => return m.remote_video(user, mesh_src(source)),
+        };
+        room.remote_participants().values().filter(|p| user_of(&p.identity().0) == Some(user)).find_map(|p| {
             p.track_publications().values().find_map(|t| match (t.source(), t.track()) {
-                (s, Some(RemoteTrack::Video(v))) if s == source => Some(v),
+                (s, Some(RemoteTrack::Video(v))) if s == source => Some(v.rtc_track()),
                 _ => None,
             })
         })
@@ -265,19 +364,23 @@ impl Call {
             simulcast: false,
             ..Default::default()
         };
-        let publication = self.room.local_participant().publish_track(LocalTrack::Video(track), opts).await?;
-        Ok(Camera { sid: publication.sid(), source, buffer: Mutex::new(I420Buffer::new(width, height)) })
+        let sid = self.publish(LocalTrack::Video(track), opts, (width, height)).await?;
+        Ok(Camera { sid, source, buffer: Mutex::new(I420Buffer::new(width, height)) })
     }
 
     pub async fn unpublish_camera(&self, camera: &Camera) -> Result<(), Error> {
-        self.room.local_participant().unpublish_track(&camera.sid).await?;
-        Ok(())
+        self.unpublish(&camera.sid).await
     }
 
     /// Each outbound video stream's (encoder, frames encoded, codec id), from WebRTC stats
     /// (`encoderImplementation`: e.g. `NvidiaVideoEncoder`, `libvpx`, `OpenH264`).
     pub async fn video_encoders(&self) -> Vec<(String, u32, String)> {
-        let Ok(stats) = self.room.get_stats().await else { return Vec::new() };
+        let Some(Ok(stats)) = (match self.room() {
+            Some(r) => Some(r.get_stats().await),
+            None => None,
+        }) else {
+            return Vec::new();
+        };
         stats
             .publisher_stats
             .iter()
@@ -290,11 +393,20 @@ impl Call {
 
     /// The LiveKit server's region and our identity, for the voice details popout.
     pub fn server_info(&self) -> (String, String) {
-        (self.room.name(), self.room.local_participant().identity().0)
+        match &self.link {
+            Link::Room(r) => (r.name(), r.local_participant().identity().0),
+            Link::Mesh(m) => ("P2P".into(), m.connection_id().into()),
+        }
     }
 
     pub async fn leave(&self) -> Result<(), Error> {
-        Ok(self.room.close().await?)
+        match &self.link {
+            Link::Room(r) => Ok(r.close().await?),
+            Link::Mesh(m) => {
+                m.close();
+                Ok(())
+            }
+        }
     }
 }
 
@@ -454,9 +566,19 @@ fn spawn_capture(stop: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource
     });
 }
 
+/// The mesh source a LiveKit track source maps to.
+fn mesh_src(source: TrackSource) -> mesh::Src {
+    match source {
+        TrackSource::Camera => mesh::Src::Camera,
+        TrackSource::Screenshare => mesh::Src::ScreenShare,
+        TrackSource::ScreenshareAudio => mesh::Src::ScreenShareAudio,
+        _ => mesh::Src::Microphone,
+    }
+}
+
 /// Feeds `track`'s frames as straight RGBA to `sink` until the track ends.
-pub async fn render_video(track: RemoteVideoTrack, mut sink: impl FnMut(u32, u32, Vec<u8>)) {
-    let mut stream = NativeVideoStream::new(track.rtc_track());
+pub async fn render_video(track: RtcVideoTrack, mut sink: impl FnMut(u32, u32, Vec<u8>)) {
+    let mut stream = NativeVideoStream::new(track);
     while let Some(frame) = stream.next().await {
         let i420 = frame.buffer.to_i420();
         let (w, h) = (i420.width(), i420.height());

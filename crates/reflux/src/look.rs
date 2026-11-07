@@ -46,6 +46,8 @@ pub struct Prefs {
     pub escape_exits_keyboard: bool,
     pub menu_shortcuts: bool,
     pub confirm_calls: bool,
+    /// `VoicePrompts.skipP2pJoinConfirm`: join peer-to-peer calls without the consent dialog.
+    pub skip_p2p_join: bool,
     /// `syncReducedMotionWithSystem`, else `reducedMotionOverride`.
     pub sync_motion: bool,
     pub reduce_motion: bool,
@@ -85,6 +87,7 @@ impl Default for Prefs {
             escape_exits_keyboard: false,
             menu_shortcuts: false,
             confirm_calls: true,
+            skip_p2p_join: false,
             sync_motion: true,
             reduce_motion: false,
             convert_emoticons: false,

@@ -7,6 +7,7 @@
 
 pub mod active_now;
 pub mod attachments;
+mod birthday;
 mod autocomplete;
 mod chat;
 pub mod debug;
@@ -120,6 +121,8 @@ pub enum Intent {
     MarkRead(Vec<(Snowflake, Snowflake)>),
     /// `POST /auth/verify/resend` from the email verification nagbar.
     ResendVerification,
+    /// `PUT /users/@me/date-of-birth` from the birthday gate.
+    SetDateOfBirth(String),
     /// A community management request (`crate::guild`).
     Api(crate::guild::Call),
     /// A partial user guild settings object: apply it now and
@@ -218,6 +221,7 @@ pub struct ShellState {
     pub intents: Vec<Intent>,
     /// The verification nagbar's "Resend email" was used this session.
     pub verify_sent: bool,
+    pub birthday: birthday::Gate,
     /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
     pub popups: Popups,
     /// The message under the pointer (shows its action bar).
@@ -340,6 +344,7 @@ impl Default for ShellState {
             media: Default::default(),
             intents: Vec::new(),
             verify_sent: false,
+            birthday: Default::default(),
             popups: Popups::default(),
             hover_msg: None,
             active_msg: None,
@@ -653,6 +658,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     call::tile_menu(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
     layer.extend(call::incoming(store, st, p, acc));
+    birthday::view(store, st, p, acc, &mut layer);
     let body = body.on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
         let sh = acc(s);
         let key = format!("{:?}", k.key);

@@ -268,7 +268,8 @@ pub fn accessibility<S: 'static>(store: &Store, st: &ShellState, p: &Palette, ac
         .child(switch(st, p, acc, t("Show focus ring on chat text area"), None, |l| l.focus_ring, |l, v| l.focus_ring = v))
         .child(switch(st, p, acc, t("Escape key exits keyboard mode"), None, |l| l.escape_exits_keyboard, |l, v| l.escape_exits_keyboard = v))
         .child(switch(st, p, acc, t("Show context menu keybinds"), None, |l| l.menu_shortcuts, |l, v| l.menu_shortcuts = v))
-        .child(switch(st, p, acc, t("Confirm before starting calls"), None, |l| l.confirm_calls, |l, v| l.confirm_calls = v));
+        .child(switch(st, p, acc, t("Confirm before starting calls"), None, |l| l.confirm_calls, |l, v| l.confirm_calls = v))
+        .child(switch(st, p, acc, t("Join P2P calls without asking"), Some(t("Other participants in a P2P call can see your IP address.")), |l| l.skip_p2p_join, |l, v| l.skip_p2p_join = v));
 
     let s = &store.settings;
     let stickers = [

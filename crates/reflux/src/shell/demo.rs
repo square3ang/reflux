@@ -372,6 +372,11 @@ impl Demo {
         }
         account_fixtures(&mut shell, &store, now);
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--account-ui=")) {
+            if sc == "birthday"
+                && let Some(me) = &mut store.me
+            {
+                me.date_of_birth_required = true;
+            }
             account_scene(&mut shell, sc);
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--guild-ui=")) {
@@ -432,6 +437,10 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
     use crate::settings::ShellModal;
     match scene {
         "menu" => sh.popups.open = Some(super::status::MENU.into()),
+        "birthday" => {
+            sh.birthday.dob.month = Some("3".into());
+            sh.birthday.error = Some("Something went wrong. Try again.".into());
+        }
         "status" => super::status::open(sh, ShellModal::CustomStatus),
         "accounts" => super::status::open(sh, ShellModal::Accounts),
         "nickname" => super::status::open(sh, ShellModal::Nickname(Snowflake(HQ))),
@@ -516,10 +525,18 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.failed = Some(lounge);
             return;
         }
-        "incoming" | "dm" => {
-            let mut states = vec![json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001"})];
-            if scene == "dm" {
-                states.push(json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true}));
+        // P2P: the start dialog, the join dialog, a call (indicator) and a failed peer.
+        "p2p-start" => {
+            (st.guild, st.channel) = (None, Some(Snowflake(8001)));
+            st.voice.p2p_rollout = (true, 4);
+            st.voice.modal = Some(Modal::P2pConsent { guild: None, channel: Snowflake(8001), start: true, allow_standard: true, video: false, always: false });
+            return;
+        }
+        "incoming" | "dm" | "p2p" | "p2p-join" | "p2p-failed" => {
+            let p2p = scene.starts_with("p2p");
+            let mut states = vec![json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001", "p2p": p2p})];
+            if scene == "dm" || scene == "p2p" || scene == "p2p-failed" {
+                states.push(json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true, "p2p": p2p}));
             }
             for v in &states {
                 apply(store, "VOICE_STATE_UPDATE", v.clone());
@@ -527,11 +544,27 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             let ringing = if scene == "incoming" { json!([ME.to_string()]) } else { json!([]) };
             apply(store, "CALL_CREATE", json!({"channel_id": "8001", "message_id": "1", "region": null, "ringing": ringing, "voice_states": states, "recipients": ["1001", ME.to_string()]}));
             (st.guild, st.channel) = (None, Some(Snowflake(8001)));
-            if scene == "dm" {
+            if scene == "dm" || scene == "p2p" || scene == "p2p-failed" {
                 st.voice.channel = Some((None, Snowflake(8001)));
-                (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (true, true, true);
+                (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (true, true, !p2p);
                 st.voice.speaking.insert(Snowflake(1001));
             }
+            match scene {
+                "p2p-join" => {
+                    st.voice.p2p_rollout = (true, 4);
+                    st.voice.modal = Some(Modal::P2pConsent { guild: None, channel: Snowflake(8001), start: false, allow_standard: false, video: false, always: true });
+                }
+                "p2p-failed" => {
+                    st.voice.p2p_failed = vec![Snowflake(1001)];
+                    let name = store.display_name(None, Snowflake(1001));
+                    st.voice.modal = Some(Modal::P2pFailed { names: vec![name], allow_switch: true });
+                }
+                _ => {}
+            }
+            return;
+        }
+        "new-device" => {
+            st.voice.modal = Some(Modal::NewDevice(super::voice::NewDevice { name: "E1x2 OTG".into(), input: Some("E1x2 OTG, USB Audio".into()), output: None }));
             return;
         }
         "voice-message" => {
@@ -621,7 +654,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.modal = Some(Modal::Trim);
         }
         "full" => st.voice.modal = Some(Modal::ChannelFull),
-        "refused" => st.voice.modal = Some(Modal::Refused("This call is peer-to-peer, which Reflux can't join yet.".into())),
+        "refused" => st.voice.modal = Some(Modal::Refused("P2P calls are unavailable right now.".into())),
         _ => {}
     }
 }

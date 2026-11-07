@@ -37,6 +37,12 @@ pub struct Saved {
     pub current: Option<Account>,
     /// The other signed-in accounts (`AccountSwitcherModal`), most recent first.
     pub accounts: Vec<Account>,
+    /// `fluxer.age_block_until.{instance}`: unix ms until which sign-up is refused there, after
+    /// a date of birth below the minimum age.
+    pub age_blocked_until: std::collections::BTreeMap<String, u64>,
+    /// `NewDeviceMonitoring`: audio devices (by card) already seen, and ones not to suggest again.
+    pub known_devices: Vec<String>,
+    pub ignored_devices: Vec<String>,
 }
 
 /// A signed-in account the switcher can go back to.

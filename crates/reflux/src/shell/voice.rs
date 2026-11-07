@@ -93,6 +93,16 @@ pub struct Voice {
     pub screen_pick: Option<reflux_voice::ScreenSource>,
     /// Linux screen share audio: (PipeWire `object.serial`, application name).
     pub audio_sources: Option<Vec<(String, String)>>,
+    /// `VoiceP2pRollout` (`GET /experiments`): peer-to-peer calls offered, and their cap.
+    pub p2p_rollout: (bool, usize),
+    /// Users in our peer-to-peer call whose direct connection failed.
+    pub p2p_failed: Vec<Snowflake>,
+}
+
+/// `isChannelP2p`: someone is in the call and every connection sends `p2p: true`.
+pub fn is_p2p(store: &Store, guild: Option<Snowflake>, channel: Snowflake) -> bool {
+    let mut states = store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel)).peekable();
+    states.peek().is_some() && states.all(|(_, v)| v.p2p)
 }
 
 /// Voice & video settings (`VoiceSettings.ts`, `Keybind` transmit mode) kept on disk.
@@ -237,6 +247,58 @@ pub enum Modal {
     AudioProcessing,
     /// `EntranceSoundTrimmerModal`.
     Trim,
+    /// `VoiceP2pConsentModal`: `start` a P2P call (with "Start standard call" when
+    /// `allow_standard`) or join one (with "Do not ask again"); `video` turns the camera on after.
+    P2pConsent { guild: Option<Snowflake>, channel: Snowflake, start: bool, allow_standard: bool, video: bool, always: bool },
+    /// `VoiceP2pPeerFailedModal`: direct connections to these users failed.
+    P2pFailed { names: Vec<String>, allow_switch: bool },
+    /// `NewDeviceMonitoring`'s prompt: switch to a newly plugged-in device?
+    NewDevice(NewDevice),
+}
+
+/// A newly seen sound card, and its input / output to switch to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewDevice {
+    pub name: String,
+    pub input: Option<String>,
+    pub output: Option<String>,
+}
+
+/// The card a cpal device name belongs to: `"E1x2 OTG, USB Audio"` and `"E1x2 OTG"` are one
+/// device, like `MediaDeviceInfo.groupId`.
+pub fn card(device: &str) -> &str {
+    device.split_once(", ").map_or(device, |(c, _)| c)
+}
+
+/// `getNewDevicePromptCandidates`: cards not seen before nor ignored, and not the selected
+/// devices' own. `known` grows by every card listed.
+pub fn new_devices(inputs: &[String], outputs: &[String], known: &mut Vec<String>, ignored: &[String], selected: [Option<&str>; 2]) -> Vec<NewDevice> {
+    let fresh = known.is_empty();
+    let mut found: Vec<NewDevice> = Vec::new();
+    for (i, list) in [inputs, outputs].into_iter().enumerate() {
+        for d in list {
+            let c = card(d);
+            if known.iter().any(|k| k == c) || ignored.iter().any(|k| k == c) || selected[i].is_some_and(|s| card(s) == c) {
+                continue;
+            }
+            let at = match found.iter().position(|f| f.name == c) {
+                Some(at) => at,
+                None => {
+                    found.push(NewDevice { name: c.to_owned(), input: None, output: None });
+                    found.len() - 1
+                }
+            };
+            let slot = if i == 0 { &mut found[at].input } else { &mut found[at].output };
+            slot.get_or_insert_with(|| d.clone());
+        }
+    }
+    for d in inputs.iter().chain(outputs) {
+        if !known.iter().any(|k| k == card(d)) {
+            known.push(card(d).to_owned());
+        }
+    }
+    // The first look only learns what's there.
+    if fresh { Vec::new() } else { found }
 }
 
 /// One clip in the entrance sound library (`EntranceSoundLibrary`).
@@ -321,6 +383,8 @@ pub struct VoiceMessage {
 /// What the voice views ask the runtime for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
+    /// "Don't suggest {deviceName} again".
+    IgnoreDevice(String),
     ToggleCamera,
     /// Start or stop the camera preview capture.
     Preview(bool),
@@ -330,6 +394,11 @@ pub enum Op {
     LocalMute(Snowflake, bool),
     /// Check eligibility, join and ring (`CallCommands.startCall`).
     StartCall(Snowflake),
+    /// The P2P consent dialog's answer: `Some(true)` agrees, `Some(false)` is "Start standard
+    /// call" (start a LiveKit call instead); `start` rings like [`Op::StartCall`].
+    P2pConsent { guild: Option<Snowflake>, channel: Snowflake, p2p: bool, start: bool },
+    /// `switchToStandardCall`: move the whole call to LiveKit (`p2p: false`).
+    SwitchToStandard,
     /// Join a ringing call (`joinCall`).
     AcceptCall(Snowflake),
     /// Stop ringing us (`rejectCall`).
@@ -677,6 +746,21 @@ fn spectators(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Sn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_devices_group_by_card() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut known = Vec::new();
+        assert!(new_devices(&v(&["PCH, Analog"]), &v(&["PCH, Analog", "PCH"]), &mut known, &[], [None, None]).is_empty(), "the first look only learns");
+        assert_eq!(known, ["PCH"]);
+        let (ins, outs) = (v(&["PCH, Analog", "Headset, USB Audio"]), v(&["PCH", "Headset, USB Audio", "Headset"]));
+        let got = new_devices(&ins, &outs, &mut known.clone(), &[], [None, None]);
+        assert_eq!(got, [NewDevice { name: "Headset".into(), input: Some("Headset, USB Audio".into()), output: Some("Headset, USB Audio".into()) }]);
+        assert!(new_devices(&ins, &outs, &mut known.clone(), &v(&["Headset"]), [None, None]).is_empty(), "ignored");
+        assert!(new_devices(&ins, &outs, &mut known.clone(), &[], [Some("Headset"), Some("Headset")]).is_empty(), "already selected");
+        new_devices(&ins, &outs, &mut known, &[], [None, None]);
+        assert!(new_devices(&ins, &outs, &mut known, &[], [None, None]).is_empty(), "seen now");
+    }
 
     #[test]
     fn signal_follows_excess_over_median() {

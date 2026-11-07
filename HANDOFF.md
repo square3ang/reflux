@@ -57,6 +57,11 @@ See `git log` for details. Crates:
   mute/deafen, speaking rings, screen share, device picker), register/forgot password/USB FIDO2
   passkeys (`authenticator` crate; origin = instance web origin), community/channel settings,
   invites, roles, notification settings. All verified only with `--shell-demo` / login scenes.
+- Account gates: `restrict.rs` (suspension / closure notices and network blocks from the login
+  error body; scenes `restricted-notice|restricted-network`), `shell/birthday.rs` (birthday gate
+  when `date_of_birth_required`; `ACCOUNT_BELOW_MINIMUM_AGE` → sign out + 24 h per-instance block
+  in `Saved::age_blocked_until`, scene `age-blocked`, `--account-ui=birthday`), new audio device
+  prompt (`shell::voice::new_devices`, polled every 10 s from READY, cards in `Saved`).
 - Desktop (`desktop/`, `keybinds.rs`, `i18n.rs`): message notifications per Fluxer's rules
   (`Store::should_notify`: levels/overrides/mutes/DND/suppress flag; focus + viewed channel in
   `desktop::on_message`) via notify-rust with the author's avatar (cached PNG) and click → focus +
@@ -129,7 +134,18 @@ See `git log` for details. Crates:
   join / ENTRANCE_SOUND_PLAY), the `voice-popout` window (`popout.rs`; call grid, camera, stream,
   PiP), in-app screen picker (X11/Windows only), Linux stream audio (`gst::audio_apps` +
   `AudioCapture`). Scenes add `tile-stream|share-pick|processing|trim`.
-  Shortcuts (in code): P2P calls refused, Wayland PiP not on top, linear resampler. PTT = the
+  P2P DM calls (`reflux-voice/src/mesh.rs`, wiring in `app/voice.rs`): Fluxer's mesh over op 13
+  (`VoiceMeshSignal` JSON), one tokio actor per peer owning a libwebrtc `PeerConnection` from the
+  shared `LkRuntime` factory; the smaller connection id offers; 4 sendrecv transceivers
+  (mic, camera, screen, screen audio). libwebrtc has no `set_direction`, so the answerer adds
+  never-fed "idle" tracks before SRD to keep them sendrecv; webrtc-sys `RtpSender::set_track(None)`
+  segfaults, so senders are never detached (idle track parked instead). Offers need
+  `offer_to_receive_*: None` (the default `Some(false)` makes them sendonly). Consent modal, the
+  "Join P2P calls without asking" switch, failed-peer modal, connection reports. Tested only by
+  `cargo test -p reflux-voice mesh` (two in-process peers, audio + H.264 video). Scenes:
+  `--voice=p2p-start|p2p-join|p2p|p2p-failed|new-device`.
+  Shortcuts (in code): Wayland PiP not on top, linear resampler, one voice connection per user,
+  P2P rollout read once per session. PTT = the
   in-window key OR `desktop::shortcuts::ptt_held()` (portal global shortcut; its key is set in the
   desktop). Live-verified with `--live=voice` (see Testing); remote playout, AEC and app audio
   capture were not (no second participant).

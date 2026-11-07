@@ -368,10 +368,9 @@ pub fn submit_register(s: &mut State) {
     }
     let r = &s.login.register;
     let opt = |t: &str| Some(t.trim().to_owned()).filter(|t| !t.is_empty());
-    let date_of_birth = match (&r.year, &r.month, &r.day) {
-        (Some(y), Some(m), Some(d)) if crate::login::sign_up(s).collect_date_of_birth => Some(format!("{y}-{m:0>2}-{d:0>2}")),
-        _ => None,
-    };
+    let date_of_birth = r.dob.complete().then(|| r.dob.clone()).filter(|_| crate::login::sign_up(s).collect_date_of_birth).map(|d| {
+        format!("{}-{:0>2}-{:0>2}", d.year.unwrap_or_default(), d.month.unwrap_or_default(), d.day.unwrap_or_default())
+    });
     let req = RegisterRequest {
         email: opt(&s.login.email.text),
         username: opt(&r.username.text),
@@ -680,6 +679,9 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             if let ConnectionState::Disconnected(code) = &c {
                 s.app.error = Some(format!("Disconnected from the gateway ({code:?})."));
             }
+            if c == ConnectionState::Connected && s.app.connection.as_ref().is_some_and(|old| *old != c) {
+                voice::on_reconnected(s);
+            }
             s.app.connection = Some(c);
         }
         GatewayEvent::Dispatch(d) => {
@@ -687,6 +689,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             match &d {
                 reflux_model::DispatchEvent::VoiceServerUpdate(v) => voice::on_server_update(s, v),
                 reflux_model::DispatchEvent::VoiceStateUpdate(v) => voice::on_state(s, v),
+                reflux_model::DispatchEvent::VoiceSignal(v) => voice::on_signal(s, v),
                 reflux_model::DispatchEvent::EntranceSoundPlay(e) => voice::on_entrance(s, e),
                 _ => {}
             }
@@ -702,6 +705,8 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                     crate::desktop::spell::configure(&s.app.saved.desktop); // the locale's dictionary
                 }
                 crate::desktop::ready(s);
+                voice::load_rollout(s);
+                voice::watch_devices();
             }
             crate::desktop::on_dispatch(s, &d);
         }
