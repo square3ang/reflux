@@ -1043,7 +1043,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
         ];
         // Only the name opens the profile (`.messageUsername`, underlined on hover).
         let name_link = |e: El, range: std::ops::Range<usize>| {
-            let (open, menu) = (open.clone(), menu.clone());
+            let open = open.clone();
             e.link(rune::Link::new(range, "name").hover(rune::LinkPaint::new().underline(author_color(store, m, p))))
                 .on_link(move |s: &mut S, _: &str, _: &mut Tx| open(s))
                 .on_link_secondary(move |s: &mut S, _: &str, at, tx: &mut Tx| menu(s, at, tx))

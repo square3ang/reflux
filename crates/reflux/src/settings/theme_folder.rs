@@ -187,7 +187,9 @@ pub fn poll(st: &mut ShellState, tx: &mut Tx) -> bool {
     redraw || save
 }
 
-static FILES: Mutex<Option<HashMap<String, (Option<SystemTime>, u64)>>> = Mutex::new(None);
+/// Linked file → (modified time, size) at the last sync.
+type Stamps = HashMap<String, (Option<SystemTime>, u64)>;
+static FILES: Mutex<Option<Stamps>> = Mutex::new(None);
 
 /// `startLinkedFileSync`: a linked file that changed on disk replaces its theme (details
 /// re-read from the header); a missing or unreadable one keeps the last loaded version.

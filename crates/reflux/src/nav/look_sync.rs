@@ -146,7 +146,8 @@ fn decode(top: u32, sub: &[u8], p: &mut Prefs) {
     }
     if top == 100 {
         // (key, value's wire type and bytes).
-        let entry = |f: &synced::Field| -> Option<(String, Option<(u8, Vec<u8>)>)> {
+        type Entry = (String, Option<(u8, Vec<u8>)>);
+        let entry = |f: &synced::Field| -> Option<Entry> {
             let kv = synced::fields(f.value)?;
             let k = synced::str_of(kv.iter().find(|x| x.num == 1)?);
             Some((k, kv.iter().find(|x| x.num == 2).map(|v| (v.wire, v.value.to_vec()))))

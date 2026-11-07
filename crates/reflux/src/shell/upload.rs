@@ -491,8 +491,7 @@ mod tests {
         assert_eq!(format_size(25 * 1024 * 1024), "25 MB");
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(content_type("A.JPG"), "image/jpeg");
-        let mut st = ShellState::default();
-        st.composer = rune::TextEdit::new("a long message");
+        let mut st = ShellState { composer: rune::TextEdit::new("a long message"), ..Default::default() };
         text_as_file(&mut st);
         assert_eq!((st.uploads[0].name.as_str(), st.uploads[0].size, st.composer.text.is_empty()), ("message.txt", 14, true));
     }

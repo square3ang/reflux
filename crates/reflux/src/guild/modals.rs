@@ -502,7 +502,7 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
     let reply = RadioGroup::new(&opts, Some(&flags))
         .on_change(move |sh: &mut S, v| {
             let f: u8 = v.parse().unwrap_or(0);
-            acc(sh).api(reqwest::Method::PATCH, &format!("/guilds/{g}/members/@me"), Some(json!({ "mention_flags": f })), super::Then::Nothing);
+            acc(sh).api(reqwest::Method::PATCH, format!("/guilds/{g}/members/@me"), Some(json!({ "mention_flags": f })), super::Then::Nothing);
         })
         .el(p);
     let reply = section(
