@@ -4,7 +4,7 @@ Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + flu
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
 How each gap or limit is worked around: [WORKAROUNDS.md](WORKAROUNDS.md).
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0; after set4 (profile badges, recovery kit, Bluesky, bot username rules, settings search highlight, overview/role crop, invite previews, activity log sentences): 164 · 22 · 0; after live5 (camera / stream audio live-verified, e2ee_capable identify, gifv on macOS): 165 · 21 · 0; after adv5 (screen-share encoder options, cloning switch, reverse image search settings, synced picker prefs, attachment delete, Windows passkeys): 167 · 19 · 0; after sweep7 (message-menu media items and pins/search media sizing moved to PARTIAL, both waiting on `shell/attachments.rs`): 165 · 21 · 0; after win6 (inline video/audio and gifv on Windows through Media Foundation, GStreamer playback test + accurate-seek fix): 167 · 19 · 0. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0; after set4 (profile badges, recovery kit, Bluesky, bot username rules, settings search highlight, overview/role crop, invite previews, activity log sentences): 164 · 22 · 0; after live5 (camera / stream audio live-verified, e2ee_capable identify, gifv on macOS): 165 · 21 · 0; after adv5 (screen-share encoder options, cloning switch, reverse image search settings, synced picker prefs, attachment delete, Windows passkeys): 167 · 19 · 0; after sweep7 (message-menu media items and pins/search media sizing moved to PARTIAL, both waiting on `shell/attachments.rs`): 165 · 21 · 0; after win6 (inline video/audio and gifv on Windows through Media Foundation, GStreamer playback test + accurate-seek fix): 167 · 19 · 0; after sweep8 (Advanced: New settings, unread badges, composer buttons; synced look prefs; Fluxerbot notes; theme sync; thread-panel composer menus/tray; activity log links; and more, rows updated): 168 · 18 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -19,8 +19,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
 | Devices | DONE | | tabs/DevicesTab.tsx |
 | Plutonium/Subscriptions/Operator pass/Gifts/Payments *(low)* | PARTIAL | read-only: Plutonium link card + subscription status, Gifts inventory (copy links); checkout, plan changes, redeem form, Operator pass and Payments are in the browser | tabs/PlutoniumTab.tsx etc. |
-| Appearance | DONE | (device prefs in session.json, not the synced-preferences protobuf; Active now has no panel to show) | tabs/AppearanceTab.tsx |
-| Themes | DONE | (impossible: Quick CSS beyond `:root` variables — Rune has no CSS engine; the rest is counted and reported) | F/theme_settings/* |
+| Appearance | DONE | (device prefs in session.json; the ones Fluxer syncs go through synced preferences 1/80/100/112; Active now has no panel to show) | tabs/AppearanceTab.tsx |
+| Themes | DONE | "Sync theme across devices" (off keeps a device-local theme) (impossible: Quick CSS beyond `:root` variables — Rune has no CSS engine; the rest is counted and reported) | F/theme_settings/* |
 | Notifications | DONE | | tabs/NotificationsTab.tsx |
 | Chat (Messages & media) | DONE | (emoji autocomplete toggle isn't in Fluxer's current tab) | tabs/ChatSettingsTab.tsx |
 | Voice & video | DONE | (impossible: camera background effects — Fluxer runs MediaPipe selfie segmentation (`selfie_segmentation_256x256.onnx`) in onnxruntime-web; GStreamer has no person-segmentation element and Reflux has no ML runtime) input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
@@ -28,7 +28,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
 | Keybinds | DONE | custom Toggle mute / Toggle deafen combos and the PTT key are global where a hook backend runs (X11, Windows, macOS); on Wayland the portal's keys are set in the desktop | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
-| Advanced | PARTIAL | the unread badge customization experiment (per-community/channel `unread_badges`) is missing (impossible: hardware acceleration — Rune always renders on the GPU). Done: the screen-share encoder Configure modal (encoder path, SVC mode, content hint; the hint maps to libwebrtc's degradation preference, since the Rust wrapper has no content-hint setter), the expression cloning-shortcuts switch, reverse image search settings | tabs/AdvancedSettingsTab.tsx |
+| Advanced | DONE | (impossible: hardware acceleration — Rune always renders on the GPU). Done: "New settings" (`addedAt` within 30 days), unread badge customization (community modal radios; channel list and rail follow the levels), composer button switches, the screen-share encoder Configure modal (encoder path, SVC mode, content hint; the hint maps to libwebrtc's degradation preference, since the Rust wrapper has no content-hint setter), the expression cloning-shortcuts switch, reverse image search settings | tabs/AdvancedSettingsTab.tsx |
 | Applications (dev) | DONE | bot banner preview is the profile card's | tabs/applications_tab/* |
 | Embed debugger (dev) | DONE | | tabs/EmbedDebuggerTab.tsx |
 | Design system (dev) | DONE | | tabs/component_gallery_tab/* |
@@ -40,7 +40,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Overview | DONE | invite page / invite modal previews; icon, banner, invite and embed backgrounds go through the crop modal (threshold date uses the DateTimePickerField kit) | guild_tabs/guild_overview_tab/* |
 | Roles | DONE | role icons go through the crop modal; members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
 | Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
-| Activity log | DONE | Fluxer's per-action sentences and detail rows; pages load as the list scrolls; users in sentences aren't clickable and custom emojis show as `:name:` | guild_tabs/GuildAuditLogTab.tsx |
+| Activity log | DONE | Fluxer's per-action sentences and detail rows; pages load as the list scrolls; users open the full profile, channels / roles copy their ID; custom emojis show as `:name:` | guild_tabs/GuildAuditLogTab.tsx |
 | Emoji | DONE | the upload dialog picks one file (Rune's file dialog returns one path); several upload by dropping them on the drop zone | guild_tabs/GuildEmojiTab.tsx |
 | Stickers | DONE | one at a time like Fluxer's drop zone; images contained in a 320px square (`optimizeStickerImage`) | guild_tabs/GuildStickersTab.tsx |
 | Explore (discovery listing) | DONE | | guild_tabs/GuildDiscoveryTab.tsx |
@@ -89,7 +89,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Rail drag-reorder / create folder | DONE | | F/app/components/layout/dnd/* |
 | Favorites | DONE | (synced_preferences field 40; no base-hash conflict retry) | FavoritesButton.tsx |
 | Set custom status | DONE | | CustomStatusModal.tsx |
-| Nagbars (connection, notice, maintenance…) | DONE | maintenance polls Instatus every 60 s flat; price-announcement nagbars need Stripe billing state; Manage/Reactivate open the web Plutonium page; desktop-notification nagbar never shows on desktop (as Fluxer) | app_layout/nagbars/* |
+| Nagbars (connection, notice, maintenance…) | DONE | maintenance polls Instatus every 60 s flat; price-announcement nagbars need Stripe billing state; Manage/Reactivate open the billing customer portal; desktop-notification nagbar never shows on desktop (as Fluxer) | app_layout/nagbars/* |
 | Skeletons | DONE | | F/app/components/skeleton/* |
 | Reopen last location | DONE | | useLastLocationPersistence.ts |
 | Window title unread count | DONE | | useFluxerDocumentTitle.ts |
@@ -114,7 +114,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Emoji / GIF / sticker / memes pickers | DONE | premium upsell *(low)* not shown. Frecency, favorites, skin tone and favorite GIFs sync through synced preferences 20/21/23/25; "Clone to…" sits behind Advanced's switch; reverse image search has engine settings (built-in toggles, custom engines; the default is synced); message media can be deleted | pickers/*, EmojiPickerPopout.tsx |
 | Reaction picker | DONE | | emoji_picker/* |
 | Composer context menu | DONE | | TextareaContextMenu.tsx |
-| Slash commands | DONE | no option hints | useCommands.ts |
+| Slash commands | DONE | option hints; `/nick` and a failed `/msg` answer with a Fluxerbot "Only you can see this" note, as do DM / unclaimed / safety send blocks | useCommands.ts |
 | @everyone confirmation | DONE | | MentionEveryonePopout.tsx |
 | Attachments | DONE | video/audio play inline everywhere: GStreamer on Linux (`gst` feature, default; `cargo test -p reflux gst::` plays generated webm/mp4/mp3 end to end: frames, sound, pause, accurate seek, end, replay), Media Foundation on Windows (`mf.rs`; wine-verified with `scripts/mf-wine-test.sh` on local H.264/AAC mp4 and mp3 files — not yet run on a real Windows box, and https streaming through MF's network source is untested), Rune `Player` on macOS (compile-checked only); a failed clip shows "This video can't be played"; pre-signed and multipart uploads live-verified | embeds/attachments/* |
 | Embeds | DONE | gifv plays muted and looping (GStreamer on Linux, Media Foundation on Windows, Rune `Player` on macOS; same verification as Attachments), video links play inline through the same player; (impossible: YouTube inline — the embed carries only an iframe URL, no stream, so play opens the browser) | RichEmbed.tsx |
@@ -176,7 +176,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
 | Create/join, header popout, context menu, privacy modal, leave | DONE | | |
-| Notification modal | DONE | | GuildNotificationSettingsModal.tsx |
+| Notification modal | DONE | unread badges (with Advanced's switch) and the per-community reply mention preference | GuildNotificationSettingsModal.tsx |
 | Edit community profile | DONE | | MyProfileTab.tsx |
 | Delete my messages | DONE | | useDeleteMyMessagesInGuild.tsx |
 | Preview nagbar | DONE | (Join / Stop previewing; visiting permissions in `compute_permissions`) | GuildPreviewNagbar.tsx |
@@ -227,8 +227,8 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
 | Invite: friends list, accept preview, pause | DONE | | F/invite/* |
 | Discovery page | DONE | load-more pages via `offset` | DiscoveryPage.tsx |
-| Search UI chips/suggestions, history | DONE | desktop has token styling (chips are mobile-only in Fluxer); unapplied-token wavy warning not drawn | F/search/* |
-| Quick switcher recents | DONE | previous, mentions (ordered by newest message, not mention arrival) and unread channels | QuickSwitcher.tsx |
+| Search UI chips/suggestions, history | DONE | desktop has token styling (chips are mobile-only in Fluxer); values the filter can't use show as unapplied | F/search/* |
+| Quick switcher recents | DONE | previous, mentions (newest mention first) and unread channels | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |
 | Custom themes, Quick CSS, theme sharing | PARTIAL | see Themes row | F/theme*/* |
 | i18n coverage, plurals, RTL, locale dates | DONE | (impossible: RTL layout mirroring — Rune has no layout direction, bidi text only; text only Reflux has, e.g. gateway/passkey errors, has no translation in Fluxer's catalogs and stays English) | F/i18n/* |
