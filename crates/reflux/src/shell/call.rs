@@ -763,7 +763,8 @@ fn camera_preview<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>,
 /// Opens the screen share picker and starts listing what it offers.
 pub fn open_screen_picker(sh: &mut ShellState) {
     sh.voice.modal = Some(Modal::ScreenShare);
-    sh.voice.screen_pick = None;
+    // Wayland: the portal picker, opened on the Applications tab (`preferredDisplaySurface`).
+    sh.voice.screen_pick = (cfg!(target_os = "linux") && !reflux_voice::can_list_sources()).then(|| reflux_voice::ScreenSource::portal(true));
     sh.intents.push(Intent::Voice(Op::LoadScreenSources));
     sh.intents.push(Intent::Voice(Op::LoadAudioSources));
 }
@@ -800,7 +801,17 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
     let mut body = col().w_full().gap(16.0);
     let listed = reflux_voice::can_list_sources() || v.screen_sources.is_some();
     match &v.screen_sources {
-        _ if !listed => body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p)),
+        _ if !listed => {
+            // Wayland: which kind of source the portal offers (`set-display-media-portal-preference`).
+            if let Some(pick) = v.screen_pick.as_ref().filter(|x| x.id == reflux_voice::ScreenSource::PORTAL) {
+                let tab = |window: bool, label: &str| {
+                    let variant = if pick.window == window { ButtonVariant::Primary } else { ButtonVariant::Secondary };
+                    Button::new(t(label)).variant(variant).key(format!("share-surface-{window}")).on_press(move |s: &mut S| acc(s).voice.screen_pick = Some(reflux_voice::ScreenSource::portal(window))).el(p)
+                };
+                body = body.child(row().gap(8.0).child(tab(true, "Applications")).child(tab(false, "Entire screen")));
+            }
+            body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p))
+        }
         None => body = body.child(body_text(t("Loading…"), p)),
         Some(list) => {
             let card = |src: &reflux_voice::ScreenSource, px: &Pixels| {

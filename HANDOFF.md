@@ -100,16 +100,19 @@ See `git log` for details. Crates:
   with `Popups::open_at` dividing pointer points by the zoom; composer spellcheck with Fluxer's
   CDN Hunspell dictionaries (sha256-checked, cached in `~/.cache/reflux/spellcheck`) read by
   `spellbook`, red underlines via `text_input().decorations`, right-click menu (suggestions, add to
-  dictionary) for the caret's misspelling; global shortcuts via the xdg-desktop-portal
-  GlobalShortcuts portal (ashpd, zbus 6) and Windows `RegisterHotKey` — voice can read
-  `desktop::shortcuts::ptt_held()`; updater against `REFLUX_UPDATE_FEED` (GitHub latest-release
+  dictionary) for the caret's misspelling; global shortcuts (`desktop/{shortcuts,hooks}.rs`): the
+  GlobalShortcuts portal on Wayland, listen-only hooks elsewhere (X11 XRecord, `WH_KEYBOARD_LL`,
+  CGEventTap) matching the account's mute/deafen combos and the PTT key — voice reads
+  `desktop::shortcuts::ptt_held()`; badge (`desktop/badge.rs`: LauncherEntry, taskbar overlay,
+  Dock label); Windows single instance over a named pipe; updater against `REFLUX_UPDATE_FEED` (GitHub latest-release
   JSON; no feed exists yet) with AppImage self-replace; locale-aware 12/24h times and dates
   (`desktop::time`, chrono `unstable-locales`, user setting `time_format`); window title badge;
   reopen last channel; nagbars (connection, update, streaming privacy) and toasts
   (`desktop::toast`); streaming privacy (`Store::mask_names` shortens names; account gate, invite
   link, sounds, notifications; OBS/XSplit detection). Snapshots: `--shell-demo
-  --desktop=bars|spell|toast|streamer`, `REFLUX_ZOOM=1.25`. Windows/macOS code was compile-checked
-  in an isolated crate only (no mingw toolchain for ring/zstd here).
+  --desktop=bars|spell|toast|streamer`, `REFLUX_ZOOM=1.25`. Windows/macOS: `scripts/cross-check.sh`
+  runs `cargo check -p reflux --no-default-features` for both with zig as the C compiler (webrtc-sys
+  C++ / Objective-C stubbed, nothing links); neither has been run on real Windows or a Mac.
 - Voice & video (`app/voice.rs`, `shell/{voice,call,clip,voice_message}.rs`, `settings/voice_tabs.rs`,
   `gst.rs`, `voice_input.rs`, `reflux-voice`): camera (GStreamer `DeviceMonitor` → RGBA appsink →
   `Camera::push_rgba` → H.264 track, `CameraPreviewModal`), `VoiceCallView` (click the joined

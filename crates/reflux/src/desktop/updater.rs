@@ -1,9 +1,16 @@
 //! Update check (`Updater.ts`, `AppImageUpdate.ts`): at start and every six hours, the release
 //! feed's newest version against ours. A newer one shows the update bar; from an AppImage it
-//! downloads next to the running file and swaps it in, then offers a restart. Elsewhere the bar
-//! opens the release page.
-// shortcut: Reflux has no release feed yet. Set one with `REFLUX_UPDATE_FEED` (at build time or
-// run time): a GitHub "latest release" API URL. Without it the updater stays off.
+//! downloads next to the running file, checks its SHA-256 against the feed's (Fluxer refuses an
+//! AppImage update without a published checksum), and swaps it in, then offers a restart.
+//! Elsewhere (Flatpak, Windows, macOS, a plain binary) the bar opens the release page: Fluxer
+//! updates those through Flathub or Velopack, which Reflux doesn't ship with.
+//!
+//! The feed: `REFLUX_UPDATE_FEED` (at build time or run time), a GitHub "latest release" API URL
+//! (`https://api.github.com/repos/<owner>/<repo>/releases/latest`): `tag_name` is the version,
+//! `html_url` the page, and the `.AppImage` asset (preferring one naming this architecture)
+//! with its `digest` (`sha256:<hex>`, which GitHub publishes for every asset).
+// shortcut: Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
+// off; set it once releases are published.
 
 use std::time::{Duration, Instant};
 
@@ -32,8 +39,9 @@ pub struct Available {
     pub version: String,
     /// The release page.
     pub page: String,
-    /// The AppImage asset, when this run is an AppImage.
-    pub appimage: Option<String>,
+    /// The AppImage asset and its SHA-256 (hex), when this run is an AppImage and the feed
+    /// publishes a checksum for it.
+    pub appimage: Option<(String, String)>,
     pub stage: Stage,
 }
 
@@ -49,6 +57,15 @@ struct Release {
 struct Asset {
     name: String,
     browser_download_url: String,
+    /// `sha256:<hex>`.
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+/// The hex SHA-256 in a GitHub asset digest.
+fn sha256_of(digest: Option<&str>) -> Option<String> {
+    let hex = digest?.strip_prefix("sha256:")?.to_ascii_lowercase();
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
 }
 
 /// `1.2.10` > `1.2.9`; a leading `v` and anything after `-` / `+` are ignored.
@@ -84,7 +101,7 @@ async fn check(url: &str) -> reqwest::Result<Option<Available>> {
     let arch = std::env::consts::ARCH;
     let appimage = std::env::var_os("APPIMAGE")
         .and_then(|_| r.assets.iter().find(|a| a.name.ends_with(".AppImage") && a.name.contains(arch)).or_else(|| r.assets.iter().find(|a| a.name.ends_with(".AppImage"))))
-        .map(|a| a.browser_download_url.clone());
+        .and_then(|a| Some((a.browser_download_url.clone(), sha256_of(a.digest.as_deref())?)));
     Ok(Some(Available { version: r.tag_name.trim_start_matches('v').to_string(), page: r.html_url, appimage, stage: Stage::Available }))
 }
 
@@ -99,7 +116,7 @@ fn set_stage(stage: Stage) {
 /// "Update now" in an AppImage: download beside it and rename over it (atomic on one filesystem).
 pub fn install(s: &mut State) {
     let Some(u) = s.desktop.update.as_mut().filter(|u| u.stage != Stage::Downloading) else { return };
-    let (Some(url), Some(target)) = (u.appimage.clone(), std::env::var_os("APPIMAGE")) else { return };
+    let (Some((url, sha256)), Some(target)) = (u.appimage.clone(), std::env::var_os("APPIMAGE")) else { return };
     u.stage = Stage::Downloading;
     crate::app::spawn(async move {
         let target = std::path::PathBuf::from(target);
@@ -109,6 +126,10 @@ pub fn install(s: &mut State) {
             // An ELF executable, not an error page.
             if !bytes.starts_with(b"\x7fELF") {
                 return Err("not an AppImage".to_string());
+            }
+            let got: String = sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(&bytes)).iter().map(|b| format!("{b:02x}")).collect();
+            if got != sha256 {
+                return Err(format!("Update checksum mismatch: expected {sha256}, downloaded {got}"));
             }
             tokio::fs::write(&tmp, &bytes).await.map_err(|e| e.to_string())?;
             #[cfg(unix)]
@@ -152,5 +173,14 @@ mod tests {
         assert!(!super::newer("v0.1.0", "0.1.0"));
         assert!(!super::newer("0.1.0-beta", "0.1.0"));
         assert!(super::newer("1.0", "0.9.9"));
+    }
+
+    #[test]
+    fn asset_digests() {
+        let hex = "AB".repeat(32);
+        assert_eq!(super::sha256_of(Some(&format!("sha256:{hex}"))), Some(hex.to_ascii_lowercase()));
+        assert_eq!(super::sha256_of(Some("sha512:00")), None);
+        assert_eq!(super::sha256_of(Some("sha256:xyz")), None);
+        assert_eq!(super::sha256_of(None), None, "no checksum, no self-update");
     }
 }

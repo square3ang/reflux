@@ -3,6 +3,8 @@
 //! single-instance forwarding; launch at login, window size and zoom, spellcheck, global
 //! shortcuts, the updater, nagbars and toasts, and streaming privacy.
 
+pub mod badge;
+mod hooks;
 pub mod autostart;
 pub mod link;
 pub mod menu;
@@ -153,7 +155,7 @@ pub fn demo(sh: &mut crate::shell::ShellState, store: &mut reflux_store::Store, 
     match scene {
         "bars" => {
             sh.desktop.offline = true;
-            sh.desktop.update = Some(updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(String::new()), stage: updater::Stage::Available });
+            sh.desktop.update = Some(updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(Default::default()), stage: updater::Stage::Available });
             sh.desktop.streamer = true;
         }
         "spell" => {
@@ -184,8 +186,8 @@ pub struct Desktop {
     pub focused: bool,
     tray: Option<rune::tray::Tray>,
     tray_look: Option<tray::Look>,
-    /// Last (mention count, unread) sent to the dock.
-    badge: Option<(u32, bool)>,
+    /// Last (badge, urgent) sent to the dock / taskbar.
+    badge: Option<(i32, bool)>,
     /// Last seen self mute / deaf, for their sounds.
     voice_self: Option<(bool, bool)>,
     /// Others in our voice channel last frame, for join / leave sounds.
@@ -247,6 +249,7 @@ pub fn start(ui: &rune::AppHandle<State>) {
             handle.update(move |s, _| open_link(s, &l));
         }
     });
+    link::register_protocol();
     if let Some(l) = link {
         ui.update(move |s, _| open_link(s, &l));
     }
@@ -377,6 +380,7 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     updater::tick(s);
     tts::on_channel(s.app.shell.channel);
     notices::tick(s);
+    shortcuts::sync(shortcuts::bindings(&s.app.shell));
     let prefs = &mut s.app.saved.desktop;
     let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
     if s.app.route == Route::Main && here.is_some() && prefs.last != here && !rune::is_headless() {
@@ -413,17 +417,15 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     } else {
         0
     };
-    // "Enable unread message badge" off clears the dock count (urgency still flags mentions).
-    let shown = if s.app.saved.desktop.look.unread_badge { mentions } else { 0 };
-    let badge = (shown, mentions > 0 && !s.desktop.focused);
+    let unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
+    let requests = if main { store.relationships.values().filter(|r| r.kind == reflux_model::RelationshipType::INCOMING_REQUEST).count() as u32 } else { 0 };
+    let badge = (badge::compute(mentions, requests, unread, s.app.saved.desktop.look.unread_badge), mentions > 0 && !s.desktop.focused);
     if s.desktop.badge != Some(badge) {
         s.desktop.badge = Some(badge);
-        set_badge(badge.0, badge.1);
+        badge::set(badge.0, badge.1);
     }
     sync_tray(s, mentions > 0);
     voice_sounds(s);
-    let store = &s.app.store;
-    let unread = main && store.channels.values().any(|c| store.has_unread(c.id) && !store.is_muted(c));
     let title = if s.app.saved.desktop.look.unread_badge { window::title(&s.app.store, &s.app.shell, mentions, unread) } else { window::title(&s.app.store, &s.app.shell, 0, false) };
     if s.desktop.title != title {
         tx.set_title(title.clone());
@@ -554,30 +556,3 @@ fn voice_sounds(s: &mut State) {
         play(s, snd);
     }
 }
-
-/// Unity LauncherEntry: the count on the dock icon (KDE, Plank, GNOME's Dash to Dock) and its
-/// urgency, as Electron's `app.setBadgeCount` does on Linux.
-#[cfg(target_os = "linux")]
-fn set_badge(count: u32, urgent: bool) {
-    if rune::is_headless() {
-        return;
-    }
-    std::thread::spawn(move || {
-        use std::collections::HashMap;
-        use zbus::zvariant::Value;
-        let r = (|| -> zbus::Result<()> {
-            let conn = zbus::blocking::Connection::session()?;
-            let props: HashMap<&str, Value> =
-                HashMap::from([("count", Value::from(count as i64)), ("count-visible", Value::from(count > 0)), ("urgent", Value::from(urgent))]);
-            let uri = format!("application://{}.desktop", notify::DESKTOP_ID);
-            conn.emit_signal(None::<&str>, "/com/canonical/unity/launcherentry/reflux", "com.canonical.Unity.LauncherEntry", "Update", &(uri, props))
-        })();
-        if let Err(e) = r {
-            eprintln!("reflux: dock badge: {e}");
-        }
-    });
-}
-
-// shortcut: no taskbar overlay (Windows) or Dock badge (macOS) yet.
-#[cfg(not(target_os = "linux"))]
-fn set_badge(_count: u32, _urgent: bool) {}

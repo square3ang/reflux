@@ -4860,6 +4860,8 @@ dependencies = [
  "jiff",
  "keyring",
  "notify-rust",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
  "qrcode",
  "reflux-markdown",
  "reflux-model",
@@ -4883,7 +4885,10 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "whatlang",
+ "winapi",
+ "windows",
  "windows-sys 0.59.0",
+ "x11rb",
  "zbus 5.19.0",
 ]
 

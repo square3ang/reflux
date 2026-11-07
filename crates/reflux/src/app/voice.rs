@@ -231,7 +231,9 @@ fn run_op(s: &mut State, op: Op) {
             if reflux_voice::can_list_sources() && !rune::is_headless() {
                 s.app.shell.voice.screen_sources = None;
                 spawn(async move {
-                    let list = tokio::task::spawn_blocking(|| reflux_voice::screen_sources(320)).await.unwrap_or_default();
+                    let mut list = tokio::task::spawn_blocking(|| reflux_voice::screen_sources(320)).await.unwrap_or_default();
+                    // `isOwnWindow`: our own windows go last.
+                    list.sort_by_key(|src| src.window && crate::desktop::window::is_own(src.id));
                     update(move |s| {
                         s.app.shell.voice.screen_sources = Some(
                             list.into_iter()

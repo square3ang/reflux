@@ -5,7 +5,7 @@
 // (and Wayland can't place windows), so those aren't restored.
 // shortcut: no minimize-to-tray; Rune sends no minimize event to hide on.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use reflux_model::ChannelType;
@@ -19,6 +19,28 @@ pub const ZOOM_MIN: f32 = 0.5;
 pub const ZOOM_MAX: f32 = 2.0;
 
 static ZOOM: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+/// The main window's native id (X11 XID / HWND), as screen capture lists it.
+static OWN: AtomicU64 = AtomicU64::new(0);
+
+/// `App::on_window`: remember the native window (`getMediaSourceId`) and give it the badge.
+pub fn on_window(w: &rune::WindowHandle) {
+    use rune::raw_window_handle::RawWindowHandle;
+    let id = w.with_raw_handle(|h| match h.as_raw() {
+        // `c_ulong`: u64 here, u32 on 32-bit targets.
+        #[allow(clippy::unnecessary_cast)]
+        RawWindowHandle::Xlib(x) => x.window as u64,
+        RawWindowHandle::Xcb(x) => x.window.get() as u64,
+        RawWindowHandle::Win32(x) => x.hwnd.get() as u64,
+        _ => 0,
+    });
+    OWN.store(id.unwrap_or(0), Ordering::Relaxed);
+    super::badge::on_window(w);
+}
+
+/// A capture source id is one of our windows (`isOwnWindow`).
+pub fn is_own(id: u64) -> bool {
+    id != 0 && id == OWN.load(Ordering::Relaxed)
+}
 
 pub fn zoom() -> f32 {
     f32::from_bits(ZOOM.load(Ordering::Relaxed))

@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -25,7 +25,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Voice & video | PARTIAL | no camera background effects; input/output volume, processing profiles and the selected devices go through our own mixer and mic chain (WebRTC APM echo cancel + AGC, RNNoise) | tabs/UserVoiceTab.tsx, UserVideoTab.tsx |
 | Accessibility | DONE | (Fluxer's current Motion tab has no keep-animating flags) | tabs/AccessibilityTab.tsx |
 | Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
-| Keybinds | PARTIAL | global (system-wide) custom combos: global shortcuts stay the portal / RegisterHotKey set; PTT key (global shortcuts toggle in Desktop tab) | tabs/KeybindsTab.tsx |
+| Keybinds | DONE | custom Toggle mute / Toggle deafen combos and the PTT key are global where a hook backend runs (X11, Windows, macOS); on Wayland the portal's keys are set in the desktop | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
 | Advanced | PARTIAL | encoder options (impossible: hardware acceleration — Rune always renders on the GPU) | tabs/AdvancedSettingsTab.tsx |
 | Applications (dev) | PARTIAL | bot username/discriminator rules | tabs/applications_tab/* |
@@ -149,7 +149,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 ### notification / read_state / typing / presence
 | Feature | Status | Missing | Official source |
 |---|---|---|---|
-| Desktop notifications | PARTIAL | clicks on Win/mac | MessageNotificationPreview.ts |
+| Desktop notifications | DONE | clicks routed on Linux, Windows and macOS (Win/mac compile-checked only) | MessageNotificationPreview.ts |
 | Sounds, status select, custom status display | DONE | | |
 | Acks | DONE | | NotificationAutoAck.ts |
 | Timed mute expiry | DONE | | useMuteSheet.ts |
@@ -204,7 +204,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Noise suppression | DONE |  | | AudioProcessingModal.tsx |
 | Voice details popout | DONE | | VoiceDetailsPopout.tsx |
 | PiP / pop-out | PARTIAL | PiP = small always-on-top pop-out; Wayland ignores always-on-top | | PiPOverlay.tsx |
-| PTT / VAD | PARTIAL | the recorded key works in-window only; the global key comes from the portal (Linux), none on Windows/macOS | HoldSources.ts |
+| PTT / VAD | DONE | the recorded key is global through the X11 / Windows / macOS hooks; Wayland takes the portal's key | HoldSources.ts |
 | Entrance sounds | DONE | (upload untested live) |  | EntranceSoundTrimmerModal.tsx |
 | Moderator move / reconnect | DONE | | VoiceReconnectionManager.tsx |
 | E2EE indicator | PARTIAL | key derivation matched to livekit-client (PBKDF2, ratchet window 0); the test server grants no e2ee_key, so untested live | VoiceE2EEIndicator.tsx |
@@ -240,16 +240,16 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 |---|---|---|---|
 | Tray, close to tray, flash, open links, HW encoder | DONE | | |
 | Minimize to tray / start minimized | PARTIAL | WONTFIX (user decision): minimize to tray — raw-window-handle workaround works only on X11/Windows/macOS, not Wayland | D/Window.ts |
-| Notifications | PARTIAL | click routing Win/mac | D/NotificationsIpc.ts |
-| Badge | PARTIAL | Win/mac | D/UnreadBadge.ts |
-| Deep links | PARTIAL | Windows forwarding | D/DeepLinks.ts |
-| Autostart | PARTIAL | Flatpak Background portal; Win/mac compile-checked only | D/Autostart.ts |
+| Notifications | DONE | body click focuses + opens the channel on Linux (D-Bus action), Windows (toast `Activated`) and macOS (NSUserNotification click); Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/NotificationsIpc.ts |
+| Badge | DONE | `computeAppBadge` (mentions + friend requests, unread dot behind the setting): Unity LauncherEntry, Windows taskbar overlay (Fluxer's `badge-N.ico`, light set only: the dark-badge switch isn't in our Desktop tab), macOS Dock label; Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/UnreadBadge.ts |
+| Deep links | DONE | second instance → first over a Unix socket / per-user named pipe (`AllowSetForegroundWindow`); Windows registers `fluxer://` in HKCU (release builds); macOS needs `CFBundleURLTypes` in the bundle and Rune exposes no `openURLs` event, so links there only work as launch args; Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/DeepLinks.ts |
+| Autostart | DONE | XDG entry, Flatpak → Background portal (+ state file), HKCU Run, LaunchAgent; the Flatpak path and Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/Autostart.ts |
 | Window state persistence | PARTIAL | WONTFIX (user decision): size only — position/maximized need the raw handle and are impossible on Wayland | D/Window.ts |
-| Updater | PARTIAL | no release feed yet (`REFLUX_UPDATE_FEED`); AppImage self-update, else opens the page | D/Updater.ts |
-| Global shortcuts / PTT | PARTIAL | Linux portal only (no X11 fallback), Windows mute/deafen only, macOS none | D/GlobalShortcutsEngine.ts |
+| Updater | PARTIAL | blocked on a release feed: none is published, so it stays off unless `REFLUX_UPDATE_FEED` (GitHub latest-release JSON) is set; AppImage self-update now requires and verifies the asset's SHA-256 `digest`; Windows/macOS/Flatpak open the release page (Fluxer self-updates those via Velopack / defers to Flathub; no Velopack packaging exists for Reflux) | D/Updater.ts |
+| Global shortcuts / PTT | DONE | Fluxer's backend choice: Wayland → GlobalShortcuts portal (keys set in the desktop); X11 → XRecord hook, Windows → `WH_KEYBOARD_LL`, macOS → listen-only CGEventTap (asks for Input Monitoring), all matching the user's own mute/deafen combos and PTT key with press/release; keyboard only (no mouse-button PTT); X11 hook unit-tested, Win/mac compile-checked only (`scripts/cross-check.sh`), not run on either | D/GlobalShortcutsEngine.ts |
 | Spellcheck | DONE | OS engine, language auto-detect; menu targets the caret's word | D/Spellcheck.ts |
 | Zoom | DONE | | D/Menu.ts |
-| Screen-share picker / app audio | PARTIAL | | D/DisplayMedia.ts |
+| Screen-share picker / app audio | DONE | listed sources with thumbnails (X11/Windows), own window sorted last (`isOwnWindow`), Wayland portal limited to Applications / Entire screen (`set-display-media-portal-preference`), Linux app audio; macOS uses ScreenCaptureKit's picker; the Windows DXGI composition guard isn't needed (libwebrtc's own capturer) | D/DisplayMedia.ts |
 | App menu (macOS) | DONE | built on Rune standard menus; not verified on a Mac | D/Menu.ts |
 | File downloads | DONE | | D/FileDownloads.ts |
 | Copy image | DONE | | D/MediaClipboard.ts |

@@ -46,19 +46,31 @@ regex = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts"] }
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts", "background"] }
 # Unity LauncherEntry (dock badge / urgency); notify-rust already pulls zbus 5.
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 # System idle time on Wayland (ext-idle-notify-v1); both already come with Rune.
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+# X11 global shortcuts: the RECORD extension (x11rb is already in the tree through Rune).
+x11rb = { version = "0.13", features = ["record"] }
 # Video attachment playback and camera capture (GStreamer playbin / v4l2src into appsinks).
 gstreamer = { version = "0.24", optional = true }
 gstreamer-app = { version = "0.24", optional = true }
 gstreamer-video = { version = "0.24", optional = true }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO", "Win32_System_LibraryLoader"] }
+# authenticator 0.5's Windows HID transport passes a std `RawHandle` where winapi wants its own
+# `c_void`; winapi's `std` feature makes them the same type (it doesn't compile otherwise).
+winapi = { version = "0.3", features = ["std"] }
+# The taskbar overlay badge (ITaskbarList3); already in the tree through other crates.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The Dock badge label; the versions Rune already uses.
+objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSDockTile", "NSResponder"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString", "NSThread"] }
 
 [features]
 # Needs the GStreamer 1.x runtime (and -dev headers to build); `--no-default-features` drops it,

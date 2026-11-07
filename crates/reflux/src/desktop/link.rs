@@ -1,6 +1,7 @@
 //! `fluxer://` links (`fluxer_desktop/src/main/DeepLinks.ts`) and single-instance forwarding: a
 //! second launch hands its link and XDG activation token to the running app over a Unix socket
-//! and exits, like Electron's `requestSingleInstanceLock` + `second-instance`.
+//! (a per-user named pipe on Windows) and exits, like Electron's `requestSingleInstanceLock` +
+//! `second-instance`.
 
 use reflux_model::Snowflake;
 
@@ -72,16 +73,55 @@ pub fn forward(link: Option<&str>) -> bool {
     writeln!(s, "{}\t{}", token.replace(['\t', '\n'], ""), link.unwrap_or_default().replace(['\t', '\n'], "")).is_ok()
 }
 
-#[cfg(not(unix))]
-// shortcut: no named-pipe forwarding on Windows yet; a second launch opens a second window.
+/// The per-user pipe name (`requestSingleInstanceLock`'s, keyed on the account).
+#[cfg(windows)]
+fn pipe() -> String {
+    let user: String = std::env::var("USERNAME").unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    format!(r"\\.\pipe\reflux-{user}")
+}
+
+/// Hands `link` to a running instance over its named pipe; true when one took it. The running
+/// instance may take the foreground (`AllowSetForegroundWindow`), as Electron's lock allows.
+#[cfg(windows)]
+pub fn forward(link: Option<&str>) -> bool {
+    use std::io::Write;
+    const ERROR_PIPE_BUSY: i32 = 231;
+    for _ in 0..20 {
+        match std::fs::OpenOptions::new().write(true).open(pipe()) {
+            Ok(mut f) => {
+                // SAFETY: a plain Win32 call.
+                unsafe { windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY) };
+                return writeln!(f, "\t{}", link.unwrap_or_default().replace(['\t', '\n'], "")).is_ok();
+            }
+            // Between two pipe instances: the listener is about to make the next one.
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn forward(_link: Option<&str>) -> bool {
     false
+}
+
+/// One launch message: `token\tlink\n`, bounded.
+fn read_launch(conn: impl std::io::Read, on_launch: &impl Fn(Option<String>, Option<String>)) {
+    use std::io::{BufRead, Read};
+    let mut line = String::new();
+    // A bounded read: anyone who can reach the socket is the same user, but keep it sane.
+    if std::io::BufReader::new(conn).take(4096).read_line(&mut line).is_err() {
+        return;
+    }
+    let (token, link) = line.trim_end().split_once('\t').unwrap_or(("", ""));
+    let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    on_launch(some(token), some(link));
 }
 
 /// Listens for later launches; `on_launch(token, link)` runs on the listener thread.
 #[cfg(unix)]
 pub fn listen(on_launch: impl Fn(Option<String>, Option<String>) + Send + 'static) {
-    use std::io::{BufRead, Read};
     let path = socket();
     let _ = std::fs::remove_file(&path); // a stale socket from a crashed run (`forward` found no one)
     let listener = match std::os::unix::net::UnixListener::bind(&path) {
@@ -94,21 +134,79 @@ pub fn listen(on_launch: impl Fn(Option<String>, Option<String>) + Send + 'stati
         .name("reflux-instance".into())
         .spawn(move || {
             for conn in listener.incoming().flatten() {
-                let mut line = String::new();
-                // A bounded read: anyone who can reach the socket is the same user, but keep it sane.
-                if std::io::BufReader::new(conn).take(4096).read_line(&mut line).is_err() {
-                    continue;
-                }
-                let (token, link) = line.trim_end().split_once('\t').unwrap_or(("", ""));
-                let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
-                on_launch(some(token), some(link));
+                read_launch(conn, &on_launch);
             }
         })
         .ok();
 }
 
-#[cfg(not(unix))]
+/// Serves the pipe: the first instance owns it (`FILE_FLAG_FIRST_PIPE_INSTANCE`), and the next
+/// instance is created before a connected one is read, so a launch never finds no pipe.
+#[cfg(windows)]
+pub fn listen(on_launch: impl Fn(Option<String>, Option<String>) + Send + 'static) {
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_INBOUND};
+    use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT};
+    let name: Vec<u16> = pipe().encode_utf16().chain([0]).collect();
+    // SAFETY: a NUL-terminated name; default security (only this user may write).
+    let create = move |first: bool| unsafe {
+        let flags = PIPE_ACCESS_INBOUND | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+        let h = CreateNamedPipeW(name.as_ptr(), flags, PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, PIPE_UNLIMITED_INSTANCES, 0, 4096, 0, std::ptr::null());
+        // As an address: raw handles aren't `Send`.
+        (h != INVALID_HANDLE_VALUE).then_some(h as usize)
+    };
+    let Some(mut h) = create(true) else {
+        return eprintln!("reflux: single-instance pipe {}: {}", pipe(), std::io::Error::last_os_error());
+    };
+    std::thread::Builder::new()
+        .name("reflux-instance".into())
+        .spawn(move || {
+            loop {
+                // SAFETY: `h` is our pipe instance; a client that connected first is fine too.
+                let ok = unsafe { ConnectNamedPipe(h as _, std::ptr::null_mut()) != 0 || GetLastError() == ERROR_PIPE_CONNECTED };
+                let next = create(false);
+                // SAFETY: we own `h`; the File closes it.
+                let conn = unsafe { std::fs::File::from_raw_handle(h as _) };
+                if ok {
+                    read_launch(conn, &on_launch);
+                }
+                match next {
+                    Some(n) => h = n,
+                    None => return eprintln!("reflux: single-instance pipe: {}", std::io::Error::last_os_error()),
+                }
+            }
+        })
+        .ok();
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn listen(_on_launch: impl Fn(Option<String>, Option<String>) + Send + 'static) {}
+
+/// `app.setAsDefaultProtocolClient('fluxer')` on Windows: `HKCU\Software\Classes\fluxer` runs
+/// this executable with the link (macOS takes it from the bundle's `CFBundleURLTypes`, Linux
+/// from `packaging/reflux.desktop`). Packaged (release) builds only, like Fluxer.
+#[cfg(windows)]
+pub fn register_protocol() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let key = r"HKCU\Software\Classes\fluxer";
+    let command = format!("\"{}\" \"%1\"", exe.display());
+    for args in [
+        vec!["add", key, "/ve", "/d", "URL:fluxer", "/f"],
+        vec!["add", key, "/v", "URL Protocol", "/d", "", "/f"],
+        vec!["add", &format!(r"{key}\shell\open\command"), "/ve", "/d", &command, "/f"],
+    ] {
+        let _ = std::process::Command::new("reg").args(args).creation_flags(CREATE_NO_WINDOW).output();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn register_protocol() {}
 
 #[cfg(test)]
 mod tests {

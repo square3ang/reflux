@@ -555,6 +555,8 @@ fn spawn_capture(stop: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource
         };
         let list = capturer.get_source_list();
         let source = match &pick {
+            // The portal's only entry, whatever it calls it.
+            Some(p) if p.id == ScreenSource::PORTAL => list.into_iter().next(),
             Some(p) => list.into_iter().find(|s| s.id() == p.id),
             None => list.into_iter().next(),
         };
@@ -605,6 +607,15 @@ pub struct ScreenSource {
 }
 
 impl ScreenSource {
+    /// The id of [`ScreenSource::portal`]'s pick.
+    pub const PORTAL: u64 = u64::MAX;
+
+    /// `setDisplayMediaPortalPreference`: the xdg-desktop-portal picker limited to windows
+    /// (`window`) or monitors, for when sources can't be listed (Wayland).
+    pub fn portal(window: bool) -> ScreenSource {
+        ScreenSource { window, id: Self::PORTAL, title: String::new(), thumbnail: None }
+    }
+
     fn kind(&self) -> DesktopCaptureSourceType {
         if self.window { DesktopCaptureSourceType::Window } else { DesktopCaptureSourceType::Screen }
     }

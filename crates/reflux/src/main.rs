@@ -114,7 +114,8 @@ fn main() {
     .keep_running()
     .modifier_keys()
     .on_close(desktop::on_close)
-    .on_focus(|s, focused, _| s.desktop.focused = focused);
+    .on_focus(|s, focused, _| s.desktop.focused = focused)
+    .on_window(desktop::window::on_window);
     let mut app = desktop::menu::install(app);
     popout::register(&mut app);
     if desktop::autostart::start_hidden(&prefs) && !rune::is_headless() {

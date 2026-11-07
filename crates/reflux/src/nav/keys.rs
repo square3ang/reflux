@@ -2,7 +2,6 @@
 //! its custom list, recorder (`KeybindRecorder`) and per-row menus, the Ctrl+/ list
 //! (`KeyboardShortcutsCheatsheetModal`) and the first-Tab `KeyboardModeIntroModal`. Kept per
 //! account on this device ([`super::AccountPrefs`]).
-// shortcut: no global (system-wide) custom keybinds.
 
 use rune::{Color, El, Key, KeyEvent, Shadow, col, el, icon, row, text};
 use serde::{Deserialize, Serialize};
@@ -46,8 +45,8 @@ pub fn action(m: &AccountPrefs, k: &KeyEvent) -> Option<Action> {
         .or_else(|| BINDS.iter().find(|b| builtin_on(m, b.action) && b.combo.matches(k)).map(|b| b.action))
 }
 
-/// Every combo that runs `a` now (`getActiveCombosForAction`).
-fn active(m: &AccountPrefs, a: Action) -> Vec<Combo> {
+/// Every combo that runs `a` now (`getActiveCombosForAction`); also the global shortcuts'.
+pub fn active(m: &AccountPrefs, a: Action) -> Vec<Combo> {
     let custom = m.keybinds.iter().filter(|c| c.enabled && c.action == Some(a)).filter_map(|c| c.combo);
     let builtin = BINDS.iter().filter(|b| b.action == a && builtin_on(m, a)).map(|b| b.combo);
     custom.chain(builtin).collect()

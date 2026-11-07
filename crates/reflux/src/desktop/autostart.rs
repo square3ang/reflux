@@ -1,7 +1,7 @@
 //! Launch at login (`Autostart.ts`): an XDG autostart entry on Linux, the HKCU `Run` key on
 //! Windows, a LaunchAgent on macOS. The launch carries [`ARG`], so "Start minimized" applies to
-//! launches at login only.
-// shortcut: no Flatpak Background portal; a sandboxed build would need it instead of the file.
+//! launches at login only. Inside Flatpak the entry is the host's, so it goes through the XDG
+//! Background portal (`setFlatpakAutostart`) and the answer is remembered in a state file.
 
 use std::io;
 use std::path::PathBuf;
@@ -60,8 +60,50 @@ fn desktop_file(exe: &str) -> String {
     .join("\n")
 }
 
+/// `isFlatpakRuntime`.
+#[cfg(target_os = "linux")]
+fn flatpak() -> bool {
+    std::path::Path::new("/.flatpak-info").exists()
+}
+
+/// `flatpak-autostart-v1.json`: what the portal last granted.
+#[cfg(target_os = "linux")]
+fn flatpak_state() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("reflux/flatpak-autostart-v1.json"))
+}
+
+/// Asks the Background portal; the request (and its permission dialog) runs on the runtime, so
+/// a refusal is only logged, as the switch has already moved.
+#[cfg(target_os = "linux")]
+fn set_flatpak(enabled: bool) {
+    crate::app::spawn(async move {
+        use ashpd::desktop::background::Background;
+        // `FLUXER_FLATPAK_COMMAND`: the command inside the sandbox.
+        let command = std::env::var("REFLUX_FLATPAK_COMMAND").ok().filter(|c| !c.trim().is_empty()).unwrap_or_else(|| "reflux".into());
+        let mut req = Background::request().auto_start(enabled);
+        if enabled {
+            req = req.reason(crate::i18n::tf("Start {appName} automatically when you sign in.", &[("appName", "Fluxer")]).as_str()).command([command.as_str(), ARG]);
+        }
+        let granted = match req.send().await.and_then(|r| r.response()) {
+            Ok(r) => r.auto_start(),
+            Err(e) => return eprintln!("reflux: Background portal: {e}"),
+        };
+        if granted != enabled {
+            eprintln!("reflux: Background portal did not {} autostart", if enabled { "enable" } else { "disable" });
+        }
+        if let Some(p) = flatpak_state() {
+            let _ = std::fs::create_dir_all(p.parent().expect("config dir"));
+            let _ = std::fs::write(p, serde_json::json!({ "enabled": granted }).to_string());
+        }
+    });
+}
+
 #[cfg(target_os = "linux")]
 pub fn set(enabled: bool) -> io::Result<()> {
+    if flatpak() {
+        set_flatpak(enabled);
+        return Ok(());
+    }
     let path = entry_path().ok_or_else(|| io::Error::other("no config dir"))?;
     if !enabled {
         return match std::fs::remove_file(&path) {
@@ -77,6 +119,10 @@ pub fn set(enabled: bool) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 pub fn is_enabled() -> bool {
+    if flatpak() {
+        let read = flatpak_state().and_then(|p| std::fs::read_to_string(p).ok());
+        return read.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).is_some_and(|v| v["enabled"] == true);
+    }
     entry_path().and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|s| !s.contains("X-GNOME-Autostart-enabled=false") && !s.contains("Hidden=true"))
 }
 

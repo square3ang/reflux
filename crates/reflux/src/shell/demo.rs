@@ -713,7 +713,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.cameras = Some(vec!["Integrated Camera".into()]);
             fake_frames(&st.voice.self_view, 220);
         }
-        "share" => st.voice.modal = Some(Modal::ScreenShare),
+        "share" => crate::shell::call::open_screen_picker(st),
         // The in-app picker (X11 / Windows) with fixture thumbnails and Linux app audio.
         "share-pick" => {
             st.voice.modal = Some(Modal::ScreenShare);

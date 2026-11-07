@@ -121,9 +121,16 @@ pub fn show(title: String, body: String, image: Option<PathBuf>, on_click: impl 
                     on_click();
                 }
             }),
-            // shortcut: clicks aren't routed back on macOS and Windows yet.
+            // A body click: the toast's in-process `Activated` event (Windows) or the
+            // NSUserNotificationCenter delegate (macOS; this thread waits for it).
             #[cfg(not(all(unix, not(target_os = "macos"))))]
-            Ok(_) => drop(on_click),
+            Ok(h) => {
+                let _ = h.wait_for_response(|r: &notify_rust::NotificationResponse| {
+                    if matches!(r, notify_rust::NotificationResponse::Default) {
+                        on_click();
+                    }
+                });
+            }
             Err(e) => eprintln!("reflux: notification: {e}"),
         }
     });
