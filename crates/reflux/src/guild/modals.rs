@@ -476,11 +476,46 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
     let levels = RadioGroup::new(&opts, Some(&lv))
         .on_change(move |sh: &mut S, v| acc(sh).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: json!({ "message_notifications": v.parse::<u8>().unwrap_or(0) }) }))
         .el(p);
+    let section = |title: &str, desc: &str, radios: El| {
+        col()
+            .w_full()
+            .gap(12.0)
+            .child(label(title, 600.0, p))
+            .child(text(desc.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap())
+            .child(radios)
+    };
+    // `unreadBadgesOptions`, shown with Advanced → "Unread badge customization".
+    let badges = st.prefs.look.unread_badge_customization.then(|| {
+        let v = s.unread_badges.map_or(3, |l| l.0).to_string();
+        let opts = [("3", t("Default"), None), ("0", t("All messages"), None), ("1", t("Only mentions"), None), ("2", t("Nothing"), None)];
+        let radios = RadioGroup::new(&opts, Some(&v))
+            .on_change(move |sh: &mut S, v| {
+                let l = v.parse::<u8>().ok().filter(|&l| l != 3);
+                acc(sh).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: json!({ "unread_badges": l }) })
+            })
+            .el(p);
+        section(t("Unread badges"), t("Choose when this community shows an unread badge. \"Default\" preserves the normal unread indicator behavior and respects mute."), radios)
+    });
+    // `mentionPreferenceOptions`: the member's `mention_flags` here (`GuildMemberCommands.updateProfile`).
+    let flags = store.member(g, store.my_id()).and_then(|m| m.mention_flags).map_or(0, |f| f.0).to_string();
+    let opts = [("0", t("Inherit from account"), None), ("1", t("Prefer @mention"), None), ("2", t("Prefer no @mention"), None)];
+    let reply = RadioGroup::new(&opts, Some(&flags))
+        .on_change(move |sh: &mut S, v| {
+            let f: u8 = v.parse().unwrap_or(0);
+            acc(sh).api(reqwest::Method::PATCH, &format!("/guilds/{g}/members/@me"), Some(json!({ "mention_flags": f })), super::Then::Nothing);
+        })
+        .el(p);
+    let reply = section(
+        t("Reply mention preference"),
+        t("Override how replies to your messages handle the @mention in this community. \"Inherit from account\" uses your account-wide setting."),
+        reply,
+    );
     let body = col()
         .w_full()
         .gap(24.0)
         .child(mute)
         .child(col().w_full().gap(12.0).child(label(t("Community notification settings"), 600.0, p)).child(levels))
+        .children(badges)
         .child(
             col()
                 .w_full()
@@ -488,9 +523,9 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
                 .child(Switch::new(s.suppress_everyone).label("Suppress @everyone and @here").on_toggle(patch(json!({ "suppress_everyone": !s.suppress_everyone }))).el(p))
                 .child(Switch::new(s.suppress_roles).label(t("Suppress all role mentions")).on_toggle(patch(json!({ "suppress_roles": !s.suppress_roles }))).el(p)),
         )
+        .child(reply)
         .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p))
         .child(overrides(store, st, g, level, p, acc, layer));
-    // shortcut: unread badges and the reply mention preference aren't here.
     Modal::new(t("Notification settings"), close(acc)).size(ModalSize::Medium).body(body).el(p)
 }
 

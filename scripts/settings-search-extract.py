@@ -140,7 +140,7 @@ def rs(s):
 
 def main():
     names = descriptors()
-    items, missing = [], set()
+    items, missing, added = [], set(), []
     files = sorted((UTILS / "section_registry").glob("*Sections.ts")) + sorted((UTILS / "search_index").glob("*Index.ts"))
     for f in files:
         txt = f.read_text(encoding="utf-8")
@@ -171,6 +171,9 @@ def main():
             # `getSettingsAudience`.
             advanced = (field(obj, "isAdvanced") == "true") or field(obj, "audience") == "'advanced'" or ident.startswith("advanced-")
             items.append((ident, tab, section, lab, kws, desc or "", advanced))
+            at = (field(obj, "addedAt") or "").strip("'\"")
+            if at:
+                added.append((ident, at))
     if missing:
         print("unresolved:", sorted(missing), file=sys.stderr)
     lines = [
@@ -183,6 +186,9 @@ def main():
     ]
     for ident, tab, sec, lab, kws, desc, adv in items:
         lines.append(f"    ({rs(ident)}, {rs(tab)}, {rs(sec)}, {rs(lab)}, &[{', '.join(rs(k) for k in kws)}], {rs(desc)}, {'true' if adv else 'false'}),")
+    lines.append("];")
+    lines += ["", "/// (id, `addedAt`) for the items that have one, for \"New settings\" (`isSettingsItemNew`).", "pub(super) const ADDED: &[(&str, &str)] = &["]
+    lines += [f"    ({rs(i)}, {rs(a)})," for i, a in added]
     lines.append("];")
     OUT.write_text("\n".join(lines) + "\n")
     print(f"{len(items)} items, {len(missing)} unresolved")

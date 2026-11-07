@@ -48,6 +48,7 @@ pub mod voice_message;
 pub mod system_msg;
 pub mod queue;
 pub mod typing;
+mod unread_badges;
 
 pub use friends::FriendsTab;
 pub use members::ranges as member_ranges;

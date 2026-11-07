@@ -1,15 +1,16 @@
 //! The Advanced tab (`AdvancedSettingsTab.tsx`): every advanced-audience item from the search
 //! index, grouped by category (`AdvancedSettingsCategories.ts`), each with its direct control
 //! (`AdvancedSettingDirectControls.tsx`) or an "Open" button to the tab it lives in.
-// shortcut: no "New settings" section, no in-tab search field (the settings search filters this
-// tab), and the action bar's options sit inline instead of in a configure dialog. Items whose
-// feature Reflux doesn't have are left out.
+//! Items added in the last 30 days lead in a "New settings" section (`isSettingsItemNew`).
+// shortcut: no in-tab search field (the settings search filters this tab), and the action bar's
+// options sit inline instead of in a configure dialog. Items whose feature Reflux doesn't have are
+// left out.
 
 use reflux_store::Store;
 use rune::{El, col, el, row, text};
 use serde_json::json;
 
-use super::search_index::ITEMS;
+use super::search_index::{ADDED, ITEMS};
 use super::tabs::section;
 use crate::desktop::Prefs;
 use crate::i18n::t;
@@ -118,6 +119,15 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
                 acc(s).open_account_modal(super::AccountModal::ReverseImageSearch)
             })
             .el(p),
+        "advanced-unread-badge-customization" => look_switch(
+            st,
+            p,
+            acc,
+            None,
+            false,
+            |p| p.look.unread_badge_customization,
+            |p, v| p.look.unread_badge_customization = v,
+        ),
         "advanced-hide-blocked-messages" => look_switch(
             st,
             p,
@@ -169,9 +179,17 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
     })
 }
 
+/// `isSettingsItemNew`: added at most 30 days before `now`, not in the future, and after the
+/// account was created (all ISO 8601 UTC with milliseconds, so they compare as strings).
+fn is_new(id: &str, now: &str, month_ago: &str, created: &str) -> bool {
+    ADDED.iter().find(|a| a.0 == id).is_some_and(|&(_, at)| at <= now && at >= month_ago && at > created)
+}
+
 /// The tab; `query` (the settings search) filters it like `filterAdvancedSettingItems`.
 pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette, acc: ShellAccess<S>) -> El {
     let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_string).collect();
+    let iso = crate::social::iso;
+    let (now, month_ago, created) = (iso(st.now_ms), iso(st.now_ms.saturating_sub(30 * 86_400_000)), iso(store.my_id().timestamp_ms()));
     let rows: Vec<(&str, El)> = ITEMS
         .iter()
         .filter(|i| i.6 && !MISSING.contains(&i.0))
@@ -199,7 +217,7 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
                 .py(16.0)
                 .child(body)
                 .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.border_color));
-            Some((category(id, tab), r))
+            Some((if is_new(id, &now, &month_ago, &created) { "new" } else { category(id, tab) }, r))
         })
         .collect();
     if rows.is_empty() {
@@ -208,14 +226,17 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
     let mut out = col().w_full();
     let mut first = true;
     let mut rows = rows;
-    for (key, label) in CATEGORIES {
+    for (key, label) in [("new", "New settings")].iter().chain(CATEGORIES) {
         let (items, rest): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(c, _)| c == key);
         rows = rest;
         if items.is_empty() {
             continue;
         }
-        let items = items.into_iter().map(|(_, r)| r);
-        out = out.child(section(t(label), col().w_full().children(items), first, p));
+        let mut body = col().w_full();
+        if *key == "new" {
+            body = body.child(text(t("New settings stay here for 30 days.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap());
+        }
+        out = out.child(section(t(label), body.children(items.into_iter().map(|(_, r)| r)), first, p));
         first = false;
     }
     out
@@ -330,4 +351,18 @@ pub fn encoder_modal<S: 'static>(
     .size(ModalSize::Medium)
     .body(body)
     .el(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_settings_window() {
+        let (now, ago) = ("2026-11-07T00:00:00.000Z", "2026-10-08T00:00:00.000Z");
+        assert!(is_new("advanced-hide-blocked-messages", now, ago, "2020-01-01T00:00:00.000Z"));
+        assert!(!is_new("advanced-hide-blocked-messages", now, ago, "2026-10-25T00:00:00.000Z"), "the account is newer");
+        assert!(!is_new("advanced-expression-clone-shortcuts", now, ago, "2020-01-01T00:00:00.000Z"), "older than 30 days");
+        assert!(!is_new("client-developer-mode", now, ago, ""), "no addedAt");
+    }
 }

@@ -165,13 +165,12 @@ fn category<S: 'static>(cat: &Channel, collapsed: bool, p: &Palette, acc: ShellA
 }
 
 fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> El {
-    let unread = store.has_unread(c.id);
     let muted = store.is_muted(c);
-    let mentions = store.mention_count(c.id);
+    let (unread, mentions, lit, dim_dot) = super::unread_badges::apply(super::unread_badges::level(store, c), store.has_unread(c.id), store.mention_count(c.id));
     // `ChannelItemSurface` swaps the modifier colours for the surface-interactive ones.
     let fg = if selected {
         p.surface_interactive_selected_color
-    } else if unread && !muted {
+    } else if lit && !muted {
         p.text_secondary
     } else {
         p.text_tertiary_muted
@@ -239,7 +238,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     if unread && !selected && (!muted || crate::look::with(|l| l.faded_unread_muted)) {
         // `.unreadIndicator`: an 8px half-pill hanging off the list's left edge.
         container = container.child(
-            el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted { 0.4 } else { 1.0 }),
+            el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
         );
     }
     container.key(format!("ch-{id}"))

@@ -177,3 +177,13 @@ pub(super) const ITEMS: &[(&str, &str, &str, &str, &[&str], &str, bool)] = &[
     ("voice-video-screen-share-preview-behavior", "voice_video", "video", "Screen share preview behavior", &["Screen share preview", "Picture-in-picture", "PiP", "Stream preview"], "Preview, popout, and stream thumbnail behavior", true),
     ("voice-video-screen-share-encoder-controls", "voice_video", "video", "Screen share encoder controls", &["Encoder path", "Software encoder", "Hardware encoder", "SVC"], "Encoder path, SVC mode, and content hint", true),
 ];
+
+/// (id, `addedAt`) for the items that have one, for "New settings" (`isSettingsItemNew`).
+pub(super) const ADDED: &[(&str, &str)] = &[
+    ("accessibility-video-seek-thumbnails", "2026-06-03T00:00:00.000Z"),
+    ("advanced-unread-badge-customization", "2026-06-04T00:00:00.000Z"),
+    ("advanced-expression-clone-shortcuts", "2026-09-11T00:00:00.000Z"),
+    ("advanced-hide-blocked-messages", "2026-10-24T00:00:00.000Z"),
+    ("chat-settings-preupload-attachments", "2026-06-04T16:10:00.000Z"),
+    ("chat-settings-keep-attachments-on-empty-edit", "2026-09-11T00:00:00.000Z"),
+];
