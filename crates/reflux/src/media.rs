@@ -13,6 +13,29 @@ use std::sync::{Arc, Mutex, OnceLock};
 use reflux_model::Snowflake;
 use rune::{Image, ImageCache, Pixels, Waker};
 
+
+/// A body cap: the media proxy is remote input, so nothing here buffers an unbounded response.
+const MAX_IMAGE_BYTES: usize = 64 << 20;
+const MAX_TEXT_BYTES: usize = 4 << 20;
+const MAX_DOWNLOAD_BYTES: usize = 512 << 20;
+
+/// GETs `url` and reads at most `cap` bytes, refusing a larger body from `Content-Length` or
+/// while streaming, so a hostile or broken proxy can't exhaust memory or the disk.
+async fn get_capped(http: &reqwest::Client, url: &str, cap: usize) -> Result<Vec<u8>, String> {
+    let mut resp = http.get(url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+    if resp.content_length().is_some_and(|n| n > cap as u64) {
+        return Err(format!("response is larger than {cap} bytes"));
+    }
+    let mut out = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        if out.len() + chunk.len() > cap {
+            return Err(format!("response is larger than {cap} bytes"));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 /// `MEDIA_PROXY_IMAGE_SIZES`: the `size` ladder.
 const LADDER: [u32; 33] = [
     16, 20, 22, 24, 28, 32, 40, 44, 48, 56, 60, 64, 80, 96, 100, 128, 160, 240, 256, 300, 320, 480, 512, 600, 640, 1024,
@@ -387,7 +410,7 @@ impl Media {
     fn fetch(&self, url: String) {
         let inner = self.0.clone();
         crate::app::spawn(async move {
-            match async { inner.http.get(&url).send().await?.error_for_status()?.bytes().await }.await {
+            match get_capped(&inner.http, &url, MAX_IMAGE_BYTES).await {
                 Ok(b) => Media(inner).decode_later(url, move |cache| match frames(&b) {
                     Some(fs) => {
                         let delays = fs.iter().map(|f| f.1).collect();
@@ -395,7 +418,7 @@ impl Media {
                     }
                     None => decode(cache, b.to_vec()).map(Decoded::Still),
                 }),
-                Err(err) => inner.finish(&url, Err(err.to_string())),
+                Err(err) => inner.finish(&url, Err(err)),
             }
         });
     }
@@ -462,8 +485,7 @@ impl Media {
         texts.insert(url.to_owned(), None);
         let (inner, url) = (self.0.clone(), url.to_owned());
         crate::app::spawn(async move {
-            let r = async { inner.http.get(&url).send().await?.error_for_status()?.bytes().await }.await;
-            let r = r.map_err(|e| e.to_string()).map(|b| String::from_utf8_lossy(&b).into_owned());
+            let r = get_capped(&inner.http, &url, MAX_TEXT_BYTES).await.map(|b| String::from_utf8_lossy(&b).into_owned());
             inner.texts.lock().unwrap_or_else(|e| e.into_inner()).insert(url, Some(r));
             crate::app::update(|_| {});
         });
@@ -479,10 +501,9 @@ impl Media {
     pub fn download(&self, url: String, path: std::path::PathBuf) {
         let inner = self.0.clone();
         crate::app::spawn(async move {
-            let r = async { inner.http.get(&url).send().await?.error_for_status()?.bytes().await }.await;
-            let r = match r {
+            let r = match get_capped(&inner.http, &url, MAX_DOWNLOAD_BYTES).await {
                 Ok(b) => tokio::fs::write(&path, &b).await.map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e),
             };
             if let Err(e) = r {
                 eprintln!("reflux: download {url} to {}: {e}", path.display());
@@ -495,8 +516,7 @@ impl Media {
     pub fn copy_image(&self, url: String) {
         let inner = self.0.clone();
         crate::app::spawn(async move {
-            let r = async { inner.http.get(&url).send().await?.error_for_status()?.bytes().await }.await;
-            let png = r.map_err(|e| e.to_string()).and_then(|b| {
+            let png = get_capped(&inner.http, &url, MAX_IMAGE_BYTES).await.and_then(|b| {
                 let img = image::load_from_memory(&b).map_err(|e| e.to_string())?;
                 let mut png = Vec::new();
                 img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
@@ -520,6 +540,26 @@ impl Media {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capped_body_refuses_an_oversized_response() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf);
+                // Content-Length exceeds the cap, so it must be refused before the body arrives.
+                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n");
+            }
+        });
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let http = reqwest::Client::new();
+        let err = rt.block_on(get_capped(&http, &format!("http://{addr}/x"), 16)).unwrap_err();
+        assert!(err.contains("larger than 16 bytes"), "{err}");
+    }
 
     const B: &str = "https://media.fluxer.app/";
 
