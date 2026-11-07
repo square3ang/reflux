@@ -5,6 +5,13 @@ Rune (https://github.com/anomalyco/rune, pinned rev `781e2b6d87cd5f32d6f4365956f
 **do not fork Rune**). Pixel-identical design to the official app, all features, third-party
 instances, Linux NVENC + VA-API screen share. License AGPL-3.0-or-later (assets are copied from Fluxer).
 
+## State (2026-11-08)
+- master `54b3472`: 177 DONE · 15 PARTIAL · 0 MISSING in `docs/FEATURES.md`.
+- Every PARTIAL is now blocked: billing/gifts (low, web), WONTFIX (tray, window position), Rune limits (compact layout, emoji pills, Quick CSS, RTL, always-on-top on Wayland), platform limits (Wayland share thumbnails, OS spellcheck), or needs the user (thread write test, second account for P2P, release feed for the updater, E2EE on the test guild).
+- Verified on 2026-11-08 with `CARGO_TARGET_DIR=/home/square3ang/.cache/reflux-verify-main`: `cargo test --workspace --exclude reflux-voice` (321 in reflux, all crates green), clippy clean, live_probe 0 failures, `--live=write`+`--live=cleanup` 0 failures, `--live=voice` 0 failures and left the channel.
+- Fast UI build without libwebrtc: `scripts/fast-build.sh`.
+- Do not share `target/` between worktrees: cargo can run another checkout's test binary. Use `CARGO_TARGET_DIR=/home/square3ang/.cache/reflux-verify-<name>` for final checks.
+
 ## Reference material (local clones, not in the repo)
 - `/tmp/opencode/fluxer` — Fluxer monorepo. UI: `fluxer_app/src` (React, ~260k LOC, Phosphor icons,
   CSS modules). Desktop shell: `fluxer_desktop`. API/Gateway docs: `fluxer_docs/src/content/docs`
