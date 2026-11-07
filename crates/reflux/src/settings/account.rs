@@ -44,6 +44,13 @@ pub enum AccountModal {
     Deauthorize(String),
     RecoveryKitReplace,
     RecoveryKit,
+    /// Advanced's `ScreenShareEncoderControlsModal` (drawn by [`super::advanced::encoder_modal`]).
+    EncoderControls,
+    /// Advanced's reverse image search settings, a custom engine to add (`None`) or edit, and
+    /// one to remove ([`super::search_engines`]).
+    ReverseImageSearch,
+    RisEngine(Option<String>),
+    RisRemove(String),
 }
 
 pub(super) fn txt(s: impl Into<String>, size: f32, weight: f32, c: rune::Color) -> El {
@@ -569,6 +576,10 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, m: &AccountModal
             });
             dialog(st, t("Delete passkey"), vec![desc(t("Are you sure you want to delete this passkey?"), p)], Some((t("Delete passkey"), true, go)), p, acc)
         }
+        AccountModal::EncoderControls
+        | AccountModal::ReverseImageSearch
+        | AccountModal::RisEngine(_)
+        | AccountModal::RisRemove(_) => return None,
         AccountModal::RecoveryKitReplace | AccountModal::RecoveryKit => return super::recovery_kit::modal(store, st, m, p, acc),
         other => return super::privacy::modal(store, st, other, p, acc),
     })

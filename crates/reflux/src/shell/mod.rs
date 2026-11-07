@@ -697,6 +697,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(switcher::view(store, st, p, acc));
     layer.extend(upload::notice_modal(st, p, acc));
     layer.extend(lightbox::view(st, p, acc));
+    layer.extend(attachments::delete_modal(st, p, acc));
     layer.extend(links::modal(st, p, acc));
     layer.extend(debug::modal(store, st, p, acc));
     call::modals(store, st, p, acc, &mut layer);

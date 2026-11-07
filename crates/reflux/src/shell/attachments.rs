@@ -49,6 +49,8 @@ pub struct MediaUi {
     pub link_warning: Option<(String, bool)>,
     /// The user's `trusted_domains`, mirrored each frame for handlers.
     pub trusted: Vec<String>,
+    /// The attachment waiting on "Delete attachment": (channel, message, attachment).
+    pub confirm_delete: Option<(Snowflake, Snowflake, Snowflake)>,
 }
 
 // ---- Sensitive media ----------------------------------------------------------------------------
@@ -266,6 +268,8 @@ pub struct Tile<'a> {
     /// The message attachment it shows (channel, message, attachment): the hover toolbar's
     /// Download and Add to saved media.
     pub saved: Option<(Snowflake, Snowflake, &'a Attachment)>,
+    /// The hover toolbar offers Delete ([`can_delete_attachment`]).
+    pub deletable: bool,
 }
 
 /// The message's media attachments (minus blocked ones) as one picture or the mosaic, then
@@ -280,6 +284,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
     let unspoil = store.settings.render_spoilers == 2 && store.permissions(m.channel_id).contains(reflux_model::Permissions::MANAGE_MESSAGES);
     let items: Rc<Vec<Item>> = Rc::new(media.iter().map(|a| item(a)).collect());
     let hovered = st.hover_msg == Some(m.id);
+    let deletable = can_delete_attachment(store, m.author.id, m.channel_id);
     let mut out = Vec::new();
     let tile = |i: usize, size: (f32, f32)| {
         let a = media[i];
@@ -294,6 +299,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             spoiler: is_spoiler(a) && !unspoil,
             mature: flagged(a.nsfw, a.flags) && level == 1,
             saved: Some((m.channel_id, m.id, a)),
+            deletable,
         };
         let (items, msg) = (items.clone(), (m.channel_id, m.id));
         media_tile(store, st, t, hovered, media.len() > 1, p, acc, Rc::new(move |s: &mut S| lightbox::open(acc(s), (*items).clone(), i, Some(msg))))
@@ -442,11 +448,81 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     tile.on_press(move |s: &mut S| open(s))
 }
 
-/// `MediaContainer`'s hover toolbar: Download, then the saved media star (`useMediaFavorite`:
-/// a saved one is removed at once, otherwise `AddFavoriteMemeModal` opens). Hidden on media
-/// under 110×50 (`shouldShowOverlays`).
-// shortcut: no Delete button (it needs Fluxer's attachment-delete confirmation flow).
-fn media_tools<S: 'static>(st: &ShellState, t: &Tile, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+/// `canDeleteAttachmentUtil`: your own message, outside communities that disabled sending.
+pub fn can_delete_attachment(store: &Store, m_author: Snowflake, channel: Snowflake) -> bool {
+    let guild = store
+        .channels
+        .get(&channel)
+        .and_then(|c| c.guild_id)
+        .and_then(|g| store.guilds.get(&g))
+        .and_then(|g| g.info.as_ref());
+    m_author == store.my_id()
+        && !guild.is_some_and(|g| {
+            g.disabled_operations
+                .contains(reflux_model::DisabledOperations::SEND_MESSAGE)
+        })
+}
+
+/// `useDeleteAttachment`: Shift deletes at once, otherwise the confirmation opens.
+fn request_delete(st: &mut ShellState, target: (Snowflake, Snowflake, Snowflake)) {
+    if st.shift_held {
+        delete_attachment(st, target);
+    } else {
+        st.media_ui.confirm_delete = Some(target);
+    }
+}
+
+fn delete_attachment(st: &mut ShellState, (c, m, a): (Snowflake, Snowflake, Snowflake)) {
+    st.media_ui.confirm_delete = None;
+    super::expr::send(
+        st,
+        reqwest::Method::DELETE,
+        format!("/channels/{c}/messages/{m}/attachments/{a}"),
+        None,
+    );
+}
+
+/// The "Delete attachment" `ConfirmModal`.
+pub fn delete_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    use crate::ui::{Button, ButtonVariant, Modal};
+    let target = st.media_ui.confirm_delete?;
+    let close = move |s: &mut S| acc(s).media_ui.confirm_delete = None;
+    let body = text(crate::i18n::t("Are you sure you want to delete this attachment? This action cannot be undone and will remove the attachment from this message."))
+        .font(font(14.0, 400.0).lh(20.0))
+        .color(p.text_primary_muted)
+        .wrap();
+    let footer = row()
+        .gap(8.0)
+        .child(
+            Button::new(crate::i18n::t("Cancel"))
+                .variant(ButtonVariant::Secondary)
+                .on_press(close)
+                .el(p),
+        )
+        .child(
+            Button::new(crate::i18n::t("Delete attachment"))
+                .variant(ButtonVariant::Danger)
+                .key("attachment-delete")
+                .on_press(move |s: &mut S| delete_attachment(acc(s), target))
+                .el(p),
+        );
+    Some(
+        Modal::new(crate::i18n::t("Delete attachment"), close)
+            .body(body)
+            .footer(footer)
+            .el(p),
+    )
+}
+
+/// `MediaContainer`'s hover toolbar: Delete (own messages), Download, then the saved media star
+/// (`useMediaFavorite`: a saved one is removed at once, otherwise `AddFavoriteMemeModal` opens).
+/// Hidden on media under 110×50 (`shouldShowOverlays`).
+fn media_tools<S: 'static>(
+    st: &ShellState,
+    t: &Tile,
+    p: &Palette,
+    acc: ShellAccess<S>,
+) -> Option<El> {
     use super::expr::{Fetched, Tool, hover_tools, tool};
     let (channel, message, a) = t.saved?;
     if t.size.0 < 110.0 || t.size.1 < 50.0 {
@@ -470,7 +546,22 @@ fn media_tools<S: 'static>(st: &ShellState, t: &Tile, p: &Palette, acc: ShellAcc
         }),
         None => tool(&icons::STAR_BOLD, crate::i18n::t("Add to favorites"), 20.0, Tool::Plain, p, move |s: &mut S, _: &mut Tx| crate::social::open_add_meme(acc(s), channel, message, &att)),
     };
-    Some(hover_tools(vec![download, star], p))
+    let mut tools = vec![download, star];
+    if t.deletable {
+        let target = (channel, message, a.id);
+        tools.insert(
+            0,
+            tool(
+                &icons::TRASH_BOLD,
+                crate::i18n::t("Delete"),
+                20.0,
+                Tool::Danger,
+                p,
+                move |s: &mut S, _: &mut Tx| request_delete(acc(s), target),
+            ),
+        );
+    }
+    Some(hover_tools(tools, p))
 }
 
 /// Starts `clip` as the one clip playing inline (pausing the last).

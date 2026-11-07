@@ -1,6 +1,6 @@
 //! The Voice & video tab (`VoiceVideoTab.tsx` = `UserVoiceTab` + `UserVideoTab`): devices,
 //! volume, voice processing (profiles, push-to-talk, activity threshold), mic test, voice
-//! channel display, camera and screen share quality, encoder preference.
+//! channel display, camera and screen share quality.
 
 use reflux_model::Snowflake;
 use rune::{El, col, el, row, text};
@@ -261,24 +261,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
         .child(desc(t("With Automatic, the bitrate follows your resolution and frame rate. Higher values keep fast motion sharper and use more upload bandwidth."), p));
     out = out.child(section(t("Screen share"), share, false, p));
 
-    // ---- Encoder
-    let encoders = [
-        ("auto", "Automatic", Some("Use a hardware encoder when one is available.")),
-        ("nvenc", "NVIDIA (NVENC)", None),
-        ("vaapi", "VA-API", None),
-        ("software", "Software", Some("Encode on the CPU. Slower, but works everywhere.")),
-    ];
-    out = out.child(section(
-        "Video encoder",
-        RadioGroup::new(&encoders, Some(set_.encoder.as_str()))
-            .on_change(move |s: &mut S, val| {
-                let val = val.to_string();
-                set(acc, move |st: &mut Settings| st.encoder = val.clone())(s)
-            })
-            .el(p),
-        false,
-        p,
-    ));
+    // The encoder path lives in Advanced (`ScreenShareEncoderControls`), like Fluxer.
     out
 }
 

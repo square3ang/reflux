@@ -59,6 +59,8 @@ pub struct Prefs {
     pub action_bar_shift_expand: bool,
     pub double_click_actions: bool,
     pub hide_blocked: bool,
+    /// `AdvancedSettings.expressionCloneShortcutsEnabled`: "Clone to…" on emoji and stickers.
+    pub clone_shortcuts: bool,
     /// `ChatInputSettings.convertEmoticons`.
     pub convert_emoticons: bool,
     /// `Notification.unreadMessageBadgeEnabled` (dock / taskbar / title badge).
@@ -133,6 +135,7 @@ impl Default for Prefs {
             action_bar_shift_expand: true,
             double_click_actions: false,
             hide_blocked: false,
+            clone_shortcuts: false,
             convert_emoticons: false,
             unread_badge: true,
             sounds_off: BTreeMap::new(),

@@ -139,8 +139,13 @@ pub struct Settings {
     pub screen_fps: u32,
     /// Bits/s, `None` = automatic.
     pub screen_bitrate: Option<u64>,
-    /// `auto`, `nvenc`, `vaapi` or `software`.
+    /// `screenShareEncoderMode`: `auto`, `hardware` or `software` (older settings may hold
+    /// `nvenc` / `vaapi`, which also pick that factory first).
     pub encoder: String,
+    /// `screenShareContentHint`: `auto`, `motion`, `detail` or `text`.
+    pub screen_content_hint: String,
+    /// `screenShareScalabilityMode`: `auto`, `single_layer` or `temporal`.
+    pub screen_svc: String,
     /// `ParticipantVolume`: per-user volume (0..200 %).
     pub user_volumes: HashMap<u64, f32>,
     /// `StreamAudioPrefs`: per-streamer volume (0..200 %) and mutes.
@@ -177,6 +182,8 @@ impl Default for Settings {
             screen_fps: 30,
             screen_bitrate: None,
             encoder: "auto".into(),
+            screen_content_hint: "text".into(),
+            screen_svc: "auto".into(),
             user_volumes: HashMap::new(),
             stream_volumes: HashMap::new(),
             stream_mutes: HashSet::new(),
@@ -228,7 +235,25 @@ impl Settings {
     }
 
     pub fn screen_quality(&self) -> reflux_voice::ScreenQuality {
-        reflux_voice::ScreenQuality { fps: self.screen_fps, max_height: self.screen_height, bitrate: self.screen_bitrate }
+        use reflux_voice::{ContentHint, Svc};
+        let content_hint = match self.screen_content_hint.as_str() {
+            "auto" => ContentHint::Auto,
+            "motion" => ContentHint::Motion,
+            "detail" => ContentHint::Detail,
+            _ => ContentHint::Text,
+        };
+        let svc = match self.screen_svc.as_str() {
+            "single_layer" => Svc::SingleLayer,
+            "temporal" => Svc::Temporal,
+            _ => Svc::Auto,
+        };
+        reflux_voice::ScreenQuality {
+            fps: self.screen_fps,
+            max_height: self.screen_height,
+            bitrate: self.screen_bitrate,
+            content_hint,
+            svc,
+        }
     }
 }
 

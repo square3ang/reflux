@@ -16,7 +16,7 @@ use crate::i18n::t;
 use crate::icons;
 use crate::shell::{Intent, ShellAccess, ShellState};
 use crate::theme::{Palette, font};
-use crate::ui::{ButtonVariant, Switch};
+use crate::ui::{ButtonSize, ButtonVariant, Modal, ModalSize, Select, Switch};
 
 /// `ADVANCED_SETTINGS_TAG_ORDER` with `ADVANCED_SETTINGS_TAG_LABELS`.
 const CATEGORIES: &[(&str, &str)] = &[
@@ -91,9 +91,60 @@ fn look_switch<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, la
 /// `AdvancedSettingControl` for the items Reflux has.
 fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     Some(match id {
-        "advanced-hide-blocked-messages" => look_switch(st, p, acc, None, false, |p| p.look.hide_blocked, |p, v| p.look.hide_blocked = v),
-        "chat-settings-double-click-message-actions" => look_switch(st, p, acc, None, false, |p| p.look.double_click_actions, |p, v| p.look.double_click_actions = v),
-        "chat-settings-convert-emoticons" => look_switch(st, p, acc, None, false, |p| p.look.convert_emoticons, |p, v| p.look.convert_emoticons = v),
+        "advanced-expression-clone-shortcuts" => look_switch(
+            st,
+            p,
+            acc,
+            None,
+            false,
+            |p| p.look.clone_shortcuts,
+            |p, v| p.look.clone_shortcuts = v,
+        ),
+        "voice-video-screen-share-encoder-controls" => crate::ui::Button::new(t("Configure"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Compact)
+            .icon(&icons::GEAR_BOLD)
+            .key("advanced-encoder-configure")
+            .on_press(move |s: &mut S| {
+                acc(s).open_account_modal(super::AccountModal::EncoderControls)
+            })
+            .el(p),
+        "chat-settings-reverse-image-search" => crate::ui::Button::new(t("Configure"))
+            .variant(ButtonVariant::Secondary)
+            .size(ButtonSize::Compact)
+            .icon(&icons::GEAR_BOLD)
+            .key("advanced-ris-configure")
+            .on_press(move |s: &mut S| {
+                acc(s).open_account_modal(super::AccountModal::ReverseImageSearch)
+            })
+            .el(p),
+        "advanced-hide-blocked-messages" => look_switch(
+            st,
+            p,
+            acc,
+            None,
+            false,
+            |p| p.look.hide_blocked,
+            |p, v| p.look.hide_blocked = v,
+        ),
+        "chat-settings-double-click-message-actions" => look_switch(
+            st,
+            p,
+            acc,
+            None,
+            false,
+            |p| p.look.double_click_actions,
+            |p, v| p.look.double_click_actions = v,
+        ),
+        "chat-settings-convert-emoticons" => look_switch(
+            st,
+            p,
+            acc,
+            None,
+            false,
+            |p| p.look.convert_emoticons,
+            |p, v| p.look.convert_emoticons = v,
+        ),
         // The `message-action-bar` switch group.
         "chat-settings-message-action-bar" => {
             let off = !st.prefs.look.action_bar;
@@ -168,4 +219,115 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
         first = false;
     }
     out
+}
+
+/// `ScreenShareEncoderControlsModal`: encoder path, SVC mode and content hint
+/// (`CompactComboboxRow`s), saved with the voice settings and used by the next screen share.
+// shortcut: Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+// probe, which isn't exposed; the plain description always shows.
+pub fn encoder_modal<S: 'static>(
+    st: &ShellState,
+    p: &Palette,
+    acc: ShellAccess<S>,
+    layer: &mut Vec<El>,
+) -> El {
+    let v = &st.voice.settings;
+    let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
+    let encoder = match v.encoder.as_str() {
+        "software" => "software",
+        "auto" => "auto",
+        _ => "hardware",
+    };
+    let mut popups = Vec::new();
+    let mut combo = |id: &'static str,
+                     label: &str,
+                     desc: &str,
+                     options: &[(&str, &str)],
+                     value: &str,
+                     width: f32,
+                     put: fn(&mut crate::shell::voice::Settings, String)| {
+        let select = Select::new(id, options, Some(value))
+            .compact()
+            .width(width)
+            .on_choose(move |s: &mut S, val| {
+                let sh = acc(s);
+                put(&mut sh.voice.settings, val.to_string());
+                sh.intents
+                    .push(Intent::Voice(crate::shell::voice::Op::Settings));
+            })
+            .el(&st.popups, pops, p, &mut popups);
+        let words = col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(4.0)
+            .child(
+                text(t(label).to_string())
+                    .font(font(14.0, 500.0).lh(20.0))
+                    .color(p.text_primary),
+            )
+            .child(
+                text(t(desc).to_string())
+                    .font(font(13.0, 400.0).lh(20.0))
+                    .color(p.text_primary_muted)
+                    .wrap(),
+            );
+        row()
+            .w_full()
+            .min_h(44.0)
+            .py(4.0)
+            .gap(16.0)
+            .center_y()
+            .child(words)
+            .child(select)
+    };
+    let body = col()
+        .w_full()
+        .gap(12.0)
+        .child(combo(
+            "advanced-encoder-path",
+            "Encoder path",
+            "Encoder preference for new screen shares.",
+            &[
+                ("auto", "Automatic"),
+                ("hardware", "Prefer hardware"),
+                ("software", "Prefer software"),
+            ],
+            encoder,
+            160.0,
+            |s, v| s.encoder = v,
+        ))
+        .child(combo(
+            "advanced-svc-mode",
+            "SVC mode",
+            "Layering for AV1 and VP9 when available.",
+            &[
+                ("auto", "Automatic"),
+                ("single_layer", "Single layer"),
+                ("temporal", "Temporal layers"),
+            ],
+            &v.screen_svc,
+            224.0,
+            |s, v| s.screen_svc = v,
+        ))
+        .child(combo(
+            "advanced-content-hint",
+            "Content hint",
+            "Used in Custom mode. The Gaming and Screen share presets set their own hint.",
+            &[
+                ("auto", "Automatic"),
+                ("motion", "Motion"),
+                ("detail", "Detail"),
+                ("text", "Text"),
+            ],
+            &v.screen_content_hint,
+            128.0,
+            |s, v| s.screen_content_hint = v,
+        ));
+    layer.append(&mut popups);
+    Modal::new(t("Screen share encoder controls"), move |s: &mut S| {
+        acc(s).close_account_modals()
+    })
+    .size(ModalSize::Medium)
+    .body(body)
+    .el(p)
 }

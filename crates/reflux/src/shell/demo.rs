@@ -505,6 +505,28 @@ fn account_scene(sh: &mut ShellState, scene: &str) {
                 sh.form.data.insert("m.rk_ack".into(), json!(true));
             }
         }
+        "ris" | "ris-add" => {
+            sh.open_settings(Some("advanced_settings"));
+            sh.prefs.ris_custom.push((
+                "custom_1".into(),
+                "Kagi".into(),
+                "https://kagi.com/images?q={url}".into(),
+            ));
+            sh.prefs
+                .ris_enabled
+                .extend(["bing".to_string(), "custom_1".to_string()]);
+            if scene == "ris" {
+                sh.open_account_modal(crate::settings::AccountModal::ReverseImageSearch);
+            } else {
+                sh.open_account_modal(crate::settings::AccountModal::RisEngine(None));
+                sh.form.error =
+                    Some(crate::i18n::t("URL pattern must contain the {url} placeholder.").into());
+            }
+        }
+        "encoder" => {
+            sh.open_settings(Some("advanced_settings"));
+            sh.open_account_modal(crate::settings::AccountModal::EncoderControls);
+        }
         "bluesky" => {
             sh.bluesky = true;
             sh.open_settings(Some("linked_accounts"));
@@ -823,7 +845,13 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
     for (k, n) in [("unicode:thumbsup", 5), ("unicode:joy", 3), (&*format!("custom:{HQ}:79"), 2), ("unicode:tada", 1)] {
         x.emoji_usage.insert(k.to_string(), super::expr::Usage { count: n, last_used: st.now_ms });
     }
-    x.sticker_usage.insert("sticker:88".into(), super::expr::Usage { count: 2, last_used: st.now_ms });
+    x.sticker_usage.insert(
+        format!("sticker:{HQ}:88"),
+        super::expr::Usage {
+            count: 2,
+            last_used: st.now_ms,
+        },
+    );
     super::expr::toggle(st, Snowflake(GENERAL), tab);
     st.intents.clear();
     let gif = |i: u32, w: u32, h: u32| {
@@ -990,6 +1018,8 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
                 i.features.push("CLONE_EMOJI_ENABLED".into());
             }
             if scene == "picker-clone" {
+                st.prefs.look.clone_shortcuts = true;
+                crate::look::set(&st.prefs.look);
                 st.expr.menu.sub = Some("expr-clone".into());
             } else {
                 st.expr.menu.close();
@@ -1020,6 +1050,8 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "expr-info" | "sticker-info" | "expr-info-clone" | "expr-info-join" | "expr-join" => {
             use super::expr::Fetched;
+            st.prefs.look.clone_shortcuts = true;
+            crate::look::set(&st.prefs.look);
             if scene == "expr-info-join" || scene == "expr-join" {
                 // A foreign emoji from a discoverable community.
                 let linus = ids[ids.len() - 2];
@@ -1087,6 +1119,24 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     store.settings.render_spoilers = 1;
     (store.settings.render_embeds, store.settings.inline_embed_media, store.settings.inline_attachment_media, store.settings.gif_auto_play) = (true, true, true, true);
     match scene {
+        // Own media hovered (the toolbar's Delete), then its confirmation.
+        "delete" | "delete-confirm" => {
+            msgs.push(message(
+                t(1),
+                0,
+                ME,
+                "",
+                json!({"attachments": [att(9301, "mine.png", "image/png", 1200, 800, json!({}))]}),
+            ));
+            st.hover_msg = Some(Snowflake::from_timestamp_ms(t(1)));
+            if scene == "delete-confirm" {
+                st.media_ui.confirm_delete = Some((
+                    Snowflake(GENERAL),
+                    Snowflake::from_timestamp_ms(t(1)),
+                    Snowflake(9301),
+                ));
+            }
+        }
         "mosaic" | "viewer" => {
             msgs.push(message(t(1), 0, 1001, "Three from the offsite:", json!({"attachments": [
                 att(9101, "a.png", "image/png", 1200, 800, json!({})), att(9102, "b.png", "image/png", 800, 800, json!({})),

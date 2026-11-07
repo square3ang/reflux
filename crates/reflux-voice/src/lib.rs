@@ -306,6 +306,8 @@ impl Call {
             video_encoder: encoder_backend(),
             simulcast: false,
             video_encoding: quality.bitrate.map(|b| livekit::options::VideoEncoding { max_bitrate: b, max_framerate: quality.fps as f64 }),
+            scalability_mode: quality.scalability_mode(VideoCodec::H264),
+            degradation_preference: Some(quality.degradation()),
             ..Default::default()
         };
         let sid = match self.publish(LocalTrack::Video(track), opts, (width, height)).await {
@@ -470,22 +472,59 @@ fn encoder_backend() -> VideoEncoderBackend {
     if SOFTWARE_ENCODE.load(Ordering::Relaxed) { VideoEncoderBackend::Software } else { VideoEncoderBackend::Hardware }
 }
 
+/// `ScreenShareContentHint` (Fluxer's default is `Text`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContentHint {
+    Auto,
+    Motion,
+    Detail,
+    #[default]
+    Text,
+}
+
+/// `ScreenShareScalabilityModePreference`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Svc {
+    #[default]
+    Auto,
+    SingleLayer,
+    Temporal,
+}
+
 /// Screen share quality (`StreamSettings`): frame rate, the tallest frame sent (`None` =
-/// source size) and a bitrate cap in bits/s (`None` = LiveKit's choice).
+/// source size), a bitrate cap in bits/s (`None` = LiveKit's choice), and Advanced's content
+/// hint and SVC mode.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenQuality {
     pub fps: u32,
     pub max_height: Option<u32>,
     pub bitrate: Option<u64>,
+    pub content_hint: ContentHint,
+    pub svc: Svc,
 }
 
 impl Default for ScreenQuality {
     fn default() -> Self {
-        Self { fps: 30, max_height: Some(720), bitrate: None }
+        Self { fps: 30, max_height: Some(720), bitrate: None, content_hint: ContentHint::default(), svc: Svc::default() }
     }
 }
 
 impl ScreenQuality {
+    /// `resolveScreenShareDegradationPreference` for a display share in Custom mode (Reflux has
+    /// no Gaming / Screen share presets). libwebrtc's native track has no content hint setter,
+    /// so the hint acts through this; "motion" is dropped for display shares
+    /// (`resolveScreenShareContentHint`) and counts as no hint.
+    pub fn degradation(&self) -> livekit::options::DegradationPreference {
+        use livekit::options::DegradationPreference::*;
+        let detailed = matches!(self.content_hint, ContentHint::Detail | ContentHint::Text);
+        if self.max_height.is_none() || detailed || self.bitrate.is_some_and(|b| b < 500_000) { MaintainResolution } else { MaintainFramerate }
+    }
+
+    /// `resolveScreenShareLayering`: SVC applies to AV1 and VP9 only.
+    pub fn scalability_mode(&self, codec: VideoCodec) -> Option<String> {
+        matches!(codec, VideoCodec::AV1 | VideoCodec::VP9).then(|| if self.svc == Svc::SingleLayer { "L1T1" } else { "L1T3" }.to_string())
+    }
+
     /// The frame size sent for a `w`×`h` capture: scaled down to `max_height`, even sides.
     pub fn fit(&self, w: u32, h: u32) -> (u32, u32) {
         let (w, h) = match self.max_height {
@@ -707,9 +746,24 @@ mod tests {
 
     #[test]
     fn screen_quality_fits() {
-        let q = super::ScreenQuality { fps: 30, max_height: Some(720), bitrate: None };
+        let q = super::ScreenQuality::default();
         assert_eq!(q.fit(2560, 1440), (1280, 720));
         assert_eq!(q.fit(1280, 600), (1280, 600));
         assert_eq!(super::ScreenQuality { max_height: None, ..q }.fit(1921, 1081), (1920, 1080));
+    }
+
+    #[test]
+    fn content_hint_and_svc_follow_fluxer() {
+        use super::{ContentHint, ScreenQuality, Svc};
+        use livekit::options::{DegradationPreference::*, VideoCodec};
+        let q = ScreenQuality { content_hint: ContentHint::Motion, ..Default::default() };
+        assert_eq!(q.degradation(), MaintainFramerate);
+        assert_eq!(ScreenQuality { content_hint: ContentHint::Auto, ..q }.degradation(), MaintainFramerate);
+        assert_eq!(ScreenQuality { content_hint: ContentHint::Text, ..q }.degradation(), MaintainResolution);
+        assert_eq!(ScreenQuality { max_height: None, ..q }.degradation(), MaintainResolution, "source");
+        assert_eq!(ScreenQuality { bitrate: Some(400_000), ..q }.degradation(), MaintainResolution, "low bitrate");
+        assert_eq!(q.scalability_mode(VideoCodec::H264), None);
+        assert_eq!(q.scalability_mode(VideoCodec::VP9).as_deref(), Some("L1T3"));
+        assert_eq!(ScreenQuality { svc: Svc::SingleLayer, ..q }.scalability_mode(VideoCodec::AV1).as_deref(), Some("L1T1"));
     }
 }

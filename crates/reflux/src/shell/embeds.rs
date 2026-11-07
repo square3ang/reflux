@@ -92,6 +92,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, msg: &Message, key: String, 
         spoiler: false,
         mature: flagged(m) && level == 1,
         saved: None,
+        deletable: false,
     };
     let (it, at) = (item(m, video), (msg.channel_id, msg.id));
     let hovered = st.hover_msg == Some(msg.id);

@@ -3,18 +3,17 @@
 //! reactions (`EmojiPickerPopout`). Also who reacted (`ReactionTooltip`,
 //! `MessageReactionsModal`) and the expression info card (`ExpressionInfoPopout`).
 //!
-//! Frecency, favorites, collapsed categories and the skin tone live in
-//! `~/.config/reflux/expressions.json`.
-// shortcut: Fluxer syncs these through the user settings proto (`makeSyncedField`); they're
-// local here until the proto is ported.
+//! Frecency, favorites, collapsed categories, the skin tone and favorite GIFs live in
+//! `~/.config/reflux/expressions.json` and sync through `synced_preferences` ([`sync`]).
 
 mod emoji;
 pub mod gif;
-mod image_search;
+pub mod image_search;
 mod info;
 mod memes;
 mod reactions;
 mod sticker;
+mod sync;
 pub use sticker::pending as pending_sticker;
 
 use std::collections::{BTreeMap, HashMap};
@@ -218,6 +217,10 @@ pub struct Expr {
     pub confirm_meme: Option<(String, String)>,
     /// The reverse image search provider picker: (image URL, engine selected).
     pub image_search: Option<(String, String)>,
+    /// The `synced_preferences` snapshot last seen or sent.
+    pub synced: Option<sync::Seen>,
+    /// A new reverse image search default waiting to be sent ([`image_search::set_default`]).
+    pub ris_default: Option<Option<String>>,
 }
 
 
@@ -355,7 +358,7 @@ fn close(st: &mut ShellState) {
 
 /// Once a frame: the GIF search debounce and two-step category jumps.
 pub fn poll(store: &Store, st: &mut ShellState, tx: &mut Tx) -> bool {
-    let mut changed = reactions::poll(store, st);
+    let mut changed = reactions::poll(store, st) | sync::poll(store, st, tx);
     if let Some((_, key)) = st.expr.jump_again.take() {
         tx.scroll_key_to(key, 0.0);
         changed = true;
@@ -474,12 +477,12 @@ pub enum Item {
 }
 
 impl Item {
-    /// `getEmojiUsageKey` (and the sticker store's `sticker:{id}`).
+    /// `getEmojiUsageKey`, and `sticker:` + the sticker store's `getStickerKey` (`{guild}:{id}`).
     pub fn key(&self) -> String {
         match self {
             Item::Unicode(e) => format!("unicode:{}", e.name),
             Item::Emoji { guild, id, .. } => format!("custom:{guild}:{id}"),
-            Item::Sticker { id, .. } => format!("sticker:{id}"),
+            Item::Sticker { guild, id, .. } => format!("sticker:{guild}:{id}"),
         }
     }
     fn guild(&self) -> Option<Snowflake> {
@@ -895,10 +898,16 @@ fn with_menu<S: 'static>(e: El, item: &Item, acc: ShellAccess<S>) -> El {
 
 /// `ExpressionContextMenuItems`: Favorite, Copy ID, "Clone … to…", then the image's Copy URL,
 /// Open in browser and reverse image search.
-// shortcut: Clone shows without Fluxer's Advanced "Emoji and sticker cloning shortcuts" switch
-// (off there by default); that switch belongs to the Advanced tab.
-fn menu_layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
-    let Some(item) = &st.expr.menu_item else { return };
+fn menu_layer<S: 'static>(
+    store: &Store,
+    st: &ShellState,
+    p: &Palette,
+    acc: ShellAccess<S>,
+    layer: &mut Vec<El>,
+) {
+    let Some(item) = &st.expr.menu_item else {
+        return;
+    };
     let sticker = matches!(item, Item::Sticker { .. });
     let key = item.key();
     let fav = st.expr.is_favorite(&key);
@@ -925,12 +934,13 @@ fn menu_layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
             close(s);
         }));
     }
-    if let (Some(id), Some(g)) = (id, item.guild()) {
+    if let (Some(id), Some(g), true) = (id, item.guild(), crate::look::with(|l| l.clone_shortcuts))
+    {
         m = clone_entries(store, st, item, id, g, acc, m);
     }
     if let Some(url) = url {
         let u = url.clone();
-        let search = image_search::entries(st, &url, acc, close);
+        let search = image_search::entries(store, st, &url, acc, close);
         m = m
             .separator()
             .item(crate::ui::MenuItem::new("expr-copy-url", label("Copy emoji URL", "Copy sticker URL")).icon(&icons::LINK).on_select_tx(move |s: &mut S, tx: &mut Tx| {

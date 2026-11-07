@@ -246,7 +246,11 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
         c = c.child(section(from, body));
     }
     if let (Some(id), Some(g)) = (i.id, guild) {
-        let key = if i.sticker { format!("sticker:{id}") } else { format!("custom:{g}:{id}") };
+        let key = if i.sticker {
+            format!("sticker:{g}:{id}")
+        } else {
+            format!("custom:{g}:{id}")
+        };
         let fav = st.expr.is_favorite(&key);
         let mut actions = col().w_full().gap(2.0).child(action(
             if fav { &icons::STAR_FILL } else { &icons::STAR },
@@ -256,7 +260,8 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
         ));
         // `CloneExpressionMenuItem`: communities you manage expressions in, other than its own,
         // full ones disabled.
-        if allow_cloning(st, i) || member {
+        // Only with Advanced's "Emoji and sticker cloning shortcuts" on.
+        if crate::look::with(|l| l.clone_shortcuts) && (allow_cloning(st, i) || member) {
             let mut targets: Vec<(Snowflake, String)> = store
                 .guilds
                 .iter()

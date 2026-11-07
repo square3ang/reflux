@@ -88,8 +88,11 @@ pub struct Prefs {
     /// Media player volume (0..1) and mute (`fluxer:media:volume` / `:muted`), shared by players.
     pub media_volume: f32,
     pub media_muted: bool,
-    /// The reverse image search engine picked (`searchEngines.reverseImageSearchEngineId`).
-    pub reverse_image_engine: Option<String>,
+    /// `ReverseImageSearch.engines` (kept on this device like Fluxer's): the enabled engine ids,
+    /// and the custom engines as (id, name, URL template with `{url}`). The default is synced
+    /// (`shell::expr::image_search`).
+    pub ris_enabled: Vec<String>,
+    pub ris_custom: Vec<(String, String, String)>,
 }
 
 impl Default for Prefs {
@@ -123,7 +126,8 @@ impl Default for Prefs {
             voice_message_rate: 1.0,
             media_volume: 1.0,
             media_muted: false,
-            reverse_image_engine: None,
+            ris_enabled: vec!["google_lens".into()],
+            ris_custom: Vec::new(),
         }
     }
 }
