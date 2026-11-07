@@ -40,7 +40,8 @@ pub enum K {
     Up,
     Down,
     Escape,
-    /// With Ctrl (Cmd on macOS): `Key::Command`.
+    /// A character: `Key::Command` with Ctrl (Cmd on macOS), else typed (`Key::Text`), which
+    /// reaches the keybinds only when no text field takes it.
     Char(char),
 }
 
@@ -108,10 +109,16 @@ pub const BINDS: &[Bind] = &[
 pub const SECTIONS: &[(&str, &str)] =
     &[("defaults", "Defaults"), ("navigation", "Navigation"), ("chat", "Chat"), ("voice_and_video", "Voice and video")];
 
+/// A single typed character, lowercased (Shift is in the mods); not a space.
+fn typed(t: &str) -> Option<char> {
+    let mut cs = t.chars();
+    let ch = cs.next().filter(|c| !c.is_whitespace() && cs.next().is_none())?;
+    Some(ch.to_lowercase().next().unwrap_or(ch))
+}
+
 impl Combo {
-    /// What a recorder makes of a key: Ctrl (Cmd) + a character, or an arrow / Escape with any
-    /// modifiers.
-    // shortcut: plain and Alt-only character combos aren't recordable (they'd type).
+    /// What a recorder makes of a key: a character (with Ctrl / Cmd, Alt, Shift or none), or an
+    /// arrow / Escape with any modifiers.
     pub fn from_event(k: &KeyEvent) -> Option<Combo> {
         let m = &k.mods;
         let key = match &k.key {
@@ -119,9 +126,10 @@ impl Combo {
             Key::Down => Down,
             Key::Escape => Escape,
             Key::Command(ch) => Char(ch.to_ascii_lowercase()),
+            Key::Text(t) => Char(typed(t)?),
             _ => return None,
         };
-        Some(c(key, m.cmd || matches!(key, Char(_)), m.alt, m.shift))
+        Some(c(key, m.cmd || matches!(k.key, Key::Command(_)), m.alt, m.shift))
     }
 
     pub fn matches(&self, k: &KeyEvent) -> bool {
@@ -129,6 +137,7 @@ impl Combo {
         let key = match (&k.key, self.key) {
             (Key::Up, Up) | (Key::Down, Down) | (Key::Escape, Escape) => true,
             (Key::Command(ch), Char(want)) => ch.eq_ignore_ascii_case(&want),
+            (Key::Text(t), Char(want)) => typed(t) == Some(want),
             _ => false,
         };
         // Ctrl++ (Shift+= on most layouts) zooms in too (`ZOOM_IN_KEYS`).
@@ -349,5 +358,11 @@ mod tests {
         let zoom_in = BINDS.iter().find(|b| b.action == ZoomIn).unwrap().combo;
         assert!(zoom_in.matches(&ev(Key::Command('='), true, false, false)));
         assert!(zoom_in.matches(&ev(Key::Command('+'), true, false, true)), "Ctrl+Shift+= types +");
+        let plain = Combo::from_event(&ev(Key::Text("G".into()), false, false, true)).unwrap();
+        assert_eq!(plain, c(Char('g'), false, false, true), "a typed character records without Ctrl");
+        assert!(plain.matches(&ev(Key::Text("G".into()), false, false, true)));
+        assert!(!plain.matches(&ev(Key::Command('g'), true, false, true)));
+        assert_eq!(Combo::from_event(&ev(Key::Text(" ".into()), false, false, false)), None);
+        assert_eq!(Combo::from_event(&ev(Key::Text("ab".into()), false, false, false)), None);
     }
 }

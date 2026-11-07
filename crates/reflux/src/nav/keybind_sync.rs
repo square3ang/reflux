@@ -71,7 +71,7 @@ fn key_name(k: K) -> String {
     }
 }
 
-/// A `KeybindCombo` this client can record: Ctrl/Cmd + a character, or an arrow / Escape.
+/// A `KeybindCombo` this client can record: a character (any modifiers), or an arrow / Escape.
 fn combo_of(fs: &[Field]) -> Option<Combo> {
     let get = |n: u32| fs.iter().rev().find(|f| f.num == n);
     let flag = |n: u32| get(n).is_some_and(|f| synced::uint_of(f) != 0);
@@ -84,7 +84,7 @@ fn combo_of(fs: &[Field]) -> Option<Combo> {
         "ArrowUp" => K::Up,
         "ArrowDown" => K::Down,
         "Escape" => K::Escape,
-        s if s.chars().count() == 1 && ctrl => K::Char(s.chars().next()?.to_ascii_lowercase()),
+        s if s.chars().count() == 1 => K::Char(s.chars().next()?.to_ascii_lowercase()),
         _ => return None,
     };
     Some(Combo { key, ctrl, alt: flag(5), shift: flag(6) })
