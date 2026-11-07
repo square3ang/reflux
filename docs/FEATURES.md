@@ -3,7 +3,7 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
@@ -225,7 +225,7 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Expression info popout, favorite memes, clone expression | PARTIAL | Join from the card; clone targets listed in the card, not a submenu; slot-full checks | F/expressions/* |
 | Gifts *(low)* | PARTIAL | accept modal for gift links (chat + `fluxer://gift/`) with Claim; inventory read-only | F/gift/* |
 | Invite: friends list, accept preview, pause | DONE | | F/invite/* |
-| Discovery page | PARTIAL | results stop at the first 24 (no load-more on scroll) | DiscoveryPage.tsx |
+| Discovery page | DONE | load-more pages via `offset` | DiscoveryPage.tsx |
 | Search UI chips/suggestions, history | PARTIAL | filter + value suggestions and per-scope history done; no chips, scope menu, date pickers or keyboard nav | F/search/* |
 | Quick switcher recents | DONE | previous + unread channels (no mentions section) | QuickSwitcher.tsx |
 | Custom keybinds, cheatsheet modal, keyboard mode | DONE | | F/input/* |

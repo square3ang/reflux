@@ -1,6 +1,5 @@
 //! Explore (`DiscoveryPage`, `DiscoveryGuildCard`), the guild preview nagbar shown while
 //! visiting a community, and `InviteAcceptModal`.
-// shortcut: results stop at the first 24 (Fluxer loads more on scroll).
 
 use reflux_model::Snowflake;
 use reflux_store::Store;
@@ -54,9 +53,12 @@ const LANGUAGES: [(&str, &str); 33] = [
     ("zh-TW", "Chinese (Traditional)"),
 ];
 
-/// The search request for the current query, category and language.
-pub fn search_path(query: &str, category: Option<u8>, language: Option<&str>) -> String {
+/// The search request for the current query, category and language, from `offset`.
+pub fn search_path_from(query: &str, category: Option<u8>, language: Option<&str>, offset: usize) -> String {
     let mut p = "/discovery/guilds?limit=24".to_string();
+    if offset > 0 {
+        p.push_str(&format!("&offset={offset}"));
+    }
     let q = query.trim();
     if !q.is_empty() {
         p.push_str("&sort_by=relevance&query=");
@@ -77,6 +79,11 @@ pub fn search_path(query: &str, category: Option<u8>, language: Option<&str>) ->
     p
 }
 
+/// The first page's request.
+pub fn search_path(query: &str, category: Option<u8>, language: Option<&str>) -> String {
+    search_path_from(query, category, language, 0)
+}
+
 /// Opens Explore and runs the search.
 pub fn open(st: &mut ShellState) {
     st.social.discovery = true;
@@ -88,6 +95,14 @@ fn search(st: &mut ShellState) {
     st.social.data.remove("discovery");
     let path = search_path(&st.social.discovery_query.text, st.social.discovery_category, st.social.discovery_language);
     st.social(Method::GET, path, None, Done::Data("discovery".into()));
+}
+
+/// `DiscoveryPage`'s "load more": the next page after what the grid shows.
+fn load_more(st: &mut ShellState) {
+    let Some(v) = st.social.data.get("discovery") else { return };
+    let offset = v["guilds"].as_array().map_or(0, |g| g.len());
+    let path = search_path_from(&st.social.discovery_query.text, st.social.discovery_category, st.social.discovery_language, offset);
+    st.social(Method::GET, path, None, Done::AppendData("discovery".into()));
 }
 
 fn compact(n: u64) -> String {
@@ -174,6 +189,18 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
                         r = r.child(el().grow(1.0).w(0.0));
                     }
                     grid = grid.child(r);
+                }
+                if (guilds.len() as u64) < total {
+                    grid = grid.child(
+                        row().w_full().h(40.0).center().child(
+                            Button::new(t("Load more"))
+                                .key("discovery-more")
+                                .variant(ButtonVariant::Secondary)
+                                .size(ButtonSize::Medium)
+                                .on_press(move |s: &mut S| load_more(acc(s)))
+                                .el(p),
+                        ),
+                    );
                 }
                 grid
             }
@@ -373,6 +400,8 @@ mod tests {
     fn search_paths_encode_the_query() {
         assert_eq!(search_path("", None, None), "/discovery/guilds?limit=24");
         assert_eq!(search_path(" rust & go ", Some(4), Some("de")), "/discovery/guilds?limit=24&sort_by=relevance&query=rust%20%26%20go&category=4&language=de");
+        assert_eq!(search_path_from("rust", None, None, 24), "/discovery/guilds?limit=24&offset=24&sort_by=relevance&query=rust");
+        assert_eq!(search_path_from("", Some(2), None, 0), "/discovery/guilds?limit=24&category=2");
         assert_eq!(compact(1500), "1.5K");
         assert_eq!(compact(2000), "2K");
         assert_eq!(invite_code("https://fluxer.gg", "https://web.fluxer.app", "https://fluxer.gg/AbC-1"), Some("AbC-1".into()));

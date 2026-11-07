@@ -127,6 +127,8 @@ pub enum Done {
     Form(String),
     /// Keep the response as `social.data[key]`.
     Data(String),
+    /// Append this page's `guilds` to `social.data[key]` (Explore's next page).
+    AppendData(String),
     /// GET `path` into `form.data[key]` (a list the request changed).
     Reload(String, String),
     /// Open the guild or channel the response is, and close the dialog.
@@ -196,6 +198,16 @@ fn apply(sh: &mut ShellState, done: Done, v: Value, reload: Option<reflux_net::R
         }
         Done::Data(k) => {
             sh.social.data.insert(k, v);
+        }
+        Done::AppendData(k) => {
+            let more = v.get("guilds").and_then(|g| g.as_array()).cloned().unwrap_or_default();
+            let kept = sh.social.data.entry(k).or_insert_with(|| json!({ "guilds": [], "total": 0 }));
+            if let Some(list) = kept.get_mut("guilds").and_then(|g| g.as_array_mut()) {
+                list.extend(more);
+            }
+            if let Some(total) = v.get("total") {
+                kept["total"] = total.clone();
+            }
         }
         Done::Reload(k, _) if same => match reload {
             Some(Ok(list)) => {

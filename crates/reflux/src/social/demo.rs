@@ -173,7 +173,7 @@ pub fn scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             (st.guild, st.channel) = (None, None);
             st.social.discovery = true;
             let card = |id: u64, name: &str, d: &str, cat: u8, m: u64, o: u64| json!({"id": id.to_string(), "name": name, "description": d, "category_type": cat, "member_count": m, "online_count": o, "features": [], "verification_level": 1});
-            st.social.data.insert("discovery".into(), json!({"total": 4, "guilds": [
+            st.social.data.insert("discovery".into(), json!({"total": 52, "guilds": [
                 card(3000, "Rust Lang", "Official community for the Rust programming language. Help, news and showcase.", 4, 12840, 2310),
                 card(9001, "Pixel Art Club", "Share your sprites, get feedback and join weekly challenges.", 2, 3402, 412),
                 card(9002, "Lo-fi Lounge", "", 1, 980, 77),
