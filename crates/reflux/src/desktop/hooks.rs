@@ -38,11 +38,8 @@ mod platform {
         if ctl.extension_information(record::X11_EXTENSION_NAME)?.is_none() {
             return Err("no RECORD extension".into());
         }
-        let (min, max) = (ctl.setup().min_keycode, ctl.setup().max_keycode);
-        let map = ctl.get_keyboard_mapping(min, max - min + 1)?.reply()?;
-        let per = (map.keysyms_per_keycode as usize).max(1);
-        // shortcut: the first keysym per keycode, read once; a layout switched later isn't seen.
-        let keysyms: Vec<u32> = map.keysyms.chunks(per).map(|c| c[0]).collect();
+        let min = ctl.setup().min_keycode;
+        let mut keysyms = keymap(&ctl)?;
         let ctx = ctl.generate_id()?;
         let range = record::Range { device_events: record::Range8 { first: KEY_PRESS, last: KEY_RELEASE }, ..Default::default() };
         ctl.record_create_context(ctx, 0, &[record::CS::ALL_CLIENTS.into()], &[range])?.check()?;
@@ -52,6 +49,14 @@ mod platform {
         let mut mods = [0u8; 3]; // Ctrl, Alt, Shift keys down
         for reply in replies {
             let reply = reply?;
+            // A new keyboard layout (`MappingNotify`, sent to every client): read the map again.
+            while let Some(ev) = ctl.poll_for_event()? {
+                if let x11rb::protocol::Event::MappingNotify(m) = ev
+                    && m.request == x11rb::protocol::xproto::Mapping::KEYBOARD
+                {
+                    keysyms = keymap(&ctl)?;
+                }
+            }
             // Category 0 = FromServer: intercepted events, 32 bytes each.
             if reply.category != 0 {
                 continue;
@@ -71,6 +76,14 @@ mod platform {
             }
         }
         Ok(())
+    }
+
+    /// Each keycode's first keysym (`XkbKeycodeToKeysym(…, group 0, level 0)` as uiohook reads it).
+    fn keymap(ctl: &x11rb::rust_connection::RustConnection) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        let (min, max) = (ctl.setup().min_keycode, ctl.setup().max_keycode);
+        let map = ctl.get_keyboard_mapping(min, max - min + 1)?.reply()?;
+        let per = (map.keysyms_per_keycode as usize).max(1);
+        Ok(map.keysyms.chunks(per).map(|c| c[0]).collect())
     }
 
     /// X keysyms (`X11/keysymdef.h`).
