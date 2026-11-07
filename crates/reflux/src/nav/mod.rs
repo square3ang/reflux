@@ -218,7 +218,7 @@ pub fn demo(sh: &mut ShellState, store: &Store, scene: &str) {
         "oauth" | "oauth-community" | "oauth-perms" => oauth::demo(sh, scene),
         "terms" => (sh.nav.terms_demo, sh.nav.terms) = (true, true),
         "terms-bar" => sh.nav.terms_demo = true,
-        "apps" | "apps-create" | "app-detail" | "embed-debugger" => crate::settings::dev::demo(sh, scene),
+        "apps" | "apps-create" | "app-detail" | "app-bot-name" | "embed-debugger" => crate::settings::dev::demo(sh, scene),
         "design-system" => sh.open_settings(Some("component_gallery")),
         _ => {}
     }

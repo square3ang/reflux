@@ -1,7 +1,6 @@
 //! Developer tabs: `ApplicationsTab` (list, create, detail with secrets, bot profile and the
 //! OAuth2 URL builder) and `EmbedDebuggerTab` (`POST /unfurl`, its preview and raw JSON).
-// shortcut: no discriminator field or username rule checklist in the bot profile, and the bot
-// banner preview is the profile card's (Fluxer shows an `ImagePreviewField`).
+// shortcut: the bot banner preview is the profile card's (Fluxer shows an `ImagePreviewField`).
 
 use reflux_model::Message;
 use reflux_store::Store;
@@ -331,7 +330,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
             .padding(16.0)
             .gap(16.0)
             .child(row().gap(16.0).center_y().child(face).child(asset("dev.bot_avatar", super::crop::Asset::Avatar, !bot["avatar"].is_null(), t("Change avatar"), t("Remove avatar"), p)))
-            .child(super::input(st, acc, "dev.bot_name", bot["username"].as_str().unwrap_or_default(), t("Username"), "", false, p))
+            .child(bot_tag(st, acc, bot, p))
             .child(super::input(st, acc, "dev.bot_bio", bot["bio"].as_str().unwrap_or_default(), t("Bot bio"), t("A helpful bot that does amazing things!"), false, p))
             .child(asset("dev.bot_banner", super::crop::Asset::ProfileBanner, !bot["banner"].is_null(), t("Change banner"), t("Remove banner"), p));
         let banner = match (st.form.data.get("dev.bot_banner"), bot_id, bot["banner"].as_str()) {
@@ -417,7 +416,16 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
             patch["redirect_uris"] = json!(r);
         }
         if has_bot {
-            let mut bot = json!({ "username": sh.form.value("dev.bot_name", &init_bot).trim(), "bio": sh.form.value("dev.bot_bio", &init_bio) });
+            let name = sh.form.value("dev.bot_name", &init_bot);
+            // react-hook-form blocks the submit on a rule failure and shows it under the tag row.
+            if username_error(&name).is_some() {
+                sh.form.data.insert("dev.bot_name_checked".into(), json!(true));
+                return;
+            }
+            let mut bot = json!({ "bio": sh.form.value("dev.bot_bio", &init_bio) });
+            if name != init_bot {
+                bot["username"] = json!(name);
+            }
             for (key, field) in [("dev.bot_avatar", "avatar"), ("dev.bot_banner", "banner")] {
                 if let Some(v) = sh.form.data.get(key) {
                     bot[field] = v.clone();
@@ -454,6 +462,51 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
                 .child(el().grow(1.0))
                 .child(Button::new(t("Save changes")).key("dev-save").submitting(st.form.busy).on_press(save).el(p)),
         )
+}
+
+/// `BotProfileSection` username rules (`required`, 1..=32, `^[a-zA-Z0-9_]+$`).
+fn username_error(name: &str) -> Option<&'static str> {
+    let n = name.chars().count();
+    if name.is_empty() {
+        Some(t("Username is required"))
+    } else if n > 32 {
+        Some(t("Username must be at most 32 characters"))
+    } else if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Some(t("Username can only contain letters, numbers, and underscores"))
+    } else {
+        None
+    }
+}
+
+/// Username + read-only discriminator, the submit error, and `UsernameValidationRules`.
+fn bot_tag<S: 'static>(st: &ShellState, acc: ShellAccess<S>, bot: &Value, p: &Palette) -> El {
+    let name = st.form.value("dev.bot_name", bot["username"].as_str().unwrap_or_default());
+    // Disabled, read-only `Input` (same 44px box at half opacity).
+    let disc = row()
+        .w(96.0)
+        .h(44.0)
+        .px(17.0)
+        .center_y()
+        .radius(8.0)
+        .fill(p.form_surface_background)
+        .border(1.0, crate::ui::over(p.background_modifier_accent, p.form_surface_background))
+        .opacity(0.5)
+        .child(text(bot["discriminator"].as_str().unwrap_or_default().to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary));
+    let tag = row().w_full().gap(8.0).items_end().child(super::input(st, acc, "dev.bot_name", bot["username"].as_str().unwrap_or_default(), t("Username"), "BotName", false, p).grow(1.0).min_w(0.0)).child(disc);
+    let mut c = col().w_full().gap(12.0).child(tag);
+    if st.form.data.contains_key("dev.bot_name_checked") {
+        if let Some(e) = username_error(&name) {
+            c = c.child(text(e).font(font(15.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+        }
+    }
+    let trimmed = name.trim();
+    let len = (1..=32).contains(&trimmed.chars().count());
+    let chars = trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let rule = |ok: bool, label: &str| {
+        let color = if ok { p.status_online } else { p.text_tertiary };
+        row().gap(8.0).items_start().child(icon(if ok { &crate::icons::CHECK_BOLD } else { &crate::icons::X_BOLD }, 16.0).color(color).mt(2.0)).child(text(label.to_string()).font(font(14.0, 400.0).lh(17.5)).color(color).wrap().shrink())
+    };
+    c.child(col().gap(6.0).child(rule(len, t("Between 1 and 32 characters"))).child(rule(chars, t("Letters (a-z, A-Z), numbers (0-9), and underscores (_) only"))))
 }
 
 // ---- Embed debugger --------------------------------------------------------------------------
@@ -520,7 +573,11 @@ pub fn demo(sh: &mut ShellState, scene: &str) {
     );
     match scene {
         "apps-create" => sh.nav.dev.create = true,
-        "app-detail" => {
+        "app-detail" | "app-bot-name" => {
+            if scene == "app-bot-name" {
+                sh.form.text.insert("dev.bot_name".into(), rune::TextEdit::new("flux bot"));
+                sh.form.data.insert("dev.bot_name_checked".into(), json!(true));
+            }
             sh.nav.dev = Dev { app: Some("1400000000000000001".into()), scopes: vec!["bot".into(), "identify".into()], redirect: Some("https://example.com/callback".into()), perms: 8 | 2048, ..Dev::default() };
             sh.form.data.insert("dev.secret".into(), json!({ "client_secret": "s3cr3t-Kq9vX2mN7pL4wR8tY1zB" }));
         }
