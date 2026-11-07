@@ -490,6 +490,10 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) });
             data(st, "role-emoji", json!({"id": null, "name": "🛡️"}));
         }
+        "role-emoji" => {
+            st.open_dialog(Dialog::Guild { guild: g, tab: "roles", role: Some(Snowflake(2011)) });
+            data(st, "role-emoji", json!({"id": "9100", "name": "fluxer"}));
+        }
         "delete" => {
             st.open_dialog(Dialog::Guild { guild: g, tab: "overview", role: None });
             st.form.confirm = Some(Confirm::DeleteGuild(g));

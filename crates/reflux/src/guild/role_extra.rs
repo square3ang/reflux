@@ -63,6 +63,44 @@ pub fn draggable<S: 'static>(e: El, g: Snowflake, i: usize, order: Vec<Snowflake
 
 // ---- Icon ------------------------------------------------------------------------------------
 
+/// Custom emoji images being fetched for the role icon (one per community + emoji).
+static STAGING: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+/// `handleEmojiSelect`: a custom emoji has no glyph in the sprite sheet — Fluxer fetches its image
+/// and stages that as the icon. Runs once per pick; the result replaces `role-emoji`.
+fn stage_custom_emoji(st: &ShellState) {
+    let Some(id) = st.form.data.get("role-emoji").and_then(|e| e["id"].as_str()).map(str::to_owned) else { return };
+    let key = format!("{}:{id}", st.media.base());
+    if !STAGING.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner()).insert(key.clone()) {
+        return;
+    }
+    let url = crate::media::emoji_url(&st.media.base(), &id);
+    crate::app::spawn(async move {
+        let bytes = async {
+            let r = reflux_net::http_client().get(&url).send().await?.error_for_status()?;
+            r.bytes().await
+        };
+        let result = match bytes.await {
+            Ok(b) => prepare(&b),
+            Err(e) => {
+                eprintln!("reflux: role icon from emoji: {e}");
+                Err("The emoji couldn't be loaded. Pick another.")
+            }
+        };
+        crate::app::update(move |s| {
+            STAGING.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
+            let f = &mut s.app.shell.form;
+            match result {
+                Ok(png) => {
+                    f.data.remove("role-emoji");
+                    f.data.insert("role-icon".into(), json!(super::data_url(std::path::Path::new("x.png"), &png)));
+                }
+                Err(e) => f.error = Some(t(e).into()),
+            }
+        });
+    });
+}
+
 /// `role_icon` policy: at least 32px.
 const MIN: u32 = 32;
 
@@ -84,7 +122,7 @@ pub fn prepare(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 /// The staged icon change for the role PATCH.
 pub fn patch(st: &ShellState, out: &mut Map<String, Value>) {
-    if let Some(e) = st.form.data.get("role-emoji") {
+    if let Some(e) = st.form.data.get("role-emoji").filter(|e| e["id"].is_null()) {
         out.insert("unicode_emoji".into(), e["name"].clone());
         out.insert("icon".into(), Value::Null);
     } else if let Some(i) = st.form.data.get("role-icon") {
@@ -97,7 +135,7 @@ pub fn patch(st: &ShellState, out: &mut Map<String, Value>) {
 fn staged(st: &ShellState, r: &Role) -> (Role, bool) {
     let mut r = r.clone();
     let mut picked_image = false;
-    if let Some(e) = st.form.data.get("role-emoji") {
+    if let Some(e) = st.form.data.get("role-emoji").filter(|e| e["id"].is_null()) {
         r.icon = None;
         r.unicode_emoji = e["name"].as_str().map(str::to_string);
     } else if let Some(i) = st.form.data.get("role-icon") {
@@ -111,7 +149,18 @@ fn staged(st: &ShellState, r: &Role) -> (Role, bool) {
 pub fn field<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, r: &Role, p: &Palette, acc: ShellAccess<S>) -> El {
     let (shown, picked_image) = staged(st, r);
     let has = picked_image || shown.icon.is_some() || shown.unicode_emoji.is_some();
-    let glyph = if picked_image { Some(icon(&icons::IMAGE_FILL, 28.0).color(p.brand_primary_fill)) } else { crate::shell::role_icon::view(st, &shown, 40.0) };
+    // A custom emoji is shown from its image while the upload copy is fetched.
+    let custom = st.form.data.get("role-emoji").and_then(|e| e["id"].as_str()).map(str::to_owned);
+    let glyph = if picked_image {
+        Some(icon(&icons::IMAGE_FILL, 28.0).color(p.brand_primary_fill))
+    } else if let Some(id) = custom {
+        match st.media.asset(move |b, _| crate::media::emoji_url(b, &id)) {
+            crate::media::Load::Ready(px) => Some(rune::el().size(40.0, 40.0).pixels_fit(&px, rune::SurfaceFit::Fit)),
+            _ => None,
+        }
+    } else {
+        crate::shell::role_icon::view(st, &shown, 40.0)
+    };
     let tile = row()
         .size(64.0, 64.0)
         .center()
@@ -134,7 +183,7 @@ pub fn field<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, r: &Role,
         });
     });
     let channel = store.channels.values().find(|c| c.guild_id == Some(g)).map_or(g, |c| c.id);
-    // shortcut: a custom emoji is kept by name only; Fluxer fetches its image as the icon.
+    stage_custom_emoji(st);
     let choose = Button::new(t("Choose emoji")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("pick-role-emoji").on_press(move |s: &mut S| crate::shell::expr::open_for_form(acc(s), channel, "role-emoji")).el(p);
     let mut buttons = row().gap(8.0).child(upload).child(choose);
     if has {
