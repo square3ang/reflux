@@ -306,7 +306,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                 }
                 false
             });
-            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(l), false, p)
+            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).key("reaction-list").child(l), false, p)
         }
         _ => col().w_full().h_full().center().child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
@@ -316,7 +316,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
         .radius(8.0)
         .clip_rounded(8.0)
         .fill(p.background_primary)
-        .child(col().w(96.0).h_full().fill(p.background_secondary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(filters), false, p)))
+        .child(col().w(96.0).h_full().fill(p.background_secondary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).key("reaction-filters").child(filters), false, p)))
         .child(col().grow(1.0).min_w(0.0).h_full().padding(8.0).child(list));
     Modal::new(t("Reactions"), move |s: &mut S| acc(s).expr.reactions = None).size(ModalSize::Medium).body(body).el(p)
 }

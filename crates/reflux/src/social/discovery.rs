@@ -213,7 +213,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         .h_full()
         .fill(p.background_secondary_lighter)
         .child(head)
-        .child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(content), false, p)))
+        .child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("discovery-list").child(content), false, p)))
 }
 
 /// `DiscoveryLanguageDropdown`: "All languages" and the supported ones by name.

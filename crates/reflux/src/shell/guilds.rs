@@ -36,7 +36,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         };
     }
     list = list.child(add_button(p, acc)).child(explore_button(st, p, acc));
-    let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false });
+    let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false }).key("guild-rail-list");
     scroller(viewport.child(list), false, p).key("guild-rail")
 }
 

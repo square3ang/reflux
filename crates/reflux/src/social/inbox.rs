@@ -27,7 +27,7 @@ pub static INBOX_ICON: Icon = Icon {
 };
 
 /// Tabs: (label, icon). 0 unread, 1 bookmarks, 2 mentions.
-const TABS: [(&str, &Icon); 3] = [("Unread", &icons::CHAT_CIRCLE_DOTS_FILL), ("Bookmarks", &icons::BOOKMARK_SIMPLE_FILL), ("Mentions", &icons::AT_BOLD)];
+const TABS: [(&str, &Icon); 3] = [("Unread", &icons::BELL_FILL), ("Bookmarks", &icons::BOOKMARK_SIMPLE_FILL), ("Mentions", &icons::AT_BOLD)];
 
 fn mentions_path(f: [bool; 3]) -> String {
     format!("/users/@me/mentions?limit=25&roles={}&everyone={}&guilds={}", f[0], f[1], f[2])
@@ -88,7 +88,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     }
     let bg = p.form_surface_background;
     let tab = st.social.inbox_tab;
-    let tabs = col().w(46.0).h_full().py(8.0).gap(4.0).items_center().child(rune::el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(p.background_header_secondary)).children(TABS.iter().enumerate().map(|(i, (name, glyph))| {
+    let tabs = col().w(46.0).h_full().py(8.0).gap(8.0).items_center().child(rune::el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(p.background_header_secondary)).children(TABS.iter().enumerate().map(|(i, (name, glyph))| {
         let on = tab == i as u8;
         row()
             .size(30.0, 30.0)
@@ -100,7 +100,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
             .role("tab")
             .label(name.to_string())
             .key(format!("inbox-tab-{i}"))
-            .child(icon(glyph, 18.0).color(if on { p.text_primary } else { p.text_primary_muted }))
+            .child(icon(glyph, 16.0).color(if on { p.text_primary } else { p.text_primary_muted }))
             .on_press(move |s: &mut S| {
                 let st = acc(s);
                 st.social.inbox_tab = i as u8;
@@ -123,7 +123,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         1 => bookmark_list(store, st, p, acc),
         _ => mention_list(store, st, p, acc),
     };
-    let content = col().grow(1.0).min_w(0.0).h_full().child(head).child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(list.padding(12.0)), false, p)));
+    let content = col().grow(1.0).min_w(0.0).h_full().child(head).child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
     let surface = row()
         .pin(None, Some(56.0), Some(16.0), Some(8.0))
         .w(600.0)
@@ -192,6 +192,19 @@ fn empty(glyph: &'static Icon, title: &str, line: &str, p: &Palette) -> El {
         .child(icon(glyph, 64.0).color(p.text_primary_muted))
         .child(text(title.to_string()).font(font(20.0, 600.0).lh(28.0)).color(p.text_primary))
         .child(text(line.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
+}
+
+/// `ChannelSourcePreview`'s avatar: a community channel's glyph, else the DM/group face.
+fn source_icon(store: &Store, st: &ShellState, c: &Channel, size: f32, p: &Palette) -> El {
+    match (c.guild_id, c.kind == ChannelType::GROUP_DM) {
+        (Some(_), _) => icon(crate::shell::channel_icon(c.kind), size).color(p.text_primary_muted),
+        (None, true) => crate::shell::group_avatar(store, st, c, size, p.form_surface_background, p),
+        (None, false) => {
+            let me = store.my_id();
+            let user = c.recipients.iter().map(|u| u.id).find(|&u| u != me).unwrap_or(me);
+            crate::shell::avatar(store, st, user, size, None, p.form_surface_background, p)
+        }
+    }
 }
 
 fn where_of(store: &Store, c: Snowflake) -> String {
@@ -289,7 +302,7 @@ fn section<S: 'static>(store: &Store, st: &ShellState, c: &Channel, msgs: Option
         .gap(6.0)
         .center_y()
         .child(caret)
-        .child(icon(crate::shell::channel_icon(c.kind), 16.0).color(p.text_primary_muted))
+        .child(source_icon(store, st, c, 16.0, p))
         .child(text(where_of(store, id)).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).truncate().shrink().cursor(rune::Cursor::Pointer).on_press(open))
         .child(rune::el().grow(1.0));
     if mentions > 0 {
@@ -356,7 +369,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, m: &Message, remove: Option<
         .key(format!("inbox-card-{id}"))
         .mb(8.0)
         .gap(4.0)
-        .child(row().gap(6.0).center_y().px(4.0).child(icon(&icons::HASH_BOLD, 14.0).color(p.text_tertiary)).child(text(where_of(store, ch)).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).truncate()))
+        .child(row().gap(6.0).center_y().px(4.0).children(store.channels.get(&ch).map(|c| source_icon(store, st, c, 14.0, p))).child(text(where_of(store, ch)).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).truncate()))
         .child(
             col()
                 .w_full()

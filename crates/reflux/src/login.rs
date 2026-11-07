@@ -224,6 +224,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .w_full()
         .h_full()
         .scroll(rune::ScrollSpec { stick_bottom: false })
+        .key("login-page")
         .child(col().w_full().min_h(size[1]).py(24.0).center().child(card(s, p, &mut layer)));
     let root = col()
         .key("login-root")

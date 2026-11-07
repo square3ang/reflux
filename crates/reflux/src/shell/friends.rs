@@ -186,7 +186,7 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
         }
         c = c.child(rows);
     }
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(c);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("friends-list").child(c);
     scroller(viewport, false, p)
 }
 
@@ -393,6 +393,10 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .child(text(t("Add friend")).font(font(24.0, 700.0).lh(32.0)).color(p.text_primary).mb(8.0))
         .child(text(t("You can add friends with their username.")).font(font(15.0, 400.0).lh(22.0)).color(p.text_secondary).mb(24.0))
         .child(form);
+    // `radial-gradient(ellipse at 50% 0%, brand 15% 0%, transparent 70%)`: Rune's radius is in
+    // points, so size it from the laid-out box (the first frame falls back to the body).
+    let [w, h] = rune::memo::layout_size("friends-add").unwrap_or([1280.0, 744.0]);
+    let reach = 0.7 * ((w * 0.5).powi(2) + h * h).sqrt();
     col()
         .w_full()
         .grow(1.0)
@@ -400,7 +404,8 @@ fn add_friend<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .padding(24.0)
         .pb(24.0 + 48.0)
         .center()
-        .radial_gradient([0.5, 0.0], (0.7, 1.0), [(0.0, mix(p.brand_primary, Color::TRANSPARENT, 15.0)), (1.0, Color::TRANSPARENT)])
+        .key("friends-add")
+        .radial_gradient([0.5, 0.0], reach, [(0.0, mix(p.brand_primary, Color::TRANSPARENT, 15.0)), (1.0, Color::TRANSPARENT)])
         .child(card)
 }
 

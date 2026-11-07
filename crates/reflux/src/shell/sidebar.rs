@@ -18,12 +18,12 @@ fn header_bar(p: &Palette) -> El {
 }
 
 fn list_following(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).on_scroll_offset(f);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("channel-list-banner").on_scroll_offset(f);
     scroller(viewport.child(content.focus_group().role("list")), false, p)
 }
 
-fn list(content: El, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
+fn list(content: El, key: &str, p: &Palette) -> El {
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key(key);
     scroller(viewport.child(content.focus_group().role("list")), false, p)
 }
 
@@ -120,7 +120,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .child(header)
         .child(match &banner {
             Some((_, l, _)) => list_following(groups, l.follow(), p),
-            None => list(groups, p),
+            None => list(groups, "channel-list", p),
         })
 }
 
@@ -250,9 +250,9 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     // Muted channels show their (faded) unread pill only with "Show unread indicator on muted
     // channels".
     if unread && !selected && (!muted || crate::look::with(|l| l.faded_unread_muted)) {
-        // `.unreadIndicator`: an 8px half-pill hanging off the list's left edge.
+        // `.unreadIndicator` (inside the item, which is 8 in from the container's edge).
         container = container.child(
-            el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
+            el().absolute(4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
         );
     }
     container.key(format!("ch-{id}"))
@@ -393,7 +393,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .min_h(0.0)
         .fill(p.background_secondary)
         .child(header)
-        .child(list(rows, p))
+        .child(list(rows, "dm-list", p))
 }
 
 /// `ClickableItem`: the Friends and Personal Notes rows, a 32px icon disc and a label.

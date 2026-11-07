@@ -215,7 +215,7 @@ pub(super) fn masonry(cols: usize, w: f32, tiles: Vec<(El, f32)>, p: &Palette) -
         c.1 += h + GAP;
     }
     let grid = row().w_full().items_start().gap(GAP).px(10.0).pb(16.0).children(columns.into_iter().map(|c| c.0));
-    col().w_full().h_full().pt(12.0).fill(p.background_tertiary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(grid), false, p))
+    col().w_full().h_full().pt(12.0).fill(p.background_tertiary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).key("gif-grid-scroll").child(grid), false, p))
 }
 
 /// (search bar with the back button and title, masonry grid).

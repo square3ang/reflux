@@ -124,7 +124,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(text(t("When friends are active in voice channels, their activity will appear here.")).font(font(12.0, 400.0).lh(16.8)).color(p.text_tertiary).wrap().align(rune::Align::Center))
     } else {
         let list = col().w_full().px(12.0).pb(12.0).gap(8.0).children(list.iter().map(|a| card(store, st, a, p, acc)));
-        crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p)
+        crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).key("active-now").child(list), false, p)
     };
     Some(
         col()

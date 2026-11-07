@@ -851,7 +851,7 @@ fn grid_list<S: 'static>(
         .grow(1.0)
         .min_h(0.0)
         .fill(p.background_tertiary)
-        .child(scroller(col().w_full().h_full().pt(12.0).px(8.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p))
+        .child(scroller(col().w_full().h_full().pt(12.0).px(8.0).scroll(rune::ScrollSpec { stick_bottom: false }).key(format!("{scope}-scroll")).child(list), false, p))
 }
 
 /// The empty state over the grid: a duotone sad face and a line.

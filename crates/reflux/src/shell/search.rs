@@ -506,9 +506,9 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .w_full()
             .grow(1.0)
             .center()
-            .gap(8.0)
+            .gap(4.0)
             .padding(16.0)
-            .child(icon(glyph, 64.0).color(p.text_primary_muted))
+            .child(icon(glyph, 80.0).color(p.text_primary_muted))
             .child(text(title.to_string()).font(font(20.0, 600.0)).color(p.text_primary))
             .child(text(line.to_string()).font(font(14.0, 400.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
     };

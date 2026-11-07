@@ -284,8 +284,21 @@ struct Metrics {
 
 fn metrics(w: f32, h: f32) -> Metrics {
     let clamp = |lo: f32, v: f32, hi: f32| v.max(lo).min(hi);
-    // `.layerFullscreen` padding and `.root.fullscreen` width.
-    let pad = [clamp(8.0, 0.015 * h, 16.0), clamp(12.0, 0.02 * w, 24.0)];
+    // `.layerFullscreen` padding and `.root.fullscreen` width, per its width media queries.
+    let (pad_y, pad_x) = if w >= 2560.0 {
+        (clamp(28.0, 0.04 * h, 56.0), clamp(96.0, 0.12 * w, 320.0))
+    } else if w >= 1920.0 {
+        (clamp(24.0, 0.035 * h, 48.0), clamp(64.0, 0.10 * w, 200.0))
+    } else if w >= 1440.0 {
+        (clamp(20.0, 0.03 * h, 40.0), clamp(48.0, 0.08 * w, 128.0))
+    } else if w >= 1024.0 {
+        (clamp(16.0, 0.025 * h, 32.0), clamp(32.0, 0.06 * w, 96.0))
+    } else if w >= 768.0 {
+        (clamp(12.0, 0.02 * h, 24.0), clamp(24.0, 0.04 * w, 64.0))
+    } else {
+        (clamp(8.0, 0.015 * h, 16.0), clamp(12.0, 0.02 * w, 24.0))
+    };
+    let pad = [pad_y, pad_x];
     let card_w = (w - 2.0 * pad[1] - 2.0).min(clamp(960.0, 0.96 * w, 1400.0) - 2.0);
     let sidebar_w = clamp(252.0, 0.24 * w, 320.0);
     let content_w = card_w - 2.0 - sidebar_w - 1.0;
@@ -752,8 +765,8 @@ mod tests {
     #[test]
     fn metrics_at_1280x800() {
         let m = metrics(1280.0, 800.0);
-        assert_eq!(m.pad, [12.0, 24.0]);
-        assert!((m.card_w - 1226.8).abs() < 0.01 && (m.sidebar_w - 307.2).abs() < 0.01, "{}", m.card_w);
+        assert_eq!(m.pad, [20.0, 76.8]);
+        assert!((m.card_w - 1124.4).abs() < 0.01 && (m.sidebar_w - 307.2).abs() < 0.01, "{}", m.card_w);
         assert_eq!(m.gutter, 48.0);
     }
 

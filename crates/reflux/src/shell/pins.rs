@@ -162,7 +162,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
             list = list.child(state(&icons::FLAG_CHECKERED, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p));
         }
     }
-    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(list), false, p);
+    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("pins-list").child(list), false, p);
     let (w, h) = size(st);
     let surface = col()
         .size(w, h)

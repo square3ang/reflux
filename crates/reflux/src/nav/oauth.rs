@@ -356,7 +356,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
                             .el(p),
                     );
                 }
-                body = body.child(crate::ui::scroller(col().w_full().max_h(280.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p));
+                body = body.child(crate::ui::scroller(col().w_full().max_h(280.0).scroll(rune::ScrollSpec { stick_bottom: false }).key("oauth-scopes").child(list), false, p));
                 if requested.contains(Permissions::ADMINISTRATOR) {
                     body = body.child(note(t("This bot requests the administrator permission. Only grant it if you fully trust the developer. Ask them to request fewer permissions instead. Close this page if unsure.").into(), p.status_warning));
                 }

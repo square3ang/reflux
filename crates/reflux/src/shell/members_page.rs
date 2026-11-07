@@ -454,7 +454,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                     .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
             });
             let list = col().w_full().children(rows);
-            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list), false, p)
+            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).key("members-page").child(list), false, p)
         }
     };
     let pages = total.div_ceil(u64::from(m.size())).max(1) as u32;

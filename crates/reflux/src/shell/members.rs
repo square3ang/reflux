@@ -60,7 +60,7 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         });
     // Before the first sync: `MemberListSkeleton`.
     let body = if rows.is_empty() { col().w_full().pt(dim::MEMBER_LIST_SCROLLER_PADDING_BLOCK_START).px(dim::MEMBER_LIST_SCROLLER_PADDING_INLINE).child(crate::nav::skeleton::member_list(p)) } else { body };
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(body.focus_group().role("list"));
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("member-list-scroll").child(body.focus_group().role("list"));
     col()
         .w(dim::LAYOUT_MEMBER_LIST_WIDTH)
         .h_full()
