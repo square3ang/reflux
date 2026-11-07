@@ -1,6 +1,6 @@
 //! `EmbedGifv`: a GIF link's video plays muted and looping in place of its still, while its
-//! tile is on screen and GIFs autoplay (else while hovered). GStreamer decodes on Linux, Rune's
-//! `Player` on macOS; Windows has neither, so the still stays.
+//! tile is on screen and GIFs autoplay (else while hovered). `crate::gst::VideoPlayer` decodes on
+//! Linux (GStreamer) and Windows (Media Foundation), Rune's `Player` on macOS.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ pub fn want(st: &ShellState, key: &str, url: &str, size: (f32, f32)) -> Option<E
 fn open(url: &str) -> Option<Backend> {
     if super::clip::native() {
         let pixels = Pixels::default();
-        let mut player = crate::gst::VideoPlayer::new(url, pixels.clone())?;
+        let mut player = crate::gst::VideoPlayer::new(url, super::clip::frames(&pixels))?;
         player.set_volume(0.0, true);
         player.play();
         return Some(Backend::Gst { player, pixels });

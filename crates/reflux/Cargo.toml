@@ -65,7 +65,8 @@ windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse",
 # `c_void`; winapi's `std` feature makes them the same type (it doesn't compile otherwise).
 winapi = { version = "0.3", features = ["std"] }
 # The taskbar overlay badge (ITaskbarList3) and passkeys (webauthn.dll); already in the tree.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Networking_WindowsWebServices"] }
+# Media Foundation (`mf.rs`): inline video / audio attachments and gifv.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Networking_WindowsWebServices", "Win32_Media_MediaFoundation", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Dock badge label; the versions Rune already uses.

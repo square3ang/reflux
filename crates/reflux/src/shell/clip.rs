@@ -1,4 +1,5 @@
-//! Inline playback through GStreamer where Rune's `Player` can't decode (Linux): the clip
+//! Inline playback where Rune's `Player` can't decode (GStreamer on Linux, Media Foundation on
+//! Windows, both `crate::gst::VideoPlayer`): the clip
 //! playing in a message or the media viewer, with `VideoPlayer`'s controls (play/pause, time,
 //! seek, volume, mute, full screen). Frames land in a `Pixels` like the stream viewer's.
 
@@ -20,9 +21,15 @@ pub struct GstClip {
     pub failed: bool,
 }
 
-/// GStreamer plays here (Rune's own player covers macOS).
+/// Our `VideoPlayer` plays here (Rune's own player covers macOS).
 pub fn native() -> bool {
-    !cfg!(target_os = "macos") && crate::gst::available()
+    !cfg!(target_os = "macos") && crate::gst::video_available()
+}
+
+/// A `VideoPlayer` sink that shows its frames in `pixels`.
+pub fn frames(pixels: &Pixels) -> impl FnMut(u32, u32, Vec<u8>) + Send + 'static {
+    let pixels = pixels.clone();
+    move |w, h, rgba| pixels.set(w, h, rgba)
 }
 
 /// Plays `url` under `key`, stopping whatever played before (`audio`: no picture).
@@ -38,7 +45,7 @@ pub fn start(st: &mut ShellState, key: String, url: String, audio: bool) {
     }
     st.media_ui.gst = None;
     let pixels = Pixels::default();
-    let Some(mut player) = crate::gst::VideoPlayer::new(&url, pixels.clone()) else { return };
+    let Some(mut player) = crate::gst::VideoPlayer::new(&url, frames(&pixels)) else { return };
     let (volume, muted) = (st.prefs.media_volume, st.prefs.media_muted);
     player.set_volume(volume as f64, muted);
     player.play();

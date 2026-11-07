@@ -4,6 +4,8 @@ mod desktop;
 mod file_picker;
 mod guild;
 mod gst;
+#[cfg(windows)]
+mod mf;
 mod handoff;
 mod i18n;
 mod keybinds;

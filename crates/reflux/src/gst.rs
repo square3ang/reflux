@@ -1,12 +1,21 @@
 //! GStreamer media: video attachment playback (Rune's `Player` decodes only on macOS) and camera
 //! capture. Both hand straight RGBA frames to the same `Pixels` path as the stream viewer.
 //! Built with the `gst` feature on Linux; elsewhere [`available`] is false and callers keep their
-//! fallbacks ("Open in browser", the camera button disabled).
+//! fallbacks ("Open in browser", the camera button disabled). On Windows `VideoPlayer` is the
+//! Media Foundation one (`mf.rs`), see [`video_available`].
 
 #[cfg(all(feature = "gst", target_os = "linux"))]
 pub use imp::*;
 #[cfg(not(all(feature = "gst", target_os = "linux")))]
 pub use stub::*;
+
+/// [`VideoPlayer`] plays here: GStreamer on Linux, Media Foundation on Windows.
+pub fn video_available() -> bool {
+    #[cfg(windows)]
+    return crate::mf::available();
+    #[cfg(not(windows))]
+    available()
+}
 
 /// Copies `h` rows of `w * 4` bytes out of a buffer whose rows are `stride` apart.
 #[cfg_attr(not(all(feature = "gst", target_os = "linux")), allow(dead_code))]
@@ -100,7 +109,7 @@ mod imp {
             .build()
     }
 
-    /// One video clip: decoded by `playbin`, frames into `pixels`, sound to the default output.
+    /// One video clip: decoded by `playbin`, RGBA frames to `sink`, sound to the default output.
     pub struct VideoPlayer {
         playbin: gst::Element,
         pub ended: bool,
@@ -111,12 +120,12 @@ mod imp {
     }
 
     impl VideoPlayer {
-        pub fn new(url: &str, pixels: rune::Pixels) -> Option<Self> {
+        pub fn new(url: &str, sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
             if !init() {
                 return None;
             }
             let caps = gst::Caps::builder("video/x-raw").field("format", "RGBA").build();
-            let sink = rgba_sink(caps, move |w, h, rgba| pixels.set(w, h, rgba));
+            let sink = rgba_sink(caps, sink);
             let playbin = gst::ElementFactory::make("playbin").property("uri", url).property("video-sink", &sink).build().ok()?;
             // Keeps the pitch when the speed changes (`preservesPitch`).
             if let Ok(tempo) = gst::ElementFactory::make("scaletempo").build() {
@@ -140,8 +149,9 @@ mod imp {
 
         pub fn seek(&self, secs: f64) {
             let at = gst::ClockTime::from_mseconds((secs.max(0.0) * 1000.0) as u64);
+            // Accurate like `currentTime =`: KEY_UNIT snapped back to the previous keyframe (test below).
             if (self.rate - 1.0).abs() < f64::EPSILON {
-                let _ = self.playbin.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, at);
+                let _ = self.playbin.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, at);
             } else {
                 let _ = self.playbin.seek(self.rate, gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, gst::SeekType::Set, at, gst::SeekType::None, gst::ClockTime::NONE);
             }
@@ -314,6 +324,139 @@ mod imp {
             let _ = self.pipeline.set_state(gst::State::Null);
         }
     }
+
+    /// End to end through `VideoPlayer` on clips GStreamer encodes here (no audio device: the
+    /// sound goes to a counting appsink in place of the default output).
+    #[cfg(test)]
+    mod tests {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+
+        use super::*;
+
+        fn encode(name: &str, desc: &str) -> std::path::PathBuf {
+            assert!(init());
+            let path = std::env::temp_dir().join(format!("reflux-test-{}-{name}", std::process::id()));
+            let p = gst::parse::launch(&desc.replace("OUT", &path.display().to_string())).unwrap();
+            p.set_state(gst::State::Playing).unwrap();
+            let msg = p.bus().unwrap().timed_pop_filtered(gst::ClockTime::from_seconds(30), &[gst::MessageType::Eos, gst::MessageType::Error]).unwrap();
+            assert!(matches!(msg.view(), gst::MessageView::Eos(_)), "{name}: {msg:?}");
+            p.set_state(gst::State::Null).unwrap();
+            path
+        }
+
+        struct Run {
+            player: VideoPlayer,
+            frames: Arc<Mutex<(u64, u32, u32, Vec<u8>)>>,
+            audio: Arc<AtomicU64>,
+        }
+
+        fn open(path: &std::path::Path) -> Run {
+            let frames = Arc::new(Mutex::new((0, 0, 0, Vec::new())));
+            let f = frames.clone();
+            let player = VideoPlayer::new(&format!("file://{}", path.display()), move |w, h, rgba| {
+                let mut f = f.lock().unwrap();
+                *f = (f.0 + 1, w, h, rgba);
+            })
+            .unwrap();
+            let audio = Arc::new(AtomicU64::new(0));
+            let a = audio.clone();
+            let sink = gst_app::AppSink::builder()
+                .caps(&gst::Caps::builder("audio/x-raw").field("format", "F32LE").build())
+                .callbacks(
+                    gst_app::AppSinkCallbacks::builder()
+                        .new_sample(move |s| {
+                            let n = s.pull_sample().ok().and_then(|s| s.buffer().map(|b| b.size())).unwrap_or(0);
+                            a.fetch_add(n as u64 / 4, Ordering::Relaxed);
+                            Ok(gst::FlowSuccess::Ok)
+                        })
+                        .build(),
+                )
+                .build();
+            player.playbin.set_property("audio-sink", &sink);
+            Run { player, frames, audio }
+        }
+
+        impl Run {
+            fn until(&mut self, what: &str, f: impl Fn(&mut Self) -> bool) {
+                let t = Instant::now();
+                while !f(self) {
+                    self.player.poll();
+                    assert!(t.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+            fn frames(&self) -> u64 {
+                self.frames.lock().unwrap().0
+            }
+        }
+
+        fn near(a: Option<f64>, b: f64) -> bool {
+            a.is_some_and(|a| (a - b).abs() < 0.15)
+        }
+
+        #[test]
+        fn plays_pauses_seeks_and_ends() {
+            let path = encode(
+                "av.webm",
+                "webmmux name=m ! filesink location=OUT \
+                 videotestsrc num-buffers=60 ! video/x-raw,width=320,height=240,framerate=30/1 ! vp8enc ! m. \
+                 audiotestsrc num-buffers=100 samplesperbuffer=960 ! audio/x-raw,rate=48000,channels=2 ! audioconvert ! opusenc ! m.",
+            );
+            let mut r = open(&path);
+            r.player.play();
+            r.until("frames and sound", |r| r.frames() > 3 && r.audio.load(Ordering::Relaxed) > 4800);
+            {
+                let f = r.frames.lock().unwrap();
+                assert_eq!((f.1, f.2, f.3.len()), (320, 240, 320 * 240 * 4));
+                // videotestsrc's second bar is yellow.
+                let px = &f.3[(10 * 320 + 68) * 4..][..4];
+                assert!(px[0] > 150 && px[1] > 150 && px[2] < 80 && px[3] == 255, "{px:?}");
+            }
+            assert!(near(r.player.duration(), 2.0), "duration {:?}", r.player.duration());
+            r.player.pause();
+            std::thread::sleep(Duration::from_millis(200));
+            let (pos, n) = (r.player.position(), r.frames());
+            std::thread::sleep(Duration::from_millis(300));
+            assert_eq!((r.player.position(), r.frames()), (pos, n), "paused clip moved");
+            r.player.seek(1.5);
+            r.until("the seek", |r| near(r.player.position(), 1.5));
+            r.player.play();
+            r.until("the end", |r| r.player.ended);
+            assert!(!r.player.playing);
+            // The gifv loop: play again after the end starts over.
+            let n = r.frames();
+            r.player.play();
+            r.until("the replay", |r| r.frames() > n + 3);
+            assert!(r.player.position().is_some_and(|p| p < 1.5), "replay at {:?}", r.player.position());
+            let _ = std::fs::remove_file(path);
+        }
+
+        #[test]
+        fn gifv_muted_loop_and_audio_only() {
+            let gifv = encode("gifv.mp4", "videotestsrc num-buffers=15 ! video/x-raw,width=160,height=120,framerate=30/1 ! x264enc ! h264parse ! mp4mux ! filesink location=OUT");
+            let mut r = open(&gifv);
+            r.player.set_volume(0.0, true);
+            r.player.play();
+            for lap in 0..2 {
+                r.until("a lap", |r| r.player.ended);
+                assert!(r.frames.lock().unwrap().1 == 160, "lap {lap}");
+                r.player.play();
+            }
+            assert!(r.player.playbin.property::<bool>("mute"));
+            let _ = std::fs::remove_file(gifv);
+
+            let mp3 = encode("a.mp3", "audiotestsrc num-buffers=50 ! audio/x-raw,rate=44100 ! audioconvert ! lamemp3enc ! filesink location=OUT");
+            let mut r = open(&mp3);
+            r.player.play();
+            r.until("sound", |r| r.audio.load(Ordering::Relaxed) > 4410);
+            r.until("the end", |r| r.player.ended);
+            assert_eq!(r.frames(), 0);
+            assert!(r.player.duration().is_some_and(|d| d > 0.5), "duration {:?}", r.player.duration());
+            let _ = std::fs::remove_file(mp3);
+        }
+    }
 }
 
 #[cfg(not(all(feature = "gst", target_os = "linux")))]
@@ -322,14 +465,18 @@ mod stub {
         false
     }
 
+    #[cfg(windows)]
+    pub use crate::mf::VideoPlayer;
+
+    #[cfg(not(windows))]
     pub struct VideoPlayer {
         pub ended: bool,
         pub playing: bool,
-        pub rate: f64,
     }
 
+    #[cfg(not(windows))]
     impl VideoPlayer {
-        pub fn new(_url: &str, _pixels: rune::Pixels) -> Option<Self> {
+        pub fn new(_url: &str, _sink: impl FnMut(u32, u32, Vec<u8>) + Send + 'static) -> Option<Self> {
             None
         }
         pub fn set_rate(&mut self, _rate: f64) {}
