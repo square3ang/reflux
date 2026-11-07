@@ -87,6 +87,12 @@ pub(super) fn run(s: &mut State, i: Intent) {
                 eprintln!("reflux: pin {message}: {e}");
             }
         }),
+        Intent::RequestMembers { guild, query } => {
+            let req = reflux_model::RequestGuildMembers { guild_ids: vec![guild], query, limit: 25, presences: true, ..Default::default() };
+            if let Some(gw) = &s.app.gateway {
+                let _ = gw.send(Command::Send(GatewayPayload::command(OpCode::REQUEST_GUILD_MEMBERS, req)));
+            }
+        }
         Intent::OpenDm(user) => with_dm(s, inst, user, |s, c| s.app.shell.select_guild(None, Some(c))),
         Intent::DmCall(user, video) => with_dm(s, inst, user, move |s, c| {
             s.app.shell.select_guild(None, Some(c));

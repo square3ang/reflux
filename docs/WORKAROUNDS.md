@@ -92,7 +92,8 @@ Rules:
 |---|---|---|---|
 | "Import template" in Add a community | a multi-step form (template link → pasted JSON → create) built on another platform's template API | `guild/modals.rs` | port `TemplateImportForm` |
 | Invite embeds: the `+N` badge pill doesn't open a badge list; a custom badge's tooltip has its description on a second line | `BadgeListModal` isn't ported | `shell/invite_embed.rs` | port it |
-| Quick switcher: no network member search (`@@`, uncached members); other accounts show a letter and no unread/channel rows | Reflux keeps one account connected | `shell/switcher.rs`, `shell/switcher_extra.rs` | member search requests; per-account connections |
+| Quick switcher: other accounts show a letter and no unread/channel rows | Reflux keeps one account connected | `shell/switcher_extra.rs` | per-account connections |
+| No staff "Developer tools" header menu (state summary, general/premium/mocking overrides, forced nagbars, runtime utilities); a read-only inspector (state, user settings, `/experiments`) sits in the own-user menu instead | a staff/developer-mode surface whose overrides mock state across the whole web client | `shell/debug.rs` | port `DeveloperToolsContextMenu` |
 | Quick CSS editor: syntax colours and variable completions only (no selector/property/snippet completions, hover, lint; Ctrl+Space doesn't open the list) | those target the DOM; only `:root` variables apply here | `quick_css_syntax.rs` | — |
 | UI strings: literals go through `t`; text only Reflux has stays English | it has no Fluxer msgid to translate from | `i18n.rs` | — |
 
@@ -150,6 +151,7 @@ Rules:
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
+- `crates/reflux/src/shell/debug.rs:5` no staff "Developer tools" header menu (`DeveloperToolsContextMenu`: overrides,
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
 - `crates/reflux/src/shell/invite_embed.rs:304` the `+N` pill doesn't open the badge list (`BadgeListModal` isn't ported) and a
 - `crates/reflux/src/shell/markdown.rs:91` a scaled span keeps its half-leading even, so the line's baseline lands where that
@@ -158,7 +160,6 @@ Rules:
 - `crates/reflux/src/shell/markdown.rs:390` emoji in one-line previews stay text (Fluxer draws 1.25em images).
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
-- `crates/reflux/src/shell/switcher.rs:3` no member search over the network (`@@` all users, members of the open community
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:226` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the

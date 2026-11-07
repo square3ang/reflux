@@ -2,6 +2,8 @@
 //! MessageDebugModal}`): a record as pretty JSON behind "Debug user / channel / community /
 //! member / message" menu items, and a client inspector (session and store counts, user
 //! settings, the `/experiments` assignments) in place of the desktop app's Chromium devtools.
+// shortcut: no staff "Developer tools" header menu (`DeveloperToolsContextMenu`: overrides,
+// mocking, forced nagbars, runtime utilities); port it if staff tooling is wanted.
 
 use reflux_model::Snowflake;
 use reflux_store::Store;
@@ -50,10 +52,49 @@ fn json_of(v: impl serde::Serialize) -> Value {
     serde_json::to_value(v).unwrap_or(Value::Null)
 }
 
-/// (title, [(tab label, content)]).
-fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<(String, String)>) {
+/// `MessageDebugModal`'s AST tab: the content's and each embed's title, description and fields,
+/// parsed, with their parse times; and the total in ms.
+fn message_ast(m: &reflux_model::Message) -> (Value, f64) {
+    let opts = reflux_markdown::Options { flags: reflux_markdown::presets::STANDARD, emoji: Default::default() };
+    let mut total = 0.0;
+    let mut parse = |s: &str| {
+        let t0 = std::time::Instant::now();
+        let ast = reflux_markdown::parse(s, &opts);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        total += ms;
+        json!({ "content": s, "ast": ast, "parseTime": ms })
+    };
+    let mut out = serde_json::Map::new();
+    if !m.content.is_empty() {
+        out.insert("message_content".into(), parse(&m.content));
+    }
+    if !m.embeds.is_empty() {
+        let embeds: Vec<Value> = m.embeds.iter().enumerate().map(|(i, e)| {
+            let mut r = json!({ "embed_index": i, "embed_type": e.kind });
+            for (k, v) in [("title", &e.title), ("description", &e.description)] {
+                if let Some(v) = v.as_deref().filter(|v| !v.is_empty()) {
+                    r[k] = parse(v);
+                }
+            }
+            if !e.fields.is_empty() {
+                r["fields"] = e.fields.iter().enumerate().map(|(j, f)| {
+                    let mut fr = json!({ "field_index": j, "inline": f.inline });
+                    if !f.name.is_empty() { fr["name"] = parse(&f.name); }
+                    if !f.value.is_empty() { fr["value"] = parse(&f.value); }
+                    fr
+                }).collect();
+            }
+            r
+        }).collect();
+        out.insert("embeds".into(), embeds.into());
+    }
+    (if out.is_empty() { Value::Null } else { out.into() }, total)
+}
+
+/// (title, [(tab label, content, summary (label, value))]).
+fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<(String, String, Option<(String, String)>)>) {
     let pretty = |v: Value| if v.is_null() { "No data available".to_string() } else { serde_json::to_string_pretty(&v).unwrap_or_default() };
-    let one = |title: &str, label: &str, v: Value| (title.to_string(), vec![(label.to_string(), pretty(v))]);
+    let one = |title: &str, label: &str, v: Value| (title.to_string(), vec![(label.to_string(), pretty(v), None)]);
     match subject {
         Subject::User(u) => {
             let me = store.me.as_ref().filter(|m| m.id == u).map(json_of);
@@ -71,11 +112,9 @@ fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<(Strin
         Subject::Member(g, u) => one(t("Community member debug"), t("Community member record"), store.member(g, u).map(json_of).unwrap_or_default()),
         Subject::Message(c, m) => {
             let msg = store.messages(c).iter().find(|x| x.id == m);
-            let ast = msg.map_or_else(String::new, |m| {
-                let opts = reflux_markdown::Options { flags: reflux_markdown::presets::STANDARD, emoji: Default::default() };
-                format!("{:#?}", reflux_markdown::parse(&m.content, &opts))
-            });
-            (t("Message debug").to_string(), vec![(t("Message record").to_string(), pretty(msg.map(json_of).unwrap_or_default())), (t("Message AST").to_string(), ast)])
+            let (ast, total) = msg.map_or((Value::Null, 0.0), message_ast);
+            let summary = (!ast.is_null()).then(|| (t("Total parsing time:").to_string(), format!("{total:.2} ms")));
+            (t("Message debug").to_string(), vec![(t("Message record").to_string(), pretty(msg.map(json_of).unwrap_or_default()), None), (t("Message AST").to_string(), pretty(ast), summary)])
         }
         Subject::Client => {
             let windows: usize = store.messages.values().map(|w| w.messages.len()).sum();
@@ -88,7 +127,7 @@ fn tabs(store: &Store, st: &ShellState, subject: Subject) -> (String, Vec<(Strin
                 Some(super::expr::Fetched::Failed(e)) => e.clone(),
                 _ => t("Loading…").to_string(),
             };
-            ("Developer tools".to_string(), vec![("State".into(), pretty(state)), (t("User settings").to_string(), pretty(json_of(&store.settings))), ("Experiments".into(), experiments)])
+            ("Developer tools".to_string(), vec![("State".into(), pretty(state), None), (t("User settings").to_string(), pretty(json_of(&store.settings)), None), ("Experiments".into(), experiments, None)])
         }
     }
 }
@@ -100,7 +139,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     let mut body = col().w_full().gap(12.0);
     if tabs.len() > 1 {
         let mut bar = row().gap(16.0);
-        for (i, (label, _)) in tabs.iter().enumerate() {
+        for (i, (label, ..)) in tabs.iter().enumerate() {
             let on = i == active;
             bar = bar.child(
                 col()
@@ -120,8 +159,20 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         }
         body = body.child(bar);
     }
-    let code = tabs.get(active).map(|(_, c)| c.clone()).unwrap_or_default();
-    // Records are JSON; the message AST (Rust debug output) gets the same colouring.
+    // `.summary`: a card with an uppercase "Summary" heading and label / mono value rows.
+    if let Some((label, value)) = tabs.get(active).and_then(|tab| tab.2.clone()) {
+        body = body.child(
+            col()
+                .w_full()
+                .padding(16.0)
+                .radius(8.0)
+                .fill(p.background_secondary)
+                .border(1.0, p.background_modifier_accent)
+                .child(text(t("Summary").to_uppercase()).font(font(14.0, 600.0).lh(20.0)).color(p.text_secondary).mb(8.0))
+                .child(row().w_full().gap(12.0).child(text(label).font(font(14.0, 500.0).lh(20.0)).color(p.text_secondary)).child(rune::el().grow(1.0)).child(text(value).font(font(14.0, 400.0).lh(20.0).mono()).color(p.text_primary))),
+        );
+    }
+    let code = tabs.get(active).map(|tab| tab.1.clone()).unwrap_or_default();
     let spans = if code.starts_with(['{', '[']) { super::highlight::spans("json", &code, crate::ui::is_light(p)) } else { Vec::new() };
     let block = col()
         .w_full()
@@ -131,4 +182,23 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         .child(rune::rich(code, spans).font(font(13.0, 400.0).lh(18.0).mono()).color(p.text_primary).wrap().selectable(true));
     body = body.child(col().w_full().h(420.0).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).child(block), false, p)));
     Some(Modal::new(title, move |s: &mut S| acc(s).debug = None).size(ModalSize::Large).body(body).el(p))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn message_ast_like_fluxer() {
+        let mut m = reflux_model::Message { content: "**hi**".into(), ..Default::default() };
+        m.embeds.push(reflux_model::Embed { kind: "rich".into(), title: Some("T".into()), fields: vec![reflux_model::EmbedField { name: "n".into(), value: String::new(), inline: true }], ..Default::default() });
+        let (v, total) = super::message_ast(&m);
+        assert_eq!(v["message_content"]["content"], "**hi**");
+        assert!(v["message_content"]["ast"].is_array());
+        assert_eq!(v["embeds"][0]["embed_type"], "rich");
+        assert_eq!(v["embeds"][0]["title"]["content"], "T");
+        assert!(v["embeds"][0].get("description").is_none());
+        assert_eq!(v["embeds"][0]["fields"][0]["inline"], true);
+        assert!(v["embeds"][0]["fields"][0].get("value").is_none());
+        assert!(total >= 0.0);
+        assert!(super::message_ast(&reflux_model::Message::default()).0.is_null());
+    }
 }

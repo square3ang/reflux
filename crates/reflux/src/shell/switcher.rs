@@ -1,7 +1,11 @@
 //! The Ctrl+K quick switcher (`QuickSwitcherModal`, `search/state/QuickSwitcher.tsx`): fuzzy over
-//! communities, channels, DMs and people, with `@` `#` `!` `*` prefixes to narrow it.
-// shortcut: no member search over the network (`@@` all users, members of the open community
-// not cached yet); people come from friends and DMs.
+//! communities, channels, DMs and people, with `@` `#` `!` `*` prefixes to narrow it. People are
+//! every cached user; `@` narrows them to friends and members of the open community and asks the
+//! gateway for matching members (op 8, `MemberSearch.fetchMembersInBackground`); `@@` searches
+//! all users.
+
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use reflux_model::{ChannelType, NotificationLevel, RelationshipType, Snowflake};
 use reflux_store::Store;
@@ -16,14 +20,66 @@ use crate::i18n::t;
 pub struct Switcher {
     pub query: TextEdit,
     pub selected: usize,
+    /// When the `@` member request goes out (`memberFetchDebounceTimer`, 300 ms).
+    pub fetch_due: Option<Instant>,
+    /// `recentFetches`: `guild:query` → when it was asked (`MEMBER_FETCH_DEDUPE_MS`).
+    fetched: HashMap<String, Instant>,
 }
 
 impl Switcher {
     pub fn new() -> Self {
         let mut query = TextEdit::new("");
         query.focused = true;
-        Switcher { query, selected: 0 }
+        Switcher { query, selected: 0, ..Default::default() }
     }
+}
+
+/// `@@` all users, else the prefix mode, and the search after it (`parsePrefix`).
+fn parse(q: &str) -> (Option<char>, bool, &str) {
+    if let Some(r) = q.strip_prefix("@@") {
+        return (Some('@'), true, r.trim());
+    }
+    match q.chars().next() {
+        Some(c @ ('@' | '#' | '!' | '*')) => (Some(c), false, q[1..].trim()),
+        _ => (None, false, q),
+    }
+}
+
+/// The header above prefix-mode results (`getModeHeader`).
+pub fn mode_header(store: &Store, query: &str, guild: Option<Snowflake>) -> Option<String> {
+    let (mode, all, _) = parse(query.trim());
+    Some(match mode? {
+        '@' => match guild.filter(|_| !all).and_then(|g| store.guilds.get(&g)?.info.as_ref()) {
+            Some(i) => crate::i18n::tf("Searching friends and members of {communityName}", &[("communityName", &i.name)]),
+            None => t("Searching all users").to_string(),
+        },
+        '#' => t("Searching text channels").to_string(),
+        '!' => t("Searching voice channels").to_string(),
+        _ => t("Searching communities").to_string(),
+    })
+}
+
+/// `triggerMemberSearchIfNeeded` + `fetchMembersInBackground`, once the debounce is due: the open
+/// community's members matching an `@` search (not `@@`) unless all of them are cached.
+/// Returns the (guild, query) to request.
+pub fn due_member_fetch(store: &Store, sw: &mut Switcher, guild: Option<Snowflake>, now: Instant) -> Option<(Snowflake, String)> {
+    if sw.fetch_due.is_none_or(|d| now < d) {
+        return None;
+    }
+    sw.fetch_due = None;
+    let (mode, all, q) = parse(sw.query.text.trim());
+    let g = guild?;
+    let loaded = store.guilds.get(&g)?;
+    if mode != Some('@') || all || q.is_empty() || loaded.info.is_none() || loaded.members.len() as u32 >= loaded.member_count {
+        return None;
+    }
+    sw.fetched.retain(|_, at| now.duration_since(*at) < Duration::from_secs(60));
+    let key = format!("{g}:{}", q.to_lowercase());
+    if sw.fetched.contains_key(&key) {
+        return None;
+    }
+    sw.fetched.insert(key, now);
+    Some((g, q.to_string()))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -123,10 +179,7 @@ fn default_results(store: &Store, recent: &[Snowflake], current: Option<Snowflak
 pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option<Snowflake>, guild: Option<Snowflake>, web: &str, accounts: &[crate::session::Account]) -> Vec<Hit> {
     let q = query.trim();
     let link = super::switcher_extra::link_hit(web, q);
-    let (mode, q) = match q.chars().next() {
-        Some(c @ ('@' | '#' | '!' | '*')) => (Some(c), q[1..].trim()),
-        _ => (None, q),
-    };
+    let (mode, all_users, q) = parse(q);
     let me = store.my_id();
     let want = |m: char| mode.is_none_or(|x| x == m);
     let guild_name = |g: Snowflake| store.guilds.get(&g).and_then(|g| g.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
@@ -136,16 +189,43 @@ pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option
     }
     if want('@') {
         let mut seen = std::collections::HashSet::new();
+        let rel = |u| store.relationships.get(&u).map(|r| r.kind);
         let friends = store.relationships.values().filter(|r| r.kind == RelationshipType::FRIEND).map(|r| r.id);
         let dm_users = store.private_channels().into_iter().filter(|c| c.kind == ChannelType::DM).flat_map(|c| c.recipients.iter().map(|u| u.id)).collect::<Vec<_>>();
-        for u in friends.chain(dm_users).filter(|&u| u != me) {
-            if seen.insert(u) {
-                let name = store.users.get(&u).map(|x| x.username.clone()).unwrap_or_default();
-                let title = store.display_name(None, u);
-                let s = if q.is_empty() { 1 } else if u.to_string() == q { 10 } else { super::switcher_extra::user_field(&title, q).max(super::switcher_extra::user_field(&name, q)) };
-                if s > 0 {
-                    hits.push(Hit { target: Target::User(u), title, meta: name, score: s, section: None });
+        // `buildForwardUserCandidates`: every cached user but blocked ones; an empty `@` lists
+        // friends and DMs. `filterUsersToCommunity` for `@` inside a community.
+        let ids: Vec<Snowflake> = if q.is_empty() { friends.chain(dm_users).collect() } else { store.users.keys().copied().collect() };
+        let community = guild.filter(|_| mode == Some('@') && !all_users);
+        for u in ids.into_iter().filter(|&u| u != me && rel(u) != Some(RelationshipType::BLOCKED)) {
+            if !seen.insert(u) || community.is_some_and(|g| rel(u) != Some(RelationshipType::FRIEND) && store.member(g, u).is_none()) {
+                continue;
+            }
+            let name = store.users.get(&u).map(|x| x.username.clone()).unwrap_or_default();
+            let mut title = store.display_name(None, u);
+            let s = if q.is_empty() {
+                1
+            } else if u.to_string() == q {
+                10
+            } else {
+                // Friend alias and community nicknames match too; the best one becomes the title
+                // (`rankedToResult`).
+                let alias = store.relationships.get(&u).and_then(|r| r.nickname.clone());
+                let nicks = store.guilds.values().filter_map(|g| g.members.get(&u)?.nick.clone());
+                let best = std::iter::once(title.clone()).chain(alias).chain(nicks).fold((0, String::new()), |b, f| {
+                    let s = super::switcher_extra::user_field(&f, q);
+                    if s > b.0 { (s, f) } else { b }
+                });
+                let by_name = super::switcher_extra::user_field(&name, q);
+                match best {
+                    (s, f) if s > 0 && s >= by_name => {
+                        title = f;
+                        s
+                    }
+                    _ => by_name,
                 }
+            };
+            if s > 0 {
+                hits.push(Hit { target: Target::User(u), title, meta: name, score: s, section: None });
             }
         }
     }
@@ -192,6 +272,20 @@ pub fn results(store: &Store, query: &str, recent: &[Snowflake], current: Option
     link.into_iter().chain(lead).chain(hits).chain(trail).collect()
 }
 
+/// Once a frame: sends the debounced `@` member request.
+pub fn poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    let guild = st.guild;
+    let Some(sw) = st.switcher.as_mut() else { return false };
+    let now = Instant::now();
+    if let Some(due) = sw.fetch_due.filter(|&d| now < d) {
+        tx.wake_after(due - now);
+        return false;
+    }
+    let Some((guild, query)) = due_member_fetch(store, sw, guild, now) else { return false };
+    st.intents.push(Intent::RequestMembers { guild, query });
+    true
+}
+
 /// Goes to a result and closes the switcher.
 fn choose(store_first: impl Fn(Snowflake) -> Option<Snowflake>, st: &mut ShellState, t: Target) {
     st.switcher = None;
@@ -234,6 +328,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             let st = acc(s);
             let sw = st.switcher.get_or_insert_with(Switcher::new);
             sw.selected = 0;
+            sw.fetch_due = Some(Instant::now() + Duration::from_millis(300));
             &mut sw.query
         })
         .on_input_key(move |s: &mut S, k, _| {
@@ -261,7 +356,11 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .border(1.0, over(p.background_modifier_accent, p.background_primary))
         .child(field);
     let mut list = col().w_full().padding(4.0);
-    if hits.is_empty() {
+    let header = mode_header(store, &sw.query.text, st.guild);
+    if let Some(h) = &header {
+        list = list.child(text(h.clone()).font(font(11.0, 600.0).lh(16.0)).color(p.text_tertiary).py(4.0).px(8.0).mb(2.0));
+    }
+    if hits.is_empty() && header.is_none() {
         list = list.child(
             col()
                 .w_full()
@@ -392,5 +491,40 @@ mod tests {
         assert_eq!(r[0].target, Target::Channel(Some(Snowflake(2000)), Snowflake(2202), false), "the open channel isn't a previous one");
         assert_eq!(r[0].section, Some("Previous channels"));
         assert!(r.iter().filter(|h| h.section == Some("Unread channels")).all(|h| h.target != r[0].target), "no repeats");
+    }
+
+    #[test]
+    fn people_search_like_fluxer() {
+        let mut d = crate::shell::demo::Demo::new();
+        let users = |store: &Store, q: &str, g: u64| results(store, q, &[], None, Some(Snowflake(g)), "", &[]).into_iter().filter_map(|h| if let Target::User(u) = h.target { Some(u.0) } else { None }).collect::<Vec<_>>();
+        assert_eq!(users(&d.store, "@linus", 2000), [1002], "a cached member of the open community");
+        assert!(users(&d.store, "@linus", 3000).is_empty(), "not a friend nor a member of Rust Lang");
+        assert_eq!(users(&d.store, "@@linus", 3000), [1002], "`@@` searches all users");
+        assert_eq!(users(&d.store, "@lovelace", 3000), [1001], "friends always count");
+        assert!(users(&d.store, "@@spam", 3000).is_empty(), "blocked users never show");
+        assert_eq!(users(&d.store, "hedy", 3000), [1008], "no prefix: every cached user");
+        assert_eq!(mode_header(&d.store, "@x", Some(Snowflake(3000))).as_deref(), Some("Searching friends and members of Rust Lang"));
+        assert_eq!(mode_header(&d.store, "@@x", Some(Snowflake(3000))).as_deref(), Some("Searching all users"));
+        assert_eq!(mode_header(&d.store, "x", None), None);
+
+        // The debounced op 8 request: only for `@`, a not fully loaded community, once a minute.
+        d.store.guilds.get_mut(&Snowflake(3000)).unwrap().member_count = 50;
+        let now = Instant::now();
+        let mut sw = Switcher::new();
+        sw.query = TextEdit::new("@lin");
+        sw.fetch_due = Some(now + Duration::from_millis(300));
+        assert_eq!(due_member_fetch(&d.store, &mut sw, Some(Snowflake(3000)), now), None, "not due yet");
+        let later = now + Duration::from_millis(300);
+        assert_eq!(due_member_fetch(&d.store, &mut sw, Some(Snowflake(3000)), later), Some((Snowflake(3000), "lin".into())));
+        sw.fetch_due = Some(later);
+        assert_eq!(due_member_fetch(&d.store, &mut sw, Some(Snowflake(3000)), later), None, "deduped");
+        for q in ["@@lin", "#lin", "@"] {
+            sw.query = TextEdit::new(q);
+            sw.fetch_due = Some(later);
+            assert_eq!(due_member_fetch(&d.store, &mut sw, Some(Snowflake(3000)), later), None, "{q}");
+        }
+        sw.query = TextEdit::new("@grace");
+        sw.fetch_due = Some(later);
+        assert_eq!(due_member_fetch(&d.store, &mut sw, Some(Snowflake(2000)), later), None, "HQ's members are all cached");
     }
 }

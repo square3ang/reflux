@@ -126,6 +126,8 @@ pub enum Intent {
     Voice(voice::Op),
     /// Open (creating it if needed) the DM with a user and show it.
     OpenDm(Snowflake),
+    /// Gateway op 8: up to 25 members of a community matching a name, with presences.
+    RequestMembers { guild: Snowflake, query: String },
     /// A `fluxer:` link, as if the OS had opened it.
     OpenLink(String),
     /// `startCallWithUser`: open the DM with a user and start (or confirm) a call there; video
@@ -553,6 +555,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     let mut changed = expr::poll(store, st, tx);
     changed |= crate::nav::poll(store, st);
     changed |= members_page::poll(st, tx);
+    changed |= switcher::poll(store, st, tx);
     changed |= crate::guild::poll_overwrite_search(store, st, tx);
     changed |= crate::settings::search::poll(store, st, tx);
     changed |= crate::settings::dev::poll(st);

@@ -917,7 +917,7 @@ fn expr_scene(st: &mut ShellState, scene: &str) {
 }
 
 /// `--msg-scene=hover|shift|failed|send-error|menu|more|emoji|reply|edit|delete`: message actions mid-use;
-/// `uploads|pins|search|search-options|switcher|switcher-link|switcher-account|autocomplete|jump|present|slowmode|counter`: the
+/// `uploads|pins|search|search-options|switcher|switcher-people|switcher-link|switcher-account|autocomplete|jump|present|slowmode|counter`: the
 /// composer and navigation tools.
 /// `picker-emoji|picker-sticker|picker-gif|picker-gif-search|picker-memes|react-picker|
 /// reaction-tip|reactions-modal|expr-info|sticker-info`: the expression surfaces.
@@ -927,6 +927,7 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
     match scene {
         "hover" => st.hover_msg = Some(ada),
         "debug-channel" => st.open_debug(super::debug::Subject::Channel(Snowflake(GENERAL))),
+        "debug-ast" => st.debug = Some(super::debug::Debug { subject: super::debug::Subject::Message(Snowflake(GENERAL), ada), tab: 1 }),
         "nagbars" => {
             st.desktop.notice = Some(reflux_model::InstanceNotice { id: "n1".into(), message: "Voice is moving to the new region tonight.".into(), url: Some("https://example.com".into()), ..Default::default() });
             st.desktop.maintenance = Some(crate::desktop::notices::Maintenance { id: "m1".into(), status: crate::desktop::notices::Status::Scheduled, start: "2026-11-08T03:00:00Z".into(), minutes: 120, url: "https://status.example.com".into() });
@@ -1014,6 +1015,13 @@ fn stage(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.toggle_switcher();
             if let Some(sw) = &mut st.switcher {
                 sw.query = rune::TextEdit::new("#");
+                sw.query.focused = true;
+            }
+        }
+        "switcher-people" => {
+            st.toggle_switcher();
+            if let Some(sw) = &mut st.switcher {
+                sw.query = rune::TextEdit::new("@a");
                 sw.query.focused = true;
             }
         }
