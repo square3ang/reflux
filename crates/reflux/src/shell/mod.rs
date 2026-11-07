@@ -527,7 +527,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     changed |= crate::nav::poll(store, st);
     changed |= members_page::poll(st, tx);
     changed |= crate::guild::poll_overwrite_search(store, st, tx);
-    changed |= crate::settings::search::poll(store, st);
+    changed |= crate::settings::search::poll(store, st, tx);
     changed |= crate::settings::dev::poll(st);
     if std::mem::take(&mut st.search_requested) {
         search::run(store, st, st.search.page.max(1));

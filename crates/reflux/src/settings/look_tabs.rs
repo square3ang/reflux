@@ -64,7 +64,7 @@ fn radio<S: 'static>(p: &Palette, options: &[(&str, &str, Option<&str>)], value:
 }
 
 fn muted(s: &str, p: &Palette) -> El {
-    text(s.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap()
+    crate::ui::mark::marked(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap()
 }
 
 /// A numeric select whose options are `values` labelled by `label`.

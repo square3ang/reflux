@@ -109,7 +109,7 @@ impl<'a, S: 'static> Input<'a, S> {
         }
         let mut fieldset = col().w_full().gap(4.0);
         if let Some(l) = self.label {
-            fieldset = fieldset.child(text(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
+            fieldset = fieldset.child(super::mark::marked(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
         }
         fieldset.child(group)
     }

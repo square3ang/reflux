@@ -139,7 +139,7 @@ impl<'a, S: 'static> Select<'a, S> {
         }
 
         match self.label {
-            Some(l) => col().gap(4.0).child(text(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)).child(trigger),
+            Some(l) => col().gap(4.0).child(super::mark::marked(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)).child(trigger),
             None => trigger,
         }
     }

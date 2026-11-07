@@ -8,6 +8,7 @@ pub mod controls;
 pub mod datepicker;
 pub mod gallery;
 pub mod input;
+pub mod mark;
 pub mod menu;
 pub mod misc;
 pub mod modal;

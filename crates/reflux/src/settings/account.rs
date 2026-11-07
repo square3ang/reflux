@@ -47,7 +47,8 @@ pub enum AccountModal {
 }
 
 pub(super) fn txt(s: impl Into<String>, size: f32, weight: f32, c: rune::Color) -> El {
-    text(s.into()).font(font(size, weight).lh(size * 1.4)).color(c).wrap()
+    let s = s.into();
+    crate::ui::mark::text(text(s.clone()).font(font(size, weight).lh(size * 1.4)).color(c).wrap(), &s)
 }
 
 /// `AccountSecurityCard`: a bordered card with an optional header (title, description, action)
@@ -56,7 +57,7 @@ pub(super) fn card(head: Option<(&str, Option<&str>, Option<El>)>, rows: Vec<El>
     let mut c = col().w_full().radius(12.0).border(1.0, p.background_modifier_accent);
     let has_head = head.is_some();
     if let Some((title, desc, action)) = head {
-        let mut words = col().grow(1.0).min_w(0.0).gap(4.0).child(text(title.to_string()).font(font(15.0, 600.0).lh(19.5)).color(p.text_primary));
+        let mut words = col().grow(1.0).min_w(0.0).gap(4.0).child(crate::ui::mark::text(text(title.to_string()).font(font(15.0, 600.0).lh(19.5)).color(p.text_primary), title));
         if let Some(d) = desc {
             words = words.child(txt(d, 13.0, 400.0, p.text_tertiary));
         }
@@ -71,7 +72,7 @@ pub(super) fn card(head: Option<(&str, Option<&str>, Option<El>)>, rows: Vec<El>
 
 /// `AccountSecurityRow`: label 14/500 and a 13px description, actions on the right.
 pub(super) fn card_row(label: &str, desc: Option<El>, actions: Vec<El>, p: &Palette) -> El {
-    let mut words = col().grow(1.0).min_w(0.0).gap(2.0).child(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).wrap());
+    let mut words = col().grow(1.0).min_w(0.0).gap(2.0).child(crate::ui::mark::text(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).wrap(), label));
     if let Some(d) = desc {
         words = words.child(d);
     }

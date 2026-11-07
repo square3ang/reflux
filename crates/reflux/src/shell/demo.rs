@@ -338,6 +338,8 @@ impl Demo {
                 && let Some(u) = shell.settings.as_mut()
             {
                 u.search = rune::TextEdit::new(q);
+                // Already past the search debounce.
+                u.typed = Some((q.trim().to_string(), std::time::Instant::now() - std::time::Duration::from_secs(1)));
             }
         }
         // `REFLUX_LOOK='{"saturation":0.5}'`: appearance / accessibility preferences for snapshots.

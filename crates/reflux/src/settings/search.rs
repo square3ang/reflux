@@ -2,8 +2,6 @@
 //! against every tab's searchable items and sections (generated into [`search_index`]); the nav
 //! keeps the matching tabs, and the content pane lists them best first as collapsible sections
 //! (match count, the first three matched items as chips) with the tab itself inline.
-// shortcut: results follow every keystroke (Fluxer waits 300 ms) and matches aren't highlighted
-// inside the inline tabs (Fluxer uses CSS highlight ranges).
 
 use reflux_store::Store;
 use rune::{El, col, icon, row, text};
@@ -93,14 +91,36 @@ pub(super) fn search(q: &str, shown: impl Fn(&str) -> bool) -> Vec<Hit> {
     hits
 }
 
-/// Once a frame: a new query expands every result again (`setExpandedTabs`) and loads what the
-/// matched tabs list.
-pub fn poll(store: &Store, st: &mut ShellState) -> bool {
-    let Some(u) = st.settings.as_ref() else { return false };
+/// `DesktopSettingsView`'s debounce: a query applies once typing pauses for this long; clearing
+/// applies at once.
+const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Once a frame: a settled new query expands every result again (`setExpandedTabs`) and loads
+/// what the matched tabs list.
+pub fn poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    let Some(u) = st.settings.as_mut() else { return false };
     let q = u.search.text.trim().to_string();
     if q == u.searched {
+        u.typed = None;
         return false;
     }
+    if !q.is_empty() {
+        let now = std::time::Instant::now();
+        let since = match &u.typed {
+            Some((typed, at)) if *typed == q => *at,
+            _ => {
+                u.typed = Some((q, now));
+                now
+            }
+        };
+        let left = DEBOUNCE.saturating_sub(now - since);
+        if !left.is_zero() {
+            tx.wake_after(left);
+            return false;
+        }
+    }
+    let q = u.search.text.trim().to_string();
+    u.typed = None;
     let hits = search(&q, |id| super::visible_id(id, store, st.premium));
     if let Some(u) = st.settings.as_mut() {
         u.searched = q;
@@ -214,7 +234,11 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
             .child(chips);
         let mut section = col().w_full().child(head);
         if expanded {
-            section = section.child(col().w_full().gap(8.0).py(16.0).child(tabs::body(store, st, ui, tab, p, acc, layer)));
+            // `data-settings-section`: the query is marked inside the inline tab.
+            crate::ui::mark::set(&ui.searched);
+            let body = tabs::body(store, st, ui, tab, p, acc, layer);
+            crate::ui::mark::clear();
+            section = section.child(col().w_full().gap(8.0).py(16.0).child(body));
         }
         out = out.child(section);
     }

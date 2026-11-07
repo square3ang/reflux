@@ -53,8 +53,11 @@ pub struct SettingsUi {
     pub modal: Option<AccountModal>,
     /// The Profile tab edits this community's profile (`ProfileTypeSelector`).
     pub profile_guild: Option<Snowflake>,
-    /// The query the search results were last set up for, and the results folded since.
+    /// The query the search results were last set up for (`debouncedSearchQuery`), and the
+    /// results folded since.
     pub searched: String,
+    /// The typed query waiting out the 300 ms debounce, and since when.
+    pub typed: Option<(String, std::time::Instant)>,
     pub collapsed: Vec<&'static str>,
 }
 
@@ -62,7 +65,7 @@ impl SettingsUi {
     /// Opens on `tab` (a [`TABS`] id), or on the first tab like Fluxer.
     pub fn new(tab: Option<&str>) -> Self {
         let tab = TABS.iter().find(|t| Some(t.id) == tab).map_or("my_profile", |t| t.id);
-        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), collapsed: Vec::new() }
+        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), typed: None, collapsed: Vec::new() }
     }
 }
 
@@ -301,7 +304,7 @@ const LAYER_KEY: &str = "settings-layer";
 pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let mut popups = Vec::new();
     let close = move |s: &mut S| acc(s).settings = None;
-    let q = ui.search.text.trim();
+    let q = ui.searched.as_str();
     let hits = search::search(q, |id| visible_id(id, store, premium));
     let (head, nav) = sidebar(store, st, ui, p, premium, &hits, acc);
     let (title, body) = if q.is_empty() {
@@ -559,7 +562,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
     profile = if profile_sel { profile.fill(c.selected) } else { profile.fill(c.surface).hover(c.hover) };
 
     // Nav: categories of items, then Sign out, then the client info footer.
-    let q = ui.search.text.trim().to_lowercase();
+    let q = ui.searched.to_lowercase();
     let shown: Vec<&TabDef> = TABS
         .iter()
         .filter(|t| !NAV_HIDDEN.contains(&t.id) && visible(t, store, premium))

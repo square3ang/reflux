@@ -83,10 +83,10 @@ impl<S: 'static> Switch<S> {
         }
         let mut labels = col().grow(1.0).shrink().gap(4.0);
         if let Some(l) = self.label {
-            labels = labels.child(text(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
+            labels = labels.child(super::mark::marked(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
         }
         if let Some(d) = self.description {
-            labels = labels.child(text(d).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().pr(16.0));
+            labels = labels.child(super::mark::marked(d).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().pr(16.0));
         }
         if let Some(f) = act {
             labels = labels.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| f(s));
@@ -128,7 +128,7 @@ impl<S: 'static> Checkbox<S> {
         let mut w = row().min_h(n).items_start().child(b).role("checkbox").checked(self.checked).focusable(!self.disabled);
         if let Some(l) = self.label {
             w = w.label(l.clone()).child(
-                text(l).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).pl(8.0).mt((n - 20.0) / 2.0 - 1.0).wrap().shrink(),
+                super::mark::marked(l).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).pl(8.0).mt((n - 20.0) / 2.0 - 1.0).wrap().shrink(),
             );
         }
         if self.disabled {
@@ -168,9 +168,9 @@ impl<'a, S: 'static> RadioGroup<'a, S> {
             let mut words = col()
                 .gap(4.0)
                 .shrink()
-                .child(text(label).font(font(15.0, 500.0).lh(21.0)).color(p.text_primary));
+                .child(super::mark::marked(label).font(font(15.0, 500.0).lh(21.0)).color(p.text_primary));
             if let Some(d) = desc {
-                words = words.child(text(d).font(font(14.0, 400.0).lh(19.6)).color(p.text_secondary).wrap());
+                words = words.child(super::mark::marked(d).font(font(14.0, 400.0).lh(19.6)).color(p.text_secondary).wrap());
             }
             let mut opt = row()
                 .w_full()

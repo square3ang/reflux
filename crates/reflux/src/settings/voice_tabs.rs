@@ -26,7 +26,7 @@ fn desc(s: &str, p: &Palette) -> El {
 }
 
 fn label(s: &str, p: &Palette) -> El {
-    text(s.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)
+    crate::ui::mark::marked(s).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)
 }
 
 /// The Voice & video tab body.

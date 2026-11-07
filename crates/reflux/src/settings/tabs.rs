@@ -22,7 +22,7 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
         "themes" => super::look_tabs::themes(store, st, p, acc),
         "chat_settings" => super::look_tabs::chat(store, st, p, acc),
         "accessibility" => super::look_tabs::accessibility(store, st, p, acc, layer),
-        "advanced_settings" => super::advanced::tab(store, st, ui.search.text.trim(), p, acc),
+        "advanced_settings" => super::advanced::tab(store, st, &ui.searched, p, acc),
         "voice_video" => super::voice_tabs::tab(store, st, p, acc, layer),
         "notifications" => super::look_tabs::notifications(store, st, p, acc),
         "keybinds" => crate::nav::keys::tab(st, p, acc, layer),
@@ -47,7 +47,7 @@ pub(crate) fn section(title: &str, content: El, first: bool, p: &Palette) -> El 
         .w_full()
         .gap(16.0)
         .pb(24.0)
-        .child(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary))
+        .child(crate::ui::mark::text(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary), crate::i18n::t(title)))
         .child(col().w_full().gap(20.0).child(content));
     if !first {
         s = s.pt(24.0).child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
