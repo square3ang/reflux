@@ -3,17 +3,17 @@
 Compared against the official client at `/tmp/opencode/fluxer` (fluxer_app + fluxer_desktop).
 Paths: **F/** = `fluxer_app/src/features/`, **D/** = `fluxer_desktop/src/main/`.
 Status: **DONE** · **PARTIAL** · **MISSING**. *(low)* = billing/premium or otherwise low priority.
-Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0. Agents: update rows you finish.
+Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after media: 63 · 68 · 141; voice/video moved 4 rows to DONE and 8 from MISSING to PARTIAL. Audit 2026-11-07 (duplicate rows dropped, stale rows fixed): 72 DONE · 85 PARTIAL · 29 MISSING (186 rows); after misc (members page, active now, alt text, overrides, auto-idle, search history, debug tools, offline cache, premium views), merged with the nav and voice agents' rows: 94 DONE · 90 PARTIAL · 2 MISSING; after community/channel settings, merged with the p2p rows: 106 DONE · 79 PARTIAL · 1 MISSING; after Explore load-more: 107 · 78 · 1; after user settings: 116 · 69 · 1; after social3 (threads, forum, user menu, active now streams, OAuth2, handoff, typing, search nav, report, entrance scopes, voice message trim): 127 DONE · 59 PARTIAL · 0 MISSING; after chat3 (nagbars, NSFW, invites, gifv, search scope/dates, date picker kit, multi-file portal picker, pickers, inbox, reactors, system messages): 142 · 44 · 0; after plat4 (notification clicks, badges, Windows deep links, Flatpak autostart, global shortcut hooks, screen-share picker; Windows/macOS now `cargo check` clean via `scripts/cross-check.sh`): 151 · 35 · 0; after med4 (voice message player, saved media, pop-out pool, Quick CSS window, theme folders, i18n msgids, debug JSON): 156 · 30 · 0; after set4 (profile badges, recovery kit, Bluesky, bot username rules, settings search highlight, overview/role crop, invite previews, activity log sentences): 164 · 22 · 0. Agents: update rows you finish.
 
 ## 1. Settings tabs
 
 ### 1.1 User settings (F/user/components/settings_utils/SettingsConstants.tsx; ours settings/)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Profile | PARTIAL | badges (hidden badges, premium timestamp); the preview doesn't show local time; GIFs skip the crop modal | F/user/components/modals/tabs/MyProfileTab.tsx |
-| Account | PARTIAL | recovery kit; a security key's PIN is asked up front | tabs/account_security_tab/* |
+| Profile | DONE | badges section (hide badges, Operator Pass timestamp/count, live preview), local time in the preview card, GIFs cropped frame by frame (no animated WebP, no Skip button) | F/user/components/modals/tabs/MyProfileTab.tsx |
+| Account | DONE | recovery kit (generate/replace, copy, PDF download, print via the system viewer; reminder dismissal is per session); security-key PIN asked only when the key wants one | tabs/account_security_tab/* |
 | Privacy | DONE | | tabs/PrivacySafetyTab.tsx |
-| Connections | PARTIAL | Bluesky (browser OAuth) | tabs/LinkedAccountsTab.tsx, F/connection/* |
+| Connections | DONE | Bluesky connects through browser OAuth; the dialog closes on USER_CONNECTIONS_UPDATE | tabs/LinkedAccountsTab.tsx, F/connection/* |
 | Authorized apps | DONE | | tabs/AuthorizedAppsTab.tsx |
 | Blocked users | DONE | | tabs/BlockedUsersTab.tsx |
 | Devices | DONE | | tabs/DevicesTab.tsx |
@@ -27,19 +27,19 @@ Baseline (2026-11-07): 57 DONE · 67 PARTIAL · 148 MISSING (272 rows); after me
 | Language & time | DONE | (impossible: OS spellcheck engine — Rune has no native text services; built-in dictionaries + whatlang auto-detect) | tabs/LanguageTab.tsx |
 | Keybinds | DONE | custom Toggle mute / Toggle deafen combos and the PTT key are global where a hook backend runs (X11, Windows, macOS); on Wayland the portal's keys are set in the desktop | tabs/KeybindsTab.tsx |
 | Desktop app | PARTIAL | minimize to tray (Rune has no minimize event), window position/maximized | tabs/DesktopSettingsTab.tsx |
-| Advanced | PARTIAL | encoder options (impossible: hardware acceleration — Rune always renders on the GPU) | tabs/AdvancedSettingsTab.tsx |
-| Applications (dev) | PARTIAL | bot username/discriminator rules | tabs/applications_tab/* |
+| Advanced | PARTIAL | screen-share encoder options (encoder path, SVC mode, content hint) need reflux-voice support (impossible: hardware acceleration — Rune always renders on the GPU) | tabs/AdvancedSettingsTab.tsx |
+| Applications (dev) | DONE | bot banner preview is the profile card's | tabs/applications_tab/* |
 | Embed debugger (dev) | DONE | | tabs/EmbedDebuggerTab.tsx |
 | Design system (dev) | DONE | | tabs/component_gallery_tab/* |
-| Settings search | PARTIAL | no in-tab match highlight or debounce | SettingsConstants.tsx |
+| Settings search | DONE | 300 ms debounce; matches are highlighted in text built by the shared settings helpers (a tab's bare `text()` isn't, as Rune keeps the element tree private) | SettingsConstants.tsx |
 
 ### 1.2 Community settings (ours guild/settings.rs)
 | Tab | Status | Missing | Official source |
 |---|---|---|---|
-| Overview | PARTIAL | no invite page / invite modal preview buttons; images are taken as picked, not through AssetCropModal (threshold date uses the DateTimePickerField kit) | guild_tabs/guild_overview_tab/* |
-| Roles | PARTIAL | uploads are centre-cropped (no crop modal); members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
+| Overview | DONE | invite page / invite modal previews; icon, banner, invite and embed backgrounds go through the crop modal (threshold date uses the DateTimePickerField kit) | guild_tabs/guild_overview_tab/* |
+| Roles | DONE | role icons go through the crop modal; members-in-role isn't in Fluxer's RoleEditor | guild_tabs/GuildRolesTab.tsx |
 | Moderation | DONE | | guild_tabs/GuildModerationTab.tsx |
-| Activity log | PARTIAL | change details are labelled `Field: old → new` rows (humanised labels, Yes/No, joined lists), not Fluxer's per-action sentences; "Load more" button instead of scroll paging; user filter lists known members | guild_tabs/GuildAuditLogTab.tsx |
+| Activity log | DONE | Fluxer's per-action sentences and detail rows; pages load as the list scrolls; users in sentences aren't clickable and custom emojis show as `:name:` | guild_tabs/GuildAuditLogTab.tsx |
 | Emoji | DONE | the upload dialog picks one file (Rune's file dialog returns one path); several upload by dropping them on the drop zone | guild_tabs/GuildEmojiTab.tsx |
 | Stickers | DONE | one at a time like Fluxer's drop zone; images contained in a 320px square (`optimizeStickerImage`) | guild_tabs/GuildStickersTab.tsx |
 | Explore (discovery listing) | DONE | | guild_tabs/GuildDiscoveryTab.tsx |

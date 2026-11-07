@@ -811,6 +811,14 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
     let cur = |k: &str| st.form.data.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     // "Filter by user": the community's known members (Fluxer lists the member store too).
     let mut users: Vec<(String, String)> = store.guilds.get(&g).map(|gs| gs.members.values().map(|m| (m.user.id.to_string(), m.nick.clone().unwrap_or_else(|| user_name(&m.user)))).collect()).unwrap_or_default();
+    // `ensureMembersLoaded` for the log's actors and targets: they join the list.
+    for u in st.form.data.get("audit").and_then(|a| a["users"].as_array()).into_iter().flatten() {
+        if let Ok(u) = serde_json::from_value::<PartialUser>(u.clone())
+            && !users.iter().any(|x| x.0 == u.id.to_string())
+        {
+            users.push((u.id.to_string(), user_name(&u)));
+        }
+    }
     users.sort_by_key(|u| u.1.to_lowercase());
     users.insert(0, (String::new(), t("All users").into()));
     let user_refs: Vec<(&str, &str)> = users.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
