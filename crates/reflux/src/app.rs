@@ -583,8 +583,8 @@ fn restore_voice_devices(s: &mut State) {
     voice::apply_encoder(&v.settings);
 }
 
-/// Drops the connection and everything loaded for it.
-fn reset(s: &mut State) {
+/// Leaves voice and closes the gateway (`cleanupRuntimeStateOnCrash` too).
+pub fn stop_for_crash(s: &mut State) {
     voice::leave(s, true);
     if let Some(h) = s.app.voice.rollout.take() {
         h.abort();
@@ -592,6 +592,11 @@ fn reset(s: &mut State) {
     if let Some(gw) = s.app.gateway.take() {
         let _ = gw.send(Command::Close);
     }
+}
+
+/// Drops the connection and everything loaded for it.
+fn reset(s: &mut State) {
+    stop_for_crash(s);
     s.app.generation += 1;
     s.app.store = Store::default();
     s.app.connection = None;

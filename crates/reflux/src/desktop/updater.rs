@@ -20,7 +20,7 @@ use crate::State;
 
 const EVERY: Duration = Duration::from_secs(6 * 3600);
 
-fn feed() -> Option<String> {
+pub(crate) fn feed() -> Option<String> {
     std::env::var("REFLUX_UPDATE_FEED").ok().or(option_env!("REFLUX_UPDATE_FEED").map(String::from)).filter(|u| u.starts_with("https://"))
 }
 
@@ -93,7 +93,7 @@ pub fn tick(s: &mut State) {
     });
 }
 
-async fn check(url: &str) -> reqwest::Result<Option<Available>> {
+pub(crate) async fn check(url: &str) -> reqwest::Result<Option<Available>> {
     let r: Release = reflux_net::http_client().get(url).send().await?.error_for_status()?.json().await?;
     if !newer(&r.tag_name, env!("CARGO_PKG_VERSION")) {
         return Ok(None);

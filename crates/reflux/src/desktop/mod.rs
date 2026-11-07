@@ -233,7 +233,7 @@ pub struct Desktop {
     pub size: [f32; 2],
     size_changed: Option<std::time::Instant>,
     title: String,
-    update: Option<updater::Available>,
+    pub(crate) update: Option<updater::Available>,
     /// OBS / XSplit is running (`StreamerModeProcessDetection.ts`).
     pub capture_app: bool,
     streamer_polled: Option<std::time::Instant>,

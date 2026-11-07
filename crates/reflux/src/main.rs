@@ -81,7 +81,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         None => {
             let look = &s.app.saved.desktop.look;
             let p = theme::custom::effective(look.theme(&s.app.store.settings.theme), cx.system_dark(), look.saturation, &look.theme_css());
-            crash::view::<State>(&crash::shown().unwrap_or_default(), &p)
+            crash::view(&crash::shown().unwrap_or_default(), s.desktop.update.as_ref(), &p)
         }
     };
     desktop::window::root(content, s.desktop.size)
@@ -114,6 +114,7 @@ fn main() {
         scenes: ui::gallery::SCENES,
         poll: Some(|s: &mut State, _, tx| {
             if crash::shown().is_some() {
+                crash::poll(s);
                 return false;
             }
             crash::guard(|| match &mut s.shell_demo {
