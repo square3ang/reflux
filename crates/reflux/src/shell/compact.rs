@@ -102,7 +102,7 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
 
 /// "Announce new messages": a polite live region holding the open channel's newest message from
 /// someone else, so screen readers read it when it arrives.
-// shortcut: lives here (not in chat.rs) to keep the shared file's diff small.
+// Kept here rather than in chat.rs to keep that shared file small.
 pub(super) fn announcer(store: &Store, c: &reflux_model::Channel) -> Option<El> {
     if !crate::look::with(|l| l.announce_messages) {
         return None;

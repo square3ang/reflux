@@ -1423,6 +1423,20 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         _ => String::new(),
     };
     let spelling = if st.prefs.spellcheck { crate::compose::unpilled(crate::desktop::spell::spans(&draft.text, draft.range().0, p.status_danger), draft) } else { Vec::new() };
+    // Enter and the send button: start the thread, confirm a mass mention, or send.
+    let submit = {
+        let mass = crate::social::mass_mention(store, c, &st.composer.text).filter(|_| slot == Slot::Main);
+        let suggested = suggested.clone();
+        std::rc::Rc::new(move |s: &mut S| match (slot, mass) {
+            (Slot::Create, _) => super::threads::submit_create(acc(s), &suggested),
+            (Slot::Main, Some((mention, n))) => {
+                let st = acc(s);
+                st.social.mass = Some((cid, mention, n));
+                st.social.pending_send = (limit, slow);
+            }
+            _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
+        })
+    };
     let field = text_input(draft, font(16.0, 400.0).lh(22.0))
         .key(match slot {
             Slot::Main => "composer",
@@ -1462,21 +1476,14 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         })
         // Enter sends; Shift+Enter is the field's own newline.
         .on_submit({
-            let mass = crate::social::mass_mention(store, c, &st.composer.text).filter(|_| slot == Slot::Main);
-            move |s: &mut S, _| match (slot, mass) {
-                (Slot::Create, _) => super::threads::submit_create(acc(s), &suggested),
-                (Slot::Main, Some((mention, n))) => {
-                    let st = acc(s);
-                    st.social.mass = Some((cid, mention, n));
-                    st.social.pending_send = (limit, slow);
-                }
-                _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
-            }
+            let submit = submit.clone();
+            move |s: &mut S, _| submit(s)
         });
     // The thread side panel has its own "+" menu and tray; the new-thread pane has none.
     let plus_id = if slot == Slot::Pane { "thread-composer-plus" } else { "composer-plus" };
     let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id).on_press(move |s: &mut S| acc(s).popups.toggle(plus_id));
     let plus = if slot == Slot::Create { el().size(32.0, 32.0) } else { plus };
+    let look = &st.prefs.look;
     // `.textareaOuterRow`: inset 6, min-height 58, radius 8, ring; `.mainWrapperDense` grid with
     // 12px columns gaps, padding 13 / 10.
     let input_row = row()
@@ -1495,10 +1502,18 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 .gap(dim::COMPOSER_ACTION_GAP)
                 .center_y()
                 .key("composer-expr")
-                .children(super::expr::gif::enabled(st).then(|| button(&icons::GIF, t("GIFs")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
-                .child(button(&icons::IMAGE_SQUARE, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes)))
-                .child(button(&icons::STICKER, t("Stickers")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers)))
-                .child(button(&icons::SMILEY, t("Emojis")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))),
+                .children((look.show_gif_button && super::expr::gif::enabled(st)).then(|| button(&icons::GIF, t("GIFs")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
+                .children(look.show_memes_button.then(|| button(&icons::IMAGE_SQUARE, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes))))
+                .children(look.show_stickers_button.then(|| button(&icons::STICKER, t("Stickers")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers))))
+                .children(look.show_emoji_button.then(|| button(&icons::SMILEY, t("Emojis")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))))
+                .children(look.show_send_button.then(|| {
+                    // `desktopSendDisabled`: nothing to send, over the limit or in slowmode.
+                    let empty = draft.text.trim().is_empty() && (slot == Slot::Create || (if slot == Slot::Pane { &st.threads.uploads } else { &st.uploads }).is_empty());
+                    let blocked = empty || draft.text.chars().count() > limit || st.cooldowns.get(&cid).is_some_and(|t| *t > st.now_ms);
+                    let b = button(&icons::PAPER_PLANE_RIGHT, t("Send message")).key(format!("composer-send-{}", slot as u8));
+                    let submit = submit.clone();
+                    if blocked { b.opacity(0.5) } else { b.on_press(move |s: &mut S| submit(s)) }
+                })),
         );
     let mut boxed = col()
         .w_full()

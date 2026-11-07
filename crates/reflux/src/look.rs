@@ -62,6 +62,13 @@ pub struct Prefs {
     /// `AccountTheme.syncAcrossDevices` and `localTheme`: off, this device keeps its own base
     /// theme instead of the account's.
     pub theme_sync: bool,
+    /// Composer buttons: `showGifButton`, `showMemesButton`, `showStickersButton`,
+    /// `showEmojiButton` and `showMessageSendButton`.
+    pub show_gif_button: bool,
+    pub show_memes_button: bool,
+    pub show_stickers_button: bool,
+    pub show_emoji_button: bool,
+    pub show_send_button: bool,
     pub local_theme: String,
     /// `AdvancedSettings.unreadBadgeCustomizationEnabled`: per-community unread badge levels.
     pub unread_badge_customization: bool,
@@ -141,6 +148,11 @@ impl Default for Prefs {
             hide_blocked: false,
             clone_shortcuts: false,
             theme_sync: true,
+            show_gif_button: true,
+            show_memes_button: true,
+            show_stickers_button: true,
+            show_emoji_button: true,
+            show_send_button: false,
             local_theme: "dark".into(),
             unread_badge_customization: false,
             convert_emoticons: false,

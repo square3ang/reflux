@@ -166,6 +166,14 @@ fn control<S: 'static>(id: &str, store: &Store, st: &ShellState, p: &Palette, ac
                 .child(look_switch(st, p, acc, Some("Show quick reactions"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_quick_reactions, |p, v| p.look.action_bar_quick_reactions = v))
                 .child(look_switch(st, p, acc, Some("Enable Shift to expand"), off || st.prefs.look.action_bar_more_only, |p| p.look.action_bar_shift_expand, |p, v| p.look.action_bar_shift_expand = v))
         }
+        "chat-settings-input-buttons" => col()
+            .w_full()
+            .gap(12.0)
+            .child(look_switch(st, p, acc, Some("Show GIFs button"), false, |p| p.look.show_gif_button, |p, v| p.look.show_gif_button = v))
+            .child(look_switch(st, p, acc, Some("Show media button"), false, |p| p.look.show_memes_button, |p, v| p.look.show_memes_button = v))
+            .child(look_switch(st, p, acc, Some("Show stickers button"), false, |p| p.look.show_stickers_button, |p, v| p.look.show_stickers_button = v))
+            .child(look_switch(st, p, acc, Some("Show emoji button"), false, |p| p.look.show_emoji_button, |p, v| p.look.show_emoji_button = v))
+            .child(look_switch(st, p, acc, Some("Show send button"), false, |p| p.look.show_send_button, |p, v| p.look.show_send_button = v)),
         "client-developer-mode" => {
             let on = store.settings.developer_mode;
             Switch::new(on).on_toggle(move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(json!({ "developer_mode": !on })))).el(p)

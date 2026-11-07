@@ -224,7 +224,7 @@ pub fn add_png(st: &mut ShellState, png: Vec<u8>) {
 /// "Upload your message as a file" (`convertTextToFile`, shown while there's text) and "Create
 /// thread" (`canStartThreadIn`) follow Upload file.
 // shortcut: no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-// web app) and no "Customize" submenu for the composer's button visibility.
+// web app).
 /// `pane`: the thread side panel's composer (its own menu, draft and tray).
 #[allow(clippy::too_many_arguments)]
 pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &reflux_model::Channel, pane: bool, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
@@ -253,7 +253,32 @@ pub fn plus_menu<S: 'static>(store: &reflux_store::Store, st: &ShellState, c: &r
     m.item(MenuItem::new("voice-message", t("Send voice message")).icon(&icons::MICROPHONE_BOLD).on_select(move |s: &mut S| {
             acc(s).intents.push(super::Intent::Voice(super::voice::Op::RecordStart(parent)));
         }))
+        .submenu("customize", t("Customize"), customize(st, acc))
         .el(&st.popups, super::pops(acc), p, layer);
+}
+
+/// The composer button switches (`TextareaPlusMenu`'s "Customize").
+fn customize<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate::ui::MenuEntry<S>> {
+    type Field = fn(&mut crate::look::Prefs) -> &mut bool;
+    let rows: [(&str, &str, Field); 5] = [
+        ("show-gif", t("Show GIFs button"), |l| &mut l.show_gif_button),
+        ("show-media", t("Show media button"), |l| &mut l.show_memes_button),
+        ("show-stickers", t("Show stickers button"), |l| &mut l.show_stickers_button),
+        ("show-emoji", t("Show emoji button"), |l| &mut l.show_emoji_button),
+        ("show-send", t("Show send button"), |l| &mut l.show_send_button),
+    ];
+    let mut look = st.prefs.look.clone();
+    rows.into_iter()
+        .map(|(id, label, f)| {
+            let on = *f(&mut look);
+            crate::ui::MenuEntry::Item(MenuItem::new(id, label).checkbox(on).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                let mut prefs = sh.prefs.clone();
+                *f(&mut prefs.look) = !on;
+                sh.intents.push(super::Intent::Prefs(Box::new(prefs)));
+            }))
+        })
+        .collect()
 }
 
 /// A tray file by ID, in the main composer's tray or the thread panel's.

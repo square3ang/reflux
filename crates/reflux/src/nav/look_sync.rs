@@ -53,6 +53,7 @@ fn entries(top: u32) -> Vec<Entry> {
         1 => vec![
             d!(1, saturation),
             b!(2, true, underline_links),
+            b!(4, show_send_button),
             b!(5, focus_ring),
             b!(7, escape_exits_keyboard),
             b!(8, sync_motion),
@@ -60,6 +61,10 @@ fn entries(top: u32) -> Vec<Entry> {
             d!(10, group_spacing),
             d!(12, font_size),
             b!(13, compact_avatars),
+            b!(21, show_gif_button),
+            b!(22, show_memes_button),
+            b!(23, show_stickers_button),
+            b!(24, show_emoji_button),
             e!(32, typing_indicator),
             b!(34, action_bar),
             b!(35, action_bar_quick_reactions),
