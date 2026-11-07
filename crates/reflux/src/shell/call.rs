@@ -363,11 +363,12 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
     let offer_p2p = !active && p2p_on && c.recipients.iter().filter(|u| u.id != store.my_id()).count() < cap;
     el_.on_press(move |s: &mut S| {
         let sh = acc(s);
-        if offer_p2p {
+        // `getCallStartRequestOptions`: Shift skips the P2P offer and the confirmation.
+        let bypass = sh.shift_held;
+        if offer_p2p && !bypass {
             sh.voice.modal = Some(Modal::P2pConsent { guild: None, channel: ch, start: true, allow_standard: true, video, always: false });
-        } else if !active && crate::look::with(|l| l.confirm_calls) {
-            // shortcut: Shift-click doesn't skip the confirmation.
-            sh.voice.modal = Some(Modal::StartCall { channel: ch, video });
+        } else if !active && !bypass && crate::look::with(|l| l.confirm_calls) {
+            sh.voice.modal = Some(Modal::StartCall { channel: ch, video, tip: true });
         } else {
             start_call(sh, ch, active, video);
         }
@@ -378,7 +379,7 @@ pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, vi
 pub fn request_call(store: &Store, sh: &mut ShellState, ch: Snowflake, video: bool) {
     let active = store.calls.contains_key(&ch);
     if !active && crate::look::with(|l| l.confirm_calls) {
-        sh.voice.modal = Some(Modal::StartCall { channel: ch, video });
+        sh.voice.modal = Some(Modal::StartCall { channel: ch, video, tip: false });
     } else {
         start_call(sh, ch, active, video);
     }
@@ -603,11 +604,16 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                         }).el(p)),
                 )
         }
-        Modal::StartCall { channel, video } => {
+        Modal::StartCall { channel, video, tip } => {
             let (ch, video) = (*channel, *video);
             let title = t(if video { "Start video call" } else { "Start voice call" });
+            let mut body = col().w_full().gap(16.0).child(body_text(t(if video { "Start a video call?" } else { "Start a voice call?" }), p));
+            if *tip {
+                let tip = t("Pro tip: Hold Shift while choosing this action to skip this confirmation.");
+                body = body.child(rune::rich(tip.to_string(), vec![rune::Span::new(0, tip.find(':').map_or(0, |i| i + 1)).weight(700.0).color(p.accent_success)]).font(font(13.0, 400.0).lh(18.2)).color(p.text_primary_muted).wrap());
+            }
             crate::ui::Modal::new(title, close)
-                .body(body_text(t(if video { "Start a video call?" } else { "Start a voice call?" }), p))
+                .body(body)
                 .footer(
                     row()
                         .gap(8.0)

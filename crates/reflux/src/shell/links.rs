@@ -113,7 +113,6 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
                 .on_press_tx(visit)
                 .el(p),
         );
-    // shortcut: the title "External link warning" is for screen readers only in Fluxer; ours shows.
     Some(Modal::new(t("External link warning"), close).body(body).footer(footer).el(p))
 }
 

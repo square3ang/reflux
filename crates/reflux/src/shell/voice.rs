@@ -271,7 +271,8 @@ pub enum Modal {
     /// `CallNotRingableModal`.
     NotRingable,
     /// `requestStartCall`'s confirm, with "Confirm before starting calls" on.
-    StartCall { channel: Snowflake, video: bool },
+    /// `tip`: opened from a header button, where Shift would have skipped it.
+    StartCall { channel: Snowflake, video: bool, tip: bool },
     /// `AudioProcessingModal`: the processing profile and its custom toggles.
     AudioProcessing,
     /// `EntranceSoundTrimmerModal`.
