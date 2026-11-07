@@ -461,9 +461,11 @@ fn join(s: &mut State, guild: Option<Snowflake>, channel: Snowflake) {
         s.app.shell.voice.channel = None;
         return;
     }
-    // `VoiceConnectionConfirmModal`: already connected from another device.
+    // `VoiceConnectionConfirmModal`: already connected to *this channel* from another device
+    // (Fluxer allows the account in another channel from another device; that is "Just join").
     let me = s.app.store.my_id();
-    let elsewhere = s.app.voice.call.is_none() && s.app.store.voice_states.iter().any(|((_, u), v)| *u == me && v.channel_id.is_some() && v.connection_id != s.app.voice.connection_id);
+    let elsewhere = s.app.voice.call.is_none()
+        && s.app.store.voice_states.iter().any(|((g, u), v)| *g == guild && *u == me && v.channel_id == Some(channel) && v.connection_id != s.app.voice.connection_id);
     if elsewhere && s.app.voice.confirmed != Some(channel) {
         let v = &mut s.app.shell.voice;
         v.channel = None;
