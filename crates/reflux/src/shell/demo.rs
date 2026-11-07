@@ -320,7 +320,7 @@ impl Demo {
             "ops": [{"op": "SYNC", "range": [0, 99], "items": items}]}));
         apply("TYPING_START", json!({"channel_id": GENERAL.to_string(), "user_id": "1002", "guild_id": HQ.to_string(), "timestamp": now / 1000}));
 
-        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, gif_provider: "Klipy".into(), ..ShellState::default() };
+        let mut shell = ShellState { guild: Some(Snowflake(HQ)), channel: Some(Snowflake(GENERAL)), now_ms: now, premium: true, marketing_base: Some("https://fluxer.app".into()), gif_provider: "Klipy".into(), ..ShellState::default() };
         // `--settings[=tab]` opens user settings (`--settings-search=q` types into its search); `--theme=light|coal|dark_legacy|system` sets the
         // account theme; `--compact` the dense message layout.
         for a in rune::extra_args() {

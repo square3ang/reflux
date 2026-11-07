@@ -245,9 +245,16 @@ pub fn apply<T: serde::Serialize + serde::de::DeserializeOwned>(settings: &mut T
     }
 }
 
-/// Applies `patch` to the store now and sends it; a failed request restores the old settings.
+/// The keys of `patch` as `old` had them: applied after a failed request, it undoes that patch
+/// alone, leaving later optimistic changes to other keys in place.
+pub fn revert_of<T: serde::Serialize>(old: &T, patch: &Value) -> Value {
+    let (Ok(Value::Object(all)), Value::Object(p)) = (serde_json::to_value(old), patch) else { return Value::Null };
+    Value::Object(p.keys().filter_map(|k| Some((k.clone(), all.get(k)?.clone()))).collect())
+}
+
+/// Applies `patch` to the store now and sends it; a failed request puts its keys back.
 pub fn patch(s: &mut crate::State, patch: Value) {
-    let old = s.app.store.settings.clone();
+    let revert = revert_of(&s.app.store.settings, &patch);
     if !apply(&mut s.app.store.settings, &patch) {
         return eprintln!("reflux: settings patch doesn't fit: {patch}");
     }
@@ -258,9 +265,7 @@ pub fn patch(s: &mut crate::State, patch: Value) {
             Ok(new) => s.app.store.settings = new,
             Err(e) => {
                 eprintln!("reflux: settings update: {e}");
-                // shortcut: restores the snapshot from before this patch, dropping any later
-                // optimistic change too; queue patches if that ever matters.
-                s.app.store.settings = old;
+                apply(&mut s.app.store.settings, &revert);
             }
         });
     });
@@ -590,8 +595,21 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         let items = items.into_iter().map(|tab| nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).on_press(select(acc, tab.id)));
         nav = nav.child(nav_group(Some(cat.label()), items, p));
     }
-    // shortcut: Fluxer also lists What's new, Submit feedback and Donate here; they open the
-    // instance's web pages, and Reflux can't open URLs yet.
+    // What's new, Submit feedback and Donate open the official site's pages in the browser;
+    // self-hosted instances have none (`Routes.patchNotes` / `feedback` / `donate`).
+    if q.is_empty()
+        && let Some(base) = st.marketing_base.as_deref()
+    {
+        let base = base.trim_end_matches('/');
+        let links = [
+            (&icons::SPARKLE, "What's new", format!("{base}/patch-notes")),
+            (&icons::CHAT_CIRCLE_DOTS, "Submit feedback", "https://feedback.fluxer.com".to_string()),
+            (&icons::HAND_HEART, "Donate", format!("{base}/donate")),
+        ];
+        for (i, label, url) in links {
+            nav = nav.child(nav_item(i, t(label), false, false, p, &c).label(format!("{} ({})", t(label), t("Opens in browser"))).on_press(move |_: &mut S| open_url(&url)));
+        }
+    }
     if q.is_empty() {
         nav = nav.child(nav_item(&icons::SIGN_OUT, t("Sign out"), false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
     }
@@ -712,6 +730,17 @@ mod tests {
         assert_eq!((s.theme.as_str(), s.developer_mode), ("coal", true));
         assert!(!apply(&mut s, &serde_json::json!({"developer_mode": "yes"})));
         assert!(s.developer_mode, "a rejected patch leaves the settings alone");
+    }
+
+    #[test]
+    fn a_failed_patch_reverts_only_its_keys() {
+        let mut s = reflux_model::UserSettings { theme: "dark".into(), ..Default::default() };
+        let p = serde_json::json!({"theme": "coal"});
+        let revert = revert_of(&s, &p);
+        apply(&mut s, &p);
+        apply(&mut s, &serde_json::json!({"developer_mode": true}));
+        apply(&mut s, &revert);
+        assert_eq!((s.theme.as_str(), s.developer_mode), ("dark", true));
     }
 
     #[test]
