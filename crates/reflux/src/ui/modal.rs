@@ -171,7 +171,14 @@ mod tests {
         assert_eq!(focused(&rt), "delete");
         press(&mut rt, Key::Tab);
         assert_eq!(focused(&rt), "dialog", "Tab wraps inside the modal");
+        // Enter on a focused button presses it, as on the web.
+        press(&mut rt, Key::Tab);
+        press(&mut rt, Key::Enter);
+        assert!(!rt.state.open, "Enter presses the focused footer button");
+        assert_eq!(focused(&rt), "open");
         // Escape dismisses and focus returns to what opened it.
+        press(&mut rt, Key::Text(" ".into()));
+        assert!(rt.state.open);
         press(&mut rt, Key::Escape);
         assert!(!rt.state.open);
         assert_eq!(focused(&rt), "open");

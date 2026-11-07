@@ -80,9 +80,11 @@ pub fn label(a: Action) -> String {
 /// while recording"), and the first Tab with nothing focused turning on keyboard mode.
 // shortcut: a Tab inside a field moves focus without showing the intro.
 pub fn on_key(sh: &mut ShellState, k: &KeyEvent) -> bool {
-    // The popout closed some other way (the settings modal closed, a press outside): recording
-    // ends with it.
-    if sh.nav.recording.is_some_and(|i| sh.settings.is_none() || !sh.popups.is_open(&editor_id(i))) {
+    // The popout closed some other way (the settings modal or its tab changed, a press outside):
+    // recording ends with it.
+    if sh.nav.recording.is_some_and(|i| {
+        !sh.settings.as_ref().is_some_and(|u| u.tab == "keybinds") || !sh.popups.is_open(&editor_id(i))
+    }) {
         sh.nav.recording = None;
     }
     if let Some(i) = sh.nav.recording {
@@ -796,6 +798,13 @@ mod focus_tests {
         // The settings modal closed (Escape from the popout closes it), leaving the popup id set.
         st.settings = None;
         assert!(!on_key(&mut st, &ev(Key::Text("x".into()))), "the key goes back to the app");
+        assert_eq!(st.nav.recording, None);
+        assert_eq!(mine(&st).keybinds[0].combo, None);
+        // Switching settings tabs with the recorder open stops it too.
+        st.settings = Some(crate::settings::SettingsUi::new(Some("my_profile")));
+        st.nav.recording = Some(0);
+        st.popups.toggle(&editor_id(0));
+        assert!(!on_key(&mut st, &ev(Key::Text("y".into()))), "a key on another tab is not captured");
         assert_eq!(st.nav.recording, None);
         assert_eq!(mine(&st).keybinds[0].combo, None);
     }

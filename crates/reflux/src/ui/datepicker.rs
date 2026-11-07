@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use rune::{El, Key, Span, TextEdit, col, el, icon, row, text, text_input};
+use rune::{El, Span, TextEdit, col, el, icon, row, text, text_input};
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, popout_shadow};
 use super::{mix, over};
@@ -92,7 +92,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
         };
         // `.inputWrapper`: 44 tall, radius 8, the read-only text, a divider and the 48px button.
         // The whole field is the button: Tab reaches it, Space / Return opens the calendar.
-        let field = row()
+        let mut field = row()
             .key(self.id)
             .w_full()
             .h(44.0)
@@ -110,7 +110,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             })
             // Web fields open on Enter as well as Space.
             .on_key(move |s: &mut S, k, _| {
-                if k.key == Key::Enter {
+                if crate::ui::enters(k) {
                     toggle(s);
                     true
                 } else {
@@ -133,6 +133,9 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .child(icon(&icons::CALENDAR_BLANK, 18.0).color(p.text_tertiary).group_color(p.text_primary))
                     .inert(),
             );
+        if let Some(d) = self.description {
+            field = field.description(d);
+        }
         let mut c = col().w_full().gap(4.0);
         if let Some(l) = self.label {
             c = c.child(text(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary));
@@ -171,10 +174,10 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .child(nav(&icons::CARET_LEFT, "prev", t("Previous month"), add_months(month, -1), first.is_some_and(|f| month <= f)))
             .child(text(month.format("%B %Y").to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
             .child(nav(&icons::CARET_RIGHT, "next", t("Next month"), add_months(month, 1), last.is_some_and(|l| month >= l)));
-        let weekdays = row().children(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(|d| row().size(DAY, 28.0).center().child(text(t(d)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))));
+        let weekdays = row().role("row").children(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(|d| row().size(DAY, 28.0).center().child(text(t(d)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))));
         let mut grid = col().child(weekdays).focus_group().role("grid").label(t("Select a date and time"));
         for (w, wk) in weeks(month).into_iter().enumerate() {
-            grid = grid.child(row().children(wk.iter().enumerate().map(|(col, &day)| {
+            grid = grid.child(row().role("row").children(wk.iter().enumerate().map(|(col, &day)| {
                 let d = day;
                 let label = d.day().to_string();
                 let n = label.len();
@@ -212,7 +215,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                         b = b.hover(p.background_modifier_hover);
                     }
                 }
-                row().size(DAY, DAY).center().child(b)
+                row().size(DAY, DAY).center().role("gridcell").child(b)
             })));
         }
         let mut pop = col().padding(12.0).fill(p.background_primary).border(1.0, over(p.background_modifier_accent, p.background_primary)).radius(8.0).box_shadow(popout_shadow(p, 0.24, 0.24)).gap(4.0).child(caption).child(grid);

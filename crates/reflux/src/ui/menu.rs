@@ -164,17 +164,21 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
             if !matches!(k.key, Key::Escape | Key::Left) || k.mods != rune::Mods::default() {
                 return false;
             }
-            let p = access(s);
-            match p.sub.take() {
-                Some(sub) => {
-                    p.sub = sub.rsplit_once('/').map(|(outer, _)| outer.to_string());
-                    true
-                }
-                None => false,
-            }
+            close_sub(access(s))
         });
     }
     c
+}
+
+/// Closes the deepest open submenu (`a/b` → `a`, `a` → none); false when none is open.
+fn close_sub(p: &mut Popups) -> bool {
+    match p.sub.take() {
+        Some(sub) => {
+            p.sub = sub.rsplit_once('/').map(|(outer, _)| outer.to_string());
+            true
+        }
+        None => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -355,4 +359,19 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
             f(s, tx);
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_closes_one_submenu_level_at_a_time() {
+        let mut p = Popups { sub: Some("a/b".into()), ..Default::default() };
+        assert!(close_sub(&mut p));
+        assert_eq!(p.sub.as_deref(), Some("a"));
+        assert!(close_sub(&mut p));
+        assert_eq!(p.sub, None);
+        assert!(!close_sub(&mut p));
+    }
 }

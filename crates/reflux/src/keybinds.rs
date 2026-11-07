@@ -266,10 +266,10 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 /// the Voice tab's key recorder.
 fn push_to_talk(sh: &mut ShellState, k: &KeyEvent) -> bool {
     use crate::shell::voice::Op;
-    // The settings modal closed under the recorder: don't capture the next key silently.
-    if sh.voice.recording_key && sh.settings.is_none() {
+    // The settings modal closed (or another tab opened) under the recorder: don't capture the
+    // next key silently.
+    if sh.voice.recording_key && !sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") {
         sh.voice.recording_key = false;
-        return false;
     }
     let key = key_name(k);
     let v = &mut sh.voice;
@@ -491,6 +491,15 @@ mod focus_tests {
         // A release alone never starts it.
         assert!(push_to_talk(&mut st, &ev(Key::Modifier { modifier: rune::Modifier::ControlLeft, pressed: false })));
         assert!(!st.voice.ptt_held);
+    }
+
+    #[test]
+    fn another_settings_tab_drops_the_voice_recorder() {
+        let mut st = ShellState { settings: Some(crate::settings::SettingsUi::new(Some("my_profile"))), ..ShellState::default() };
+        st.voice.recording_key = true;
+        assert!(!push_to_talk(&mut st, &ev(Key::Text("x".into()))));
+        assert!(!st.voice.recording_key);
+        assert_eq!(st.voice.settings.ptt_key, None, "a key meant for another tab is not captured");
     }
 
     #[test]
