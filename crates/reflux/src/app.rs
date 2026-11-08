@@ -776,6 +776,7 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
             s.app.connection = Some(c);
         }
         GatewayEvent::Dispatch(d) => {
+            log_dispatch(s, &d);
             s.app.store.apply(&d, now_ms());
             crate::shell::pins::on_dispatch(&mut s.app.shell, &d, || chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
             match &d {
@@ -1052,3 +1053,16 @@ mod tests {
     }
 }
 
+/// `REFLUX_LOG_GATEWAY=1`: message events and whether the store holds their message, for
+/// reports like "an embed shows only after switching channels". Never logs content or tokens.
+fn log_dispatch(s: &State, d: &reflux_model::DispatchEvent) {
+    use reflux_model::DispatchEvent as D;
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("REFLUX_LOG_GATEWAY").is_some());
+    if !*ON {
+        return;
+    }
+    let (D::MessageCreate(m) | D::MessageUpdate(m)) = d else { return };
+    let held = s.app.store.messages(m.channel_id).iter().any(|x| x.id == m.id);
+    let loaded = s.app.store.messages.contains_key(&m.channel_id);
+    eprintln!("reflux: gateway {} channel {} message {} embeds {} (window loaded {loaded}, message held {held})", d.name(), m.channel_id, m.id, m.embeds.len());
+}

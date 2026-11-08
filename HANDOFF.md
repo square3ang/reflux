@@ -11,6 +11,7 @@ instances, Linux NVENC + VA-API screen share. License AGPL-3.0-or-later (assets 
 - Verified on 2026-11-08 with `CARGO_TARGET_DIR=/home/square3ang/.cache/reflux-verify-main`: `cargo test --workspace --exclude reflux-voice` (321 in reflux, all crates green), clippy clean, live_probe 0 failures, `--live=write`+`--live=cleanup` 0 failures, `--live=voice` 0 failures and left the channel.
 - Fast UI build without libwebrtc: `scripts/fast-build.sh`.
 - `REFLUX_LIVE_CACHE=1` with `--live` keeps the offline-cache restore, to test the cache → READY handover (startup chat load).
+- `REFLUX_LOG_GATEWAY=1` logs each MESSAGE_CREATE / MESSAGE_UPDATE (ids, embed count, whether the store holds the message); no content.
 - Do not share `target/` between worktrees: cargo can run another checkout's test binary. Use `CARGO_TARGET_DIR=/home/square3ang/.cache/reflux-verify-<name>` for final checks.
 
 ## Reference material (local clones, not in the repo)

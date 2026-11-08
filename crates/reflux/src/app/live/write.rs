@@ -59,6 +59,11 @@ pub struct Run {
     got: Arc<Mutex<Option<Result<String, String>>>>,
     instance: Option<Arc<Instance>>,
     failures: Vec<String>,
+    /// The Embed step's REST read-back was started.
+    embed_rest: Option<()>,
+    /// The Embed step's message showed up before its embed (the unfurl's MESSAGE_UPDATE path).
+    embed_late: bool,
+    preflight_sent: bool,
 }
 
 pub enum Next {
@@ -94,6 +99,9 @@ impl Run {
             got: Arc::default(),
             instance: None,
             failures: Vec::new(),
+            embed_rest: None,
+            embed_late: false,
+            preflight_sent: false,
         })
     }
 
@@ -109,6 +117,9 @@ impl Run {
             got: Arc::default(),
             instance: None,
             failures: Vec::new(),
+            embed_rest: None,
+            embed_late: false,
+            preflight_sent: false,
         }
     }
 
@@ -238,7 +249,12 @@ impl Run {
         let thumbs = || ReactionEmoji { id: None, name: "👍".into(), animated: None };
         match self.step {
             Step::Preflight => {
-                if first {
+                // With `REFLUX_LIVE_CACHE` the cached UI comes up before the session does.
+                if !self.preflight_sent {
+                    if s.app.instance.is_none() || s.app.store.me.is_none() {
+                        return None;
+                    }
+                    self.preflight_sent = true;
                     self.get(s, |i| async move {
                         let c: reflux_model::Channel = i.rest.get(&format!("/channels/{ch}")).await.map_err(|e| e.to_string())?;
                         Ok(format!("{}|{}|{}", c.kind.0, c.guild_id.map_or(String::new(), |g| g.to_string()), c.name.unwrap_or_default()))
@@ -328,18 +344,41 @@ impl Run {
             // The unfurl worker's MESSAGE_UPDATE adds the embed to the open channel.
             Step::Embed => {
                 // A fresh URL each run, so the server unfurls it instead of reusing its cache.
-                let what = format!("link https://github.com/rust-lang/rust?reflux={}", self.tag);
+                let what = format!("link https://www.youtube.com/watch?v=jNQXAC9IVRw&t={}s", self.tag);
                 let what = what.as_str();
                 if first {
                     self.send(s, what, None, vec![]);
                     return None;
                 }
-                if self.echo(s, &self.marker(what))?.embeds.is_empty() || since < Duration::from_secs(3) {
+                let m = self.echo(s, &self.marker(what))?;
+                if m.embeds.is_empty() {
+                    self.embed_late = true;
+                }
+                if m.embeds.is_empty() || since < Duration::from_secs(3) {
                     return None;
+                }
+                if self.embed_rest.is_none() {
+                    say(format!("embed: arrived {}", if self.embed_late { "in a later MESSAGE_UPDATE" } else { "with the message" }));
+                }
+                let (id, local) = (m.id, serde_json::to_string(&m.embeds).unwrap_or_default());
+                // What the gateway gave must be what a refetch (a channel switch) gives.
+                if self.embed_rest.is_none() {
+                    self.embed_rest = Some(());
+                    self.get(s, move |i| async move {
+                        let page = i.rest.messages(ch, reflux_net::MessagePage::Latest, 10).await.map_err(|e| e.to_string())?;
+                        let m = page.iter().find(|m| m.id == id).ok_or("not in the latest page")?;
+                        Ok(serde_json::to_string(&m.embeds).unwrap_or_default())
+                    });
+                    return None;
+                }
+                let rest = self.take_got()?.unwrap_or_else(|e| e);
+                if rest != local {
+                    say(format!("embed: gateway {local}"));
+                    say(format!("embed: REST    {rest}"));
                 }
                 // The embed grows the last row: a list at the bottom keeps it in view.
                 say(format!("embed: at_bottom {} rows_below {}", s.app.shell.at_bottom, s.app.shell.rows_below));
-                Some(s.app.shell.at_bottom)
+                Some(s.app.shell.at_bottom && rest == local)
             }
             Step::Reply => {
                 if first {
