@@ -1897,6 +1897,19 @@ fn send_voice_message(s: &mut State) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_live_stream_quality_pick_restarts_the_share_with_it() {
+        // The "Stream quality" radios switch to Custom and set the value (`stream_quality_entries`).
+        let before = super::Settings::default();
+        let mut after = before.clone();
+        (after.screen_fps, after.streaming_mode) = (15, "custom".into());
+        assert!(super::screen_settings_changed(&before, &after));
+        let limits = crate::shell::upload::Limits::default();
+        assert_eq!(after.screen_quality(&limits, true).fps, 15);
+        after.screen_height = Some(480);
+        assert_eq!(after.screen_quality(&limits, true).max_height, Some(480));
+    }
+
+    #[test]
     fn rollout_polls_like_experiment_assignments() {
         use std::time::Duration;
         assert_eq!(super::rollout_delay(None, None, 0, 0.5), Duration::from_secs(60));

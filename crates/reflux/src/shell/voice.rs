@@ -1169,7 +1169,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     let screen_label = match (v.connected, can_stream, v.screen) {
         (false, _, _) => t("Waiting for connection..."),
         (_, false, _) => "You don't have permission to stream in this channel",
-        (_, _, true) => "Stop sharing your screen",
+        (_, _, true) => t("Configure or end screen share"),
         _ => t("Share your screen"),
     };
     let cam_ok = crate::camera::available();
@@ -1180,16 +1180,26 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         (_, _, true) => t("Turn off camera"),
         _ => t("Turn on camera"),
     };
-    let media = row()
-        .w_full()
-        .gap(4.0)
-        .child(media_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, !v.connected || !can_stream || !cam_ok, p, move |s: &mut S| {
-            acc(s).intents.push(Intent::Voice(Op::ToggleCamera))
-        }))
-        .child(media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, !v.connected || !can_stream, p, move |s: &mut S| {
-            let sh = acc(s);
-            if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { super::call::open_screen_picker(sh) }
-        }));
+    // `LocalParticipantControls`: a right-click on the camera opens its settings menu; while
+    // sharing, a click or right-click on the share button opens `ActiveScreenShareMenu`.
+    let cam_disabled = !v.connected || !can_stream || !cam_ok;
+    let mut camera = media_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, cam_disabled, p, move |s: &mut S| {
+        acc(s).intents.push(Intent::Voice(Op::ToggleCamera))
+    });
+    if !cam_disabled {
+        camera = camera.on_secondary_press(move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(super::call::MENU_CAMERA, [at.x, at.y]));
+    }
+    let share_disabled = !v.connected || !can_stream;
+    let mut share = media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, share_disabled, p, move |s: &mut S| {
+        let sh = acc(s);
+        // shortcut: Rune's press has no pointer position, so a click anchors the menu to the
+        // button where Fluxer opens it at the pointer; a right-click opens at the pointer.
+        if sh.voice.screen { sh.popups.toggle(SHARE_MENU) } else { super::call::open_screen_picker(sh) }
+    });
+    if v.screen && !share_disabled {
+        share = share.key(SHARE_MENU).on_secondary_press(move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(SHARE_MENU, [at.x, at.y]));
+    }
+    let media = row().w_full().gap(4.0).child(camera.key("camera")).child(share);
     // `.connectionInfo` (8 apart): the source, our connection ID, the participants' avatars.
     let mut info = col().w_full().gap(8.0).child(source_row);
     let mine = store.voice_states.get(&(guild, store.my_id())).filter(|s| s.channel_id == Some(channel));
@@ -1232,6 +1242,8 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
 }
 
 const PANEL_MENU: &str = "voice-panel-menu";
+/// The voice panel's `ActiveScreenShareMenu` (no settings tail there).
+const SHARE_MENU: &str = "voice-panel-share-menu";
 
 /// `AvatarWithPresence` for voice: the avatar, a 3px status-online ring while speaking, and
 /// the mute / deafen badge at its bottom right, cut out of `surface`.
@@ -1382,6 +1394,13 @@ pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
 /// stream settings menu, plus the running share's `ScreenShareEndedModal`.
 pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     panel_menu(st, p, acc, layer);
+    if st.voice.screen && st.popups.is_open(SHARE_MENU) {
+        let mut m = Menu::new(SHARE_MENU).placement(Placement::Top);
+        for e in super::call::active_share_entries(st, p, acc) {
+            m = m.entry(e);
+        }
+        m.el(&st.popups, super::pops(acc), p, layer);
+    }
     if let Some(user) = st.voice.watching {
         let guild = st.voice.channel.and_then(|(g, _)| g);
         if st.popups.is_open(SPECTATORS_BTN) {

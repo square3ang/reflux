@@ -1233,10 +1233,12 @@ fn screen_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
             let (fps, res) = stream_quality_entries(st, acc);
             menu = menu.separator().submenu("stream-quality-res", t("Resolution"), res).submenu("stream-quality-fps", t("Frame rate"), fps);
         }
-        // shortcut: no "Capture desktop audio" checkbox; Reflux's stream audio is the PipeWire app
-        // picked in the share dialog, not an on/off capture. Add it with a capture-audio setting.
+        menu = menu.separator();
+        if let Some(e) = stream_audio_entry(st, t("Capture app audio"), acc) {
+            menu = menu.entry(e);
+        }
         let hide = crate::look::with(|l| l.hide_stream_preview);
-        menu = menu.separator().item(MenuItem::new("hide-stream-preview", t("Hide preview thumbnail")).checkbox(hide).keep_open().on_select(move |s: &mut S| {
+        menu = menu.item(MenuItem::new("hide-stream-preview", t("Hide preview thumbnail")).checkbox(hide).keep_open().on_select(move |s: &mut S| {
             let sh = acc(s);
             let mut prefs = sh.prefs.clone();
             prefs.look.hide_stream_preview = !hide;
@@ -1257,12 +1259,29 @@ pub fn active_share_entries<S: 'static>(st: &ShellState, p: &Palette, acc: Shell
     quality.push(MenuEntry::Separator);
     quality.push(label(t("Resolution")));
     quality.extend(res);
-    // shortcut: no "Share stream audio" checkbox, as for the capture checkbox above.
-    vec![
+    let mut out = vec![
         MenuEntry::Item(MenuItem::new("stop-stream", t("Stop streaming")).icon(&icons::STOP_CIRCLE_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen))),
         MenuEntry::Item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s)))),
         MenuEntry::Submenu("stream-quality".into(), t("Stream quality").to_string(), quality),
-    ]
+    ];
+    out.extend(stream_audio_entry(st, t("Share stream audio"), acc));
+    out
+}
+
+/// `StreamSettingsAudioGroup`'s capture checkbox on Reflux's `stream_audio` (the PipeWire app
+/// the share sends audio from). Unchecking drops it; a live share restarts without it.
+fn stream_audio_entry<S: 'static>(st: &ShellState, label: &str, acc: ShellAccess<S>) -> Option<MenuEntry<S>> {
+    if !crate::audio_share::available() {
+        return None;
+    }
+    let on = st.voice.settings.stream_audio.is_some();
+    // shortcut: checking it needs an app, which is picked in the share dialog; with none picked
+    // the box is disabled. Remember the last app if an on/off capture is wanted here.
+    Some(MenuEntry::Item(MenuItem::new("stream-audio", label).checkbox(on).disabled(!on).keep_open().on_select(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.settings.stream_audio = None;
+        sh.intents.push(Intent::Voice(Op::Settings));
+    })))
 }
 
 fn input_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {

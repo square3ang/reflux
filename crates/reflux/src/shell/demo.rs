@@ -1081,7 +1081,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
-        | "bar-tip" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
+        | "bar-tip" | "panel-share-menu" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
         | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
@@ -1101,6 +1101,13 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "menu-output" => st.popups.open = Some(super::call::MENU_OUTPUT.into()),
         "bar-tip" => st.popups.tip = Some("mic-button".into()),
+        // The voice panel's share button while sharing (`ActiveScreenShareMenu`).
+        "panel-share-menu" => {
+            st.voice.screen = true;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
+            st.popups.open_at("voice-panel-share-menu", [200.0, 560.0]);
+            st.popups.sub = Some("stream-quality".into());
+        }
         "menu-camera" => {
             st.voice.cameras = Some(vec!["Integrated Camera".into(), "Virtual Camera".into()]);
             st.popups.open = Some(super::call::MENU_CAMERA.into());
