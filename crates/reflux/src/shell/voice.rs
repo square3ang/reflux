@@ -1165,7 +1165,9 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         if !users.is_empty() {
             let mut stack = row().gap(0.0).center_y();
             for &(u, muted, deaf) in users.iter().take(4) {
-                stack = stack.child(voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p));
+                // `VoiceParticipantAvatarList`'s context menu.
+                let face = voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p);
+                stack = stack.child(super::call::ParticipantMenu::participant_menu(face, u, guild, acc));
             }
             if users.len() > 4 {
                 stack = stack.child(

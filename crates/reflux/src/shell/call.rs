@@ -402,11 +402,23 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
                 sh.intents.push(Intent::Watch(Some(user)));
             }
         })
-        .on_secondary_press(move |s: &mut S, at, _| {
+        .participant_menu(user, guild, acc)
+}
+
+/// `VoiceParticipantContextMenu` on right-click: the tile menu ([`tile_menu`]) for whoever a
+/// call tile, avatar or participant row stands for.
+pub trait ParticipantMenu {
+    fn participant_menu<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, acc: ShellAccess<S>) -> El;
+}
+
+impl ParticipantMenu for El {
+    fn participant_menu<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, acc: ShellAccess<S>) -> El {
+        self.on_secondary_press(move |s: &mut S, at, _| {
             let sh = acc(s);
             sh.popups.open_at(TILE_MENU, [at.x, at.y]);
             sh.target = Some(super::Target::User { user, guild, dm: None });
         })
+    }
 }
 
 /// `getPlaceholderAvatarColor` + `dimColor(…, 0.12)`: the avatar colour, a default avatar's
@@ -717,7 +729,7 @@ fn participant_stack<S: 'static>(store: &Store, st: &ShellState, guild: Option<S
             let sh = acc(s);
             sh.voice.focus = Some(user);
             sh.call.pin(Some(user));
-        }));
+        }).participant_menu(user, guild, acc));
     }
     if people.len() > 5 {
         let extra = people.len() - 5;
@@ -1320,7 +1332,8 @@ fn participants_popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
                     sh.voice.focus = Some(user);
                     sh.call.pin(Some(user));
                     sh.popups.close();
-                }),
+                })
+                .participant_menu(user, guild, acc),
         );
     }
     let surface = col()

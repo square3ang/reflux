@@ -374,7 +374,8 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
         if speaking || current {
             item = item.fill(p.background_modifier_hover);
         }
-        item
+        // `VoiceParticipantItem`'s context menu.
+        super::call::ParticipantMenu::participant_menu(item, u, gid, acc)
     }))
 }
 
