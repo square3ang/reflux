@@ -786,6 +786,10 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.voice.channel = Some((Some(g), Snowflake(2301)));
             st.voice.connected = true;
         }
+        // `UpdaterIcon` in the channel header: an installable desktop update.
+        "header-update" => {
+            st.desktop.update = Some(crate::desktop::updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(Default::default()), stage: crate::desktop::updater::Stage::Available });
+        }
         "add" => st.open_dialog(Dialog::Add(AddView::Landing)),
         "create" => st.open_dialog(Dialog::Add(AddView::Create)),
         "join" => st.open_dialog(Dialog::Add(AddView::Join)),

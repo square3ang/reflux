@@ -312,6 +312,24 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     if !forum {
         right = right.child(super::search::bar(store, st, p, acc, layer));
     }
+    // `UpdaterIcon`: the green download arrow between the search and the inbox while a desktop
+    // update can be installed (`--channel-header-update-icon-color: #22c55e`).
+    if let Some(u) = st.desktop.update.as_ref().filter(|u| u.appimage.is_some() && matches!(u.stage, crate::desktop::updater::Stage::Available | crate::desktop::updater::Stage::Downloading)) {
+        let updating = u.stage == crate::desktop::updater::Stage::Downloading;
+        let (label, glyph) = if updating { (t("Updating…"), &icons::ARROW_CLOCKWISE_BOLD) } else { (t("Update available"), &icons::DOWNLOAD_SIMPLE_BOLD) };
+        let updater = row()
+            .key("updater")
+            .size(dim::CHANNEL_HEADER_ACTION_SIZE, dim::CHANNEL_HEADER_ACTION_SIZE)
+            .center()
+            .radius(dim::RADIUS_FULL)
+            .hover_group()
+            .cursor(if updating { rune::Cursor::NotAllowed } else { rune::Cursor::Pointer })
+            .role("button")
+            .label(label.to_string())
+            .hover(if call { Color { r: 1.0, g: 1.0, b: 1.0, a: 0.09 } } else { p.background_modifier_hover })
+            .child(icon(glyph, dim::CHANNEL_HEADER_ACTION_ICON_SIZE).color(if call { Color::WHITE } else { rgb(0x22, 0xc5, 0x5e) }));
+        right = right.child(if updating { updater } else { updater.on_press(move |s: &mut S| acc(s).intents.push(Intent::Desktop(crate::desktop::Request::Update))) });
+    }
     right = right.children(super::devtools::button(store, st, p, acc, layer));
     right = right.child(crate::social::inbox_button(st, p, acc));
     let bar = row().w_full().h(dim::LAYOUT_HEADER_HEIGHT).px(dim::CHANNEL_HEADER_PADDING_INLINE).gap(dim::CHANNEL_HEADER_GAP).center_y();
