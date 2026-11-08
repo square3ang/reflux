@@ -160,10 +160,10 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/real.rs:205` no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
 - `crates/reflux/src/app.rs:880` Rune shifts the offset by what lands above the view but not a running
 - `crates/reflux/src/app.rs:893` Rune's virtual list holds the topmost row in view, which at the top of what's
-- `crates/reflux/src/app/voice.rs:1124` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1310` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1758` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1767` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1117` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1287` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1735` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1744` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -199,12 +199,17 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/voice_tabs.rs:511` opens the Advanced tab at its top; Fluxer scrolls to its Media section.
 - `crates/reflux/src/settings/voice_tabs.rs:694` Fluxer's bars are slanted (`clip-path` parallelograms); these are plain rounded bars.
 - `crates/reflux/src/shell/attachments.rs:552` plain text; Fluxer links it to the attachment-expiry help article.
-- `crates/reflux/src/shell/call.rs:175` the store keeps a 200-message window and no total unread count, so a channel with
-- `crates/reflux/src/shell/call.rs:274` previews reuse Active Now's cached stream thumbnail; a call without one shows
-- `crates/reflux/src/shell/call.rs:453` other users' accent colours only arrive with their profile, which the tile
-- `crates/reflux/src/shell/call.rs:902` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:2317` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2600` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:122` kept for the session; Fluxer persists it. Persist with the other layout prefs.
+- `crates/reflux/src/shell/call.rs:187` the store keeps a 200-message window and no total unread count, so a channel with
+- `crates/reflux/src/shell/call.rs:493` only our own Speak permission is known here; others show red for a server mute only.
+- `crates/reflux/src/shell/call.rs:575` no "Add stream" button; reflux watches one stream at a time. Add it with
+- `crates/reflux/src/shell/call.rs:662` other users' accent colours only arrive with their profile, which the tile
+- `crates/reflux/src/shell/call.rs:1168` reflux keeps favorites for community channels only, so a DM call has no star.
+- `crates/reflux/src/shell/call.rs:1193` `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
+- `crates/reflux/src/shell/call.rs:1221` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:1758` a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
+- `crates/reflux/src/shell/call.rs:2648` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2931` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -225,7 +230,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:689` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-- `crates/reflux/src/shell/voice.rs:1582` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+- `crates/reflux/src/shell/voice.rs:1578` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
 crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sans` and `system-ui` are left to Rune's own fallbacks.
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/controls.rs:309` it shows while the whole control is hovered (Rune's hover group), which also

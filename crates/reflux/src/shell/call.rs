@@ -689,11 +689,20 @@ struct FocusInfo {
     screen: Option<Snowflake>,
 }
 
+/// The grid's area. The full view's comes from the view's size (between the chrome, less the
+/// 48px and 1rem paddings), so it is known while the focus layout shows instead of the grid.
+fn grid_area(compact: bool) -> [f32; 2] {
+    if compact {
+        return rune::memo::layout_size("call-grid-compact").unwrap_or([960.0, 540.0]);
+    }
+    let chrome = dim::LAYOUT_HEADER_HEIGHT + rune::memo::layout_size("call-footer").map_or(78.0, |[_, h]| h) + 96.0 + 32.0;
+    rune::memo::layout_size("call-view").map_or([960.0, 540.0], |[w, h]| [w, (h - chrome).max(0.0)])
+}
+
 /// Whether the call view shows the focus layout and what it focuses, as `layout` decides.
 fn focus_of(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)], compact: bool) -> (Vec<Tile>, Option<Tile>) {
     let all = call_tiles(st, store.my_id(), people);
-    let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
-    let [gw, gh] = rune::memo::layout_size(grid_key).unwrap_or([960.0, 540.0]);
+    let [gw, gh] = grid_area(compact);
     let packed = pack_grid(all.len(), gw, gh, compact);
     let focused = st.call.pinned(st.voice.focus).and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
     // `gridOverflow`: a grid that can't fit every tile at its minimum size shows focus instead.
@@ -725,13 +734,13 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     }
     // `VoiceGridLayout` in `.gridLayoutWrapper` (1rem above and below): the packed columns, each
     // tile the computed 16:9 size, rows centred.
-    let [gw, gh] = rune::memo::layout_size(grid_key).unwrap_or([960.0, 540.0]);
+    let [gw, gh] = grid_area(compact);
     let packed = pack_grid(all.len(), gw, gh, compact);
     let mut grid = col().key(grid_key).w_full().h_full().min_w(0.0).min_h(0.0).gap(packed.gap).center();
     for chunk in all.chunks(packed.columns.max(1)) {
         grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().key(format!("g-{}-{}", t.user, t.screen as u8)).size(packed.tile[0], packed.tile[1]).child(make(*t, Pres::Grid)))));
     }
-    if compact { grid } else { col().w_full().h_full().py(16.0).child(grid) }
+    if compact { grid } else { col().w_full().h_full().min_w(0.0).min_h(0.0).py(16.0).child(grid) }
 }
 
 /// `focusLayoutContentFullscreen`: the focused tile as large a 16:9 box as fits above what the
@@ -1068,7 +1077,7 @@ fn stream_focus_info<S: 'static>(store: &Store, st: &ShellState, guild: Option<S
         let k = 0.92;
         streamer = streamer.child(row().px(8.0 * k).py(2.0 * k).radius(999.0).fill(rgb(0x2a, 0x2a, 0x2d)).child(text(info).font(font(11.0 * k, 500.0).lh(13.2 * k)).color(p.text_secondary)).key("track-info"));
     }
-    let mut info = row().h(32.0).gap(8.0).center_y().min_w(0.0).shrink().max_w(416.0).child(streamer);
+    let mut info = row().h(32.0).gap(8.0).center_y().min_w(0.0).shrink().child(streamer);
     let watchers = super::voice::spectators_for(store, guild, user);
     if !watchers.is_empty() {
         // `AvatarStack` (20px, at most 5) opening `StreamSpectatorsPopout`.
@@ -1150,9 +1159,11 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         left = left.child(header_button(&icons::LIST_BOLD, t("Back to voice channel"), false, move |s: &mut S| acc(s).voice.call_view = false).mr(dim::SPACING_2).key("back"));
     }
     left = left.child(icon(&icons::SPEAKER_HIGH_FILL, 24.0).color(Color::WHITE)).child(text(name).font(font(16.0, 500.0).lh(24.0)).color(Color::WHITE).truncate().shrink().ml(dim::SPACING_3));
-    let mut right = row().gap(dim::SPACING_2).center_y().min_w(0.0);
+    let mut right = row().gap(dim::SPACING_2).center_y().min_w(0.0).shrink();
     if let Some(user) = focus.as_ref().and_then(|f| f.screen) {
-        right = right.child(stream_focus_info(store, st, guild, user, p, acc).key("stream-focus"));
+        // `.voiceCallHeaderSupplement`: at most min(50%, 26rem) of the header.
+        let half = rune::memo::layout_size("call-view").map_or(640.0, |[w, _]| w / 2.0);
+        right = right.child(stream_focus_info(store, st, guild, user, p, acc).max_w(half.min(416.0)).key("stream-focus"));
     }
     // shortcut: reflux keeps favorites for community channels only, so a DM call has no star.
     if let Some(g) = guild.filter(|_| crate::look::with(|l| l.show_favorites)) {
@@ -1220,11 +1231,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     // `--voice-hud-opacity`: idle chrome fades out over the tiles.
     let chrome = |e: El| if hud { e } else { e.opacity(0.0).inert() };
     let root = el()
+        .key("call-view")
         .grow(1.0)
         .min_w(0.0)
         .h_full()
         .fill(Color::BLACK)
-        .child(main.key("main").child(body))
+        .child(main.key("main").clip_rounded(0.0).child(body))
         .child(chrome(header))
         .child(chrome(footer))
         .child(chrome(corner.key("corner")));
