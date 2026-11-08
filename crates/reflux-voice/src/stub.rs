@@ -28,6 +28,8 @@ pub mod audio {
         Stream,
         /// A one-shot entrance sound clip.
         Entrance,
+        /// The mic test's playback of our own mic.
+        Monitor,
     }
 
     /// One remote source: what it is, whose it is, and which connection.
@@ -107,6 +109,7 @@ pub mod audio {
         pub fn open_input(&self, _name: Option<&str>) -> bool {
             false
         }
+        pub fn set_monitor(&self, _on: bool) {}
         pub fn close_input(&self) {}
     }
 

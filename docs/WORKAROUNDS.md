@@ -155,10 +155,10 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:18` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
 - `crates/reflux-voice/src/lib.rs:26` Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
-- `crates/reflux/src/app/voice.rs:1083` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1253` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1664` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1673` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1086` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1256` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1692` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1701` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the

@@ -34,6 +34,9 @@ pub const FRAME: usize = 480;
 /// [`KEEP`].
 const MAX_BUFFER: usize = RATE as usize * 3 / 10;
 const KEEP: usize = RATE as usize * 6 / 100;
+/// `MIC_TEST_MONITOR_DELAY_SECONDS` (0.9 s): how far the mic test's playback lags the mic.
+const MONITOR_DELAY: usize = RATE as usize * 9 / 10;
+const MONITOR_MAX: usize = MONITOR_DELAY + RATE as usize * 3 / 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Kind {
@@ -43,6 +46,8 @@ pub enum Kind {
     Stream,
     /// A one-shot entrance sound clip.
     Entrance,
+    /// The mic test's playback of our own processed mic ([`Engine::set_monitor`]).
+    Monitor,
 }
 
 /// One remote source: what it is, whose it is, and which connection (a user can join from
@@ -86,10 +91,14 @@ impl Default for Mixer {
 impl Mixer {
     /// Queues mono samples at [`RATE`].
     pub fn push(&mut self, src: Source, samples: &[f32]) {
-        let live = src.kind != Kind::Entrance;
+        let kind = src.kind;
         let buf = self.sources.entry(src).or_default();
         buf.extend(samples);
-        if live && buf.len() > MAX_BUFFER {
+        // The monitor carries its delay as queued samples; past it, drift becomes latency.
+        if kind == Kind::Monitor && buf.len() > MONITOR_MAX {
+            let drop = buf.len() - MONITOR_DELAY;
+            buf.drain(..drop);
+        } else if kind != Kind::Entrance && kind != Kind::Monitor && buf.len() > MAX_BUFFER {
             let drop = buf.len() - KEEP;
             buf.drain(..drop);
         }
@@ -106,6 +115,7 @@ impl Mixer {
             Kind::Stream if self.muted_streams.contains(&src.user) => 0.0,
             Kind::Stream => self.stream_volume.get(&src.user).copied().unwrap_or(1.0),
             Kind::Entrance => self.entrance_volume.get(&src.user).copied().unwrap_or(1.0),
+            Kind::Monitor => 1.0,
         };
         if self.deaf { 0.0 } else { g * self.output }
     }
@@ -291,6 +301,8 @@ pub struct Engine {
     noise_state: Arc<AtomicU8>,
     input: Mutex<Option<IoThread>>,
     output: Mutex<Option<IoThread>>,
+    /// Whether the mic chain also plays into [`Engine::mixer`] (the mic test).
+    monitor: Arc<AtomicBool>,
 }
 
 impl Default for Engine {
@@ -303,7 +315,7 @@ impl Engine {
     pub fn new() -> Self {
         // No WebRTC processing on the source: ours runs before it; queue 0 = 10 ms frames, sync.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), RATE, 1, 0);
-        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default() };
+        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default(), monitor: Arc::default() };
         engine.set_processing(Processing::default());
         engine
     }
@@ -362,8 +374,9 @@ impl Engine {
         *slot = None;
         let (source, apm, processing, name) = (self.source.clone(), self.apm.clone(), self.processing.clone(), name.map(str::to_string));
         let (level, noise_state) = (self.level.clone(), self.noise_state.clone());
+        let monitor = (self.mixer.clone(), self.monitor.clone());
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let mut chain = MicChain::new(RATE, source, apm, processing, level, noise_state);
+            let mut chain = MicChain::new(RATE, source, apm, processing, level, noise_state, monitor);
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -380,14 +393,14 @@ impl Engine {
             return true;
         }
         #[cfg(target_os = "linux")]
-        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), noise_state.clone())) {
+        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), noise_state.clone(), monitor.clone())) {
             *slot = Some(thread);
             return true;
         }
         *slot = run_stream(move || {
             let device = input_device(name.as_deref())?;
             let cfg = config(device.supported_input_configs().ok()?.collect(), device.default_input_config().ok()?);
-            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, noise_state);
+            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, noise_state, monitor);
             match cfg.sample_format() {
                 cpal::SampleFormat::F32 => build_input::<f32>(&device, &cfg, chain),
                 cpal::SampleFormat::I16 => build_input::<i16>(&device, &cfg, chain),
@@ -398,6 +411,18 @@ impl Engine {
             }
         });
         slot.is_some()
+    }
+
+    /// `createMicTestAudioGraph`: the processed mic also plays out of this engine's speakers,
+    /// 0.9 s late, at the mixer's output volume.
+    pub fn set_monitor(&self, on: bool) {
+        let src = Source { kind: Kind::Monitor, user: 0, conn: String::new() };
+        let mut mixer = self.mixer.lock().unwrap();
+        mixer.remove(&src);
+        if on {
+            mixer.push(src, &vec![0.0; MONITOR_DELAY]);
+        }
+        self.monitor.store(on, Ordering::Relaxed);
     }
 
     pub fn close_input(&self) {
@@ -492,10 +517,11 @@ struct MicChain {
     denoise: Box<nnnoiseless::DenoiseState<'static>>,
     deep: crate::deepfilter::Deep,
     level: Arc<AtomicU32>,
+    monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
 }
 
 impl MicChain {
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, noise_state: Arc<AtomicU8>) -> Self {
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
         Self {
             resampler: Resampler::new(rate, RATE),
             pending: Vec::new(),
@@ -505,6 +531,7 @@ impl MicChain {
             denoise: nnnoiseless::DenoiseState::new(),
             deep: crate::deepfilter::Deep::new(noise_state),
             level,
+            monitor,
         }
     }
 
@@ -532,6 +559,10 @@ impl MicChain {
             }
             let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0;
             self.level.store(peak.to_bits(), Ordering::Relaxed);
+            if self.monitor.1.load(Ordering::Relaxed) {
+                let out: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
+                self.monitor.0.lock().unwrap().push(Source { kind: Kind::Monitor, user: 0, conn: String::new() }, &out);
+            }
             let af = AudioFrame { data: pcm.into(), sample_rate: RATE, num_channels: 1, samples_per_channel: FRAME as u32 };
             // Queue 0: the frame goes straight to the sinks, so this future is already done.
             let _ = self.source.capture_frame(&af).now_or_never();
@@ -542,6 +573,20 @@ impl MicChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_keeps_its_delay_and_caps_drift() {
+        let mut m = Mixer::default();
+        m.push(src(Kind::Monitor, 0), &vec![0.0; MONITOR_DELAY]);
+        m.push(src(Kind::Monitor, 0), &[0.5; FRAME]);
+        assert_eq!(m.sources[&src(Kind::Monitor, 0)].len(), MONITOR_DELAY + FRAME, "not trimmed like a live track");
+        m.push(src(Kind::Monitor, 0), &vec![0.5; MONITOR_MAX]);
+        assert_eq!(m.sources[&src(Kind::Monitor, 0)].len(), MONITOR_DELAY, "drift trims back to the delay");
+        m.output = 0.5;
+        let mut out = [0.0; 2];
+        m.mix(&mut out);
+        assert_eq!(out, [0.25; 2], "plays at the output volume");
+    }
 
     fn src(kind: Kind, user: u64) -> Source {
         Source { kind, user, conn: "c".into() }

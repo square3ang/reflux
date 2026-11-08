@@ -1,10 +1,8 @@
-//! The microphone outside the call: the level the mic test meter and the voice-activity gate
-//! read, and voice message recording (`VoiceMessageRecordingUtils.ts`: mono 16-bit WAV plus a
+//! The microphone outside the call: the level the voice-activity gate reads, and voice message recording (`VoiceMessageRecordingUtils.ts`: mono 16-bit WAV plus a
 //! base64 waveform). It opens the same selected input as the call (the PulseAudio source on
 //! Linux, cpal elsewhere or when no server answers), a second stream that PipeWire /
 //! PulseAudio / WASAPI / CoreAudio allow.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use reflux_voice::audio::Capture;
@@ -14,8 +12,6 @@ pub const FLOOR_DB: f32 = -100.0;
 
 /// A running input stream; dropping it stops capture.
 pub struct Mic {
-    /// Peak level of the last block in dBFS (f32 bits).
-    level: Arc<AtomicU32>,
     /// Mono samples while recording.
     rec: Arc<Mutex<Option<Vec<f32>>>>,
     rate: u32,
@@ -26,9 +22,8 @@ impl Mic {
     /// Opens the input called `device` (`None` = the default); `on_level` runs on the audio
     /// thread after each block.
     pub fn start(device: Option<String>, on_level: impl Fn(f32) + Send + 'static) -> Option<Self> {
-        let level = Arc::new(AtomicU32::new(FLOOR_DB.to_bits()));
         let rec: Arc<Mutex<Option<Vec<f32>>>> = Arc::default();
-        let (l, r) = (level.clone(), rec.clone());
+        let r = rec.clone();
         let capture = reflux_voice::audio::capture(device.as_deref(), move |block: &[f32]| {
             let mut peak = 0f32;
             let mut rec = r.lock().unwrap();
@@ -38,15 +33,9 @@ impl Mic {
                     v.push(s);
                 }
             }
-            let db = to_db(peak);
-            l.store(db.to_bits(), Ordering::Relaxed);
-            on_level(db);
+            on_level(to_db(peak));
         })?;
-        Some(Self { level, rec, rate: capture.rate, _capture: capture })
-    }
-
-    pub fn level_db(&self) -> f32 {
-        f32::from_bits(self.level.load(Ordering::Relaxed))
+        Some(Self { rec, rate: capture.rate, _capture: capture })
     }
 
     pub fn start_recording(&self) {

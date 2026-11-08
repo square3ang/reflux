@@ -159,20 +159,33 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     out = out.child(section(t("Voice processing"), processing, false, p));
 
     // ---- Mic test
-    let test = Button::new(if v.mic_test { t("Stop mic test") } else { t("Start mic test") })
+    // `MicTestSection`: a square play / stop button (`Stop mic test` / `Start mic test`) that
+    // plays the processed mic back through the speakers 0.9 s late (`useMicTest`).
+    let test = Button::new(String::new())
+        .icon(if v.mic_test { &crate::icons::STOP_FILL } else { &crate::icons::PLAY_FILL })
+        .square()
+        .variant(if v.mic_test { ButtonVariant::Secondary } else { ButtonVariant::Primary })
         .key("mic-test")
         .on_press({
             let on = !v.mic_test;
             move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::MicTest(on)))
         })
-        .el(p);
+        .el(p)
+        .size(40.0, 40.0) // `.actionButton`: 2.5rem
+        .label(if v.mic_test { t("Stop mic test") } else { t("Start mic test") });
     let threshold = (!set_.vad_auto && !set_.ptt()).then_some(set_.vad_threshold);
-    out = out.child(section(
-        "Mic test",
-        col().w_full().gap(12.0).child(desc(t("Check how loud your microphone is."), p)).child(row().w_full().gap(16.0).center_y().child(test).child(meter(v.mic_test, v.level, threshold, p))),
-        false,
-        p,
-    ));
+    // `.bar`: meter then button, gap 10, padding 12, 1px accent border, radius 8.
+    let bar = row()
+        .w_full()
+        .gap(10.0)
+        .padding(12.0)
+        .center_y()
+        .radius(8.0)
+        .border(1.0, p.background_modifier_accent)
+        .fill(p.background_secondary)
+        .child(row().grow(1.0).min_w(0.0).center_y().child(meter(v.mic_test, v.level, threshold, p)))
+        .child(test);
+    out = out.child(section(t("Mic test"), bar, false, p));
     out = out.child(section(t("Entrance sound"), entrance(store, st, p, acc, layer), false, p));
 
     // ---- Voice channels

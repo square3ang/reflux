@@ -59,6 +59,9 @@ pub struct VoiceRt {
     /// The second microphone stream (meter, voice activity, voice messages), and the
     /// voice-activity gate it drives on the audio thread: (mode, state, open).
     mic: Option<Mic>,
+    /// `useMicTest`: its own processed mic and speakers, the mic playing back 0.9 s late.
+    /// Keyed by what it was opened with, so a settings or device change restarts it.
+    mic_test: Option<(reflux_voice::audio::Engine, MicTestKey)>,
     vad: Arc<Mutex<(Option<Mode>, Gate, bool)>>,
     ptt: Gate,
     /// A DM call we started: ring these once connected; stop ringing them when leaving.
@@ -1638,6 +1641,31 @@ fn toggle_camera(s: &mut State) {
 
 // ---- Microphone gate, mic test, voice messages --------------------------------------------------
 
+/// `useMicTest`: while testing, the selected mic through the voice processing to the selected
+/// speakers (at the output volume), and the meter on the processed level.
+fn mic_test(s: &mut State) {
+    let v = &s.app.shell.voice;
+    if !v.mic_test || rune::is_headless() {
+        s.app.voice.mic_test = None;
+        return;
+    }
+    let key = (v.settings.mic_processing(), v.input.clone(), v.output.clone());
+    if s.app.voice.mic_test.as_ref().is_none_or(|(_, k)| *k != key) {
+        s.app.voice.mic_test = None; // close the old streams first
+        let e = reflux_voice::audio::Engine::new();
+        e.set_processing(key.0);
+        e.open_output(key.2.as_deref());
+        e.open_input(key.1.as_deref());
+        e.set_monitor(true);
+        s.app.voice.mic_test = Some((e, key));
+    }
+    if let Some((e, _)) = &s.app.voice.mic_test {
+        e.mixer.lock().unwrap().output = v.settings.output_volume / 100.0;
+    }
+}
+
+type MicTestKey = (reflux_voice::audio::Processing, Option<String>, Option<String>);
+
 fn ensure_mic(s: &mut State) {
     if s.app.voice.mic.is_some() || rune::is_headless() {
         return;
@@ -1695,7 +1723,8 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     let vad_mode = (in_call && !v.settings.ptt() && v.settings.processing != "studio")
         .then_some(Mode::Activity { threshold: v.settings.vad_threshold, auto: v.settings.vad_auto });
     let recording = v.voice_message.as_ref().is_some_and(|m| m.recording);
-    let need = vad_mode.is_some() || v.mic_test || recording;
+    let need = vad_mode.is_some() || recording;
+    mic_test(s);
     if need { ensure_mic(s) } else { s.app.voice.mic = None }
     s.app.voice.vad.lock().unwrap().0 = vad_mode;
 
@@ -1723,12 +1752,12 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
         }
     }
 
-    let Some(mic) = &s.app.voice.mic else { return };
-    let v = &mut s.app.shell.voice;
-    if v.mic_test {
-        v.level = mic.level_db();
+    if let Some((e, _)) = &s.app.voice.mic_test {
+        s.app.shell.voice.level = crate::voice_input::to_db(e.level());
         tx.wake_after(Duration::from_millis(50));
     }
+    let Some(mic) = &s.app.voice.mic else { return };
+    let v = &mut s.app.shell.voice;
     if let Some(vm) = v.voice_message.as_mut().filter(|m| m.recording) {
         vm.secs = mic.recorded_secs().unwrap_or(0.0);
         // `VOICE_MESSAGE_WAVEFORM_BAR_COUNT` bars, one per 70 ms tick.
