@@ -197,7 +197,7 @@ impl Demo {
         hq["stickers"] = json!([{"id": "88", "name": "wave", "description": "Hello there", "tags": ["hi"], "animated": false},
                                 {"id": "89", "name": "ship it", "description": "", "tags": ["release"], "animated": false}]);
         hq["properties"]["banner"] = json!("demo");
-        hq["properties"]["features"] = json!(["INVITE_SPLASH", "VISITS_ENABLED"]);
+        hq["properties"]["features"] = json!(["INVITE_SPLASH", "VISITS_ENABLED", "VERIFIED"]);
         let small = |id: u64, name: &str, ch: u64, last: u64| {
             guild(
                 id,

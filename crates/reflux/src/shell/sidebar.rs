@@ -70,6 +70,9 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .label(name.clone())
         .key(crate::guild::HEADER_MENU)
         .on_press(move |s: &mut S| acc(s).popups.toggle(crate::guild::HEADER_MENU))
+        // `GuildBadge` (`visibleCustomBadges={2}`, 20px) before the name.
+        // shortcut: the `banner` variant's drop shadow isn't drawn.
+        .children(info.and_then(|i| super::invite_embed::guild_badge_sized(&i.features, &i.badge_ids, 20.0, 2, false, st, p, acc)))
         .child(row().grow(1.0).shrink().min_w(0.0).child(tinted(name_el(Color::WHITE), name_el(p.text_primary)).w_full()))
         .child(tinted(icon(caret, 16.0).color(Color::WHITE).rotate(turn), icon(caret, 16.0).color(p.text_primary).rotate(turn)));
     header = match &banner {

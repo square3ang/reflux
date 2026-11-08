@@ -208,6 +208,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+- `crates/reflux/src/shell/sidebar.rs:74` the `banner` variant's drop shadow isn't drawn.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
 - `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set

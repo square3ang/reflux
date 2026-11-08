@@ -297,6 +297,13 @@ fn ids_key(st: &ShellState, ids: &[String]) -> Option<String> {
 /// verified over discoverable, or the instance's replacement image), then up to three custom
 /// badges and a `+N` pill opening `GuildBadgesModal`; each has its tooltip.
 pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
+    guild_badge_sized(features, badge_ids, 24.0, VISIBLE_CUSTOM, true, st, p, acc)
+}
+
+/// `GuildBadge` at `size` (24 `large`, else 20) showing `visible` custom badges;
+/// `light_surface` = `onLightSurface` (the light theme swaps seal and glyph colours).
+#[allow(clippy::too_many_arguments)]
+pub fn guild_badge_sized<S: 'static>(features: &[String], badge_ids: &[String], size: f32, visible: usize, light_surface: bool, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let has = |f: &str| features.iter().any(|x| x == f) && !st.media_ui.hidden_badges.iter().any(|h| h == &f.to_ascii_lowercase());
     let (verified, partnered) = (has("VERIFIED"), has("PARTNERED"));
     let built = if partnered {
@@ -310,23 +317,23 @@ pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &S
     };
     let tip = move |key: String, content: El, trigger: El| super::badges::tip(key, content, 190.0, trigger, acc);
     // `.badgeOnLightSurface`: the light theme swaps seal and glyph colours.
-    let (seal, glyph_c) = if crate::ui::is_light(p) { (p.brand_primary, p.brand_primary_fill) } else { (p.brand_primary_fill, p.brand_primary) };
+    let (seal, glyph_c) = if light_surface && crate::ui::is_light(p) { (p.brand_primary, p.brand_primary_fill) } else { (p.brand_primary_fill, p.brand_primary) };
     let mut items = Vec::new();
     if let Some((glyph, label, replacement)) = built {
         let face = match replacement.as_deref() {
             Some(url) => match badge_image(st, url) {
-                Some(px) => el().size(24.0, 24.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-                None => el().size(24.0, 24.0),
+                Some(px) => el().size(size, size).pixels_fit(&px, rune::SurfaceFit::Fit),
+                None => el().size(size, size),
             },
-            None => el().size(24.0, 24.0).child(icon(&SEAL, 24.0).color(seal)).child(icon(glyph, 24.0).color(glyph_c).absolute(0.0, 0.0)),
+            None => el().size(size, size).child(icon(&SEAL, size).color(seal)).child(icon(glyph, size).color(glyph_c).absolute(0.0, 0.0)),
         };
         items.push(tip(format!("guild-badge-{}-builtin", badge_ids.join("-")), super::badges::label_tip(label, p), face.label(label)));
     }
     let custom = custom_badges(st, badge_ids).unwrap_or_default();
-    for b in custom.iter().take(VISIBLE_CUSTOM) {
+    for b in custom.iter().take(visible) {
         let face = match badge_image(st, &b.asset_url) {
-            Some(px) => el().size(24.0, 24.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-            None => el().size(24.0, 24.0),
+            Some(px) => el().size(size, size).pixels_fit(&px, rune::SurfaceFit::Fit),
+            None => el().size(size, size),
         };
         let mut face = face.label(&b.name);
         if let Some(href) = b.href.clone() {
@@ -340,9 +347,9 @@ pub fn guild_badge<S: 'static>(features: &[String], badge_ids: &[String], st: &S
         };
         items.push(tip(format!("guild-badge-{}", b.id), content, face));
     }
-    if custom.len() > VISIBLE_CUSTOM {
+    if custom.len() > visible {
         let all = custom.iter().map(super::badges::from_guild).collect();
-        let pill = super::badges::more_pill(custom.len() - VISIBLE_CUSTOM, 20.0, 20.0, 10.0, all, p, acc);
+        let pill = super::badges::more_pill(custom.len() - visible, 20.0, 20.0, 10.0, all, p, acc);
         items.push(tip(format!("guild-badge-{}-more", badge_ids.join("-")), super::badges::label_tip(t("Show all badges"), p), pill));
     }
     match items.len() {
