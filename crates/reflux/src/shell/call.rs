@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{Channel, ChannelType, Permissions, Snowflake, VoiceState};
 use reflux_store::Store;
-use rune::{Color, El, Pixels, col, el, icon, row, text};
+use rune::{Color, El, Pixels, Shadow, col, el, icon, row, text};
 
 use super::voice::{Modal, Op};
 use super::{Intent, ShellAccess, ShellState, avatar, pops};
@@ -116,6 +116,8 @@ pub struct CallUi {
     pub app_fullscreen: bool,
     /// Fullscreen was entered from the compact call view, so leaving it goes back there.
     pub fullscreen_from_compact: bool,
+    /// `VoiceCallLayout.focusMembersRowVisible`: focus layout's row of the other participants.
+    pub focus_members_row: bool,
 }
 
 impl Default for CallUi {
@@ -137,6 +139,7 @@ impl Default for CallUi {
             hud_until: None,
             app_fullscreen: false,
             fullscreen_from_compact: false,
+            focus_members_row: true,
         }
     }
 }
@@ -450,7 +453,7 @@ fn slot(content: El, key: &'static str) -> El {
 
 /// The tile area: a near-square grid, or one focused/pinned tile over a strip of the rest.
 /// Tiles without video show the avatar on its colour, as Fluxer's full call view does.
-fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, hud_visible: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let me = store.my_id();
     let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
     let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
@@ -465,18 +468,48 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let focused = focused.or_else(|| (packed.visible < all.len()).then(|| all.first().copied()).flatten());
     if let Some(f) = focused {
         let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
-        let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(slot(make(f, true), if compact { "call-focus-compact" } else { "call-focus" }));
+        // `.focusLayoutMembersRow`'s height (`--voice-focus-members-row-height: 7.25rem`).
+        const ROW_H: f32 = 116.0;
+        let mut c = col().w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, true), if compact { "call-focus-compact" } else { "call-focus" }));
         // `showMembersRow` needs `fillsCallArea` (focus and not compact): the compact view shows
         // just the focused tile.
-        if !rest.is_empty() && !compact {
+        if !rest.is_empty() && !compact && st.call.focus_members_row {
             // `.focusLayoutMembersRow`: 7.25rem high, 0.375rem padding, scrolls sideways when it
             // overflows; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`), so the
             // inner row is at least the viewport's last width.
-            const ROW_H: f32 = 116.0;
             let tile_h = ROW_H - 12.0;
             let inner_w = rune::memo::layout_size("call-strip").map_or(0.0, |[w, _]| w);
-            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.into_iter().map(|t| el().w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
+            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.iter().copied().map(|t| el().w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
             c = c.child(row().key("call-strip").w_full().h(ROW_H).scroll_x().child(inner));
+        }
+        // `focusMembersToggle`: the users pill under the focused tile that hides and shows the
+        // row (in fullscreen, hiding it leaves just the video).
+        if !rest.is_empty() && !compact {
+            let shown = st.call.focus_members_row;
+            let label = if shown { t("Hide members") } else { t("Show members") }.to_string();
+            let mut toggle = row()
+                .key("focus-members-toggle")
+                // The control bar sits below the call area, so clearing it needs no offset here.
+                .pin(None, None, None, Some(if shown { ROW_H + 8.0 } else { 0.0 }))
+                .h(32.0)
+                .px(12.0)
+                .gap(6.0)
+                .center_y()
+                .radius(999.0)
+                .fill(Color::BLACK)
+                .border(1.0, hud_border())
+                .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.24), inset: false })
+                .hover(rgb(17, 17, 17))
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(label)
+                .child(icon(&icons::USERS_THREE_BOLD, 16.0).color(Color::WHITE))
+                .child(icon(if shown { &icons::CARET_DOWN_BOLD } else { &icons::CARET_UP_BOLD }, 16.0).color(Color::WHITE))
+                .on_press(move |s: &mut S| acc(s).call.focus_members_row = !shown);
+            if !hud_visible {
+                toggle = toggle.opacity(0.0).inert();
+            }
+            c = c.child(toggle);
         }
         return c;
     }
@@ -838,7 +871,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(chat_pill(store, st, channel, true, p, acc));
     header = header.child(el().grow(1.0)).child(right);
     let body = if st.voice.connected {
-        layout(store, st, guild, &people, false, p, acc)
+        layout(store, st, guild, &people, false, hud_visible, p, acc)
     } else {
         row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
@@ -1555,7 +1588,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
         } else {
             // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
             // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
-            content = content.child(col().w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, p, acc)));
+            content = content.child(col().w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, true, p, acc)));
         }
         // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
         let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
