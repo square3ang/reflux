@@ -39,8 +39,10 @@ fn path(a: &session::Account) -> Option<PathBuf> {
 
 /// Paints the saved account from its cache while the gateway connects.
 pub fn restore(s: &mut State) {
-    if super::live::scene().is_some() {
-        return; // `--live` waits for the real READY
+    // `--live` waits for the real READY; `REFLUX_LIVE_CACHE=1` keeps the restore to test the
+    // cache → READY handover.
+    if super::live::scene().is_some() && std::env::var_os("REFLUX_LIVE_CACHE").is_none() {
+        return;
     }
     let Some(file) = s.app.saved.current.as_ref().and_then(path).and_then(|p| std::fs::read(p).ok()) else { return };
     let Ok(File { ready: Some(ready), messages }) = serde_json::from_slice::<File>(&file) else { return };

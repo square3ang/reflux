@@ -812,6 +812,12 @@ fn on_gateway(s: &mut State, ev: GatewayEvent) {
                     crate::desktop::spell::configure(&s.app.saved.desktop); // the locale's dictionary
                 }
                 crate::desktop::ready(s);
+                // READY rebuilt the store, dropping the cached page the open channel showed, and
+                // that channel is already selected, so nothing else would fetch it again.
+                if let Some(c) = s.app.shell.channel.filter(|c| !s.app.store.messages.contains_key(c)) {
+                    s.app.selected_channel = Some(c);
+                    fetch_messages(s, c);
+                }
                 open_pending_channel(s);
                 voice::load_rollout(s);
                 voice::watch_devices();
