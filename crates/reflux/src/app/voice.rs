@@ -807,11 +807,20 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
 /// is loud (300 ms hang).
 #[cfg(feature = "voice-webrtc")]
 async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
-    let (mut on, mut quiet) = (false, u32::MAX);
+    let (mut on, mut quiet, mut noise) = (false, u32::MAX, reflux_voice::NoiseState::Idle);
     loop {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let Some(call) = call.upgrade() else { return };
         quiet = if call.mic_level() > 0.01 { 0 } else { quiet.saturating_add(1) };
+        let ns = call.noise_state();
+        if ns != noise {
+            noise = ns;
+            update(move |s| {
+                if s.app.voice.generation == generation {
+                    s.app.shell.voice.noise_state = ns;
+                }
+            });
+        }
         if on != (quiet < 6) {
             on = !on;
             update(move |s| {
@@ -1488,7 +1497,16 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
         w.abort();
     }
     match user {
-        Some(u) if s.app.shell.voice.watch_for != Some(u) => s.app.shell.voice.begin_watch(u),
+        Some(u) if s.app.shell.voice.watch_for != Some(u) => {
+            let sh = &mut s.app.shell;
+            sh.voice.begin_watch(u);
+            // `handleWatch`: the stream becomes the call view's pinned tile.
+            if sh.voice.channel.is_some_and(|(g, _)| g.is_some()) {
+                sh.voice.focus = Some(u);
+                sh.call.pin(Some(u));
+                sh.voice.call_view = true;
+            }
+        }
         None => s.app.shell.voice.end_watch(),
         _ => {}
     }

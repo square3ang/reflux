@@ -8,7 +8,7 @@
 //! (decoding) remote audio, and nothing else plays it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -137,8 +137,7 @@ pub use crate::resample::Resampler;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Processing {
     pub echo_cancellation: bool,
-    /// RNNoise.
-    pub noise_suppression: bool,
+    pub noise: crate::Noise,
     pub auto_gain_control: bool,
     /// Linear input gain (input volume / 100).
     pub input_gain: f32,
@@ -146,7 +145,7 @@ pub struct Processing {
 
 impl Default for Processing {
     fn default() -> Self {
-        Self { echo_cancellation: true, noise_suppression: true, auto_gain_control: true, input_gain: 1.0 }
+        Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0 }
     }
 }
 
@@ -288,6 +287,8 @@ pub struct Engine {
     level: Arc<AtomicU32>,
     processing: Arc<Mutex<Processing>>,
     apm: Apm,
+    /// [`crate::NoiseState`] as a `u8`, written by the mic chain.
+    noise_state: Arc<AtomicU8>,
     input: Mutex<Option<IoThread>>,
     output: Mutex<Option<IoThread>>,
 }
@@ -302,7 +303,7 @@ impl Engine {
     pub fn new() -> Self {
         // No WebRTC processing on the source: ours runs before it; queue 0 = 10 ms frames, sync.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), RATE, 1, 0);
-        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), input: Mutex::default(), output: Mutex::default() };
+        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default() };
         engine.set_processing(Processing::default());
         engine
     }
@@ -311,11 +312,21 @@ impl Engine {
         f32::from_bits(self.level.load(Ordering::Relaxed))
     }
 
+    pub fn noise_state(&self) -> crate::NoiseState {
+        match self.noise_state.load(Ordering::Relaxed) {
+            1 => crate::NoiseState::Loading,
+            2 => crate::NoiseState::Ready,
+            3 => crate::NoiseState::Failed,
+            _ => crate::NoiseState::Idle,
+        }
+    }
+
     pub fn set_processing(&self, p: Processing) {
         *self.processing.lock().unwrap() = p;
-        let any = p.echo_cancellation || p.auto_gain_control;
+        let standard = p.noise == crate::Noise::Standard;
+        let any = p.echo_cancellation || p.auto_gain_control || standard;
         // High-pass rides along with any processing; studio (all off) gets none.
-        *self.apm.lock().unwrap() = any.then(|| AudioProcessingModule::new(p.echo_cancellation, p.auto_gain_control, true, false));
+        *self.apm.lock().unwrap() = any.then(|| AudioProcessingModule::new(p.echo_cancellation, p.auto_gain_control, true, standard));
     }
 
     /// (Re)opens the speakers on `name` (`None` = default).
@@ -350,9 +361,9 @@ impl Engine {
         let mut slot = self.input.lock().unwrap();
         *slot = None;
         let (source, apm, processing, name) = (self.source.clone(), self.apm.clone(), self.processing.clone(), name.map(str::to_string));
-        let level = self.level.clone();
+        let (level, noise_state) = (self.level.clone(), self.noise_state.clone());
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let mut chain = MicChain::new(RATE, source, apm, processing, level);
+            let mut chain = MicChain::new(RATE, source, apm, processing, level, noise_state);
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -369,14 +380,14 @@ impl Engine {
             return true;
         }
         #[cfg(target_os = "linux")]
-        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone())) {
+        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), noise_state.clone())) {
             *slot = Some(thread);
             return true;
         }
         *slot = run_stream(move || {
             let device = input_device(name.as_deref())?;
             let cfg = config(device.supported_input_configs().ok()?.collect(), device.default_input_config().ok()?);
-            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level);
+            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, noise_state);
             match cfg.sample_format() {
                 cpal::SampleFormat::F32 => build_input::<f32>(&device, &cfg, chain),
                 cpal::SampleFormat::I16 => build_input::<i16>(&device, &cfg, chain),
@@ -470,7 +481,8 @@ fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * 32767.0) as i16
 }
 
-/// Mic samples → 48 kHz → 10 ms frames → gain → APM → RNNoise → the WebRTC source.
+/// Mic samples → 48 kHz → 10 ms frames → gain → APM → RNNoise / DeepFilterNet → the WebRTC
+/// source.
 struct MicChain {
     resampler: Resampler,
     pending: Vec<f32>,
@@ -478,12 +490,22 @@ struct MicChain {
     apm: Apm,
     processing: Arc<Mutex<Processing>>,
     denoise: Box<nnnoiseless::DenoiseState<'static>>,
+    deep: crate::deepfilter::Deep,
     level: Arc<AtomicU32>,
 }
 
 impl MicChain {
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>) -> Self {
-        Self { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), level }
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, noise_state: Arc<AtomicU8>) -> Self {
+        Self {
+            resampler: Resampler::new(rate, RATE),
+            pending: Vec::new(),
+            source,
+            apm,
+            processing,
+            denoise: nnnoiseless::DenoiseState::new(),
+            deep: crate::deepfilter::Deep::new(noise_state),
+            level,
+        }
     }
 
     fn feed(&mut self, mono: impl Iterator<Item = f32>) {
@@ -496,7 +518,13 @@ impl MicChain {
             if let Some(apm) = self.apm.lock().unwrap().as_mut() {
                 let _ = apm.process_stream(&mut pcm, RATE as i32, 1);
             }
-            if p.noise_suppression {
+            let deep = p.noise == crate::Noise::DeepFilter && {
+                let input: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
+                self.deep.process(&input, &mut frame)
+            };
+            if deep {
+                pcm = frame.iter().copied().map(to_i16).collect();
+            } else if matches!(p.noise, crate::Noise::Rnnoise | crate::Noise::DeepFilter) {
                 // RNNoise takes samples on the i16 scale.
                 let scaled: Vec<f32> = pcm.iter().map(|&s| s as f32).collect();
                 self.denoise.process_frame(&mut frame, &scaled);

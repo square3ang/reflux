@@ -13,7 +13,7 @@ use crate::i18n::t;
 use crate::icons;
 use crate::settings::{Op, ShellModal, input};
 use crate::theme::{Palette, font};
-use crate::ui::{Button, ButtonVariant, Menu, MenuItem, Modal, Select, mix};
+use crate::ui::{Button, ButtonVariant, Modal, Select, mix};
 
 /// The id of the user-area menu; the user row is keyed with it so the menu anchors there.
 pub const MENU: &str = "user-area";
@@ -37,48 +37,147 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         return;
     }
     use reflux_model::Status as S_;
-    let cur = store.settings.status;
-    let status = |id: &str, label: &str, hint: Option<&str>, s: S_| {
-        let v = serde_json::to_value(s).unwrap_or(Value::Null);
-        let mut i = MenuItem::new(format!("status-{id}"), t(label)).radio(cur == s).on_select(move |st: &mut S| {
-            let sh = acc(st);
-            sh.popups.close();
-            sh.intents.push(Intent::PatchSettings(json!({ "status": v })));
-        });
-        if let Some(h) = hint {
-            i = i.hint(t(h));
-        }
-        i
-    };
     let me = store.my_id();
-    let custom = store.settings.custom_status.as_ref().and_then(|c| c.text.clone()).filter(|t| !t.is_empty());
-    let mut m = Menu::new(MENU)
-        .placement(crate::ui::Placement::Top)
-        .min_w(320.0)
-        .item(status("online", t("Online"), None, S_::Online))
-        .item(status("idle", t("Idle"), None, S_::Idle))
-        .item(status("dnd", "Do Not Disturb", Some(t("You won't receive notifications on desktop")), S_::Dnd))
-        .item(status("invisible", t("Invisible"), Some(t("You'll appear offline")), S_::Invisible))
-        .separator()
-        .item(
-            MenuItem::new("custom-status", custom.clone().unwrap_or_else(|| t("Set a custom status").into()))
-                .icon(&icons::SMILEY)
-                .on_select(move |s: &mut S| open(acc(s), ShellModal::CustomStatus)),
-        );
-    if custom.is_some() {
-        m = m.item(
-            MenuItem::new("clear-status", t("Clear custom status"))
-                .icon(&icons::X_BOLD)
-                .on_select(move |s: &mut S| acc(s).intents.push(Intent::PatchSettings(json!({ "custom_status": null })))),
+    let cur = store.settings.status;
+    let dot = |s: S_| match s {
+        S_::Online => Dot::Online,
+        S_::Idle => Dot::Idle,
+        S_::Dnd => Dot::Dnd,
+        _ => Dot::Offline,
+    };
+    let label = |s: S_| match s {
+        S_::Online => t("Online"),
+        S_::Idle => t("Idle"),
+        S_::Dnd => "Do Not Disturb",
+        _ => t("Invisible"),
+    };
+    // `.actionButton`: 22px icon, 13px/500 label, optional 11px hint and a caret.
+    let action = |key: &'static str, icon_el: El, text_: String, hint: Option<String>, chevron: bool| {
+        let mut words = col().grow(1.0).min_w(0.0).child(text(text_).font(font(13.0, 500.0).lh(16.25)).color(p.text_primary).truncate());
+        if let Some(h) = hint {
+            words = words.child(text(h).font(font(11.0, 400.0).lh(13.75)).color(p.text_tertiary).truncate());
+        }
+        let mut r = row()
+            .key(key)
+            .w_full()
+            .gap(10.0)
+            .px(12.0)
+            .py(10.0)
+            .center_y()
+            .hover(p.background_modifier_hover)
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .child(row().size(22.0, 22.0).center().child(icon_el))
+            .child(words);
+        if chevron {
+            r = r.child(rune::icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
+        }
+        r
+    };
+    let divider = || el().mx(12.0).h(1.0).fill(p.background_header_secondary).opacity(0.3);
+    let surface = p.background_secondary_alt;
+    let status_row = action(STATUS_ROW, crate::ui::avatar::status_indicator(dot(cur), 14.0, surface, p), label(cur).to_string(), None, true)
+        .on_hover_change(move |s: &mut S, inside, _| {
+            if inside {
+                acc(s).popups.sub = Some(STATUS_ROW.into());
+            }
+        })
+        .on_press(move |s: &mut S| acc(s).popups.sub = Some(STATUS_ROW.into()));
+    let accounts = action("user-area-accounts", rune::icon(&icons::USERS_THREE_BOLD, 16.0).color(p.text_secondary), t("Switch accounts").to_string(), None, true)
+        .on_hover_change(move |s: &mut S, inside, _| {
+            if inside {
+                acc(s).popups.sub = None;
+            }
+        })
+        // shortcut: Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
+        // click opens the account switcher, as Fluxer's does.
+        .on_press(move |s: &mut S| open(acc(s), ShellModal::Accounts));
+    let copy = action("user-area-copy-id", rune::icon(&icons::IDENTIFICATION_BADGE_BOLD, 16.0).color(p.text_secondary), t("Copy user ID").to_string(), None, false)
+        .on_hover_change(move |s: &mut S, inside, _| {
+            if inside {
+                acc(s).popups.sub = None;
+            }
+        })
+        .on_press_tx(move |s: &mut S, tx: &mut Tx| {
+            acc(s).popups.close();
+            tx.copy(me.to_string());
+        });
+    let group = col().w_full().radius(12.0).clip_rounded(12.0).fill(surface).child(status_row).child(divider()).child(accounts).child(divider()).child(copy);
+    let edit = Button::new(t("Edit profile"))
+        .icon(&icons::PENCIL_BOLD)
+        .fit_container()
+        .key("user-area-edit-profile")
+        .on_press(move |s: &mut S| acc(s).open_settings(Some("my_profile")))
+        .el(p);
+    // The custom status, or `.customStatusPlaceholder` ("Set a custom status").
+    let has_custom = store.presences.get(&me).and_then(|pr| pr.custom_status.as_ref()).is_some_and(|c| c.text.as_deref().is_some_and(|t| !t.is_empty()) || c.emoji_name.is_some());
+    let c = super::profile::card_for(store, st, me, None, 80.0, p);
+    let accent = c.accent;
+    let placeholder = (!has_custom).then(|| {
+        row()
+            .gap(3.0)
+            .center_y()
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .child(rune::icon(&icons::SMILEY, 14.0).color(p.text_tertiary))
+            .child(text(t("Set a custom status")).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary))
+            .on_press(move |s: &mut S| open(acc(s), ShellModal::CustomStatus))
+    });
+    let c = super::profile::with_badges(store, st, c, false, p, acc);
+    let footer = col().w_full().gap(12.0).px(12.0).pt(8.0).child(group).child(edit);
+    // shortcut: a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
+    // click in Fluxer); change it from the custom status modal.
+    let extra: Vec<El> = placeholder.into_iter().collect();
+    let body = super::profile::card_body(store, st, c, super::profile::WIDTH, extra, p);
+    let card = super::profile::frame(body, accent, super::profile::WIDTH, p).key("user-area-popout").child(footer).modal(true, move |s: &mut S| acc(s).popups.close());
+    layer.push(crate::ui::overlay::anchor(card, MENU, crate::ui::Placement::Top, 8.0));
+    if st.popups.sub.as_deref() == Some(STATUS_ROW) {
+        layer.push(crate::ui::overlay::anchor(status_menu(cur, p, acc), STATUS_ROW, crate::ui::Placement::RightStart, 8.0));
+    }
+}
+
+const STATUS_ROW: &str = "user-area-status";
+use crate::ui::avatar::Status as Dot;
+
+/// `StatusMenu`: the four statuses with their descriptions.
+// shortcut: the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
+// here lasts until changed.
+fn status_menu<S: 'static>(cur: reflux_model::Status, p: &Palette, acc: ShellAccess<S>) -> El {
+    use reflux_model::Status as S_;
+    let mut m = col().w(220.0).padding(6.0).radius(8.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).key("user-area-status-menu");
+    for (s, dot, label, hint) in [
+        (S_::Online, Dot::Online, t("Online"), None),
+        (S_::Idle, Dot::Idle, t("Idle"), None),
+        (S_::Dnd, Dot::Dnd, "Do Not Disturb", Some(t("You won't receive notifications on desktop"))),
+        (S_::Invisible, Dot::Offline, t("Invisible"), Some(t("You'll appear offline"))),
+    ] {
+        let v = serde_json::to_value(s).unwrap_or(Value::Null);
+        let mut words = col().grow(1.0).min_w(0.0).child(text(t(label)).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary));
+        if let Some(h) = hint {
+            words = words.child(text(h).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).wrap());
+        }
+        let _ = cur;
+        m = m.child(
+            row()
+                .w_full()
+                .gap(10.0)
+                .px(8.0)
+                .py(6.0)
+                .center_y()
+                .radius(4.0)
+                .hover(p.background_modifier_hover)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .child(row().size(16.0, 16.0).center().child(crate::ui::avatar::status_indicator(dot, 14.0, p.form_surface_background, p)))
+                .child(words)
+                .on_press(move |st: &mut S| {
+                    let sh = acc(st);
+                    sh.popups.close();
+                    sh.intents.push(Intent::PatchSettings(json!({ "status": v })));
+                }),
         );
     }
-    m = m
-        .separator()
-        .item(MenuItem::new("edit-profile", t("Edit profile")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| acc(s).open_settings(Some("my_profile"))))
-        .item(MenuItem::new("switch-accounts", t("Switch accounts")).icon(&icons::USERS).on_select(move |s: &mut S| open(acc(s), ShellModal::Accounts)))
-        .separator()
-        .item(MenuItem::new("copy-me", t("Copy user ID")).icon(&icons::SNOWFLAKE).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(me.to_string())));
-    m.el(&st.popups, pops(acc), p, layer);
+    m
 }
 
 /// Opens a user-area modal with fresh `m.` fields.

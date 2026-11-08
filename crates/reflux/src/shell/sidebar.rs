@@ -642,7 +642,13 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .cursor(rune::Cursor::Pointer)
         .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label("User area")
-        .on_press(move |s: &mut S| acc(s).popups.toggle(super::status::MENU))
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.toggle(super::status::MENU);
+            if sh.popups.is_open(super::status::MENU) {
+                sh.fetch_profile(me, None);
+            }
+        })
         .child(avatar(store, st, me, 32.0, Some(dot), surface, p))
         .child(
             col()

@@ -126,19 +126,30 @@ impl<'a> Avatar<'a> {
                 .child(at(s, ph).radius(rx).fill(colour).child(screen).child(wheel));
         }
 
-        // The `flx-mask-presence-*` holes, in the status box's own units.
-        let hole = match status {
-            Status::Online => None,
-            Status::Idle => Some(el().absolute(-0.125 * s, -0.125 * s).size(0.75 * s, 0.75 * s).radius(0.375 * s)),
-            Status::Dnd => Some(el().absolute(0.125 * s, 0.375 * s).size(0.75 * s, 0.25 * s).radius(0.125 * s)),
-            Status::Offline => Some(el().absolute(0.25 * s, 0.25 * s).size(0.5 * s, 0.5 * s).radius(0.25 * s)),
-        };
-        let mut dot = at(s, s).radius(s / 2.0).fill(colour).clip_rounded(s / 2.0);
-        if let Some(h) = hole {
-            dot = dot.child(h.fill(surface));
-        }
-        root.child(at(2.0 * r, 2.0 * r).radius(r).fill(surface)).child(dot)
+        let _ = colour;
+        root.child(at(2.0 * r, 2.0 * r).radius(r).fill(surface)).child(status_indicator(status, s, surface, p).absolute(c - s / 2.0, c - s / 2.0))
     }
+}
+
+/// `StatusIndicator`: the presence dot `s` wide, its `flx-mask-presence-*` hole cut in `surface`.
+pub fn status_indicator(status: Status, s: f32, surface: Color, p: &Palette) -> El {
+    let colour = match status {
+        Status::Online => p.status_online,
+        Status::Idle => p.status_idle,
+        Status::Dnd => p.status_dnd,
+        Status::Offline => p.status_offline,
+    };
+    let hole = match status {
+        Status::Online => None,
+        Status::Idle => Some(el().absolute(-0.125 * s, -0.125 * s).size(0.75 * s, 0.75 * s).radius(0.375 * s)),
+        Status::Dnd => Some(el().absolute(0.125 * s, 0.375 * s).size(0.75 * s, 0.25 * s).radius(0.125 * s)),
+        Status::Offline => Some(el().absolute(0.25 * s, 0.25 * s).size(0.5 * s, 0.5 * s).radius(0.25 * s)),
+    };
+    let mut dot = el().size(s, s).radius(s / 2.0).fill(colour).clip_rounded(s / 2.0);
+    if let Some(h) = hole {
+        dot = dot.child(h.fill(surface));
+    }
+    dot
 }
 
 #[cfg(test)]

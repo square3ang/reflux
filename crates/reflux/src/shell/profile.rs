@@ -17,7 +17,7 @@ use crate::ui::{Button, ButtonSize, ButtonVariant, mix, rgb};
 
 /// `PROFILE_POPOUT_GEOMETRY`: 300 content + 2.5 border, 105 banner in a 140 header, an 80px
 /// avatar at (10, 55).
-const WIDTH: f32 = 300.0;
+pub(crate) const WIDTH: f32 = 300.0;
 const BORDER: f32 = 2.5;
 
 /// What a profile card shows.
@@ -168,7 +168,7 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
     col().w_full().child(head).child(content.children(extra))
 }
 
-fn frame(body: El, accent: Color, w: f32, p: &Palette) -> El {
+pub(crate) fn frame(body: El, accent: Color, w: f32, p: &Palette) -> El {
     col()
         .w(w + 2.0 * BORDER)
         .gap(4.0)

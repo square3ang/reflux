@@ -153,7 +153,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     }
     if set_.processing == "custom" {
         processing = processing
-            .child(Switch::new(set_.noise_suppression).label(t("Noise suppression")).on_toggle(set(acc, |st: &mut Settings| st.noise_suppression ^= true)).el(p))
+            .child(crate::shell::call::noise_select(st, p, acc, layer))
             .child(Switch::new(set_.echo_cancellation).label(t("Echo cancellation")).on_toggle(set(acc, |st: &mut Settings| st.echo_cancellation ^= true)).el(p));
     }
     out = out.child(section(t("Voice processing"), processing, false, p));

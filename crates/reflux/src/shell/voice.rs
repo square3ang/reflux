@@ -104,6 +104,8 @@ pub struct Voice {
     /// The mic test meter runs; its last level in dBFS.
     pub mic_test: bool,
     pub level: f32,
+    /// The DeepFilterNet model's state, polled from the call.
+    pub noise_state: reflux_voice::NoiseState,
     /// The mic gate (voice activity / push-to-talk) is open.
     pub transmitting: bool,
     /// The push-to-talk key is held in the window.
@@ -351,7 +353,9 @@ pub struct Settings {
     /// `voice` (focused voice), `studio` (direct input) or `custom`.
     pub processing: String,
     pub echo_cancellation: bool,
-    pub noise_suppression: bool,
+    /// `noiseSuppressionBackend` for the custom profile: `none`, `standard` (WebRTC),
+    /// `rnnoise` or `deep_filter`.
+    pub noise_backend: String,
     pub auto_gain_control: bool,
     pub stereo: bool,
     pub push_to_talk: bool,
@@ -410,7 +414,7 @@ impl Default for Settings {
             output_volume: 100.0,
             processing: "voice".into(),
             echo_cancellation: true,
-            noise_suppression: true,
+            noise_backend: "rnnoise".into(),
             auto_gain_control: true,
             stereo: false,
             push_to_talk: false,
@@ -444,20 +448,48 @@ impl Default for Settings {
     }
 }
 
+/// `VOICE_NOISE_SUPPRESSION_BACKENDS` that Reflux runs, with `getNoiseSuppressionChoiceLabel`.
+pub const NOISE_BACKENDS: [(&str, &str); 4] = [("none", "None"), ("standard", "WebRTC"), ("rnnoise", "RNNoise"), ("deep_filter", "DeepFilterNet")];
+
+fn noise_from(id: &str) -> reflux_voice::Noise {
+    use reflux_voice::Noise;
+    match id {
+        "none" => Noise::None,
+        "standard" => Noise::Standard,
+        "deep_filter" => Noise::DeepFilter,
+        _ => Noise::Rnnoise,
+    }
+}
+
+/// `getNoiseSuppressionFallbackMessage`: DeepFilterNet is chosen but RNNoise is standing in.
+pub fn noise_fallback(v: &Voice) -> Option<String> {
+    if v.settings.processing != "custom" || v.settings.noise_backend != "deep_filter" {
+        return None;
+    }
+    let args = [("requested", "DeepFilterNet"), ("effective", "RNNoise")];
+    match v.noise_state {
+        reflux_voice::NoiseState::Loading => Some(tf("Using {effective} until {requested} is ready.", &args)),
+        reflux_voice::NoiseState::Failed => Some(tf("{requested} could not start. Using {effective} instead.", &args)),
+        _ => None,
+    }
+}
+
 impl Settings {
-    /// (echo cancellation, noise suppression, auto gain) for the chosen profile.
-    pub fn processing(&self) -> (bool, bool, bool) {
+    /// `resolveBaseVoiceProcessing`: (echo cancellation, noise backend, auto gain) for the
+    /// chosen profile; focused voice uses the default backend, custom the chosen one.
+    pub fn processing(&self) -> (bool, reflux_voice::Noise, bool) {
+        use reflux_voice::Noise;
         match self.processing.as_str() {
-            "studio" => (false, false, false),
-            "custom" => (self.echo_cancellation, self.noise_suppression, self.auto_gain_control),
-            _ => (true, true, self.auto_gain_control),
+            "studio" => (false, Noise::None, false),
+            "custom" => (self.echo_cancellation, noise_from(&self.noise_backend), self.auto_gain_control),
+            _ => (true, Noise::default(), self.auto_gain_control),
         }
     }
 
-    /// What the mic path runs (RNNoise = noise suppression) at the input volume.
+    /// What the mic path runs at the input volume.
     pub fn mic_processing(&self) -> reflux_voice::Processing {
-        let (echo_cancellation, noise_suppression, auto_gain_control) = self.processing();
-        reflux_voice::Processing { echo_cancellation, noise_suppression, auto_gain_control, input_gain: self.input_volume / 100.0 }
+        let (echo_cancellation, noise, auto_gain_control) = self.processing();
+        reflux_voice::Processing { echo_cancellation, noise, auto_gain_control, input_gain: self.input_volume / 100.0 }
     }
 
     /// Copies the playback preferences into the call's mixer.
@@ -1203,8 +1235,7 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         s => s,
     };
     let watched = user != me || st.voice.self_stream;
-    let (vol, muted) = (st.voice.settings.stream_volumes.get(&user.0).copied().unwrap_or(100.0), st.voice.settings.stream_mutes.contains(&user.0));
-    let mut header = row()
+    let header = row()
         .w_full()
         .h(dim::LAYOUT_HEADER_HEIGHT)
         .px(dim::SPACING_4)
@@ -1212,32 +1243,8 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .center_y()
         .child(super::avatar(store, st, user, 20.0, None, p.background_primary, p))
         .child(text(tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name.to_string())])).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().shrink())
-        .child(el().grow(1.0));
-    if let Some(info) = stream_info(&st.voice.stream, st.voice.watch_fps).filter(|_| state == WatchState::Live || state == WatchState::Buffering) {
-        header = header.child(stream_pill(info, p));
-    }
-    if watched && !spectators_for(store, guild, user).is_empty() {
-        header = header.child(spectators_button(store, st, guild, user, p, acc));
-    }
-    header = header
-        .child(viewer_button("stream-volume", if muted { &icons::SPEAKER_SLASH_FILL } else if vol > 100.0 { &icons::SPEAKER_HIGH_FILL } else { &icons::SPEAKER_LOW_FILL }, if muted { t("Unmute stream") } else { t("Mute stream") }, muted, p, move |s: &mut S| {
-            let sh = acc(s);
-            if !sh.voice.settings.stream_mutes.remove(&user.0) {
-                sh.voice.settings.stream_mutes.insert(user.0);
-            }
-            sh.intents.push(Intent::Voice(Op::Settings));
-        }))
-        .child(viewer_button("stream-pin", if st.voice.stream_pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }, if st.voice.stream_pinned { t("Unpin stream") } else { t("Pin stream") }, st.voice.stream_pinned, p, move |s: &mut S| acc(s).voice.toggle_watch_pin()))
-        .child(viewer_button("stream-fullscreen", if st.voice.stream_fullscreen { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }, if st.voice.stream_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, st.voice.stream_fullscreen, p, move |s: &mut S| {
-            acc(s).voice.stream_fullscreen ^= true;
-        }))
-        .child(viewer_button("stream-popout", &icons::ARROW_SQUARE_OUT, t("Pop out stream"), false, p, move |s: &mut S| {
-            acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
-        }))
-        .child(viewer_button("stream-settings", &icons::DOTS_THREE_BOLD, t("Stream settings"), false, p, move |s: &mut S| {
-            acc(s).popups.toggle(STREAM_MENU);
-        }))
-        .child(viewer_button("stream-stop", &icons::X_BOLD, t("Stop watching"), false, p, move |s: &mut S| stop_watching(s, acc)));
+        .child(el().grow(1.0))
+        .child(stream_controls(store, st, p, acc));
     let last_frame = st.voice.stream.size() != (0, 0);
     let mut body = el().w_full().grow(1.0).min_h(0.0).fill(Color::BLACK);
     // `useOwnScreenSharePreviewState`: our own stream draws live; with "Pause my screen share
@@ -1269,6 +1276,46 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     };
     body = body.child(content);
     Some(col().grow(1.0).min_w(0.0).h_full().fill(Color::BLACK).child(header.fill(p.background_primary)).child(body))
+}
+
+/// `StreamFocusHeaderInfo` + `FocusedStreamVolumeControl`: the watched stream's info pill,
+/// spectators, volume/mute, pin, fullscreen, pop-out, settings and stop — in the viewer's
+/// header and the call view's while the stream is focused.
+pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let Some(user) = st.voice.watching else { return el() };
+    let guild = st.voice.channel.and_then(|(g, _)| g);
+    let state = match st.voice.watch_state {
+        WatchState::Idle => WatchState::Buffering,
+        s => s,
+    };
+    let watched = user != store.my_id() || st.voice.self_stream;
+    let (vol, muted) = (st.voice.settings.stream_volumes.get(&user.0).copied().unwrap_or(100.0), st.voice.settings.stream_mutes.contains(&user.0));
+    let mut header = row().gap(dim::SPACING_2).center_y();
+    if let Some(info) = stream_info(&st.voice.stream, st.voice.watch_fps).filter(|_| state == WatchState::Live || state == WatchState::Buffering) {
+        header = header.child(stream_pill(info, p));
+    }
+    if watched && !spectators_for(store, guild, user).is_empty() {
+        header = header.child(spectators_button(store, st, guild, user, p, acc));
+    }
+    header
+        .child(viewer_button("stream-volume", if muted { &icons::SPEAKER_SLASH_FILL } else if vol > 100.0 { &icons::SPEAKER_HIGH_FILL } else { &icons::SPEAKER_LOW_FILL }, if muted { t("Unmute stream") } else { t("Mute stream") }, muted, p, move |s: &mut S| {
+            let sh = acc(s);
+            if !sh.voice.settings.stream_mutes.remove(&user.0) {
+                sh.voice.settings.stream_mutes.insert(user.0);
+            }
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .child(viewer_button("stream-pin", if st.voice.stream_pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }, if st.voice.stream_pinned { t("Unpin stream") } else { t("Pin stream") }, st.voice.stream_pinned, p, move |s: &mut S| acc(s).voice.toggle_watch_pin()))
+        .child(viewer_button("stream-fullscreen", if st.voice.stream_fullscreen { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }, if st.voice.stream_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, st.voice.stream_fullscreen, p, move |s: &mut S| {
+            acc(s).voice.stream_fullscreen ^= true;
+        }))
+        .child(viewer_button("stream-popout", &icons::ARROW_SQUARE_OUT, t("Pop out stream"), false, p, move |s: &mut S| {
+            acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
+        }))
+        .child(viewer_button("stream-settings", &icons::DOTS_THREE_BOLD, t("Stream settings"), false, p, move |s: &mut S| {
+            acc(s).popups.toggle(STREAM_MENU);
+        }))
+        .child(viewer_button("stream-stop", &icons::X_BOLD, t("Stop watching"), false, p, move |s: &mut S| stop_watching(s, acc)))
 }
 
 /// The viewer's menus and popouts, into the screen's overlay layer: the spectators list and the

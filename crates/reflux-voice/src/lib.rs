@@ -11,6 +11,8 @@
 #[cfg(feature = "webrtc")]
 mod real;
 #[cfg(feature = "webrtc")]
+mod deepfilter;
+#[cfg(feature = "webrtc")]
 pub use real::*;
 
 // shortcut: a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
@@ -19,6 +21,29 @@ pub use real::*;
 mod stub;
 #[cfg(not(feature = "webrtc"))]
 pub use stub::*;
+
+/// `VoiceNoiseSuppressionBackend`: what cleans the mic before it is sent.
+// shortcut: Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Noise {
+    None,
+    /// WebRTC's own noise suppression (the APM).
+    Standard,
+    #[default]
+    Rnnoise,
+    /// DeepFilterNet3; RNNoise stands in while the model loads or if it can't start.
+    DeepFilter,
+}
+
+/// Where the DeepFilterNet model is (`NoiseSuppressionAvailability`'s fallback state).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoiseState {
+    #[default]
+    Idle,
+    Loading,
+    Ready,
+    Failed,
+}
 
 // Shared with both implementations: `reflux_voice::audio::Resampler`.
 mod resample;

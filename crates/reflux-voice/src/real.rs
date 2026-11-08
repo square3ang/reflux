@@ -163,6 +163,11 @@ impl Call {
         self.audio.as_ref().map_or(0.0, |a| a.level())
     }
 
+    /// Whether DeepFilterNet is loading, running or failed (RNNoise stands in until it runs).
+    pub fn noise_state(&self) -> crate::NoiseState {
+        self.audio.as_ref().map_or(crate::NoiseState::Idle, |a| a.noise_state())
+    }
+
     /// Mic processing (echo cancellation, RNNoise, gain control) and input volume.
     pub fn set_processing(&self, p: Processing) {
         if let Some(audio) = &self.audio {

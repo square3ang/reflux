@@ -15,6 +15,9 @@ serde_json.workspace = true
 cpal = "0.18"
 # RNNoise in pure Rust: noise suppression on the mic path.
 nnnoiseless = { version = "0.5", default-features = false }
+# DeepFilterNet3 (tract inference, the model bundled). Not on crates.io past 0.2, so the release tag.
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", default-features = false, features = ["tract", "default-model"], optional = true }
+ndarray = { version = "0.15", optional = true }
 
 # The PipeWire screen capture portal talks GDBus, which needs a running GLib main loop.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -29,7 +32,7 @@ libpulse-simple-binding = "2.29"
 # `--no-default-features` builds `src/stub.rs` instead: the app compiles for UI work without
 # libwebrtc, and calls / screen share / camera are unavailable.
 default = ["webrtc"]
-webrtc = ["dep:livekit"]
+webrtc = ["dep:livekit", "dep:deep_filter", "dep:ndarray"]
 
 [dev-dependencies]
 log = "0.4"

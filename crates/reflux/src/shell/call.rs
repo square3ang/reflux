@@ -696,6 +696,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         header = header.child(e2ee_badge());
     }
     let mut right = row().gap(4.0).center_y();
+    // `StreamFocusHeaderInfo`: the focused tile is the watched stream.
+    if st.voice.watching.is_some() && st.call.pinned(st.voice.focus) == st.voice.watching {
+        right = right.child(super::voice::stream_controls(store, st, p, acc));
+    }
     if !people.is_empty() {
         right = right.child(participant_stack(store, st, guild, &people, p, acc));
     }
@@ -758,23 +762,31 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     }
     root = root.child(col().w_full().grow(1.0).min_h(0.0).child(body));
     if hud_visible {
-        // shortcut: Rune has no pointer-move event, so the chrome hides after the idle timeout
-        // and comes back when the pointer enters the call (or Show controls is pressed).
         root = root.child(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc)));
     } else {
         root = root.child(row().w_full().py(8.0).justify_center().child(header_button(&icons::CORNERS_OUT_BOLD, t("View call controls"), p, acc, move |s: &mut S| {
             acc(s).call.hud_until = Some(Instant::now() + Duration::from_secs(8));
         })));
     }
-    Some(root.on_hover_change(move |s: &mut S, inside, tx: &mut rune::Tx| {
-        let sh = acc(s);
-        // shortcut: `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
-        // on every pointer move. A click or hover enter brings it back here.
-        sh.call.hud_until = if inside { Some(Instant::now() + HUD_IDLE) } else { Some(Instant::now() - Duration::from_millis(1)) };
-        if inside {
-            tx.wake_after(HUD_IDLE);
-        }
-    }))
+    // `useVoiceCallHudVisibility`: any pointer move shows the chrome for the idle timeout;
+    // leaving the call hides it. Moves only re-arm it once it is half spent (no rebuild per move).
+    Some(
+        root.on_pointer_move_local(move |s: &mut S, _, tx: &mut rune::Tx| {
+            let sh = acc(s);
+            let now = Instant::now();
+            if sh.call.hud_until.is_none_or(|t| t < now + HUD_IDLE / 2) {
+                sh.call.hud_until = Some(now + HUD_IDLE);
+                tx.wake_after(HUD_IDLE);
+            }
+        })
+        .on_hover_change(move |s: &mut S, inside, tx: &mut rune::Tx| {
+            let sh = acc(s);
+            sh.call.hud_until = if inside { Some(Instant::now() + HUD_IDLE) } else { Some(Instant::now() - Duration::from_millis(1)) };
+            if inside {
+                tx.wake_after(HUD_IDLE);
+            }
+        }),
+    )
 }
 
 // ---- In-call settings menus (`VoiceSettingsMenus`) ----------------------------------------------
@@ -2259,6 +2271,26 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
         )
 }
 
+/// `CompactComboboxRow` "Noise suppression": the backend for the custom profile, with
+/// `getNoiseSuppressionFallbackMessage` under it while RNNoise stands in for DeepFilterNet.
+pub fn noise_select<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
+    let opts: Vec<(&str, &str)> = super::voice::NOISE_BACKENDS.iter().map(|(id, l)| (*id, if *id == "none" { t(l) } else { *l })).collect();
+    let pick = crate::ui::Select::new("noise-backend", &opts, Some(st.voice.settings.noise_backend.as_str()))
+        .label(t("Noise suppression"))
+        .width(195.0)
+        .on_choose(move |s: &mut S, val| {
+            let sh = acc(s);
+            sh.voice.settings.noise_backend = val.to_string();
+            sh.intents.push(Intent::Voice(Op::Settings));
+        })
+        .el(&st.popups, pops(acc), p, layer);
+    let mut c = col().w_full().gap(4.0).child(pick);
+    if let Some(msg) = super::voice::noise_fallback(&st.voice) {
+        c = c.child(text(msg).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).wrap());
+    }
+    c
+}
+
 /// `AudioProcessingModal`: the processing profile; Custom shows the individual switches.
 fn audio_processing<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close: impl Fn(&mut S) + Copy + 'static) -> crate::ui::Modal<S> {
     let set = &st.voice.settings;
@@ -2285,7 +2317,7 @@ fn audio_processing<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
     );
     if set.processing == "custom" {
         body = body
-            .child(crate::ui::Switch::new(set.noise_suppression).label(t("Noise suppression")).description("RNNoise").on_toggle(change(|s| s.noise_suppression ^= true)).el(p))
+            .child(noise_select(st, p, acc, &mut Vec::new()))
             .child(crate::ui::Switch::new(set.echo_cancellation).label(t("Echo cancellation")).description(t("Stops your speakers from looping back into your mic.")).on_toggle(change(|s| s.echo_cancellation ^= true)).el(p))
             .child(crate::ui::Switch::new(set.auto_gain_control).label(t("Automatic gain control")).description(t("Evens out your mic volume so you are not too quiet.")).on_toggle(change(|s| s.auto_gain_control ^= true)).el(p));
     }

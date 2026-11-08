@@ -76,14 +76,14 @@ pub mod audio {
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Processing {
         pub echo_cancellation: bool,
-        pub noise_suppression: bool,
+        pub noise: crate::Noise,
         pub auto_gain_control: bool,
         pub input_gain: f32,
     }
 
     impl Default for Processing {
         fn default() -> Self {
-            Self { echo_cancellation: true, noise_suppression: true, auto_gain_control: true, input_gain: 1.0 }
+            Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0 }
         }
     }
 
@@ -268,6 +268,10 @@ impl Call {
 
     pub fn mic_level(&self) -> f32 {
         0.0
+    }
+
+    pub fn noise_state(&self) -> crate::NoiseState {
+        crate::NoiseState::Idle
     }
 
     pub fn set_processing(&self, _p: Processing) {}
