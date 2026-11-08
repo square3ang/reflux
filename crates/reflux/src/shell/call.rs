@@ -89,6 +89,8 @@ pub struct CallUi {
     pub layout: LayoutMode,
     /// `showMyOwnCamera`: false keeps our camera published but shows our avatar instead.
     pub show_own_camera: bool,
+    /// `showMyOwnScreenShare`: false hides our own stream's tile from our view.
+    pub show_own_screen: bool,
     /// `showNonVideoParticipants`.
     pub show_non_video: bool,
     /// `prioritizeSpeakingParticipants`.
@@ -125,6 +127,7 @@ impl Default for CallUi {
         Self {
             layout: LayoutMode::Grid,
             show_own_camera: true,
+            show_own_screen: true,
             show_non_video: true,
             prioritize_speakers: false,
             hide_camera_confirm: None,
@@ -475,7 +478,7 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let me = store.my_id();
     let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
     let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
-    let all = tiles(&people);
+    let all: Vec<Tile> = tiles(&people).into_iter().filter(|t| st.call.show_own_screen || !(t.screen && t.user == me)).collect();
     let state = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
     let make = |t: Tile, big: bool| state(t.user).map(|vs| tile(store, st, guild, t, vs, big, p, acc)).unwrap_or_else(el);
     let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
@@ -1054,6 +1057,7 @@ fn device_entries<S: 'static>(devices: Option<&Vec<String>>, current: Option<&st
     let prefix = if input { "input" } else { "output" };
     let mut out = vec![MenuEntry::Item(
         MenuItem::new(format!("{prefix}-default"), t("Default"))
+            .keep_open()
             .radio(current.is_none())
             .on_select(move |s: &mut S| {
                 let sh = acc(s);
@@ -1069,6 +1073,7 @@ fn device_entries<S: 'static>(devices: Option<&Vec<String>>, current: Option<&st
         let pick = name.clone();
         out.push(MenuEntry::Item(
             MenuItem::new(format!("{prefix}-{name}"), name.clone())
+                .keep_open()
                 .radio(current == Some(name.as_str()))
                 .on_select(move |s: &mut S| {
                     let sh = acc(s);
@@ -1088,7 +1093,7 @@ fn profile_entries<S: 'static>(current: &str, acc: ShellAccess<S>) -> Vec<MenuEn
     [("voice", "Focused voice"), ("studio", "Direct input"), ("custom", "Custom")]
         .into_iter()
         .map(|(id, label)| {
-            MenuEntry::Item(MenuItem::new(format!("profile-{id}"), t(label)).radio(current == id).on_select(move |s: &mut S| {
+            MenuEntry::Item(MenuItem::new(format!("profile-{id}"), t(label)).radio(current == id).keep_open().on_select(move |s: &mut S| {
                 let sh = acc(s);
                 sh.voice.settings.processing = id.into();
                 sh.intents.push(Intent::Voice(Op::Settings));
@@ -1122,6 +1127,8 @@ fn meter_entry<S: 'static>(level_db: f32, p: &Palette) -> MenuEntry<S> {
 fn camera_device_entries<S: 'static>(cameras: Option<&Vec<String>>, current: Option<&str>, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
     let mut out = vec![MenuEntry::Item(
         MenuItem::new("camera-default", t("Default"))
+            .lead(&icons::CAMERA_FILL)
+            .keep_open()
             .radio(current.is_none())
             .on_select(move |s: &mut S| {
                 let sh = acc(s);
@@ -1135,6 +1142,8 @@ fn camera_device_entries<S: 'static>(cameras: Option<&Vec<String>>, current: Opt
         let pick = name.clone();
         out.push(MenuEntry::Item(
             MenuItem::new(format!("camera-{name}"), name.clone())
+                .lead(&icons::CAMERA_FILL)
+                .keep_open()
                 .radio(current == Some(name.as_str()))
                 .on_select(move |s: &mut S| {
                     let sh = acc(s);
@@ -1148,105 +1157,112 @@ fn camera_device_entries<S: 'static>(cameras: Option<&Vec<String>>, current: Opt
     out
 }
 
-fn camera_quality_entries<S: 'static>(higher: bool, current: &str, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
-    [("low", "480p"), ("medium", "720p"), ("high", "1080p")]
-        .into_iter()
-        .map(|(id, label)| {
-            let locked = id == "high" && !higher;
-            let item = MenuItem::new(format!("camera-quality-{id}"), t(label)).radio(current == id);
-            if locked {
-                MenuEntry::Item(item.disabled(true).hint(t("Plutonium")))
-            } else {
-                MenuEntry::Item(item.on_select(move |s: &mut S| {
-                    let sh = acc(s);
-                    sh.voice.settings.camera_quality = id.into();
-                    sh.intents.push(Intent::Voice(Op::Settings));
-                    sh.intents.push(Intent::Voice(Op::Preview(false)));
-                    sh.intents.push(Intent::Voice(Op::Preview(true)));
-                }))
-            }
-        })
-        .collect()
-}
-
+/// `StreamSettingsMenuContent`'s mode radios: a title and its `.modeDescription`.
 fn screen_mode_entries<S: 'static>(current: &str, higher: bool, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
-    [("gaming", if higher { "Gaming (up to 1440p60)" } else { "Gaming (up to 720p30)" }), ("screenshare", "Screen share"), ("custom", "Custom")]
+    let gaming = if higher { "Smooth 60 FPS at up to 1440p" } else { "Smooth 30 FPS at up to 720p" };
+    let screenshare = if higher { "Sharp text at up to 1080p, 30 FPS" } else { "Sharp text at 720p, up to 30 FPS" };
+    [("gaming", "Gaming", gaming), ("screenshare", "Screen share", screenshare), ("custom", "Custom", "Dial in your own numbers")]
         .into_iter()
-        .map(|(id, label)| {
-            MenuEntry::Item(MenuItem::new(format!("screen-mode-{id}"), t(label)).radio(current == id).on_select(move |s: &mut S| {
+        .map(|(id, label, desc)| {
+            MenuEntry::Item(MenuItem::new(format!("screen-mode-{id}"), t(label)).desc(t(desc)).radio(current == id).keep_open().on_select(move |s: &mut S| {
                 let sh = acc(s);
-                sh.voice.settings.streaming_mode = id.into();
-                sh.intents.push(Intent::Voice(Op::Settings));
+                if sh.voice.settings.streaming_mode != id {
+                    sh.voice.settings.streaming_mode = id.into();
+                    sh.intents.push(Intent::Voice(Op::Settings));
+                }
             }))
         })
         .collect()
 }
 
-/// The camera's in-call menu (`VoiceCameraSettingsMenu`).
+/// `openVoiceVideoSettings`: the Voice & Video tab.
+fn voice_settings_item<S: 'static>(id: &str, label: &str, acc: ShellAccess<S>) -> MenuItem<S> {
+    MenuItem::new(id, label).lead(&icons::GEAR_FILL).on_select(move |s: &mut S| {
+        let sh = acc(s);
+        sh.popups.close();
+        sh.open_settings(Some("voice_video"));
+    })
+}
+
+/// The camera's in-call menu (`VoiceCameraSettingsMenu`). Camera quality lives in the preview
+/// modal and the Video settings it links to, as in Fluxer.
 fn camera_menu<S: 'static>(st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
     let v = &st.voice;
     let cameras = v.cameras.as_ref();
     let current = v.settings.camera.as_deref();
-    let higher = st.limits.higher_video_quality;
-    let quality = camera_quality_entries(higher, &v.settings.camera_quality, acc);
-    let mut menu = Menu::new(MENU_CAMERA).placement(Placement::Top);
-    menu = menu.entry(MenuEntry::SubmenuHint {
-        id: "cameras".into(),
-        label: t("Camera").to_string(),
-        hint: Some(current.unwrap_or(t("Default")).to_string()),
-        disabled: false,
-        entries: camera_device_entries(cameras, current, acc),
-    });
-    menu = menu
-        .entry(MenuEntry::Submenu("camera-quality".into(), t("Camera quality").to_string(), quality))
+    Menu::new(MENU_CAMERA)
+        .placement(Placement::Top)
+        .entry(MenuEntry::SubmenuHint {
+            id: "cameras".into(),
+            label: t("Camera").to_string(),
+            hint: Some(current.unwrap_or(t("Default")).to_string()),
+            disabled: false,
+            entries: camera_device_entries(cameras, current, acc),
+        })
         .item(MenuItem::new("mirror-camera", t("Mirror camera")).checkbox(v.settings.mirror_camera).keep_open().on_select(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.settings.mirror_camera ^= true;
             sh.intents.push(Intent::Voice(Op::Settings));
         }))
         .separator()
-        .item(MenuItem::new("preview-camera", t("Preview camera")).icon(&icons::EYE_FILL).on_select(move |s: &mut S| {
+        .item(MenuItem::new("preview-camera", t("Preview camera")).lead(&icons::EYE_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.modal = Some(Modal::CameraPreview);
             sh.intents.push(Intent::Voice(Op::LoadCameras));
             sh.intents.push(Intent::Voice(Op::Preview(true)));
         }))
-        .item(MenuItem::new("video-settings", t("Video settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
-            let sh = acc(s);
-            sh.popups.close();
-            sh.open_settings(Some("voice_video"));
-        }));
-    menu
+        .separator()
+        .item(voice_settings_item("video-settings", t("Video settings"), acc))
 }
 
-fn screen_menu<S: 'static>(st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
+/// The screen share control's menu: `ActiveScreenShareMenu` while sharing, else
+/// `StreamSettingsMenuContent`; both end in "Screen share settings".
+fn screen_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
     let v = &st.voice;
-    let higher = st.limits.higher_video_quality;
     let mut menu = Menu::new(MENU_SCREEN).placement(Placement::Top);
     if v.screen {
-        menu = menu
-            .item(MenuItem::new("stop-stream", t("End screen share")).icon(&icons::MONITOR_PLAY_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen)))
-            .item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::ARROWS_LEFT_RIGHT_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))));
-        for e in stream_quality_entries(st, acc) {
+        for e in active_share_entries(st, p, acc) {
             menu = menu.entry(e);
         }
     } else {
-        menu = menu.entry(MenuEntry::Group(t("Streaming mode").to_string()));
-        for e in screen_mode_entries(&v.settings.streaming_mode, higher, acc) {
+        menu = menu.group(t("Streaming mode"));
+        for e in screen_mode_entries(&v.settings.streaming_mode, st.limits.higher_video_quality, acc) {
             menu = menu.entry(e);
         }
-        for e in stream_quality_entries(st, acc) {
-            menu = menu.entry(e);
+        if v.settings.streaming_mode == "custom" {
+            let (fps, res) = stream_quality_entries(st, acc);
+            menu = menu.separator().submenu("stream-quality-res", t("Resolution"), res).submenu("stream-quality-fps", t("Frame rate"), fps);
         }
-        menu = menu
-            .separator()
-            .item(MenuItem::new("share-now", t("Share your screen")).icon(&icons::MONITOR_ARROW_UP_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))));
+        // shortcut: no "Capture desktop audio" checkbox; Reflux's stream audio is the PipeWire app
+        // picked in the share dialog, not an on/off capture. Add it with a capture-audio setting.
+        let hide = crate::look::with(|l| l.hide_stream_preview);
+        menu = menu.separator().item(MenuItem::new("hide-stream-preview", t("Hide preview thumbnail")).checkbox(hide).keep_open().on_select(move |s: &mut S| {
+            let sh = acc(s);
+            let mut prefs = sh.prefs.clone();
+            prefs.look.hide_stream_preview = !hide;
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
+        }));
     }
-    menu.item(MenuItem::new("screen-settings", t("Screen share settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
-        let sh = acc(s);
-        sh.popups.close();
-        sh.open_settings(Some("voice_video"));
-    }))
+    menu.separator().item(voice_settings_item("screen-settings", t("Screen share settings"), acc))
+}
+
+/// `ActiveScreenShareMenu`: Stop streaming, Change stream and the compact live "Stream
+/// quality" submenu (frame rate and resolution groups).
+pub fn active_share_entries<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
+    let (fps, res) = stream_quality_entries(st, acc);
+    // `.compactLiveGroupLabel`: 14/600 text-tertiary, not uppercase.
+    let label = |l: &str| MenuEntry::El(Box::new(text(l.to_string()).font(font(14.0, 600.0).lh(18.0)).color(p.text_tertiary).pt(6.0).px(8.0).pb(4.0)));
+    let mut quality = vec![label(t("Frame rate"))];
+    quality.extend(fps);
+    quality.push(MenuEntry::Separator);
+    quality.push(label(t("Resolution")));
+    quality.extend(res);
+    // shortcut: no "Share stream audio" checkbox, as for the capture checkbox above.
+    vec![
+        MenuEntry::Item(MenuItem::new("stop-stream", t("Stop streaming")).icon(&icons::STOP_CIRCLE_FILL).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen))),
+        MenuEntry::Item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s)))),
+        MenuEntry::Submenu("stream-quality".into(), t("Stream quality").to_string(), quality),
+    ]
 }
 
 fn input_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
@@ -1284,18 +1300,7 @@ fn input_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         }))
         .entry(meter_entry(level, p))
         .separator()
-        .item(MenuItem::new("push-to-talk", t("Push-to-talk")).checkbox(set.push_to_talk).keep_open().on_select(move |s: &mut S| {
-            let sh = acc(s);
-            sh.voice.settings.push_to_talk ^= true;
-            sh.intents.push(Intent::Voice(Op::Settings));
-        }))
-        .item(MenuItem::new("deafen", t("Deafen")).checkbox(v.self_deaf).keep_open().on_select(move |s: &mut S| acc(s).toggle_deaf()))
-        .separator()
-        .item(MenuItem::new("voice-settings", t("Voice settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
-            let sh = acc(s);
-            sh.popups.close();
-            sh.open_settings(Some("voice_video"));
-        }))
+        .item(voice_settings_item("voice-settings", t("Voice settings"), acc))
 }
 
 fn output_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
@@ -1318,12 +1323,7 @@ fn output_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
             sh.intents.push(Intent::Voice(Op::Settings));
         }))
         .separator()
-        .item(MenuItem::new("deafen", t("Deafen")).checkbox(v.self_deaf).keep_open().on_select(move |s: &mut S| acc(s).toggle_deaf()))
-        .item(MenuItem::new("voice-settings", t("Voice settings")).icon(&icons::GEAR_FILL).on_select(move |s: &mut S| {
-            let sh = acc(s);
-            sh.popups.close();
-            sh.open_settings(Some("voice_video"));
-        }))
+        .item(voice_settings_item("voice-settings", t("Voice settings"), acc))
 }
 
 /// `fetchCallRegions` for a DM call, through the generic REST intent.
@@ -1340,39 +1340,60 @@ pub fn ensure_regions(sh: &mut ShellState) {
     sh.intents.push(Intent::Fetch { key, method: reqwest::Method::GET, path: format!("/channels/{ch}/call/regions"), body: None });
 }
 
-/// The region list from `GET /channels/:id/call/regions` (Automatic always first).
+/// `getRegionDisplayName`: the server's name, else the ID title-cased ("us-east" → "US East").
+fn region_display_name(id: &str, name: &str) -> String {
+    if !name.is_empty() && name != id {
+        return name.to_string();
+    }
+    id.split('-')
+        .map(|part| match part.to_lowercase().as_str() {
+            "us" => "US".to_string(),
+            "eu" => "EU".to_string(),
+            l => l.chars().take(1).flat_map(char::to_uppercase).chain(l.chars().skip(1)).collect(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The region list from `GET /channels/:id/call/regions`: Automatic, then the rest by name.
 pub fn region_options(st: &ShellState) -> Vec<(String, String)> {
     let Some((None, ch)) = st.voice.channel else { return Vec::new() };
     let key = format!("voice-regions-{ch}");
-    let mut out = vec![("automatic".to_string(), t("Automatic").to_string())];
+    let mut out = Vec::new();
     if let Some(super::expr::Fetched::Done(serde_json::Value::Array(list))) = st.expr.fetched.get(&key) {
         for r in list {
-            let Some(id) = r["id"].as_str() else { continue };
-            if id == "automatic" {
-                continue;
-            }
-            let name = r["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(id);
-            out.push((id.to_string(), name.to_string()));
+            let Some(id) = r["id"].as_str().filter(|id| *id != "automatic") else { continue };
+            out.push((id.to_string(), region_display_name(id, r["name"].as_str().unwrap_or_default())));
         }
     }
+    // shortcut: `localeCompare` is approximated by a case-insensitive compare.
+    out.sort_by_key(|(_, n)| n.to_lowercase());
+    out.insert(0, ("automatic".to_string(), t("Automatic").to_string()));
     out
+}
+
+/// Whether the region PATCH is in flight (`isChangingRegion`).
+fn region_changing(st: &ShellState, ch: Snowflake) -> bool {
+    matches!(st.expr.fetched.get(&format!("voice-region-set-{ch}")), Some(super::expr::Fetched::Loading))
 }
 
 fn region_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
     let Some((_, ch)) = st.voice.channel else { return Vec::new() };
-    let current = st.call.region.clone();
-    let options = region_options(st);
-    if options.len() == 1 && !matches!(st.expr.fetched.get(&format!("voice-regions-{ch}")), Some(super::expr::Fetched::Done(_))) {
-        return vec![MenuEntry::Item(MenuItem::new("regions-loading", t("Loading…")).disabled(true))];
-    }
-    options
+    let current = st.call.region.clone().unwrap_or_else(|| "automatic".into());
+    let changing = region_changing(st, ch);
+    region_options(st)
         .into_iter()
         .map(|(id, name)| {
+            let selected = current == id;
             let pick = id.clone();
-            MenuEntry::Item(MenuItem::new(format!("region-{id}"), name).radio(current.as_deref() == Some(id.as_str())).on_select(move |s: &mut S| {
+            MenuEntry::Item(MenuItem::new(format!("region-{id}"), name).radio(selected).disabled(changing).keep_open().on_select(move |s: &mut S| {
+                if selected {
+                    return;
+                }
                 let sh = acc(s);
                 sh.call.teleport_until = Some(Instant::now() + Duration::from_secs(3));
                 sh.call.region = (pick != "automatic").then(|| pick.clone());
+                sh.expr.fetched.insert(format!("voice-region-set-{ch}"), super::expr::Fetched::Loading);
                 sh.intents.push(Intent::Fetch {
                     key: format!("voice-region-set-{ch}"),
                     method: reqwest::Method::PATCH,
@@ -1384,63 +1405,50 @@ fn region_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<MenuE
         .collect()
 }
 
-/// `VoiceMoreOptionsMenu`: region, layout, own camera, non-video participants, speaker
-/// priority, standard-call switch and the settings entry.
+/// `VoiceMoreOptionsMenu`: region (DM calls), grid view (community calls), own camera and
+/// screen share, non-video participants, speaker priority, standard-call switch and settings.
+/// `CheckboxItem` drops its `icon`, so the checkboxes show none.
 fn more_menu<S: 'static>(store: &Store, st: &ShellState, _p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
     let v = &st.voice;
     let mut menu = Menu::new(MENU_MORE).placement(Placement::Top).min_w(300.0);
-    if matches!(v.channel, Some((None, _))) {
-        let regions = region_entries(st, acc);
-        let hint = st.call.region.as_ref().and_then(|id| region_options(st).into_iter().find(|(i, _)| i == id).map(|(_, n)| n));
-        menu = menu.entry(MenuEntry::SubmenuHint {
-            id: "voice-region".into(),
-            label: t("Voice region").to_string(),
-            hint: Some(hint.unwrap_or_else(|| t("Automatic").to_string())),
-            disabled: false,
-            entries: regions,
-        });
+    let dm = matches!(v.channel, Some((None, _)));
+    if let Some((None, ch)) = v.channel {
+        let hint = match &st.call.region {
+            None => t("Automatic").to_string(),
+            Some(id) => region_options(st).into_iter().find(|(i, _)| i == id).map_or_else(|| id.clone(), |(_, n)| n),
+        };
+        menu = menu.entry(MenuEntry::SubmenuHint { id: "voice-region".into(), label: t("Voice region").to_string(), hint: Some(hint), disabled: region_changing(st, ch), entries: region_entries(st, acc) });
     }
-    let is_grid = st.call.layout == LayoutMode::Grid;
-    let first = v.channel.and_then(|(g, c)| participants(store, g, c).first().map(|(u, _)| *u));
+    if !dm {
+        let is_grid = st.call.layout == LayoutMode::Grid;
+        let first = v.channel.and_then(|(g, c)| participants(store, g, c).first().map(|(u, _)| *u));
+        menu = menu.item(MenuItem::new("grid-view", t("Grid view")).checkbox(is_grid).keep_open().on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if sh.call.layout == LayoutMode::Grid {
+                sh.call.set_layout(LayoutMode::Focus);
+                sh.voice.focus = first.or(sh.voice.focus);
+            } else {
+                sh.call.set_layout(LayoutMode::Grid);
+                sh.voice.focus = None;
+            }
+        }));
+    }
     menu = menu
-        .item(
-            MenuItem::new("grid-view", t("Grid view")).icon(&icons::GRID_FOUR_FILL).checkbox(is_grid).keep_open().on_select(move |s: &mut S| {
-                let sh = acc(s);
-                if sh.call.layout == LayoutMode::Grid {
-                    sh.call.set_layout(LayoutMode::Focus);
-                    sh.voice.focus = first.or(sh.voice.focus);
+        .item(MenuItem::new("show-own-camera", t("Show my own camera")).checkbox(st.call.show_own_camera).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            if sh.call.show_own_camera {
+                if sh.prefs.skip_hide_own_camera_confirm {
+                    sh.call.show_own_camera = false;
                 } else {
-                    sh.call.set_layout(LayoutMode::Grid);
-                    sh.voice.focus = None;
+                    sh.call.hide_camera_confirm = Some(false);
                 }
-            }),
-        )
-        .item(
-            MenuItem::new("show-own-camera", t("Show my own camera")).checkbox(st.call.show_own_camera).on_select(move |s: &mut S| {
-                let sh = acc(s);
-                if sh.call.show_own_camera {
-                    if sh.prefs.skip_hide_own_camera_confirm {
-                        sh.call.show_own_camera = false;
-                    } else {
-                        sh.call.hide_camera_confirm = Some(false);
-                    }
-                } else {
-                    sh.call.show_own_camera = true;
-                }
-            }),
-        )
-        .item(
-            MenuItem::new("show-non-video", t("Show non-video participants"))
-                .checkbox(st.call.show_non_video)
-                .keep_open()
-                .on_select(move |s: &mut S| acc(s).call.show_non_video ^= true),
-        )
-        .item(
-            MenuItem::new("prioritize-speakers", t("Prioritize speakers"))
-                .checkbox(st.call.prioritize_speakers)
-                .keep_open()
-                .on_select(move |s: &mut S| acc(s).call.prioritize_speakers ^= true),
-        );
+            } else {
+                sh.call.show_own_camera = true;
+            }
+        }))
+        .item(MenuItem::new("show-own-screen", t("Show my screen share")).checkbox(st.call.show_own_screen).keep_open().on_select(move |s: &mut S| acc(s).call.show_own_screen ^= true))
+        .item(MenuItem::new("show-non-video", t("Show non-video participants")).checkbox(st.call.show_non_video).keep_open().on_select(move |s: &mut S| acc(s).call.show_non_video ^= true))
+        .item(MenuItem::new("prioritize-speakers", t("Prioritize speakers")).checkbox(st.call.prioritize_speakers).keep_open().on_select(move |s: &mut S| acc(s).call.prioritize_speakers ^= true));
     if let Some((g, c)) = v.channel
         && super::voice::is_p2p(store, g, c)
     {
@@ -2734,10 +2742,9 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     }));
     let streaming = store.voice_states.get(&(guild, user)).is_some_and(|v| v.self_stream);
     if streaming && user == me {
-        m = m
-            .item(MenuItem::new("stop-stream", t("Stop streaming")).danger().on_select(move |s: &mut S| acc(s).intents.push(Intent::ToggleScreen)))
-            .item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))))
-            .submenu("stream-quality", t("Stream quality"), stream_quality_entries(st, acc));
+        for e in active_share_entries(st, p, acc) {
+            m = m.entry(e);
+        }
     }
     let watching = st.voice.watching == Some(user);
     // `buildStreamStateAction`: Watch stream, or Stop watching once watched.
@@ -2804,7 +2811,7 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
 /// `StreamSettingsMenuContent`'s compactLive variant ("Stream quality"): frame rate and
 /// resolution radios. Options above the instance's higher-quality tier are visible but locked
 /// when the instance sells Plutonium, like Fluxer's premium badge rows.
-fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate::ui::MenuEntry<S>> {
+fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> (Vec<MenuEntry<S>>, Vec<MenuEntry<S>>) {
     let higher = st.limits.higher_video_quality;
     let premium = st.premium;
     let quality = st.voice.settings.screen_quality(&st.limits, st.limits.higher_video_quality);
@@ -2815,7 +2822,7 @@ fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> V
             continue;
         }
         let label = crate::i18n::tf("{frameRate} FPS", &[("frameRate", &value.to_string())]);
-        let mut item = MenuItem::new(format!("stream-fps-{value}"), label).radio(quality.fps == value);
+        let mut item = MenuItem::new(format!("stream-fps-{value}"), label).radio(quality.fps == value).keep_open();
         item = if locked {
             item.disabled(true).hint(t("Plutonium"))
         } else {
@@ -2834,7 +2841,7 @@ fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> V
         if locked && !premium {
             continue;
         }
-        let mut item = MenuItem::new(format!("stream-res-{value}"), label).radio(current == value);
+        let mut item = MenuItem::new(format!("stream-res-{value}"), label).radio(current == value).keep_open();
         item = if locked {
             item.disabled(true).hint(t("Plutonium"))
         } else {
@@ -2846,10 +2853,7 @@ fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> V
         };
         res.push(crate::ui::MenuEntry::Item(item));
     }
-    vec![
-        crate::ui::MenuEntry::Submenu("stream-quality-fps".into(), t("Frame rate").to_string(), fps),
-        crate::ui::MenuEntry::Submenu("stream-quality-res".into(), t("Resolution").to_string(), res),
-    ]
+    (fps, res)
 }
 
 #[cfg(test)]

@@ -24,7 +24,11 @@ pub struct MenuItem<S: 'static> {
     id: String,
     label: String,
     icon: Option<&'static Icon>,
+    /// A 16px icon before the label (`MenuItemRadio` `icon`, `.leadingActionLabel`).
+    lead: Option<&'static Icon>,
     hint: Option<String>,
+    /// `.modeDescription`: an 11/14 text-tertiary line under the label.
+    desc: Option<String>,
     shortcut: Option<String>,
     danger: bool,
     disabled: bool,
@@ -39,7 +43,9 @@ impl<S: 'static> MenuItem<S> {
             id: id.into(),
             label: label.into(),
             icon: None,
+            lead: None,
             hint: None,
+            desc: None,
             shortcut: None,
             danger: false,
             disabled: false,
@@ -50,6 +56,8 @@ impl<S: 'static> MenuItem<S> {
     }
     pub fn icon(mut self, i: &'static Icon) -> Self { self.icon = Some(i); self }
     pub fn hint(mut self, h: impl Into<String>) -> Self { self.hint = Some(h.into()); self }
+    pub fn lead(mut self, i: &'static Icon) -> Self { self.lead = Some(i); self }
+    pub fn desc(mut self, d: impl Into<String>) -> Self { self.desc = Some(d.into()); self }
     pub fn shortcut(mut self, k: impl Into<String>) -> Self { self.shortcut = Some(k.into()); self }
     pub fn danger(mut self) -> Self { self.danger = true; self }
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
@@ -293,13 +301,20 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
         p.text_primary
     };
     let mut words = col().grow(1.0).shrink().min_w(0.0);
-    let mut line = row().w_full().gap(16.0).center_y().child(label_text(&it.label, fg));
+    let mut line = row().w_full().gap(16.0).center_y();
+    line = match it.lead {
+        Some(i) => line.child(row().grow(1.0).shrink().min_w(0.0).gap(8.0).center_y().child(icon(i, 16.0).color(fg)).child(label_text(&it.label, fg))),
+        None => line.child(label_text(&it.label, fg)),
+    };
     // "Show context menu keybinds" (Accessibility → Keyboard).
     if let Some(k) = it.shortcut.as_ref().filter(|_| crate::look::with(|l| l.menu_shortcuts)) {
         let kc = if it.danger { fg } else { p.text_primary_muted };
         line = line.child(text(k.clone()).font(font(12.0, 400.0).mono()).color(kc));
     }
     words = words.child(line);
+    if let Some(d) = &it.desc {
+        words = words.gap(2.0).child(text(d.clone()).font(font(11.0, 400.0).lh(14.0)).color(p.text_tertiary).truncate());
+    }
     if let Some(h) = &it.hint {
         words = words.child(hint_text(h, p));
     }
@@ -309,6 +324,10 @@ fn item<S: 'static>(menu: &str, it: MenuItem<S>, access: impl PopupAccess<S>, p:
     }
     if let Some(k) = it.shortcut.as_ref().filter(|_| crate::look::with(|l| l.menu_shortcuts)) {
         r = r.shortcut_hint(k.clone());
+    }
+    if let Some(d) = &it.desc {
+        // Nowrap: the description widens the menu (CSS max-content).
+        r = r.min_w(rune::text::measure(d, &[], font(11.0, 400.0).lh(14.0), None).0 + 2.0 * 9.0 + 8.0 + 18.0 + 1.0);
     }
     if let Some(h) = &it.hint {
         // Padding, the gap and the trailing icon around the hint.
