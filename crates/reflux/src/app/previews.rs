@@ -12,6 +12,9 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     }
     let Some(inst) = s.app.instance.clone() else { return };
     let wanted = crate::shell::active_now::wanted_previews(&s.app.store, &s.app.shell);
+    if crate::ui::misc::debug_scroll() {
+        eprintln!("preview: wanted {wanted:?}");
+    }
     let previews = &mut s.app.shell.voice.previews;
     previews.retain(|k, _| wanted.contains(k));
     if wanted.is_empty() {

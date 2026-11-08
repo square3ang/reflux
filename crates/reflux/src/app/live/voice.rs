@@ -90,6 +90,9 @@ pub struct Run {
     device_restarted: bool,
     device_stopping: bool,
     device_ok: bool,
+    /// `useScreensharePreviewUploader` checked during the first device-share case.
+    preview_checked: bool,
+    preview_due: bool,
     /// The camera cases: which one is running and whether it is being turned off.
     camera_case: usize,
     camera_on: bool,
@@ -130,10 +133,41 @@ impl Run {
             device_restarted: false,
             device_stopping: false,
             device_ok: false,
+            preview_checked: false,
+            preview_due: false,
             camera_case: 0,
             camera_on: false,
             cameras: Vec::new(),
         })
+    }
+
+    /// Our own stream key, and whether the uploader stored a still a viewer can fetch. The
+    /// uploader retries every second, so wait up to three for the first attempt.
+    fn check_preview(&mut self, s: &State) {
+        for _ in 0..6 {
+            if s.app.voice.preview_upload.uploaded {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        if !s.app.voice.preview_upload.uploaded {
+            say("preview: uploader has not uploaded");
+            self.failures.push("preview not uploaded".into());
+            return;
+        }
+        let Some(conn) = self.mine(s).and_then(|v| v.connection_id.clone()) else {
+            self.failures.push("preview: no connection id".into());
+            return;
+        };
+        let key = format!("{}:{}:{conn}", self.guild.map_or("dm".to_string(), |g| g.to_string()), self.ch);
+        let Some(inst) = s.app.instance.as_ref() else { return };
+        let Some(bridge) = super::super::BRIDGE.get() else { return };
+        let got = bridge.rt.block_on(async { inst.rest.get_bytes(&format!("/streams/{key}/preview")).await });
+        match got {
+            Ok(Some(b)) if !b.is_empty() => say(format!("preview: server still {} bytes for {key}", b.len())),
+            Ok(_) => self.failures.push("preview: GET returned none".into()),
+            Err(e) => self.failures.push(format!("preview: GET {e}")),
+        }
     }
 
     /// Runs a check on the network thread; [`Run::result`] picks up its outcome.
@@ -237,6 +271,10 @@ impl Run {
 
     /// `Some(true)` done, `Some(false)` failed, `None` still waiting.
     fn advance(&mut self, s: &mut State, first: bool, since: Duration) -> Option<bool> {
+        if self.preview_due {
+            self.preview_due = false;
+            self.check_preview(s);
+        }
         let call = super::super::voice::call(s);
         let sh = &mut s.app.shell;
         match self.step {
@@ -361,10 +399,14 @@ impl Run {
                 if !self.capture {
                     // No window system to capture: publish the pattern through the same options.
                     if self.pending {
-                        match self.got.lock().unwrap().take()? {
+                        let done = self.got.lock().unwrap().take()?;
+                        match done {
                             Ok(Payload::Stats(stats)) => {
                                 say(format!("screen case {}: {stats}", self.screen_case));
                                 self.screens.push(stats);
+                                // `.screensharePreviewBackground`: our still reached the server and
+                                // a viewer can fetch it (`GET /streams/{key}/preview`).
+
                             }
                             Ok(Payload::Line(m)) => say(format!("screen case {}: {m}", self.screen_case)),
                             Err(e) => {
@@ -461,9 +503,19 @@ impl Run {
                     return if s.app.voice.device_share.is_none() { Some(self.device_ok) } else { None };
                 }
                 if self.pending {
-                    match self.got.lock().unwrap().take()? {
+                    let done = self.got.lock().unwrap().take()?;
+                    let check = self.device_case == 0 && !self.preview_checked;
+                    if check {
+                        self.preview_checked = true;
+                    }
+                    match done {
                         Ok(Payload::Stats(stats)) => {
                             say(format!("device share case {}: {stats}", self.device_case));
+                            // `.screensharePreviewBackground`: our still reached the server and a
+                            // viewer can fetch it (`GET /streams/{key}/preview`).
+                            if check {
+                                self.preview_due = true;
+                            }
                             let want = if self.device_case == 0 { (1280, 720) } else { (852, 480) };
                             let ok = (stats.width, stats.height) == want && stats.fps >= 8.0 && !stats.encoder.is_empty();
                             self.device_ok &= ok;

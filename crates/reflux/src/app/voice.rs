@@ -476,7 +476,9 @@ fn payload(s: &State, channel: Option<(Option<Snowflake>, Snowflake)>) -> Update
         self_mute: v.self_mute,
         self_deaf: v.self_deaf,
         self_video: v.camera && s.app.voice.camera.is_some(),
-        self_stream: v.screen && s.app.voice.share.is_some(),
+        // A camera/device share publishes as a screen share too (`Devices` in the picker), so
+        // the server and other clients see us streaming.
+        self_stream: v.screen && (s.app.voice.share.is_some() || s.app.voice.device_share.is_some()),
         viewer_stream_keys: channel.map(|_| watching.map(|k| vec![k])),
         // Only `true` agrees; leaving it out never switches a call.
         p2p: channel.filter(|(_, c)| s.app.voice.p2p_agreed == Some(*c)).map(|_| true),
@@ -1393,6 +1395,9 @@ fn toggle_screen(s: &mut State) {
         let (w, h) = quality.fit(3840, 2160);
         s.app.shell.voice.share_pick = None;
         let fps = quality.fps;
+        // A device share is a screen share to the server: the preview uploader gets a frame
+        // from the same feed (kept only when it asks).
+        let (frame, want) = (s.app.voice.own_frame.clone(), s.app.voice.want_own_frame.clone());
         spawn(async move {
             let cam = match call.publish_test_screen(quality, w, h).await {
                 Ok(c) => Arc::new(c),
@@ -1409,7 +1414,13 @@ fn toggle_screen(s: &mut State) {
             let feed = cam.clone();
             // A restart may open the device before the old pipeline has released it; retry once.
             let start = |feed: Arc<Camera>| {
-                crate::camera::CameraCapture::start(Some(&device), w, h, fps, move |w, h, rgba| feed.push_rgba(w, h, &rgba))
+                let (frame, want) = (frame.clone(), want.clone());
+                crate::camera::CameraCapture::start(Some(&device), w, h, fps, move |w, h, rgba| {
+                    if want.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                        *frame.lock().unwrap() = Some((w, h, rgba.clone()));
+                    }
+                    feed.push_rgba(w, h, &rgba)
+                })
             };
             let capture = start(feed.clone()).or_else(|| {
                 std::thread::sleep(Duration::from_millis(300));

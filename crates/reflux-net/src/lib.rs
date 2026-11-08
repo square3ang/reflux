@@ -94,6 +94,15 @@ pub(crate) fn allows(method: &reqwest::Method, path: &str, write_channel: Option
     if *method == Method::GET || (*method == Method::POST && path == "/search/messages") {
         return true;
     }
+    // A screen-share preview upload URL is a write, but only for the test channel: its stream
+    // key is `{guild|dm}:{channel}:{connection}`. The presigned PUT that follows carries no API
+    // path, so it is outside this gate (and only the URL the server just handed out).
+    if *method == Method::POST
+        && let Some(channel) = path.strip_prefix("/streams/").and_then(|p| p.strip_suffix("/preview/upload-url")).and_then(|key| key.split(':').nth(1))
+        && voice_channel() == Some(channel)
+    {
+        return true;
+    }
     // No dot segments: the URL parser would resolve them out of the channel.
     let dots = path.contains("..") || path.to_ascii_lowercase().contains("%2e");
     !dots && write_channel.is_some_and(|c| path.strip_prefix("/channels/").and_then(|p| p.strip_prefix(c)).is_some_and(|p| p.starts_with('/')))

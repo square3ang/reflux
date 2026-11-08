@@ -490,8 +490,9 @@ impl Client {
     /// `PUT`s `bytes` to an upload URL exactly as issued, without `Authorization`. Retries a
     /// part on 408/425/429/5xx and network errors, like `ChunkedAttachmentUploader`.
     pub async fn put_upload(&self, url: &str, bytes: Arc<Vec<u8>>, range: std::ops::Range<usize>, content_type: Option<&str>, sent: Arc<std::sync::atomic::AtomicU64>, progress: Arc<dyn Fn(u64) + Send + Sync>) -> Result<()> {
-        // Upload URLs come only from `upload_plan`, which the guard already scoped to a channel.
-        if crate::readonly() && crate::write_channel().is_none() {
+        // Upload URLs come only from `upload_plan` (scoped to the write channel by the guard) or
+        // a stream preview's upload-url (scoped to the voice channel's stream key).
+        if crate::readonly() && crate::write_channel().is_none() && crate::voice_channel().is_none() {
             return Err(readonly_error());
         }
         let len = range.len() as u64;

@@ -161,11 +161,11 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/real.rs:205` no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
 - `crates/reflux/src/app.rs:881` Rune shifts the offset by what lands above the view but not a running
 - `crates/reflux/src/app.rs:894` Rune's virtual list holds the topmost row in view, which at the top of what's
-- `crates/reflux/src/app/share_preview.rs:81` Fluxer snapshots the live video element; the call tile's renderer tees one
-- `crates/reflux/src/app/voice.rs:1112` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1282` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1737` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1746` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/share_preview.rs:88` Fluxer snapshots the live video element; the call tile's renderer tees one
+- `crates/reflux/src/app/voice.rs:1114` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1284` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1748` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1757` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:167` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).

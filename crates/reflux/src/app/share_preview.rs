@@ -19,7 +19,7 @@ const MAX_BYTES: usize = 1_000_000;
 /// One RGBA frame of our share: width, height, rows top first.
 pub type Still = (u32, u32, Vec<u8>);
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Upload {
     /// The stream key this state belongs to; a new share starts over.
     pub key: Option<String>,
@@ -39,11 +39,18 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     };
     // `isOwnScreenShare`: the screen or device share we publish, while it's connected.
     let live = s.app.shell.voice.screen && s.app.voice.share.is_some() || s.app.voice.device_share.is_some();
-    let Some(conn) = s.app.store.voice_states.get(&(guild, me)).filter(|v| v.self_stream).and_then(|v| v.connection_id.clone()) else {
+    let mine = s.app.store.voice_states.get(&(guild, me));
+    if crate::ui::misc::debug_scroll() {
+        eprintln!("preview: tick live={live} screen={} st={:?} self_stream={:?}", s.app.shell.voice.screen, mine.and_then(|v| v.channel_id), mine.map(|v| v.self_stream));
+    }
+    let Some(conn) = mine.filter(|v| v.self_stream).and_then(|v| v.connection_id.clone()) else {
         s.app.voice.preview_upload = Upload::default();
         return;
     };
     let key = format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string()));
+    if crate::ui::misc::debug_scroll() {
+        eprintln!("preview: tick live={live} key={key} state={:?}", s.app.voice.preview_upload);
+    }
     if !live {
         s.app.voice.preview_upload = Upload::default();
         return;
@@ -85,22 +92,50 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     let (frame, want) = (s.app.voice.own_frame.clone(), s.app.voice.want_own_frame.clone());
     let generation = s.app.generation;
     spawn(async move {
-        // A frame at 30 fps arrives within a frame time; a paused share may never give one.
-        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        let still = frame.lock().unwrap().take();
+        // A frame at 30 fps arrives within a frame time (15 fps device shares need longer); a
+        // paused share may never give one.
+        let mut still = None;
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            still = frame.lock().unwrap().take();
+            if still.is_some() {
+                break;
+            }
+        }
         want.store(false, Ordering::Relaxed);
-        let Some(still) = still else { return };
+        let debug = crate::ui::misc::debug_scroll();
+        if debug {
+            eprintln!("preview: spawn frame {:?}", still.as_ref().map(|s| (s.0, s.1, s.2.len())));
+        }
+        let Some(still) = still else {
+            // Nothing to send: free the slot for the next attempt (and don't count it).
+            update(move |s| {
+                let up = &mut s.app.voice.preview_upload;
+                up.busy = false;
+                if up.key.as_deref() == Some(&key) && !up.uploaded {
+                    up.attempts = up.attempts.saturating_sub(1);
+                }
+            });
+            return;
+        };
         let body = json!({ "channel_id": channel.to_string(), "content_type": "image/jpeg" });
         let r: Result<bool, String> = async {
             let answer: serde_json::Value = inst
                 .rest
                 .request(reqwest::Method::POST, &format!("/streams/{key}/preview/upload-url"), Some(&body))
                 .await
+                .inspect_err(|e| eprintln!("preview: upload-url {key}: {e}"))
                 .map_err(|e| e.to_string())?;
+            if debug {
+                eprintln!("preview: upload-url {answer}");
+            }
             let url = answer["upload_url"].as_str().ok_or("no upload_url")?;
             let content_type = answer["content_type"].as_str().unwrap_or("image/jpeg");
             let max = answer["max_bytes"].as_u64().map_or(MAX_BYTES, |n| n as usize);
             let bytes = tokio::task::spawn_blocking(move || still_preview(&still, max)).await.ok().flatten();
+            if debug {
+                eprintln!("preview: encoded {:?} bytes (max {max})", bytes.as_ref().map(|b| b.len()));
+            }
             let Some(bytes) = bytes else { return Ok(false) };
             let n = bytes.len();
             inst.rest
@@ -110,6 +145,9 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
             Ok(true)
         }
         .await;
+        if debug {
+            eprintln!("preview: upload result {r:?}");
+        }
         update(move |s| {
             if s.app.generation != generation {
                 return;
