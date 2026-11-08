@@ -188,13 +188,14 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
-- `crates/reflux/src/shell/call.rs:166` the store keeps a 200-message window and no total unread count, so a channel with
-- `crates/reflux/src/shell/call.rs:265` previews reuse Active Now's cached stream thumbnail; a call without one shows
-- `crates/reflux/src/shell/call.rs:749` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:763` Rune has no pointer-move event, so the chrome hides after the idle timeout
-- `crates/reflux/src/shell/call.rs:773` `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
-- `crates/reflux/src/shell/call.rs:2114` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2376` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:169` the store keeps a 200-message window and no total unread count, so a channel with
+- `crates/reflux/src/shell/call.rs:268` previews reuse Active Now's cached stream thumbnail; a call without one shows
+- `crates/reflux/src/shell/call.rs:411` other users' accent colours only arrive with their profile, which the tile
+- `crates/reflux/src/shell/call.rs:741` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:755` Rune has no pointer-move event, so the chrome hides after the idle timeout
+- `crates/reflux/src/shell/call.rs:765` `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
+- `crates/reflux/src/shell/call.rs:2143` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2405` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -210,7 +211,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-- `crates/reflux/src/shell/voice.rs:1389` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+- `crates/reflux/src/shell/voice.rs:1475` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:219` rune can't tell us which way the parent flipped, so a nested submenu opens to the

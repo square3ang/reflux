@@ -361,6 +361,10 @@ pub struct Settings {
     pub vad_auto: bool,
     pub vad_threshold: f32,
     pub show_connection_ids: bool,
+    /// `showVoiceConnectionAvatarStack` / `showVoiceConnectionId`: the connection panel's
+    /// participant avatars and our connection ID (its context menu toggles them).
+    pub panel_avatars: bool,
+    pub panel_connection_id: bool,
     pub camera: Option<String>,
     pub mirror_camera: bool,
     /// `low` (480p), `medium` (720p) or `high` (1080p).
@@ -415,6 +419,8 @@ impl Default for Settings {
             vad_auto: true,
             vad_threshold: -60.0,
             show_connection_ids: false,
+            panel_avatars: true,
+            panel_connection_id: true,
             camera: None,
             mirror_camera: true,
             camera_quality: "medium".into(),
@@ -1097,7 +1103,86 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             let sh = acc(s);
             if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { super::call::open_screen_picker(sh) }
         }));
-    Some(shell.child(status_row).child(source_row).child(media).child(divider))
+    // `.connectionInfo` (8 apart): the source, our connection ID, the participants' avatars.
+    let mut info = col().w_full().gap(8.0).child(source_row);
+    let mine = store.voice_states.get(&(guild, store.my_id())).filter(|s| s.channel_id == Some(channel));
+    if let Some(id) = mine.and_then(|s| s.connection_id.clone()).filter(|_| v.settings.panel_connection_id) {
+        // `.connectionIdRow`: 12/16 text-secondary after a 16px text-tertiary desktop icon.
+        let glyph = if mine.is_some_and(|s| s.is_mobile) { &icons::DEVICE_MOBILE } else { &icons::DESKTOP };
+        info = info.child(
+            row().w_full().gap(8.0).center_y().child(icon(glyph, 16.0).color(p.text_tertiary)).child(text(id.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).truncate().shrink().label(id)),
+        );
+    }
+    if v.connected && v.settings.panel_avatars {
+        // `VoiceParticipantSpeakingAvatarStack` (32px, at most 4, no overlap, one per user):
+        // a 3px status-online ring while speaking, then "+N".
+        let mut users: Vec<(Snowflake, bool, bool)> = Vec::new();
+        for ((g, u), s) in &store.voice_states {
+            if *g == guild && s.channel_id == Some(channel) && !users.iter().any(|x| x.0 == *u) {
+                users.push((*u, s.mute || s.self_mute, s.deaf || s.self_deaf));
+            }
+        }
+        users.sort_by_key(|x| x.0);
+        if !users.is_empty() {
+            let mut stack = row().gap(0.0).center_y();
+            for &(u, muted, deaf) in users.iter().take(4) {
+                stack = stack.child(voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p));
+            }
+            if users.len() > 4 {
+                stack = stack.child(
+                    row().size(32.0, 32.0).center().radius(999.0).fill(p.background_tertiary).child(text(format!("+{}", users.len() - 4)).font(font(10.0, 600.0).lh(12.0)).color(p.text_secondary)),
+                );
+            }
+            info = info.child(stack);
+        }
+    }
+    let shell = shell.on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PANEL_MENU, [at.x, at.y]));
+    Some(shell.child(status_row).child(info).child(media).child(divider))
+}
+
+const PANEL_MENU: &str = "voice-panel-menu";
+
+/// `AvatarWithPresence` for voice: the avatar, a 3px status-online ring while speaking, and
+/// the mute / deafen badge at its bottom right, cut out of `surface`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn voice_avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32, speaking: bool, muted: bool, deaf: bool, surface: Color, p: &Palette) -> El {
+    let mut a = el().size(size, size).radius(999.0).child(super::avatar(store, st, user, size, None, surface, p));
+    if speaking {
+        a = a.child(el().pin(Some(-3.0), Some(-3.0), Some(-3.0), Some(-3.0)).radius(999.0).border(3.0, p.status_online));
+    }
+    if muted || deaf {
+        let glyph = if deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::MICROPHONE_SLASH_FILL };
+        let badge = (size * 0.44).round().max(14.0);
+        let out = -(badge * 0.2).round();
+        a = a.child(
+            row()
+                .pin(None, None, Some(out), Some(out))
+                .size(badge, badge)
+                .center()
+                .radius(999.0)
+                .fill(p.status_danger)
+                .border((badge / 7.0).round().max(2.0), surface)
+                .child(icon(glyph, (badge * 0.55).round()).color(Color::WHITE)),
+        );
+    }
+    a
+}
+
+/// The connection panel's context menu: "Show call avatars" and "Show connection ID".
+fn panel_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let set = &st.voice.settings;
+    Menu::new(PANEL_MENU)
+        .item(MenuItem::new("panel-avatars", t("Show call avatars")).icon(&icons::USERS).checkbox(set.panel_avatars).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.settings.panel_avatars ^= true;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .item(MenuItem::new("panel-connection-id", t("Show connection ID")).checkbox(set.panel_connection_id).on_select(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.settings.panel_connection_id ^= true;
+            sh.intents.push(Intent::Voice(Op::Settings));
+        }))
+        .el(&st.popups, super::pops(acc), p, layer);
 }
 
 const SPECTATORS_BTN: &str = "stream-spectators-btn";
@@ -1189,6 +1274,7 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
 /// The viewer's menus and popouts, into the screen's overlay layer: the spectators list and the
 /// stream settings menu, plus the running share's `ScreenShareEndedModal`.
 pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    panel_menu(st, p, acc, layer);
     if let Some(user) = st.voice.watching {
         let guild = st.voice.channel.and_then(|(g, _)| g);
         if st.popups.is_open(SPECTATORS_BTN) {
