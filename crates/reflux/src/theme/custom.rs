@@ -207,7 +207,7 @@ pub fn fonts(css: &str) -> [Option<String>; 2] {
 pub fn families(css: &str) -> (String, String) {
     let [sans, mono] = fonts(css);
     let with = |o: Option<String>, base: &str| o.map_or(base.to_string(), |o| format!("{o}, {base}"));
-    (with(sans, super::FAMILIES.0), with(mono, super::FAMILIES.1))
+    (with(sans, super::sans_family()), with(mono, super::FAMILIES.1))
 }
 
 fn strip_comments(css: &str) -> String {
