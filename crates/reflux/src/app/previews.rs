@@ -37,7 +37,12 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
                 let Some(p) = s.app.shell.voice.previews.get_mut(&key) else { return };
                 (p.loading, p.fetched_ms) = (false, now_ms());
                 match r {
-                    Ok(Some(b)) => (p.bytes, p.missing) = (Some(Arc::new(b)), 0),
+                    Ok(Some(b)) => {
+                        if crate::ui::misc::debug_scroll() {
+                            eprintln!("preview: fetched {key} ({} bytes)", b.len());
+                        }
+                        (p.bytes, p.missing) = (Some(Arc::new(b)), 0)
+                    }
                     _ => p.missing = p.missing.saturating_add(1),
                 }
             });

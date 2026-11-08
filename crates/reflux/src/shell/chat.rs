@@ -277,6 +277,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     }
     let mut right = row().gap(dim::CHANNEL_HEADER_ACTIONS_GAP).center_y();
     let cid = c.id;
+    let guild = c.guild_id.unwrap_or_default();
     let pins = action(&icons::PUSH_PIN_FILL, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
         .key(super::pins::POPOUT)
         .on_press(move |s: &mut S| super::pins::open(acc(s), cid));
@@ -285,7 +286,18 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         right = right.child(if c.kind.is_thread() { super::threads::notification_button(st, c, p, acc) } else { crate::social::bell_button(store, st, c, p, acc) });
         right = right.children(super::threads::header_button(store, st, c, p, acc));
         if !forum {
-            right = right.child(pins).child(
+            right = right.child(pins);
+            // `toggle-favorite`: a filled star once the channel is in the favorites rail.
+            if crate::look::with(|l| l.show_favorites) {
+                let on = crate::nav::favorites::is_favorite(st, cid);
+                let (label, glyph) = if on { (t("Remove from favorites"), &icons::STAR_FILL) } else { (t("Add to favorites"), &icons::STAR_BOLD) };
+                right = right.child(
+                    action(glyph, label, on)
+                        .key("toggle-favorite")
+                        .on_press(move |s: &mut S| crate::nav::favorites::toggle(acc(s), guild, cid)),
+                );
+            }
+            right = right.child(
                 action(&icons::USERS_FILL, "Toggle Member List", st.member_list)
                     .key("toggle-members")
                     .on_press(move |s: &mut S| acc(s).member_list ^= true),
