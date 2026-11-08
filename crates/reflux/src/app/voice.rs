@@ -1515,11 +1515,14 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
         Some(u) if s.app.shell.voice.watch_for != Some(u) => {
             let sh = &mut s.app.shell;
             sh.voice.begin_watch(u);
-            // `handleWatch`: the stream becomes the call view's pinned tile.
-            if sh.voice.channel.is_some_and(|(g, _)| g.is_some()) {
+            // `applyStreamWatchFocus`: the stream becomes the pinned tile and the call's channel is
+            // selected; whether its chat or the expanded call shows stays as it was.
+            if let Some((Some(_), c)) = sh.voice.channel {
                 sh.voice.focus = Some(u);
                 sh.call.pin(Some(u));
-                sh.voice.call_view = true;
+                if sh.channel != Some(c) && !sh.voice.call_view {
+                    sh.select_channel(c);
+                }
             }
         }
         None => s.app.shell.voice.end_watch(),
