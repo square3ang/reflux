@@ -9,7 +9,7 @@ use super::{ShellAccess, ShellState, Target, avatar, channel_icon, group_avatar,
 use crate::icons;
 use crate::media::{self, Load};
 use crate::theme::{Palette, dim, font};
-use crate::ui::{Status, mention_badge, mix, over, rgb, rgba, scroller};
+use crate::ui::{Status, mention_badge, mix, over, rgba, scroller};
 use crate::i18n::t;
 
 fn header_bar(p: &Palette) -> El {
@@ -94,25 +94,40 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
     let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0).children(banner.as_ref().map(|(_, l, _)| l.spacer()));
     groups = groups.children(super::members_page::sidebar_row(store, st, gid, p, acc).map(|r| r.key("members")));
     let hide_muted = store.guild_settings.get(&Some(gid)).is_some_and(|s| s.hide_muted_channels);
+    let connected = |c: &Channel| c.kind == ChannelType::GUILD_VOICE && st.voice.channel == Some((c.guild_id, c.id));
     for g in store.channel_groups(gid) {
         let collapsed = g.category.is_some_and(|c| st.collapsed.contains(&c.id));
+        let selected = |c: &Channel| st.channel == Some(c.id) && st.social.members.is_none();
+        let shown = |c: &Channel| !hide_muted || selected(c) || connected(c) || !store.is_muted(c);
+        let mut voice: Vec<&Channel> = g.voice.iter().copied().filter(|c| shown(c)).collect();
+        let connected_here = voice.iter().any(|c| connected(c));
         if let Some(cat) = g.category {
             groups = groups.child(category(cat, collapsed, p, acc).key(format!("cat-{}", cat.id)));
+            if collapsed && !connected_here {
+                groups = groups.children(super::voice_list::collapsed_category(store, st, cat.id, Some(gid), &voice, p, acc).map(|e| e.key(format!("cat-voice-{}", cat.id))));
+            }
         }
-        for c in g.text.iter().chain(g.voice.iter()) {
-            let selected = st.channel == Some(c.id) && st.social.members.is_none();
-            // A collapsed category still shows its selected and unread channels.
-            if collapsed && !selected && !store.has_unread(c.id) {
-                continue;
-            }
-            if hide_muted && !selected && store.is_muted(c) {
-                continue;
-            }
-            groups = groups.child(channel_row(store, st, c, selected, p, acc));
+        // A collapsed category still shows its selected, connected and unread channels, the
+        // connected one first.
+        let keep = |c: &Channel| !collapsed || selected(c) || connected(c) || store.has_unread(c.id);
+        if collapsed {
+            voice.retain(|c| keep(c));
+            voice.sort_by_key(|c| !connected(c));
+        }
+        for c in g.text.iter().copied().filter(|c| shown(c) && keep(c)) {
+            groups = groups.child(channel_row(store, st, c, selected(c), p, acc));
             groups = groups.children(super::threads::sidebar_rows(store, st, c, p, acc).map(|t| t.key(format!("threads-{}", c.id))));
-            if c.kind == ChannelType::GUILD_VOICE {
-                groups = groups.child(voice_users(store, st, c, p, acc).key(format!("voice-{}", c.id)));
-            }
+        }
+        for c in voice {
+            groups = groups.child(channel_row(store, st, c, selected(c), p, acc));
+            let people = if !collapsed {
+                super::voice_list::list(store, st, c, p, acc)
+            } else if connected(c) {
+                Some(super::voice_list::collapsed_channel(store, st, c, p, acc))
+            } else {
+                None
+            };
+            groups = groups.children(people.map(|e| e.key(format!("voice-{}", c.id))));
         }
     }
     groups = groups.child(el().h(10.0 + user_area_overlay(st) + dim::SPACING_2).key("end"));
@@ -185,6 +200,13 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     };
     let id = c.id;
     let link = c.kind == ChannelType::GUILD_LINK;
+    let voice = c.kind == ChannelType::GUILD_VOICE;
+    // `isVoiceSelected`: connected here, which counts as selected for the badge and typing.
+    let connected = voice && st.voice.channel == Some((c.guild_id, id));
+    let can_connect = !voice || store.permissions(id).contains(reflux_model::Permissions::CONNECT);
+    // `channelItemHighlight`: connected but viewing another channel, a text-secondary icon.
+    let icon_fg = if connected && !selected { p.text_secondary } else { fg };
+    let glyph = if voice { super::voice_channel_icon(c, connected && st.voice.encrypted, !can_connect) } else { channel_icon(c.kind) };
     let mut item = row()
         .grow(1.0)
         .min_w(0.0)
@@ -198,7 +220,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(c.name.clone().unwrap_or_default())
         .hover_group()
-        .child(icon(channel_icon(c.kind), 20.0).color(fg).group_color(if selected { fg } else { p.text_chat }))
+        .child(icon(glyph, 20.0).color(icon_fg).group_color(if selected { fg } else { p.text_chat }))
         .child(
             text(c.name.clone().unwrap_or_default())
                 .font(font(16.0, 500.0).lh(20.0))
@@ -210,7 +232,8 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         );
     // `channelTypingIndicatorMode`: the typing dots, with the typers' avatars unless "only".
     let mode = crate::look::with(|l| l.typing_indicator);
-    let typers: Vec<_> = if mode < 2 { super::devtools::typing(store, st, c.id) } else { Vec::new() };
+    // Not on a selected or connected channel (`!isSelected`).
+    let typers: Vec<_> = if mode < 2 && !selected && !connected { super::devtools::typing(store, st, c.id) } else { Vec::new() };
     if !typers.is_empty() {
         let dot_c = if selected { p.surface_interactive_selected_color } else { p.text_chat };
         let mut t = row().gap(4.0).center_y().child(typing_dots(dot_c));
@@ -225,12 +248,19 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     // `hoverAffordancesActive`: hovered, selected, or its context menu is open.
     let menu = st.popups.open.is_some() && st.target == Some(Target::Channel(id));
     let affordances = (selected || st.hover_channel == Some(id) || menu) && c.kind != ChannelType::GUILD_CATEGORY;
-    // `showMentionBadge`: not while the affordances show.
-    if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances) {
+    // `showMentionBadge`: not on a connected channel, nor while the affordances show.
+    if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances && !connected) {
         item = item.child(b.key("mention"));
     }
+    // `shouldShowVoiceUserCount`: with a user limit, hidden while hover affordances show.
+    let limit = c.user_limit.filter(|l| voice && *l > 0);
+    let (icons, has_icons) = affordance_icons(store, c, selected, p, acc);
+    if let Some(l) = limit.filter(|_| !(has_icons && affordances)) {
+        let count = super::voice_list::connections(store, c.guild_id, id).iter().map(|e| e.1.len()).sum();
+        item = item.child(super::voice_list::user_count(count, l, p).key("user-count"));
+    }
     if affordances {
-        item = item.child(affordance_icons(store, c, selected, p, acc).key("affordances"));
+        item = item.child(icons.key("affordances"));
     }
     item = item.on_hover_change(move |s: &mut S, inside, _| {
         let st = acc(s);
@@ -246,20 +276,20 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         item.hover(p.surface_interactive_hover_bg)
     };
     let guild = c.guild_id;
-    if c.kind == ChannelType::GUILD_VOICE {
-        // `Accessibility.voiceChannelJoinRequiresDoubleClick` / `confirmBeforeJoiningVoiceChannels`.
+    if voice {
+        // `Accessibility.voiceChannelJoinRequiresDoubleClick` / `confirmBeforeJoiningVoiceChannels`;
+        // a channel we're in, or can't connect to, only opens.
         let double = crate::look::with(|l| l.join_double_click);
+        let joinable = !connected && can_connect;
         item = item.on_press(move |s: &mut S| {
             let sh: &mut ShellState = acc(s);
-            if double {
-                if sh.channel != Some(id) {
-                    sh.select_channel(id);
-                }
-            } else {
+            if !double && joinable {
                 super::voice_join::request(sh, guild, id);
+            } else if sh.channel != Some(id) {
+                sh.select_channel(id);
             }
         });
-        if double {
+        if joinable {
             item = item.on_double_press(move |s: &mut S| acc(s).join_voice(guild, id));
         }
     } else if !link {
@@ -284,7 +314,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
 
 /// `ChannelItem`'s `hoverAffordance` icons (`ChannelItemIcon`, 16px, 4 apart): Open chat on
 /// voice channels, Invite members, Channel settings.
-fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> (El, bool) {
     let id = c.id;
     let voice = c.kind == ChannelType::GUILD_VOICE;
     let button = |glyph: &'static rune::Icon, label: &str| {
@@ -300,7 +330,9 @@ fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &
             .child(icon(glyph, 16.0).color(rest).group_color(hover))
     };
     let mut r = row().gap(4.0).center_y().ml(8.0);
+    let mut any = false;
     if voice && !crate::look::with(|l| l.join_double_click) {
+        any = true;
         r = r.child(button(&icons::CHAT_TEARDROP_FILL, t("Open chat")).key("chat").on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.call_view = false;
@@ -310,80 +342,14 @@ fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &
     let invitable = matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
         && store.permissions(id).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
     if invitable {
+        any = true;
         r = r.child(button(&icons::USER_PLUS_FILL, t("Invite members")).key("invite").on_press(move |s: &mut S| crate::guild::open_invite(acc(s), id)));
     }
     if let Some(tab) = crate::guild::first_channel_tab(store, id) {
+        any = true;
         r = r.child(button(&icons::GEAR_FILL, t("Channel settings")).key("settings").on_press(move |s: &mut S| acc(s).open_channel_settings(id, tab, voice)));
     }
-    r
-}
-
-/// Members connected to a voice channel, under its row (`VoiceParticipantItem`): 24px avatar
-/// with a green ring while speaking, the name, then camera / mute / deafen / LIVE.
-fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
-    let gid = c.guild_id;
-    let me = store.my_id();
-    let mut users: Vec<_> = store.voice_states.iter().filter(|((g, _), v)| *g == gid && v.channel_id == Some(c.id)).map(|((_, u), v)| (*u, v)).collect();
-    // shortcut: case-insensitive by name like `DISPLAY_NAME_COLLATOR`, without its numeric collation or join-order snapshot.
-    users.sort_by_cached_key(|(u, _)| (store.display_name(gid, *u).to_lowercase(), *u));
-    // `VoiceParticipantsList.module.css` `.container`.
-    col().w_full().mt(4.0).pl(24.0).gap(2.0).children(users.into_iter().map(|(u, v)| {
-        let speaking = st.voice.speaking.contains(&u);
-        let current = u == me && st.voice.channel == Some((gid, c.id));
-        let fg = if speaking || current { p.text_primary } else { p.text_primary_muted };
-        // `.containerSpeaking`: a 2.4px #22c55e outline (min(3px, 10% of the avatar)).
-        let mut face = el().size(24.0, 24.0).child(avatar(store, st, u, 24.0, None, p.background_secondary, p));
-        if speaking {
-            face = face.child(el().absolute(-2.4, -2.4).size(28.8, 28.8).radius(14.4).border(2.4, rgb(0x22, 0xc5, 0x5e)));
-        }
-        let glyph = |i: &'static rune::Icon, c: Color| icon(i, 16.0).color(c);
-        let mut icons_row = row().gap(4.0).center_y();
-        if v.self_video {
-            icons_row = icons_row.child(glyph(&icons::VIDEO_CAMERA_FILL, p.text_primary_muted).key("video"));
-        }
-        if v.mute || v.self_mute {
-            icons_row = icons_row.child(glyph(&icons::MICROPHONE_SLASH_FILL, if v.mute { rgb(239, 68, 68) } else { p.text_primary_muted }).key("mute"));
-        }
-        if v.deaf || v.self_deaf {
-            icons_row = icons_row.child(glyph(&icons::SPEAKER_SLASH_FILL, if v.deaf { rgb(239, 68, 68) } else { p.text_primary_muted }).key("deaf"));
-        }
-        if v.self_stream {
-            // `LiveBadge`: red pill, 10/600 uppercase white; opens the stream viewer.
-            let mut badge = row()
-                .key("live")
-                .px(6.0)
-                .py(2.0)
-                .radius(999.0)
-                .fill(rgb(220, 38, 38))
-                .child(text("LIVE").font(font(10.0, 600.0).lh(10.0)).color(Color::WHITE));
-            if u != me {
-                badge = badge.cursor(rune::Cursor::Pointer).role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary).label(t("Watch stream")).on_press(move |s: &mut S| {
-                    let sh = acc(s);
-                    sh.voice.watching = Some(u);
-                    sh.intents.push(super::Intent::Watch(Some(u)));
-                });
-            }
-            icons_row = icons_row.child(badge);
-        }
-        let mut item = row()
-            .key(format!("vu-{u}"))
-            .w_full()
-            .px(8.0)
-            .py(4.0)
-            .gap(6.0)
-            .center_y()
-            .radius(6.0)
-            .hover(p.background_modifier_hover)
-            .hover_group()
-            .child(face)
-            .child(text(store.display_name(gid, u)).font(font(14.0, 500.0).lh(20.0)).color(fg).group_color(p.text_primary).truncate().grow(1.0).shrink())
-            .child(icons_row);
-        if speaking || current {
-            item = item.fill(p.background_modifier_hover);
-        }
-        // `VoiceParticipantItem`'s context menu.
-        super::call::ParticipantMenu::participant_menu(item, u, gid, acc)
-    }))
+    (r, any)
 }
 
 /// Home: the DM list (`DirectMessageList`, `DMListItem`).
