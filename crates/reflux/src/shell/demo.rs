@@ -1092,16 +1092,23 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     match scene {
         // The channel list's voice rows: a user limit, a user on two devices, a LIVE row's
         // hover card, the devices expanded, a collapsed category connected or not.
-        "sidebar" | "sidebar-card" | "sidebar-grouped" | "sidebar-collapsed" | "sidebar-collapsed-away" => {
+        "sidebar" | "sidebar-card" | "sidebar-grouped" | "sidebar-collapsed" | "sidebar-collapsed-away" | "sidebar-profile" | "sidebar-tip" => {
             if let Some(c) = store.channels.get_mut(&Snowflake(2301)) {
                 c.user_limit = Some(10);
             }
+            // Pairing needs a role to connect (@everyone denied CONNECT); the call is encrypted.
+            if let Some(c) = store.channels.get_mut(&Snowflake(2302)) {
+                c.permission_overwrites = vec![reflux_model::PermissionOverwrite { id: Snowflake(HQ), deny: reflux_model::Permissions::CONNECT, ..Default::default() }];
+            }
+            st.voice.encrypted = true;
             for (conn, mobile) in [("c1001a", false), ("c1001b", true)] {
                 apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": conn, "is_mobile": mobile, "self_mute": true}));
             }
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1002", "channel_id": "2302", "connection_id": "c1002", "mute": true}));
             match scene {
                 "sidebar-card" => st.stream_card.0 = Some("vu-2301-1004".into()),
+                "sidebar-profile" => st.open_profile(Snowflake(1003), Some(Snowflake(HQ)), String::new(), "vu-2301-1003".into(), crate::ui::Placement::RightStart),
+                "sidebar-tip" => st.popups.tip = Some("vu-2302-1002-mute".into()),
                 "sidebar-grouped" => drop(st.voice_expanded.insert(Snowflake(1001))),
                 "sidebar-collapsed" => drop(st.collapsed.insert(Snowflake(2300))),
                 "sidebar-collapsed-away" => {

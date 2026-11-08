@@ -201,6 +201,12 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     let id = c.id;
     let link = c.kind == ChannelType::GUILD_LINK;
     let voice = c.kind == ChannelType::GUILD_VOICE;
+    // `isVoiceSelected`: connected here, which counts as selected for the badge and typing.
+    let connected = voice && st.voice.channel == Some((c.guild_id, id));
+    let can_connect = !voice || store.permissions(id).contains(reflux_model::Permissions::CONNECT);
+    // `channelItemHighlight`: connected but viewing another channel, a text-secondary icon.
+    let icon_fg = if connected && !selected { p.text_secondary } else { fg };
+    let glyph = if voice { super::voice_channel_icon(c, connected && st.voice.encrypted, !can_connect) } else { channel_icon(c.kind) };
     let mut item = row()
         .grow(1.0)
         .min_w(0.0)
@@ -214,7 +220,7 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         .role("link").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
         .label(c.name.clone().unwrap_or_default())
         .hover_group()
-        .child(icon(channel_icon(c.kind), 20.0).color(fg).group_color(if selected { fg } else { p.text_chat }))
+        .child(icon(glyph, 20.0).color(icon_fg).group_color(if selected { fg } else { p.text_chat }))
         .child(
             text(c.name.clone().unwrap_or_default())
                 .font(font(16.0, 500.0).lh(20.0))
@@ -226,7 +232,8 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         );
     // `channelTypingIndicatorMode`: the typing dots, with the typers' avatars unless "only".
     let mode = crate::look::with(|l| l.typing_indicator);
-    let typers: Vec<_> = if mode < 2 { super::devtools::typing(store, st, c.id) } else { Vec::new() };
+    // Not on a selected or connected channel (`!isSelected`).
+    let typers: Vec<_> = if mode < 2 && !selected && !connected { super::devtools::typing(store, st, c.id) } else { Vec::new() };
     if !typers.is_empty() {
         let dot_c = if selected { p.surface_interactive_selected_color } else { p.text_chat };
         let mut t = row().gap(4.0).center_y().child(typing_dots(dot_c));
@@ -241,8 +248,8 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     // `hoverAffordancesActive`: hovered, selected, or its context menu is open.
     let menu = st.popups.open.is_some() && st.target == Some(Target::Channel(id));
     let affordances = (selected || st.hover_channel == Some(id) || menu) && c.kind != ChannelType::GUILD_CATEGORY;
-    // `showMentionBadge`: not while the affordances show.
-    if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances) {
+    // `showMentionBadge`: not on a connected channel, nor while the affordances show.
+    if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances && !connected) {
         item = item.child(b.key("mention"));
     }
     // `shouldShowVoiceUserCount`: with a user limit, hidden while hover affordances show.
@@ -270,19 +277,19 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     };
     let guild = c.guild_id;
     if voice {
-        // `Accessibility.voiceChannelJoinRequiresDoubleClick` / `confirmBeforeJoiningVoiceChannels`.
+        // `Accessibility.voiceChannelJoinRequiresDoubleClick` / `confirmBeforeJoiningVoiceChannels`;
+        // a channel we're in, or can't connect to, only opens.
         let double = crate::look::with(|l| l.join_double_click);
+        let joinable = !connected && can_connect;
         item = item.on_press(move |s: &mut S| {
             let sh: &mut ShellState = acc(s);
-            if double {
-                if sh.channel != Some(id) {
-                    sh.select_channel(id);
-                }
-            } else {
+            if !double && joinable {
                 super::voice_join::request(sh, guild, id);
+            } else if sh.channel != Some(id) {
+                sh.select_channel(id);
             }
         });
-        if double {
+        if joinable {
             item = item.on_double_press(move |s: &mut S| acc(s).join_voice(guild, id));
         }
     } else if !link {
