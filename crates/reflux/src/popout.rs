@@ -12,8 +12,17 @@ use reflux_model::Snowflake;
 use rune::{AppHandle, AppSpec, Color, Cx, El, Pixels, WindowHandle, WindowOptions, WindowSpec, col, el, row, text};
 
 use crate::State;
-use crate::theme::font;
+use crate::theme::{Palette, font};
 use crate::ui::{rgb, rgba};
+
+/// `VoiceControlBar`'s state as the pop-out shows it (the main window owns the actions).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Bar {
+    pub mute: bool,
+    pub deaf: bool,
+    pub camera: bool,
+    pub screen: bool,
+}
 
 #[derive(Default)]
 pub struct Popout {
@@ -23,6 +32,7 @@ pub struct Popout {
     /// One video (a camera or stream); `None` = the call grid.
     video: Option<Pixels>,
     tiles: Vec<Tile>,
+    bar: Bar,
 }
 
 #[derive(Clone)]
@@ -43,8 +53,9 @@ struct Slot {
     /// `getVoiceCallPopoutKey` / `getVoiceTilePopoutKey`: `call:{channel}` or
     /// `tile:{user}:{camera|screen}`; `None` = free.
     key: Option<String>,
-    /// A call pop-out's last tiles: (name, speaking, has video).
+    /// A call pop-out's last tiles: (name, speaking, has video), and its control bar.
     shown: Vec<(String, bool, bool)>,
+    shown_bar: Bar,
     /// When it opened, so the oldest gives way when all are taken.
     opened: u64,
 }
@@ -69,14 +80,14 @@ pub fn register(app: &mut rune::App<State>) {
         // was a blank taskbar entry that also broke the launcher's click-to-minimize).
         let papp = rune::App::new(spec).windowless().on_close(|p: &mut Popout, _| free(p.slot));
         let (handle, win) = app.window(WindowSpec::from_app(format!("voice-popout-{i}"), papp).options(options));
-        SLOTS.with(|s| s.borrow_mut().push(Slot { app: handle, win, key: None, shown: Vec::new(), opened: 0 }));
+        SLOTS.with(|s| s.borrow_mut().push(Slot { app: handle, win, key: None, shown: Vec::new(), shown_bar: Bar::default(), opened: 0 }));
     }
 }
 
 fn free(i: usize) {
     SLOTS.with(|s| {
         if let Some(slot) = s.borrow_mut().get_mut(i) {
-            (slot.key, slot.shown) = (None, Vec::new());
+            (slot.key, slot.shown, slot.shown_bar) = (None, Vec::new(), Bar::default());
         }
     });
 }
@@ -106,17 +117,90 @@ fn pick(slots: &[Slot], key: &str) -> Option<usize> {
 }
 
 fn view(s: &Popout, _cx: &mut Cx<Popout>) -> El {
-    let root = col().w_full().h_full().fill(rgb(0x0d, 0x0d, 0x0f));
+    let p = palette();
     if let Some(px) = &s.video {
-        return root.child(el().w_full().h_full().pixels_fit(px, rune::SurfaceFit::Fit)).child(el().pin(Some(8.0), None, None, Some(8.0)).child(pill(&s.title)));
+        return col().w_full().h_full().fill(rgb(0x0d, 0x0d, 0x0f)).child(el().w_full().h_full().pixels_fit(px, rune::SurfaceFit::Fit)).child(el().pin(Some(8.0), None, None, Some(8.0)).child(pill(&s.title)));
     }
-    let n = s.tiles.len().max(1);
+    call_view(&s.tiles, s.bar, &p)
+}
+
+/// `VoicePopoutHost`: the call pop-out is the same call view — tiles, then the control bar
+/// floating at the bottom.
+pub(crate) fn call_view(tiles: &[Tile], bar: Bar, p: &Palette) -> El {
+    let root = col().w_full().h_full().fill(rgb(0, 0, 0));
+    if tiles.is_empty() {
+        return root;
+    }
+    let n = tiles.len();
     let cols = (n as f32).sqrt().ceil() as usize;
-    let mut grid = root.gap(8.0).padding(8.0);
-    for chunk in s.tiles.chunks(cols) {
-        grid = grid.child(row().w_full().grow(1.0).min_h(0.0).gap(8.0).children(chunk.iter().map(tile)));
+    let mut grid = col().w_full().grow(1.0).min_h(0.0).gap(8.0).padding(8.0).center();
+    for chunk in tiles.chunks(cols) {
+        grid = grid.child(row().w_full().grow(1.0).min_h(0.0).gap(8.0).justify_center().children(chunk.iter().map(tile)));
     }
-    grid
+    let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pb(12.0).justify_center().child(control_bar(bar, p));
+    root.child(grid).child(controls)
+}
+
+/// `.container`: the black tray of 44px buttons with its shadow.
+fn control_bar(bar: Bar, _p: &Palette) -> El {
+    let button = |on: bool, tint: Color, icon: &'static rune::Icon, label: &'static str, act: fn(&mut crate::State)| {
+        let (bg, fg) = if on { (Color { a: 0.16, ..tint }, tint) } else { (rgba(255, 255, 255, 0.05), rgb(255, 255, 255)) };
+        row()
+            .size(44.0, 44.0)
+            .center()
+            .radius(16.0)
+            .fill(bg)
+            .hover(rgba(255, 255, 255, 0.09))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label)
+            .on_press(move |_: &mut Popout| crate::app::update(move |s| act(s)))
+            .child(rune::icon(icon, 22.0).color(fg))
+    };
+    row()
+        .padding(6.0)
+        .gap(4.0)
+        .center_y()
+        .radius(24.0)
+        .fill(rgb(0, 0, 0))
+        .border(1.0, rgba(255, 255, 255, 0.1))
+        .box_shadow(rune::Shadow { x: 0.0, y: 8.0, blur: 24.0, spread: 0.0, color: rgba(0, 0, 0, 0.45), inset: false })
+        .child(button(bar.mute, rgb(0xff, 0x45, 0x3a), if bar.mute { &crate::icons::MICROPHONE_SLASH_FILL } else { &crate::icons::MICROPHONE_FILL }, if bar.mute { "Unmute" } else { "Mute" }, |s| s.app.shell.toggle_mute()))
+        .child(button(bar.deaf, rgb(0xff, 0x45, 0x3a), if bar.deaf { &crate::icons::SPEAKER_SLASH_FILL } else { &crate::icons::SPEAKER_HIGH_FILL }, if bar.deaf { "Undeafen" } else { "Deafen" }, |s| s.app.shell.toggle_deaf()))
+        .child(button(bar.screen, rgb(0x23, 0xa5, 0x5a), &crate::icons::MONITOR_PLAY_FILL, "Share your screen", |s| s.app.shell.intents.push(crate::shell::Intent::ToggleScreen)))
+        .child(button(bar.camera, rgb(0x23, 0xa5, 0x5a), if bar.camera { &crate::icons::CAMERA_FILL } else { &crate::icons::CAMERA_SLASH_FILL }, "Camera", |s| s.app.shell.intents.push(crate::shell::Intent::Voice(crate::shell::voice::Op::ToggleCamera))))
+        .child(el().size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)))
+        .child(button(false, rgb(0xff, 0x3b, 0x30), &crate::icons::PHONE_X_FILL, "Disconnect", |s| s.app.shell.leave_voice()))
+}
+
+/// The theme's palette for the pop-out windows (they render outside the main window's state).
+fn palette() -> Palette {
+    let look = crate::look::with(|l| l.clone());
+    crate::theme::custom::effective(look.theme("dark"), true, look.saturation, &look.theme_css())
+}
+
+thread_local! {
+    /// The demo shell renders the pop-out's call view in the main window so it can be snapped.
+    static DEMO: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn demo(on: bool) {
+    DEMO.with(|d| d.set(on));
+}
+
+pub fn demoing() -> bool {
+    DEMO.with(|d| d.get())
+}
+
+pub fn demo_call() -> El {
+    let p = palette();
+    let tiles: Vec<Tile> = ["Square", "Ada Lovelace", "Linus", "Grace Hopper"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| Tile { name: (*name).into(), speaking: i == 1, video: None })
+        .collect();
+    let bar = Bar { mute: false, deaf: false, camera: true, screen: false };
+    call_view(&tiles, bar, &p)
 }
 
 fn pill(name: &str) -> El {
@@ -219,20 +303,31 @@ pub fn sync(s: &State) {
             video: if u == me { v.camera.then(|| v.self_view.clone()) } else { v.videos.get(&u).cloned() },
         })
         .collect();
+    let bar = Bar { mute: v.self_mute, deaf: v.self_deaf, camera: v.camera, screen: v.screen };
     let key: Vec<(String, bool, bool)> = tiles.iter().map(|t| (t.name.clone(), t.speaking, t.video.is_some())).collect();
-    if key == shown {
+    let same = key == shown && SLOTS.with(|x| x.borrow().iter().find(|s| s.key.as_deref() == Some(call.as_str())).is_some_and(|s| s.shown_bar == bar));
+    if same {
         return;
     }
     SLOTS.with(|x| {
         if let Some(slot) = x.borrow_mut().iter_mut().find(|s| s.key.as_deref() == Some(call.as_str())) {
-            slot.shown = key;
-            slot.app.update(move |p, _| p.tiles = tiles);
+            (slot.shown, slot.shown_bar) = (key, bar);
+            slot.app.update(move |p, _| (p.tiles, p.bar) = (tiles, bar));
         }
     });
 }
 
 #[cfg(test)]
 mod tests {
+    /// The demo hook swaps the shell for the pop-out's call view; keep it per thread.
+    #[test]
+    fn the_demo_flag_round_trips() {
+        super::demo(true);
+        assert!(super::demoing());
+        super::demo(false);
+        assert!(!super::demoing());
+    }
+
     #[test]
     fn keys() {
         use reflux_model::Snowflake;

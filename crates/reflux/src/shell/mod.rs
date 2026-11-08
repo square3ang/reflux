@@ -784,6 +784,10 @@ pub const BODY_KEY: &str = "shell-body";
 
 /// The whole logged-in screen.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    // The demo shell shows the call pop-out's view in the window, to compare it offline.
+    if crate::popout::demoing() {
+        return crate::popout::demo_call();
+    }
     if skeleton::forced(&st.prefs.dev) {
         let key = st.account.current.as_ref().map(|a| a.user_id.as_str());
         return skeleton::screen(p, skeleton_memory::get(key).as_ref());

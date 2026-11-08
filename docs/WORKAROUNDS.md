@@ -188,7 +188,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/nav/keys.rs:82` a Tab inside a field moves focus without showing the intro.
 - `crates/reflux/src/passkey.rs:14` no hybrid (phone) flow off Windows.
 - `crates/reflux/src/popout.rs:6` on Wayland the compositor ignores always-on-top and placement (winit can't ask for
-- `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
+- `crates/reflux/src/popout.rs:46` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:230` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
@@ -232,7 +232,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/markdown.rs:94` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:393` emoji in one-line previews stay text (Fluxer draws 1.25em images).
 - `crates/reflux/src/shell/mod.rs:555` Rune hovers an element by its own rect, not its children's (DOM keeps the row
-- `crates/reflux/src/shell/mod.rs:800` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/mod.rs:804` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:77` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and

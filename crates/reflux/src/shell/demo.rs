@@ -786,6 +786,8 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.voice.channel = Some((Some(g), Snowflake(2301)));
             st.voice.connected = true;
         }
+        // The call pop-out's view (`VoicePopoutHost`) in the main window, for a snapshot.
+        "popout" => crate::popout::demo(true),
         // The general UI with the member list closed, to compare against Fluxer at the same width.
         "chat-nomembers" => st.member_list = false,
         // The call strip with the member list closed, as Fluxer's reference capture has it.
