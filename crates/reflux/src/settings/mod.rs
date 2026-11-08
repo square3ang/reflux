@@ -332,12 +332,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     let q = ui.searched.as_str();
     let hits = search::search(q, |id| visible_id(id, store, premium));
     let (head, nav) = sidebar(store, st, ui, p, premium, &hits, acc);
+    // Section deep links (`buildUserSettingsDeepLink`) carry the open tab.
+    tabs::set_current_tab(ui.tab);
     let (title, body) = if q.is_empty() {
         (label_of(ui.tab), tabs::body(store, st, ui, ui.tab, p, acc, &mut popups))
     } else {
         (t("Search results"), search::results(store, st, ui, &hits, p, acc, &mut popups))
     };
-    let mut modal = frame(t("User settings"), title, head, nav, body, close, p);
+    let link = (q.is_empty()).then(|| tabs::deep_link(ui.tab, None));
+    let mut modal = frame(t("User settings"), title, link, head, nav, body, close, p);
     if ui.confirm_logout {
         let cancel = move |s: &mut S| set(acc, s, |u| u.confirm_logout = false);
         modal = modal.child(
@@ -381,7 +384,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
 /// The full-window settings modal user, community and channel settings share: the backdrop and
 /// card, a sidebar (`head` over the scrolling `nav`), and a content pane titled `title` around
 /// `body`. Escape and the close button call `close`.
-pub(crate) fn frame<S: 'static>(label: &str, title: &str, head: Vec<El>, nav: El, body: El, close: impl Fn(&mut S) + Clone + 'static, p: &Palette) -> El {
+pub(crate) fn frame<S: 'static>(label: &str, title: &str, link: Option<String>, head: Vec<El>, nav: El, body: El, close: impl Fn(&mut S) + Clone + 'static, p: &Palette) -> El {
     // The layer covers the window; its size from the last frame stands in for the viewport.
     let [w, h] = rune::memo::layout_size(LAYER_KEY).unwrap_or([1280.0, 800.0]);
     let m = metrics(w, h);
@@ -429,7 +432,7 @@ pub(crate) fn frame<S: 'static>(label: &str, title: &str, head: Vec<El>, nav: El
         .focusable(true)
         .focus_ring(2.0, -2.0, p.focus_primary)
         .child(sidebar)
-        .child(content(title, body, p, &m, close.clone()))
+        .child(content(title, link, body, p, &m, close.clone()))
         .modal(true, close);
     el().key(LAYER_KEY)
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -730,7 +733,7 @@ pub(crate) fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, dang
     }
 }
 
-fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: impl Fn(&mut S) + 'static) -> El {
+fn content<S: 'static>(title: &str, link: Option<String>, body: El, p: &Palette, m: &Metrics, close: impl Fn(&mut S) + 'static) -> El {
     let c = colors(p);
     let bg = if is_light(p) { p.background_primary } else { p.background_secondary };
     // `SettingsModalHeader`: 60 tall, padding 0 16, title 18/600, a 34 close button.
@@ -755,6 +758,10 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
             }
         })
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
+    let mut heading = row().gap(8.0).center_y().grow(1.0).min_w(0.0).mr(16.0).child(text(title.to_string()).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().shrink());
+    if let Some(href) = link {
+        heading = heading.child(tabs::link_button(href, true, p));
+    }
     let header = row()
         .w_full()
         .h(60.0)
@@ -762,7 +769,7 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .pb(1.0)
         .center_y()
         .justify_between()
-        .child(text(title.to_string()).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
+        .child(heading)
         .child(x)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(c.border, bg)));
     // Keyed by tab so a new tab mounts fresh instead of morphing the old tab's elements.

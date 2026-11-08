@@ -1,10 +1,12 @@
 //! The content of each settings tab.
 
 use reflux_store::Store;
-use rune::{El, col, el};
+use rune::{El, col, el, icon, row};
 use crate::ui::mark::marked as text;
 
 use super::SettingsUi;
+use crate::i18n::t;
+use crate::icons;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
 
@@ -42,15 +44,70 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
     }
 }
 
-/// `SettingsSection`: title 18/600, content gap 20; later sections get a top border and 24 padding.
+thread_local! {
+    /// The tab being rendered, for the section deep links (`buildUserSettingsDeepLink`).
+    static TAB: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+pub(crate) fn set_current_tab(tab: &'static str) {
+    TAB.with(|t| t.set(tab));
+}
+
+/// `buildUserSettingsDeepLink`: `fluxer://settings/user?tab=…[&section=…]`.
+pub(crate) fn deep_link(tab: &str, section: Option<&str>) -> String {
+    match section {
+        Some(s) => format!("fluxer://settings/user?tab={tab}&section={s}"),
+        None => format!("fluxer://settings/user?tab={tab}"),
+    }
+}
+
+/// `SettingsHeadingLinkButton`: a 28px link that copies `href`, turning into a check for two
+/// seconds (`COPY_LINK_TO_PAGE` / `COPY_LINK_TO_SECTION`).
+pub(crate) fn link_button(href: String, page: bool, p: &Palette) -> El {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static COPIED: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+    let copied = COPIED.lock().unwrap().as_ref().is_some_and(|(h, at)| *h == href && at.elapsed() < Duration::from_secs(2));
+    let label = if copied { t("Copied") } else if page { t("Copy link to page") } else { t("Copy link to section") };
+    let press = href.clone();
+    row()
+        .size(28.0, 28.0)
+        .center()
+        .radius(6.0)
+        .role("button")
+        .label(label.to_string())
+        .cursor(rune::Cursor::Pointer)
+        .hover_group()
+        .on_press_tx(move |_: &mut crate::State, tx: &mut rune::Tx| {
+            tx.copy(press.clone());
+            *COPIED.lock().unwrap() = Some((press.clone(), Instant::now()));
+            tx.wake_after(Duration::from_secs(2));
+        })
+        .child(icon(if copied { &icons::CHECK_BOLD } else { &icons::LINK_BOLD }, 15.0).color(p.text_tertiary).group_color(p.text_primary))
+}
+
+/// The section's deep-link id: Fluxer's ids are the lowercased title (`audio`, `video`, …).
+fn section_id(title: &str) -> String {
+    title.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect::<String>().trim_matches('_').to_string()
+}
+
+/// `SettingsSection`: title 18/600 with its deep-link button, content gap 20; later sections get a
+/// top border and 24 padding.
 pub(crate) fn section(title: &str, content: El, first: bool, p: &Palette) -> El {
     // Keyed by title: tabs add sections conditionally, which would shift the ones after them.
+    let link = deep_link(TAB.with(|t| t.get()), Some(&section_id(crate::i18n::t(title))));
     let mut s = col()
         .key(format!("sec-{title}"))
         .w_full()
         .gap(16.0)
         .pb(24.0)
-        .child(crate::ui::mark::text(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary), crate::i18n::t(title)))
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(crate::ui::mark::text(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary), crate::i18n::t(title)))
+                .child(link_button(link, false, p)),
+        )
         .child(col().w_full().gap(20.0).child(content));
     if !first {
         s = s.pt(24.0).child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
@@ -72,3 +129,15 @@ pub(crate) fn not_available(p: &Palette) -> El {
         )
 }
 
+
+#[cfg(test)]
+mod tests {
+    /// `buildUserSettingsDeepLink`: the tab, and the section when one is named.
+    #[test]
+    fn section_deep_links_match_fluxer() {
+        assert_eq!(super::deep_link("voice_video", None), "fluxer://settings/user?tab=voice_video");
+        assert_eq!(super::deep_link("voice_video", Some("audio")), "fluxer://settings/user?tab=voice_video&section=audio");
+        assert_eq!(super::section_id("Audio"), "audio");
+        assert_eq!(super::section_id("Video"), "video");
+    }
+}

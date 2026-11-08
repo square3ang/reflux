@@ -112,7 +112,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
         },
         _ => crate::social::channel_tab(store, st, channel, tab, p, acc).unwrap_or_else(|| not_available(p)),
     };
-    let mut modal = frame(t("Channel settings"), label, vec![head], nav, body, close, p);
+    let mut modal = frame(t("Channel settings"), label, None, vec![head], nav, body, close, p);
     if let Some(cf) = st.form.confirm {
         modal = modal.child(confirm(store, st, cf, p, acc));
     }

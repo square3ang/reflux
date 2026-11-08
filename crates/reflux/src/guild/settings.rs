@@ -110,7 +110,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
         _ => crate::social::guild_tab(store, st, guild, tab, p, acc, &mut popups).unwrap_or_else(|| not_available(p)),
     };
     super::overview_extra::threshold_modal(st, guild, info, p, acc, &mut popups);
-    let mut modal = frame(t("Community settings"), label, vec![head], nav, body, close, p);
+    let mut modal = frame(t("Community settings"), label, None, vec![head], nav, body, close, p);
     if tab == "audit_log" {
         // The window's height, for the activity log's scroll paging.
         modal = modal.on_layout(move |s: &mut S, [_, _, _, h]: [f32; 4]| {
