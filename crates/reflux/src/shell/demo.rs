@@ -1081,7 +1081,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
-        | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
+        | "bar-tip" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
         | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
@@ -1100,6 +1100,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.popups.open = Some(super::call::MENU_INPUT.into());
         }
         "menu-output" => st.popups.open = Some(super::call::MENU_OUTPUT.into()),
+        "bar-tip" => st.popups.tip = Some("mic-button".into()),
         "menu-camera" => {
             st.voice.cameras = Some(vec!["Integrated Camera".into(), "Virtual Camera".into()]);
             st.popups.open = Some(super::call::MENU_CAMERA.into());

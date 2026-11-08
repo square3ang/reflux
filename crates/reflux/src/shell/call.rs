@@ -607,10 +607,11 @@ pub fn pack_grid(count: usize, width: f32, height: f32, compact: bool) -> Packed
 }
 
 /// `.settingsButton`: the caret badge on a control's top-right corner (17px, 2px outside it,
-/// black with a light border and shadow) that opens its in-call menu.
-fn settings_button<S: 'static>(id: &'static str, label: &str, _p: &Palette, acc: ShellAccess<S>) -> El {
-    row()
-        .key(id)
+/// black with a light border and shadow) that opens its in-call menu. Open from here it turns
+/// white (`[data-context-menu-open]`); `.settingsButton:disabled` dims it.
+fn settings_button<S: 'static>(st: &ShellState, id: &'static str, label: &str, disabled: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let open = st.popups.is_open(id) && st.popups.at.is_none();
+    let b = row()
         .pin(None, Some(-2.0), Some(-2.0), None)
         .size(17.0, 17.0)
         .center()
@@ -618,92 +619,205 @@ fn settings_button<S: 'static>(id: &'static str, label: &str, _p: &Palette, acc:
         .fill(rgb(0, 0, 0))
         .border(1.0, rgba(255, 255, 255, 0.14))
         .shadow(6.0, 16.0, rgba(0, 0, 0, 0.5))
-        .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(label.to_string())
         .hover_group()
-        .child(icon(&icons::CARET_DOWN_BOLD, 10.0).color(rgba(255, 255, 255, 0.88)).group_color(Color::WHITE))
-        .on_press(move |s: &mut S| acc(s).popups.toggle(id))
+        .child(icon(&icons::CARET_DOWN_BOLD, 10.0).color(if open { Color::WHITE } else { rgba(255, 255, 255, 0.88) }).group_color(Color::WHITE));
+    let b = if disabled { b.opacity(0.45).cursor(rune::Cursor::NotAllowed).disabled(true) } else { b.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| acc(s).popups.toggle(id)) };
+    super::badges::tip(id.to_string(), super::badges::label_tip(label, p), 190.0, b, acc)
 }
 
 /// `.buttonContainer`: a control with its caret badge over its corner.
-fn control_pair<S: 'static>(button: El, id: &'static str, label: &str, p: &Palette, acc: ShellAccess<S>) -> El {
-    el().size(44.0, 44.0).child(button).child(settings_button(id, label, p, acc))
+fn control_pair(button: El, caret: El) -> El {
+    el().size(44.0, 44.0).child(button).child(caret)
 }
 
+/// (background, hover background, icon) of a `VoiceControlBar` button.
+type Look = (Color, Color, Color);
+
+/// `.button`: 44px, 16 radius, the inset top highlight. `:disabled` dims it to .45 with a
+/// not-allowed cursor and no hover; `open` (`[data-context-menu-open]`) keeps the hover fill.
+fn bar_button(i: &'static rune::Icon, label: &str, look: Look, disabled: bool, open: bool) -> El {
+    let b = row()
+        .size(44.0, 44.0)
+        .center()
+        .radius(16.0)
+        .fill(if open { look.1 } else { look.0 })
+        .box_shadow(Shadow { x: 0.0, y: 1.0, blur: 0.0, spread: 0.0, color: rgba(255, 255, 255, 0.045), inset: true })
+        .role("button")
+        .label(label.to_string())
+        .child(icon(i, 22.0).color(look.2));
+    if disabled { b.opacity(0.45).cursor(rune::Cursor::NotAllowed).disabled(true) } else { b.hover(look.1).cursor(rune::Cursor::Pointer) }
+}
+
+/// `TooltipWithKeybind`: the label over the action's key caps (`.key`: 20 tall, 5 across,
+/// 11/600 uppercase on background-secondary), unless keyboard hints are hidden.
+fn keybind_tip(label: &str, combo: Option<crate::keybinds::Combo>, p: &Palette) -> El {
+    let mut c = col().items_center().gap(6.0).py(7.0).px(10.0).child(text(label.to_string()).font(font(13.0, 500.0).lh(18.0)).color(p.text_primary).align(rune::Align::Center).wrap());
+    if let Some(combo) = combo.filter(|_| !crate::look::with(|l| l.hide_keyboard_hints)) {
+        c = c.child(row().gap(2.0).center_y().children(combo.caps().into_iter().map(|k| {
+            row().min_w(20.0).h(20.0).px(5.0).center().radius(4.0).fill(p.background_secondary).child(text(k.to_uppercase()).font(font(11.0, 600.0).lh(11.0)).color(p.text_secondary))
+        })));
+    }
+    c
+}
+
+/// `formatKeyCombo` for the recorded push-to-talk key (`keybinds::key_name`'s `{:?}` form).
+fn ptt_key_label(k: &str) -> String {
+    if let Some(c) = k.strip_prefix("Text(\"").and_then(|r| r.strip_suffix("\")")) {
+        return c.to_uppercase();
+    }
+    if let Some(m) = k.strip_prefix("Modifier { modifier: ").and_then(|r| r.split(',').next()) {
+        return m.to_string();
+    }
+    k.to_string()
+}
+
+/// `VOICE_CHANNEL_CAMERA_USER_LIMIT`.
+const CAMERA_USER_LIMIT: usize = 25;
+
 /// `VoiceControlBar`: 44px buttons on a black pill, each settings control with its caret menu.
+/// Their state follows `selectVoiceControlBarState`; a right-click opens a control's menu at the
+/// pointer (`openPointerMenu`).
 fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
     let v = &st.voice;
-    let button = |i: &'static rune::Icon, label: &str, bg: Color, hover: Color, fg: Color, on: Box<dyn Fn(&mut S)>| {
-        row()
-            .size(44.0, 44.0)
-            .center()
-            .radius(16.0)
-            .fill(bg)
-            .hover(hover)
-            .cursor(rune::Cursor::Pointer)
-            .role("button")
-            .label(label.to_string())
-            .child(icon(i, 22.0).color(fg))
-            .on_press(move |s: &mut S| on(s))
-    };
+    let me = store.my_id();
     let neutral = (rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.9));
     let red = (rgba(255, 69, 58, 0.16), rgba(255, 69, 58, 0.24), danger());
     let success = (rgba(48, 209, 88, 0.16), rgba(48, 209, 88, 0.24), success());
-    let pick = |on: bool, a: (Color, Color, Color), b: (Color, Color, Color)| if on { a } else { b };
-    let mic = pick(v.self_mute, red, neutral);
-    let deaf = pick(v.self_deaf, red, neutral);
-    let cam = pick(v.camera, success, neutral);
-    let scr = pick(v.screen, success, neutral);
-    let can_video = super::voice::can(store, v, Permissions::STREAM) && crate::camera::available();
+    let pick = |on: bool, a: Look, b: Look| if on { a } else { b };
+    let at_pointer = |id: &str| st.popups.is_open(id) && st.popups.at.is_some();
+    let menu_at = |id: &'static str| move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(id, [at.x, at.y]);
+    let tip = |key: &str, content: El, trigger: El| super::badges::tip(key.to_string(), content, 190.0, trigger, acc);
+    // Signals.
+    let (guild, channel) = v.channel.unzip();
+    let guild = guild.flatten();
+    let mine = store.voice_states.get(&(guild, me)).filter(|s| s.channel_id == channel);
+    let (server_mute, server_deaf) = mine.map_or((false, false), |s| (s.mute, s.deaf));
+    let no_speak = !super::voice::can(store, v, Permissions::SPEAK);
+    let can_stream = super::voice::can(store, v, Permissions::STREAM);
+    let mic_locked = server_mute || server_deaf || no_speak;
+    let muted = v.self_mute || mic_locked;
+    let people = channel.map(|c| participants(store, guild, c)).unwrap_or_default();
+    let cam_limit = !v.camera && people.len() > CAMERA_USER_LIMIT;
+    let cam_cap = !v.camera && people.iter().filter(|(_, s)| s.self_video).count() >= CAMERA_USER_LIMIT;
+    let cam_ok = crate::camera::available();
+    let prefs = crate::nav::mine(st);
+    let combo = |a| crate::nav::keys::active(&prefs, a).first().copied();
+    let deafened_by_mods = t("You were deafened by moderators");
+    // Mute.
+    let mute_label = if server_deaf {
+        deafened_by_mods.to_string()
+    } else if server_mute {
+        t("Muted by moderators").to_string()
+    } else if no_speak {
+        t("You can't speak in this channel").to_string()
+    } else if v.settings.ptt() && !v.self_mute {
+        match v.settings.ptt_key.as_deref() {
+            Some(k) => crate::i18n::tf("Push-to-talk is on. Hold {pushToTalkHint} to speak.", &[("pushToTalkHint", &ptt_key_label(k))]),
+            None => t("Push-to-talk is on. Hold your push-to-talk key to speak.").to_string(),
+        }
+    } else if muted {
+        t("Unmute").to_string()
+    } else {
+        t("Mute").to_string()
+    };
+    let mut mic = bar_button(if muted { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, &mute_label, pick(muted, red, neutral), mic_locked, at_pointer(MENU_INPUT));
+    if !mic_locked {
+        mic = mic.on_press(move |s: &mut S| acc(s).toggle_mute()).on_secondary_press(menu_at(MENU_INPUT));
+    }
+    let mic = tip("mic-button", keybind_tip(&mute_label, combo(crate::keybinds::Action::ToggleMute).filter(|_| !mic_locked), p), mic);
+    // Deafen.
+    let deaf = v.self_deaf || server_deaf;
+    let deaf_label = if server_deaf { deafened_by_mods } else if deaf { t("Undeafen") } else { t("Deafen") };
+    let mut deaf_button = bar_button(if deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, deaf_label, pick(deaf, red, neutral), server_deaf, at_pointer(MENU_OUTPUT));
+    if !server_deaf {
+        deaf_button = deaf_button.on_press(move |s: &mut S| acc(s).toggle_deaf()).on_secondary_press(menu_at(MENU_OUTPUT));
+    }
+    let deaf_button = tip("deaf-button", keybind_tip(deaf_label, combo(crate::keybinds::Action::ToggleDeafen).filter(|_| !server_deaf), p), deaf_button);
+    // Camera.
+    let limit_label;
+    let cam_label = if !can_stream && !v.camera {
+        t("You can't turn on your camera in this channel")
+    } else if cam_limit {
+        limit_label = crate::i18n::tf("Cameras are off above {voiceChannelCameraUserLimit} participants", &[("voiceChannelCameraUserLimit", &CAMERA_USER_LIMIT.to_string())]);
+        &limit_label
+    } else if cam_cap {
+        limit_label = crate::i18n::tf("This channel is at its camera limit. Up to {voiceChannelCameraUserLimit} people can share video in it.", &[("voiceChannelCameraUserLimit", &CAMERA_USER_LIMIT.to_string())]);
+        &limit_label
+    } else if !cam_ok && !v.camera {
+        "Camera needs Reflux built with GStreamer"
+    } else if v.camera {
+        t("Turn off camera")
+    } else {
+        t("Turn on camera")
+    };
+    let cam_disabled = !v.camera && (!can_stream || cam_limit || cam_cap || !cam_ok);
+    let mut cam = bar_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, cam_label, pick(v.camera, success, neutral), cam_disabled, at_pointer(MENU_CAMERA));
+    if !cam_disabled {
+        cam = cam.on_press(op(acc, Op::ToggleCamera)).on_secondary_press(menu_at(MENU_CAMERA));
+    }
+    let cam = tip("camera-button", super::badges::label_tip(cam_label, p), cam);
+    // Screen share.
+    let scr_disabled = !can_stream && !v.screen;
+    let scr_label = if scr_disabled {
+        t("You can't share your screen in this channel")
+    } else if v.screen {
+        t("End screen share")
+    } else {
+        t("Share your screen")
+    };
+    let mut scr = bar_button(&icons::MONITOR_PLAY_FILL, scr_label, pick(v.screen, success, neutral), scr_disabled, at_pointer(MENU_SCREEN));
+    if !scr_disabled {
+        scr = scr
+            .on_press(move |s: &mut S| {
+                let sh = acc(s);
+                if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { open_screen_picker(sh) }
+            })
+            .on_secondary_press(menu_at(MENU_SCREEN));
+    }
+    let scr = tip("screen-button", super::badges::label_tip(scr_label, p), scr);
     let mut bar = row()
         .padding(6.0)
         .gap(4.0)
         .center_y()
         .radius(16.0 + 6.0 + 2.0)
         .fill(rgb(0, 0, 0))
-        .border(1.0, hud_border());
-    let mic_button = button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { t("Unmute") } else { t("Mute") }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute()));
-    bar = bar.child(control_pair(mic_button, MENU_INPUT, t("Input settings"), p, acc).key("mic"));
-    let deaf_button = button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { t("Undeafen") } else { t("Deafen") }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf()));
-    bar = bar.child(control_pair(deaf_button, MENU_OUTPUT, t("Output settings"), p, acc).key("deaf"));
-    if can_video {
-        let cam_button = button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { t("Turn off camera") } else { t("Turn on camera") }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera)));
-        bar = bar.child(control_pair(cam_button, MENU_CAMERA, t("Camera settings"), p, acc).key("camera"));
-    }
-    let scr_button = button(&icons::MONITOR_PLAY_FILL, if v.screen { t("End screen share") } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
-        let sh = acc(s);
-        if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { open_screen_picker(sh) }
-    }));
-    bar = bar.child(control_pair(scr_button, MENU_SCREEN, t("Screen share settings"), p, acc).key("screen"));
+        .border(1.0, hud_border())
+        .shadow(8.0, 24.0, rgba(0, 0, 0, 0.45))
+        .child(control_pair(mic, settings_button(st, MENU_INPUT, t("Input settings"), false, p, acc)).key("mic"))
+        .child(control_pair(deaf_button, settings_button(st, MENU_OUTPUT, t("Output settings"), false, p, acc)).key("deaf"))
+        .child(control_pair(cam, settings_button(st, MENU_CAMERA, t("Camera settings"), false, p, acc)).key("camera"))
+        .child(control_pair(scr, settings_button(st, MENU_SCREEN, t("Screen share settings"), scr_disabled, p, acc)).key("screen"));
     // `VoiceMoreOptionsMenu`: layout, own camera, speakers, region and settings.
-    bar = bar.child(
-        row()
-            .key(MENU_MORE)
+    let more = bar_button(&icons::DOTS_THREE_BOLD, t("More options"), neutral, false, st.popups.is_open(MENU_MORE)).on_press(move |s: &mut S| {
+        let sh = acc(s);
+        sh.popups.toggle(MENU_MORE);
+        if sh.popups.is_open(MENU_MORE) {
+            ensure_regions(sh);
+        }
+    });
+    bar = bar.child(tip(MENU_MORE, super::badges::label_tip(t("More options"), p), more));
+    // `.buttonSeparator`: 1×22, 12% white, before Disconnect.
+    bar = bar.child(el().key("separator").size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)));
+    // `.buttonDisconnect`: solid #ff3b30, #ff453a on hover.
+    let disconnect = bar_button(&icons::PHONE_X_FILL, t("Disconnect"), (rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE), false, false).on_press(move |s: &mut S| acc(s).leave_voice());
+    bar = bar.child(tip("disconnect", super::badges::label_tip(t("Disconnect"), p), disconnect));
+    // `canStopWatchingFocusedStream`: the focused tile is a stream we watch from elsewhere.
+    if v.watching.is_some_and(|w| w != me) && st.call.pinned(v.focus) == v.watching {
+        // `.stopWatchingButton`: no inset highlight.
+        let stop = row()
             .size(44.0, 44.0)
             .center()
             .radius(16.0)
-            .fill(neutral.0)
-            .hover(neutral.1)
+            .fill(red.0)
+            .hover(red.1)
             .cursor(rune::Cursor::Pointer)
             .role("button")
-            .label(t("More options"))
-            .child(icon(&icons::DOTS_THREE_BOLD, 22.0).color(neutral.2))
-            .on_press(move |s: &mut S| {
-                let sh = acc(s);
-                sh.popups.toggle(MENU_MORE);
-                if sh.popups.is_open(MENU_MORE) {
-                    ensure_regions(sh);
-                }
-            }),
-    );
-    // `.buttonSeparator`: 1×22, 12% white, before Disconnect.
-    bar = bar.child(el().key("separator").size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)));
-    bar = bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())).key("disconnect"));
-    // `canStopWatchingFocusedStream`: the focused tile is a stream we watch from elsewhere.
-    let me = store.my_id();
-    if v.watching.is_some_and(|w| w != me) && st.call.pinned(v.focus) == v.watching {
-        bar = bar.child(button(&icons::EYE_SLASH_FILL, t("Stop watching stream"), red.0, red.1, red.2, Box::new(move |s: &mut S| super::voice::stop_watching(s, acc))).key("stop-watching"));
+            .label(t("Stop watching stream"))
+            .child(icon(&icons::EYE_SLASH_FILL, 22.0).color(red.2))
+            .on_press(move |s: &mut S| super::voice::stop_watching(s, acc));
+        bar = bar.child(tip("stop-watching", super::badges::label_tip(t("Stop watching stream"), p), stop));
     }
     bar
 }
