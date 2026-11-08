@@ -186,6 +186,12 @@ pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
     sync(s);
 }
 
+/// `isCallPopoutOpenForChannel`.
+pub fn call_open(channel: Snowflake) -> bool {
+    let k = key(None, false, channel);
+    SLOTS.with(|s| s.borrow().iter().any(|x| x.key.as_deref() == Some(k.as_str())))
+}
+
 /// Hides every pop-out (the call ended).
 pub fn close() {
     close_where(|_| true);

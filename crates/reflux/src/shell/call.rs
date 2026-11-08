@@ -1471,87 +1471,300 @@ pub fn e2ee_badge() -> El {
         .child(text("Encrypted").font(font(11.0, 600.0).lh(13.0)).color(success()))
 }
 
-/// `CompactVoiceCallView` over a DM / group DM with an active call: tiles, then Join or the
-/// control bar.
+/// `getCallParticipantLayoutMetrics`: the largest avatar (40..88) whose wrapped rows fit the
+/// row's box, with a gap of an 18th of its smaller side (8..16).
+fn call_avatar_metrics(count: usize, w: f32, h: f32) -> (f32, f32) {
+    if count == 0 || w <= 0.0 || h <= 0.0 {
+        return (64.0, 12.0);
+    }
+    let (w, h) = (w.max(40.0), h.max(40.0));
+    let gap = (w.min(h) / 18.0).round().clamp(8.0, 16.0);
+    let mut best = 40.0f32;
+    for cols in 1..=count {
+        let rows = count.div_ceil(cols);
+        let by_w = (w - gap * (cols - 1) as f32) / cols as f32;
+        let by_h = (h - gap * (rows - 1) as f32) / rows as f32;
+        best = best.max(by_w.min(by_h).min(88.0).floor());
+    }
+    (best.clamp(40.0, 88.0), gap)
+}
+
+/// `CallParticipantsRow`: us, the call's participants, then the recipients being rung, as
+/// wrapped avatars sized to the row. Someone being rung is dimmed with a pulsing ring.
+/// Right-click opens the voice participant menu, or the user menu for someone not in the call.
+#[allow(clippy::too_many_arguments)]
+fn call_participants_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, ringing: &[Snowflake], people: &[(Snowflake, &VoiceState)], surface: Color, p: &Palette, acc: ShellAccess<S>) -> El {
+    let me = store.my_id();
+    let in_call = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
+    let mut ids: Vec<Snowflake> = Vec::new();
+    for u in std::iter::once(me).chain(people.iter().map(|(u, _)| *u)).chain(c.recipients.iter().map(|u| u.id)).chain(ringing.iter().copied()) {
+        if !ids.contains(&u) && (in_call(u).is_some() || ringing.contains(&u)) {
+            ids.push(u);
+        }
+    }
+    let key = format!("call-participants-{}", c.id);
+    let [w, h] = rune::memo::layout_size(&key).unwrap_or([0.0, 0.0]);
+    let (size, gap) = call_avatar_metrics(ids.len(), w, h);
+    let mut list = row().w_full().flex_wrap().justify_center().items_center().gaps(gap, gap);
+    for u in ids {
+        let name = store.display_name(None, u);
+        let face = match in_call(u) {
+            Some(vs) => super::voice::voice_avatar(store, st, u, size, st.voice.speaking.contains(&u), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, surface, p).participant_menu(u, None, acc),
+            None => {
+                // `.callParticipantRinging`: a 2.2s white ring spreading max(8, 18%) and fading.
+                // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread
+                // instead of growing; brightness(.55) saturate(.85) is a .55 dim over the dark banner.
+                let spread = (size * 0.18).round().max(8.0) / 2.0;
+                el().size(size, size)
+                    .child(el().pin(Some(-spread), Some(-spread), Some(-spread), Some(-spread)).radius(999.0).fill(rgba(255, 255, 255, 0.25)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 1.0)))
+                    .child(avatar(store, st, u, size, None, surface, p).dim(0.55))
+                    .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::User { user: u, guild: None, dm: None }, [at.x, at.y]))
+            }
+        };
+        list = list.child(face.key(format!("p-{u}")).role("button").label(name));
+    }
+    row().key(key).w_full().h_full().min_h(0.0).center().role("group").label(t("Call participants")).child(list)
+}
+
+/// `DMChannelView`'s call surface: once this device is in the call, the compact call view
+/// (`ChannelCompactCallSurface`) with `CallParticipantsRow` as its avatar fallback; before that
+/// the resizable `.callBanner`: the participants row over `CallControls`.
 pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> Option<El> {
     if !matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM) {
         return None;
     }
     let call = store.calls.get(&c.id)?;
-    let people = participants(store, None, c.id);
-    let joined = st.voice.channel == Some((None, c.id));
-    let me = store.my_id();
-    let ringing: Vec<Snowflake> = call.ringing.iter().copied().filter(|u| *u != me).collect();
-    let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
-    let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
-    let all = tiles(&visible);
-    // `hasRenderableCallMedia`: any screen share, or a camera that's on.
-    let has_media = all.iter().any(|t| t.screen || video(st, me, *t).is_some());
-    let mut row_tiles = row().w_full().h(150.0).gap(8.0).justify_center().items_center();
-    if !has_media {
-        for (u, vs) in &visible {
-            let user = *u;
-            let name = store.display_name(None, user);
-            let mut face = col()
-                .w(135.0)
-                .h_full()
-                .center()
-                .gap(6.0)
-                .child(avatar(store, st, user, 64.0, None, surface_3(), p))
-                .child(
-                    row()
-                        .gap(4.0)
-                        .center_y()
-                        .child(text(name).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.9)).max_w(110.0).truncate())
-                        .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 12.0).color(danger()) } else { el() }),
-                );
-            if st.voice.speaking.contains(u) {
-                face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(12.0).border(2.0, p.status_online));
-            }
-            row_tiles = row_tiles.child(face.key(format!("f-{user}")));
-        }
-    } else {
-        for t in &all {
-            let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
-            if let Some(vs) = vs {
-                row_tiles = row_tiles.child(el().key(format!("t-{}-{}", t.user, t.screen as u8)).w(240.0).h_full().child(tile(store, st, None, *t, vs, false, p, acc)));
-            }
-        }
-    }
-    // Recipients being rung show dimmed with a ring button state.
-    for u in ringing.iter().filter(|u| !people.iter().any(|(x, _)| x == *u)) {
-        row_tiles = row_tiles.child(
-            col()
-                .key(format!("r-{u}"))
-                .w(135.0)
-                .h(135.0)
-                .center()
-                .gap(8.0)
-                .radius(12.0)
-                .fill(surface_3())
-                .opacity(0.6)
-                .child(avatar(store, st, *u, 64.0, None, surface_3(), p))
-                .child(text("Ringing…").font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72))),
-        );
-    }
     let ch = c.id;
-    let footer = if joined {
-        control_bar(store, st, p, acc)
+    let people = participants(store, None, ch);
+    let me = store.my_id();
+    let here = st.voice.channel == Some((None, ch));
+    // `callExistsAndOngoing`: someone's in it, someone's being rung, or we started it.
+    if people.is_empty() && call.ringing.is_empty() && !here {
+        return None;
+    }
+    if here && st.voice.connected {
+        // `.compactCallParticipantsRow`: at most 42rem wide.
+        let fallback = call_participants_row(store, st, c, &call.ringing, &people, rgb(0, 0, 0), p, acc).max_w(672.0);
+        return Some(compact_call(store, st, None, ch, &people, Some(fallback), p, acc));
+    }
+    // `useCallHeaderState`'s controls variant.
+    let incoming = call.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&ch);
+    let mut controls = row().gaps(12.0, 12.0).flex_wrap().justify_center().items_center();
+    controls = if here {
+        controls.child(Button::<S>::new(t("Connecting...")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).submitting(true).key("dm-call-connecting").el(p))
+    } else if incoming {
+        // shortcut: Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
+        controls
+            .child(Button::new(t("Accept")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).key("dm-call-accept").on_press(op(acc, Op::AcceptCall(ch))).el(p))
+            .child(Button::new(t("Reject")).variant(ButtonVariant::Danger).icon(&icons::X_BOLD).key("dm-call-reject").on_press(op(acc, Op::DeclineCall(ch))).el(p))
+            .child(Button::new(t("Ignore")).variant(ButtonVariant::Secondary).icon(&icons::BELL_SLASH_FILL).key("dm-call-ignore").on_press(ignore_call(acc, ch, me)).el(p))
+    } else if people.iter().any(|(u, _)| *u == me) {
+        controls.child(Button::new(t("Join on this device")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).key("dm-call-join-here").on_press(op(acc, Op::AcceptCall(ch))).el(p))
     } else {
-        Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p)
+        controls.child(Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p))
     };
-    let mut strip = col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer);
+    let mut inner = col().w_full().gap(8.0).items_center().child(controls);
+    // `VoiceE2EEIndicator variant="call"`: "P2P" for a peer-to-peer call; a DM call is only
+    // known to be encrypted once connecting to it.
     if super::voice::is_p2p(store, None, ch) {
         let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
         let tip = crate::ui::Tooltip::new("dm-call-p2p", t("Direct connection. Audio and video go directly between the people in the call, who can see each other's IP address."));
-        strip = strip.child(tip.el(p2p_indicator(joined && !st.voice.p2p_failed.is_empty(), p), &st.popups, pops, p, layer));
+        inner = inner.child(tip.el(p2p_indicator(here && !st.voice.p2p_failed.is_empty(), p), &st.popups, pops, p, layer));
+    } else if here && st.voice.encrypted {
+        inner = inner.child(e2ee_badge());
     }
-    Some(strip)
+    // `.callBanner` (`--voice-surface-0`) in `.compactCallWrapper` (black, a 1px
+    // `--voice-overlay-light` bottom border), resized like the compact call view.
+    let banner = col()
+        .w_full()
+        .h_full()
+        .fill(surface_0())
+        .child(row().w_full().grow(1.0).min_h(0.0).center().px(16.0).py(12.0).child(call_participants_row(store, st, c, &call.ringing, &people, surface_0(), p, acc)))
+        .child(row().w_full().justify_center().px(16.0).pb(24.0).child(inner));
+    // `.compactCallResizePill`: 36x4, `--voice-overlay-light-strong`.
+    let handle = compact_resize_handle(ch, acc).child(row().w_full().h_full().center().child(el().size(36.0, 4.0).radius(999.0).fill(rgba(255, 255, 255, 0.2))));
+    Some(
+        col()
+            .key(format!("dm-call-{ch}"))
+            .w_full()
+            .h(compact_call_height(st, ch))
+            .fill(rgb(0, 0, 0))
+            .child(banner)
+            .child(handle)
+            .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(rgba(255, 255, 255, 0.12))),
+    )
+}
+
+/// `CallCommands.ignoreCall`: stop ringing just us.
+fn ignore_call<S: 'static>(acc: ShellAccess<S>, ch: Snowflake, me: Snowflake) -> impl Fn(&mut S) + 'static {
+    move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.dismissed_calls.insert(ch);
+        sh.intents.push(Intent::Voice(Op::Ring(ch, me, false)));
+    }
+}
+
+/// The compact call's height: its saved height, kept under `getCompactHeightMax` (the window
+/// leaves room for the chat under it).
+fn compact_call_height(st: &ShellState, ch: Snowflake) -> f32 {
+    let window_h = rune::memo::layout_size(super::BODY_KEY).map_or(800.0, |[_, h]| h);
+    let max_h = (window_h - COMPACT_CHAT_RESERVE).clamp(COMPACT_HEIGHT_MIN, COMPACT_HEIGHT_MAX);
+    compact_height(st.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT)).min(max_h)
+}
+
+/// `.resizeHandle` / `.compactCallResizeHandle`: the 16px strip along the bottom edge; dragging
+/// or the arrow keys resize the call and save its height.
+fn compact_resize_handle<S: 'static>(ch: Snowflake, acc: ShellAccess<S>) -> El {
+    el()
+        .key(format!("compact-call-resize-{ch}"))
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .h(16.0)
+        .cursor(rune::Cursor::ResizeRow)
+        .role("separator")
+        .label(t("Resize call view"))
+        .focusable(true)
+        .on_step(move |s: &mut S, delta, _| {
+            let sh = acc(s);
+            let h = sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT);
+            sh.prefs.compact_call_heights.insert(ch, compact_height(h + delta as f32 * 16.0));
+            let prefs = sh.prefs.clone();
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
+        })
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Down {
+                d.data = compact_height(sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
+            }
+            sh.prefs.compact_call_heights.insert(ch, compact_height(d.data + d.dy));
+            if d.phase == rune::Phase::Up {
+                let prefs = sh.prefs.clone();
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            }
+        })
+}
+
+/// Whether the joined compact call shows only avatars (`data-voice-call-avatar-mode`): no
+/// screen share and no camera on (`hasRenderableCallMedia`).
+pub fn compact_avatar_mode(store: &Store, st: &ShellState, guild: Option<Snowflake>, ch: Snowflake) -> bool {
+    let me = store.my_id();
+    let people = participants(store, guild, ch);
+    let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    !tiles(&visible).iter().any(|t| t.screen || video(st, me, *t).is_some())
+}
+
+/// `CompactVoiceCallView`: the joined call above a channel's chat — the participants' avatars
+/// (or `avatar_fallback`), or the call layout once someone has a camera or stream on, with the
+/// control bar, the chat / pop-out / fullscreen corner buttons and the resize handle.
+#[allow(clippy::too_many_arguments)]
+fn compact_call<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, ch: Snowflake, people: &[(Snowflake, &VoiceState)], avatar_fallback: Option<El>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let height = compact_call_height(st, ch);
+    let width = rune::memo::layout_size(&format!("compact-call-{ch}")).map_or(640.0, |[w, _]| w);
+    let me = store.my_id();
+    let visible = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
+    let tiles_all = tiles(&visible);
+    // `hasRenderableCallMedia`: any screen share, or a camera that's on.
+    let has_media = tiles_all.iter().any(|t| t.screen || video(st, me, *t).is_some());
+    // `CompactVoiceCallView.module.css`'s reserves: the edge padding, the control bar's
+    // (56px buttons + padding) and what the content keeps clear of it.
+    let edge = (height * 0.045).clamp(12.0, 24.0);
+    let control_h = 58.0 + (height * 0.04).clamp(16.0, 24.0) + 12.0;
+    let control_reserve = control_h + (height * 0.055).clamp(16.0, 28.0);
+    let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
+    let pad_bottom = edge.max(footer.min(height * 0.34));
+    let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
+    let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
+    if people.is_empty() {
+        content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
+    } else if !has_media && let Some(fallback) = avatar_fallback {
+        content = content.child(fallback.key("avatars"));
+    } else if !has_media {
+        // `audioAvatarLayout` + `VoiceParticipantWrappedAvatarList`: wrapping avatars,
+        // clamp(44, 18% of the smaller side, 88), with their mute / deafen badges.
+        let content_h = height - pad_top - pad_bottom;
+        let size = (width.min(content_h + pad_top + pad_bottom) * 0.18).clamp(44.0, 88.0);
+        let gap = (height * 0.024).clamp(8.0, 16.0);
+        let mut list = row().w_full().max_w(768.0).flex_wrap().justify_center().items_center().gaps(gap, gap);
+        for (u, vs) in &visible {
+            let user = *u;
+            let name = store.display_name(guild, user);
+            let face = super::voice::voice_avatar(store, st, user, size, st.voice.speaking.contains(&user), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, rgb(0, 0, 0), p)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(name)
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    let next = (sh.call.pinned(sh.voice.focus) != Some(user)).then_some(user);
+                    sh.voice.focus = next;
+                    sh.call.pin(next);
+                });
+            list = list.child(face.key(format!("a-{user}")));
+        }
+        content = content.child(list.key("avatars"));
+    } else {
+        // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
+        // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
+        content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, guild, people, true, p, acc)));
+    }
+    // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
+    let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
+        row()
+            .key(key)
+            .size(42.0, 42.0)
+            .center()
+            .radius(14.0)
+            .fill(rgb(0, 0, 0))
+            .border(1.0, rgba(255, 255, 255, 0.12))
+            .shadow(3.0, 10.0, rgba(0, 0, 0, 0.26))
+            .hover(rgb(0x11, 0x11, 0x11))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label)
+            .hover_group()
+            .child(icon(glyph, 21.0).color(rgba(255, 255, 255, 0.9)).group_color(Color::WHITE))
+    };
+    let unread = unread_messages(store, ch);
+    let mut chat = corner("voice-chat-toggle", &icons::CHAT_TEARDROP_FILL, t("Hide chat").to_string()).on_press(move |s: &mut S| acc(s).voice.call_view = true);
+    if unread > 0 {
+        chat = chat.child(
+            row()
+                .pin(None, Some(-6.4), Some(-6.4), None)
+                .min_w(14.0)
+                .h(14.0)
+                .px(4.0)
+                .center()
+                .radius(999.0)
+                .fill(p.status_danger)
+                .border(1.5, rgb(0, 0, 0))
+                .child(text(if unread > 9 { "9+".to_string() } else { unread.to_string() }).font(font(9.0, 700.0).lh(9.0)).color(Color::WHITE)),
+        );
+    }
+    let popout = corner("compact-call-popout", &icons::ARROW_SQUARE_OUT_BOLD, t("Pop out call").to_string()).on_press(op(acc, Op::PopOut { user: None, screen: false, pip: false }));
+    let full = corner("compact-call-fullscreen", &icons::CORNERS_OUT_BOLD, t("Enter fullscreen").to_string()).on_press(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.call_view = true;
+        sh.call.app_fullscreen = true;
+        sh.call.fullscreen_from_compact = true;
+    });
+    let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pt((height * 0.04).clamp(16.0, 24.0)).px(16.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc));
+    col()
+        .key(format!("compact-call-{ch}"))
+        .w_full()
+        .h(height)
+        .fill(rgb(0, 0, 0))
+        .clip_rounded(0.0)
+        .child(content)
+        .child(controls)
+        .child(el().pin(Some(12.0), None, None, Some(12.0)).child(chat))
+        .child(row().pin(None, None, Some(12.0), Some(12.0)).gap(8.0).child(popout).child(full))
+        .child(compact_resize_handle(ch, acc))
+        // `.compactCallWrapper`'s 1px `--voice-overlay-light` bottom border.
+        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(rgba(255, 255, 255, 0.12)))
 }
 
 /// `ChannelCompactCallSurface`: the call above a voice channel's text chat — the channel's
-/// participants and a Join button, or, once joined, the tiles with the call controls. The
-/// surface resizes by its bottom handle and remembers that height per channel.
+/// participants and a Join button, or, once joined, the compact call view. The surface resizes
+/// by its bottom handle and remembers that height per channel.
 pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     if c.kind != ChannelType::GUILD_VOICE {
         return None;
@@ -1561,138 +1774,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     let joined = st.voice.channel == Some((Some(guild), c.id));
     let ch = c.id;
     if joined {
-        // `getCompactHeightMax`: the window keeps room for the chat under the call.
-        let window_h = rune::memo::layout_size(super::BODY_KEY).map_or(800.0, |[_, h]| h);
-        let max_h = (window_h - COMPACT_CHAT_RESERVE).clamp(COMPACT_HEIGHT_MIN, COMPACT_HEIGHT_MAX);
-        let height = compact_height(st.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT)).min(max_h);
-        let width = rune::memo::layout_size(&format!("compact-call-{ch}")).map_or(640.0, |[w, _]| w);
-        let me = store.my_id();
-        let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
-        let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
-        let tiles_all = tiles(&visible);
-        // `hasRenderableCallMedia`: any screen share, or a camera that's on.
-        let has_media = tiles_all.iter().any(|t| t.screen || video(st, me, *t).is_some());
-        // `CompactVoiceCallView.module.css`'s reserves: the edge padding, the control bar's
-        // (56px buttons + padding) and what the content keeps clear of it.
-        let edge = (height * 0.045).clamp(12.0, 24.0);
-        let control_h = 58.0 + (height * 0.04).clamp(16.0, 24.0) + 12.0;
-        let control_reserve = control_h + (height * 0.055).clamp(16.0, 28.0);
-        let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
-        let pad_bottom = edge.max(footer.min(height * 0.34));
-        let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
-        let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
-        if people.is_empty() {
-            content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
-        } else if !has_media {
-            // `audioAvatarLayout` + `VoiceParticipantWrappedAvatarList`: wrapping avatars,
-            // clamp(44, 18% of the smaller side, 88), with their mute / deafen badges.
-            let content_h = height - pad_top - pad_bottom;
-            let size = (width.min(content_h + pad_top + pad_bottom) * 0.18).clamp(44.0, 88.0);
-            let gap = (height * 0.024).clamp(8.0, 16.0);
-            let mut list = row().w_full().max_w(768.0).flex_wrap().justify_center().items_center().gaps(gap, gap);
-            for (u, vs) in &visible {
-                let user = *u;
-                let name = store.display_name(Some(guild), user);
-                let face = super::voice::voice_avatar(store, st, user, size, st.voice.speaking.contains(&user), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, rgb(0, 0, 0), p)
-                    .cursor(rune::Cursor::Pointer)
-                    .role("button")
-                    .label(name)
-                    .on_press(move |s: &mut S| {
-                        let sh = acc(s);
-                        let next = (sh.call.pinned(sh.voice.focus) != Some(user)).then_some(user);
-                        sh.voice.focus = next;
-                        sh.call.pin(next);
-                    });
-                list = list.child(face.key(format!("a-{user}")));
-            }
-            content = content.child(list.key("avatars"));
-        } else {
-            // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
-            // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
-            content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, p, acc)));
-        }
-        // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
-        let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
-            row()
-                .key(key)
-                .size(42.0, 42.0)
-                .center()
-                .radius(14.0)
-                .fill(rgb(0, 0, 0))
-                .border(1.0, rgba(255, 255, 255, 0.12))
-                .shadow(3.0, 10.0, rgba(0, 0, 0, 0.26))
-                .hover(rgb(0x11, 0x11, 0x11))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(label)
-                .hover_group()
-                .child(icon(glyph, 21.0).color(rgba(255, 255, 255, 0.9)).group_color(Color::WHITE))
-        };
-        let unread = unread_messages(store, ch);
-        let mut chat = corner("voice-chat-toggle", &icons::CHAT_TEARDROP_FILL, t("Hide chat").to_string()).on_press(move |s: &mut S| acc(s).voice.call_view = true);
-        if unread > 0 {
-            chat = chat.child(
-                row()
-                    .pin(None, Some(-6.4), Some(-6.4), None)
-                    .min_w(14.0)
-                    .h(14.0)
-                    .px(4.0)
-                    .center()
-                    .radius(999.0)
-                    .fill(p.status_danger)
-                    .border(1.5, rgb(0, 0, 0))
-                    .child(text(if unread > 9 { "9+".to_string() } else { unread.to_string() }).font(font(9.0, 700.0).lh(9.0)).color(Color::WHITE)),
-            );
-        }
-        let popout = corner("compact-call-popout", &icons::ARROW_SQUARE_OUT_BOLD, t("Pop out call").to_string()).on_press(op(acc, Op::PopOut { user: None, screen: false, pip: false }));
-        let full = corner("compact-call-fullscreen", &icons::CORNERS_OUT_BOLD, t("Enter fullscreen").to_string()).on_press(move |s: &mut S| {
-            let sh = acc(s);
-            sh.voice.call_view = true;
-            sh.call.app_fullscreen = true;
-            sh.call.fullscreen_from_compact = true;
-        });
-        let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pt((height * 0.04).clamp(16.0, 24.0)).px(16.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc));
-        let handle = el()
-            .key(format!("compact-call-resize-{ch}"))
-            .w_full()
-            .h(8.0)
-            .cursor(rune::Cursor::ResizeRow)
-            .role("separator")
-            .label(t("Resize call view"))
-            .focusable(true)
-            .on_step(move |s: &mut S, delta, _| {
-                let sh = acc(s);
-                let h = sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT);
-                sh.prefs.compact_call_heights.insert(ch, compact_height(h + delta as f32 * 16.0));
-                let prefs = sh.prefs.clone();
-                sh.intents.push(Intent::Prefs(Box::new(prefs)));
-            })
-            .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
-                let sh = acc(s);
-                if d.phase == rune::Phase::Down {
-                    d.data = compact_height(sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
-                }
-                sh.prefs.compact_call_heights.insert(ch, compact_height(d.data + d.dy));
-                if d.phase == rune::Phase::Up {
-                    let prefs = sh.prefs.clone();
-                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
-                }
-            });
-        // `.resizeHandle`: the 16px strip along the bottom edge.
-        let handle = handle.pin(Some(0.0), None, Some(0.0), Some(0.0)).h(16.0);
-        return Some(
-            col()
-                .key(format!("compact-call-{ch}"))
-                .w_full()
-                .h(height)
-                .fill(rgb(0, 0, 0))
-                .clip_rounded(0.0)
-                .child(content)
-                .child(controls)
-                .child(el().pin(Some(12.0), None, None, Some(12.0)).child(chat))
-                .child(row().pin(None, None, Some(12.0), Some(12.0)).gap(8.0).child(popout).child(full))
-                .child(handle),
-        );
+        return Some(compact_call(store, st, Some(guild), ch, &people, None, p, acc));
     }
     let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
     let mut faces = row().gap(6.0).center_y();
@@ -1712,27 +1794,47 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     Some(strip)
 }
 
-/// `CallButtons`: start a voice / video call from the DM header (join it when one runs).
-pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, video: bool, el_: El, acc: ShellAccess<S>) -> El {
+/// `CallButtons`: the DM header's voice and video call buttons. Voice starts, joins or (selected,
+/// in the call) leaves it; video starts the call with the camera or joins it, and once in the
+/// call turns the camera on or off (selected while it's on). A system DM can't host calls.
+pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, video: bool, action: &dyn Fn(&'static rune::Icon, &str, bool) -> El, acc: ShellAccess<S>) -> El {
     let ch = c.id;
     let active = store.calls.contains_key(&ch);
-    let joined = st.voice.channel == Some((None, ch));
-    if joined {
-        return el_.opacity(0.5);
+    let in_call = st.voice.connected && st.voice.channel == Some((None, ch));
+    let count = participants(store, None, ch).len();
+    let system = c.kind == ChannelType::DM && c.recipients.iter().any(|u| u.id == super::client_system::FLUXERBOT);
+    let label = match video {
+        _ if system => t(if video { "System DMs cannot host video calls" } else { "System DMs cannot host voice calls" }).to_string(),
+        false if in_call => t("Leave voice call").to_string(),
+        false if active => t("Join voice call").to_string(),
+        false => t("Start voice call").to_string(),
+        true if in_call => t(if st.voice.camera { "Turn off camera" } else { "Turn on camera" }).to_string(),
+        true if active && count > 0 => crate::i18n::tp("{count, plural, one {Join video call (# participant)} other {Join video call (# participants)}}", count as i64, &[]),
+        true if active => t("Join video call").to_string(),
+        true => t("Start video call").to_string(),
+    };
+    let selected = in_call && (!video || st.voice.camera);
+    let b = action(if video { &icons::VIDEO_CAMERA_FILL } else { &icons::PHONE_FILL }, &label, selected);
+    if system {
+        return b.disabled(true).opacity(0.5).cursor(rune::Cursor::NotAllowed);
     }
     // `canOfferP2pCall`: the rollout is on and everyone fits in a P2P call.
     let (p2p_on, cap) = st.voice.p2p_rollout;
     let offer_p2p = !active && p2p_on && c.recipients.iter().filter(|u| u.id != store.my_id()).count() < cap;
-    el_.on_press(move |s: &mut S| {
+    b.on_press(move |s: &mut S| {
         let sh = acc(s);
         // `getCallStartRequestOptions`: Shift skips the P2P offer and the confirmation.
         let bypass = sh.shift_held;
-        if offer_p2p && !bypass {
+        if in_call {
+            sh.intents.push(if video { Intent::Voice(Op::ToggleCamera) } else { Intent::LeaveVoice });
+        } else if active {
+            sh.intents.push(Intent::Voice(Op::AcceptCall(ch)));
+        } else if offer_p2p && !bypass {
             sh.voice.modal = Some(Modal::P2pConsent { guild: None, channel: ch, start: true, allow_standard: true, video, always: false });
-        } else if !active && !bypass && crate::look::with(|l| l.confirm_calls) {
+        } else if !bypass && crate::look::with(|l| l.confirm_calls) {
             sh.voice.modal = Some(Modal::StartCall { channel: ch, video, tip: true });
         } else {
-            start_call(sh, ch, active, video);
+            start_call(sh, ch, false, video);
         }
     })
 }
@@ -2753,6 +2855,16 @@ mod tests {
         let t = tiles(&people);
         assert_eq!(t.len(), 3);
         assert!(t[1].screen && t[1].user == Snowflake(1));
+    }
+
+    #[test]
+    fn call_avatar_metrics_fit_the_row() {
+        assert_eq!(call_avatar_metrics(0, 600.0, 200.0), (64.0, 12.0));
+        // Two avatars in a wide row hit the 88 cap; the gap is 200/18 rounded.
+        assert_eq!(call_avatar_metrics(2, 600.0, 200.0), (88.0, 11.0));
+        // Six in a small box: 3x2 at (200-16)/3 wide or (100-8)/2 tall, floored, min 40.
+        assert_eq!(call_avatar_metrics(6, 200.0, 100.0), (46.0, 8.0));
+        assert_eq!(call_avatar_metrics(9, 100.0, 60.0).0, 40.0);
     }
 
     #[test]
