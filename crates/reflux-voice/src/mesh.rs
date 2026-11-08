@@ -402,6 +402,11 @@ impl Mesh {
         })
     }
 
+    /// Whether a remote track of `user` from `src` reaches us (e.g. a screen share's audio).
+    pub fn has_remote(&self, user: u64, src: Src) -> bool {
+        self.sh.receivers.lock().unwrap().values().any(|(u, t)| *u == user && t[src.index()].is_some())
+    }
+
     /// Each peer's status.
     pub fn connections(&self) -> Vec<(String, u64)> {
         self.sh.peers.lock().unwrap().iter().map(|(c, (u, _))| (c.clone(), *u)).collect()

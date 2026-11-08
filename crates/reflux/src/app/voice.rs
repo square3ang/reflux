@@ -1750,6 +1750,10 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
             watch(s, Some(u));
         }
     }
+    let audio = s.app.shell.voice.watching.is_some_and(|u| s.app.voice.call.as_ref().is_some_and(|c| c.has_stream_audio(u.0)));
+    if s.app.shell.voice.watch_audio != audio {
+        s.app.shell.voice.watch_audio = audio;
+    }
     let now = super::now_ms();
     let v = &s.app.shell.voice;
     let in_call = s.app.voice.call.is_some() && !(v.self_mute || v.self_deaf);
@@ -1835,6 +1839,19 @@ fn send_voice_message(s: &mut State) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_live_stream_quality_pick_restarts_the_share_with_it() {
+        // The "Stream quality" radios switch to Custom and set the value (`stream_quality_entries`).
+        let before = super::Settings::default();
+        let mut after = before.clone();
+        (after.screen_fps, after.streaming_mode) = (15, "custom".into());
+        assert!(super::screen_settings_changed(&before, &after));
+        let limits = crate::shell::upload::Limits::default();
+        assert_eq!(after.screen_quality(&limits, true).fps, 15);
+        after.screen_height = Some(480);
+        assert_eq!(after.screen_quality(&limits, true).max_height, Some(480));
+    }
+
     #[test]
     fn rollout_polls_like_experiment_assignments() {
         use std::time::Duration;

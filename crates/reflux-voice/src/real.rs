@@ -365,6 +365,15 @@ impl Call {
         room.remote_participants().values().filter(|p| user_of(&p.identity().0) == Some(user)).any(|p| p.track_publications().values().any(|t| t.source() == TrackSource::Screenshare))
     }
 
+    /// Whether `user`'s screen share carries audio (a `ScreenshareAudio` publication).
+    pub fn has_stream_audio(&self, user: u64) -> bool {
+        let room = match &self.link {
+            Link::Room(r) => r,
+            Link::Mesh(m) => return m.has_remote(user, mesh_src(TrackSource::ScreenshareAudio)),
+        };
+        room.remote_participants().values().filter(|p| user_of(&p.identity().0) == Some(user)).any(|p| p.track_publications().values().any(|t| t.source() == TrackSource::ScreenshareAudio))
+    }
+
     /// `ScreenShareSubscriptionPolicy`: a screen share and its audio are subscribed only while
     /// watched. Subscribing on watch also makes the SFU ask the sharer for a keyframe, so a
     /// still screen shows at once instead of staying black until it changes.

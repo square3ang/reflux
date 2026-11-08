@@ -41,7 +41,7 @@ fn mark_read<S: 'static>(acks: Vec<(Snowflake, Snowflake)>, acc: ShellAccess<S>)
     MenuItem::new("mark-read", t("Mark as read")).icon(&icons::EYE_FILL).disabled(none).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(acks.clone())))
 }
 
-fn copy_id<S: 'static>(label: &str, id: Snowflake) -> MenuItem<S> {
+pub(crate) fn copy_id<S: 'static>(label: &str, id: Snowflake) -> MenuItem<S> {
     MenuItem::new(format!("copy-{label}"), label).icon(&icons::SNOWFLAKE).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(id.to_string()))
 }
 
@@ -95,29 +95,12 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
             }
         }
         m = m.separator();
-        if !bot {
-            m = invite_submenu(store, st, user, m, acc);
+        if let Some(e) = invite_entry(store, st, user, acc).filter(|_| !bot) {
+            m = m.entry(e);
         }
-        let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());
-        let kind = store.relationships.get(&user).map(|r| r.kind);
-        m = match kind {
-            Some(RelationshipType::FRIEND) => {
-                m.item(MenuItem::new("remove-friend", t("Remove friend")).icon(&icons::USER_MINUS_FILL).danger().on_select(push(Intent::RemoveRelationship(user))))
-            }
-            Some(RelationshipType::INCOMING_REQUEST) => m
-                .item(MenuItem::new("accept", t("Accept friend request")).icon(&icons::CHECK_CIRCLE_FILL).on_select(push(Intent::AddFriend(user))))
-                .item(MenuItem::new("ignore", t("Ignore friend request")).icon(&icons::X_FILL).on_select(push(Intent::RemoveRelationship(user)))),
-            Some(RelationshipType::OUTGOING_REQUEST) => m.item(
-                MenuItem::new("cancel", t("Cancel friend request")).icon(&icons::CLOCK_COUNTER_CLOCKWISE_FILL).on_select(push(Intent::RemoveRelationship(user))),
-            ),
-            Some(RelationshipType::BLOCKED) => m,
-            _ => m.item(MenuItem::new("add-friend", t("Add friend")).icon(&icons::USER_PLUS_FILL).on_select(push(Intent::AddFriend(user)))),
-        };
-        m = if kind == Some(RelationshipType::BLOCKED) {
-            m.item(MenuItem::new("unblock", t("Unblock")).icon(&icons::PROHIBIT_FILL).on_select(push(Intent::RemoveRelationship(user))))
-        } else {
-            m.item(MenuItem::new("block", t("Block")).icon(&icons::PROHIBIT_FILL).danger().on_select(push(Intent::Block(user))))
-        };
+        for i in relationship_items(store, user, acc) {
+            m = m.item(i);
+        }
     }
     for e in crate::social::group_items(store, st, user, acc) {
         m = m.entry(e);
@@ -146,9 +129,31 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
     m
 }
 
+/// The friend actions (remove, accept / ignore, cancel, add) and block or unblock.
+pub(crate) fn relationship_items<S: 'static>(store: &Store, user: Snowflake, acc: ShellAccess<S>) -> Vec<MenuItem<S>> {
+    let push = |i: Intent| move |s: &mut S| acc(s).intents.push(i.clone());
+    let kind = store.relationships.get(&user).map(|r| r.kind);
+    let mut out = match kind {
+        Some(RelationshipType::FRIEND) => vec![MenuItem::new("remove-friend", t("Remove friend")).icon(&icons::USER_MINUS_FILL).danger().on_select(push(Intent::RemoveRelationship(user)))],
+        Some(RelationshipType::INCOMING_REQUEST) => vec![
+            MenuItem::new("accept", t("Accept friend request")).icon(&icons::CHECK_CIRCLE_FILL).on_select(push(Intent::AddFriend(user))),
+            MenuItem::new("ignore", t("Ignore friend request")).icon(&icons::X_FILL).on_select(push(Intent::RemoveRelationship(user))),
+        ],
+        Some(RelationshipType::OUTGOING_REQUEST) => vec![MenuItem::new("cancel", t("Cancel friend request")).icon(&icons::CLOCK_COUNTER_CLOCKWISE_FILL).on_select(push(Intent::RemoveRelationship(user)))],
+        Some(RelationshipType::BLOCKED) => Vec::new(),
+        _ => vec![MenuItem::new("add-friend", t("Add friend")).icon(&icons::USER_PLUS_FILL).on_select(push(Intent::AddFriend(user)))],
+    };
+    out.push(if kind == Some(RelationshipType::BLOCKED) {
+        MenuItem::new("unblock", t("Unblock")).icon(&icons::PROHIBIT_FILL).on_select(push(Intent::RemoveRelationship(user)))
+    } else {
+        MenuItem::new("block", t("Block")).icon(&icons::PROHIBIT_FILL).danger().on_select(push(Intent::Block(user)))
+    });
+    out
+}
+
 /// `InviteToCommunityMenuItem`: your communities the user isn't known to be in that have a
 /// channel to invite to, by name.
-fn invite_submenu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, m: Menu<S>, acc: ShellAccess<S>) -> Menu<S> {
+pub(crate) fn invite_entry<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, acc: ShellAccess<S>) -> Option<crate::ui::MenuEntry<S>> {
     let mut guilds: Vec<(String, Snowflake, Snowflake)> = store
         .guilds
         .iter()
@@ -156,7 +161,7 @@ fn invite_submenu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, m
         .filter_map(|(g, gs)| Some((gs.info.as_ref()?.name.clone(), *g, crate::guild::invitable_channel(store, st, *g)?)))
         .collect();
     if guilds.is_empty() {
-        return m;
+        return None;
     }
     guilds.sort_by_key(|a| a.0.to_lowercase());
     let items = guilds
@@ -165,7 +170,7 @@ fn invite_submenu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, m
             crate::ui::MenuEntry::Item(MenuItem::new(format!("invite-{guild}"), name).on_select(move |s: &mut S| acc(s).intents.push(Intent::InviteToGuild { user, guild, channel })))
         })
         .collect();
-    m.submenu("invite-to-community", t("Invite to community"), items)
+    Some(crate::ui::MenuEntry::Submenu("invite-to-community".into(), t("Invite to community").into(), items))
 }
 
 fn close_dm(st: &mut ShellState, c: Snowflake) {

@@ -44,7 +44,6 @@ fn timed_out(store: &Store, g: Snowflake, u: Snowflake, now_iso: &str) -> bool {
 /// The user context menu's community items: nickname, roles, moderation, voice and report.
 pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
     let me = store.my_id();
-    let have = store.guild_permissions(g);
     let mut out = Vec::new();
     let open = move |m: Modal| move |s: &mut S| acc(s).open_social(m.clone());
     let member = store.member(g, u).is_some();
@@ -53,29 +52,54 @@ pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u:
     if nick_ok && member {
         out.push(MenuEntry::Item(MenuItem::new("change-nickname", t("Change nickname")).icon(&icons::IDENTIFICATION_CARD_FILL).on_select(open(Modal::Nickname { guild: g, user: u }))));
     }
-    if have.contains(P::MANAGE_ROLES) && member {
-        let mine = rank(store, g, me);
-        let has: Vec<Snowflake> = store.member(g, u).map(|m| m.roles.clone()).unwrap_or_default();
-        let roles: Vec<MenuEntry<S>> = crate::guild::sorted_roles(store, g)
-            .into_iter()
-            .filter(|r| r.id != g && (r.position as i64) < mine)
-            .map(|r| {
-                let (rid, on) = (r.id, has.contains(&r.id));
-                MenuEntry::Item(MenuItem::new(format!("role-{rid}"), r.name.clone()).checkbox(on).on_select(move |s: &mut S| {
-                    acc(s).social(if on { Method::DELETE } else { Method::PUT }, format!("/guilds/{g}/members/{u}/roles/{rid}"), None, Done::Nothing)
-                }))
-            })
-            .collect();
-        if !roles.is_empty() {
-            out.push(MenuEntry::Separator);
-            out.push(MenuEntry::Submenu("roles".into(), "Roles".into(), roles));
-        }
+    if let Some(r) = roles_entry(store, g, u, acc) {
+        out.push(MenuEntry::Separator);
+        out.push(r);
     }
     let owner = store.guilds.get(&g).and_then(|gs| gs.info.as_ref()).is_some_and(|i| i.owner_id == me);
     let mut mods = Vec::new();
     if owner && u != me && member && store.users.get(&u).is_none_or(|x| !x.bot) {
         mods.push(MenuItem::new("transfer", t("Transfer ownership")).icon(&icons::CROWN_FILL).danger().on_select(open(Modal::TransferOwnership { guild: g, user: u })));
     }
+    mods.extend(punish_items(store, st, g, u, acc));
+    if !mods.is_empty() {
+        out.push(MenuEntry::Separator);
+        out.extend(mods.into_iter().map(MenuEntry::Item));
+    }
+    out.extend(voice_items(store, g, u, acc));
+    if u != me {
+        out.push(MenuEntry::Separator);
+        let m = Modal::Report { target: "user", guild: Some(g), channel: None, id: u };
+        out.push(MenuEntry::Item(MenuItem::new("report-user", t("Report profile")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| open_report(acc(s), m.clone()))));
+    }
+    out
+}
+
+/// `ManageRolesMenuItem`: a checkbox per role below ours (MANAGE_ROLES).
+pub fn roles_entry<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> Option<MenuEntry<S>> {
+    if !store.guild_permissions(g).contains(P::MANAGE_ROLES) || store.member(g, u).is_none() {
+        return None;
+    }
+    let mine = rank(store, g, store.my_id());
+    let has: Vec<Snowflake> = store.member(g, u).map(|m| m.roles.clone()).unwrap_or_default();
+    let roles: Vec<MenuEntry<S>> = crate::guild::sorted_roles(store, g)
+        .into_iter()
+        .filter(|r| r.id != g && (r.position as i64) < mine)
+        .map(|r| {
+            let (rid, on) = (r.id, has.contains(&r.id));
+            MenuEntry::Item(MenuItem::new(format!("role-{rid}"), r.name.clone()).checkbox(on).on_select(move |s: &mut S| {
+                acc(s).social(if on { Method::DELETE } else { Method::PUT }, format!("/guilds/{g}/members/{u}/roles/{rid}"), None, Done::Nothing)
+            }))
+        })
+        .collect();
+    (!roles.is_empty()).then(|| MenuEntry::Submenu("roles".into(), "Roles".into(), roles))
+}
+
+/// Timeout (or remove it), kick and ban, as our permissions and rank allow.
+pub fn punish_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> Vec<MenuItem<S>> {
+    let open = move |m: Modal| move |s: &mut S| acc(s).open_social(m.clone());
+    let member = store.member(g, u).is_some();
+    let mut mods = Vec::new();
     if member && can_moderate(store, g, u, P::MODERATE_MEMBERS) {
         let now = iso(st.now_ms);
         mods.push(if timed_out(store, g, u, &now) {
@@ -90,17 +114,7 @@ pub fn member_items<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, u:
     if can_moderate(store, g, u, P::BAN_MEMBERS) {
         mods.push(MenuItem::new("ban", t("Ban member")).icon(&icons::GAVEL_FILL).danger().on_select(open(Modal::Ban { guild: g, user: u })));
     }
-    if !mods.is_empty() {
-        out.push(MenuEntry::Separator);
-        out.extend(mods.into_iter().map(MenuEntry::Item));
-    }
-    out.extend(voice_items(store, g, u, acc));
-    if u != me {
-        out.push(MenuEntry::Separator);
-        let m = Modal::Report { target: "user", guild: Some(g), channel: None, id: u };
-        out.push(MenuEntry::Item(MenuItem::new("report-user", t("Report profile")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| open_report(acc(s), m.clone()))));
-    }
-    out
+    mods
 }
 
 /// Opens a report flow and fetches its screens.
@@ -113,33 +127,46 @@ pub fn open_report(st: &mut ShellState, m: Modal) {
 /// `VoiceParticipantMenuItems` for someone in a voice channel of the guild: community mute and
 /// deafen, move, disconnect.
 pub fn voice_items<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> Vec<MenuEntry<S>> {
-    let Some(vs) = store.voice_states.get(&(Some(g), u)).filter(|v| v.channel_id.is_some()) else { return Vec::new() };
+    let (toggles, moves, disconnect) = voice_parts(store, g, u, acc);
+    let mut out: Vec<MenuEntry<S>> = toggles;
+    out.extend(moves);
+    out.extend(disconnect);
+    if out.is_empty() {
+        return out;
+    }
+    out.insert(0, MenuEntry::Separator);
+    out
+}
+
+/// The voice moderation pieces apart: (community mute and deafen, "Move to…", Disconnect).
+#[allow(clippy::type_complexity)]
+pub fn voice_parts<S: 'static>(store: &Store, g: Snowflake, u: Snowflake, acc: ShellAccess<S>) -> (Vec<MenuEntry<S>>, Option<MenuEntry<S>>, Option<MenuEntry<S>>) {
+    let Some(vs) = store.voice_states.get(&(Some(g), u)).filter(|v| v.channel_id.is_some()) else { return (Vec::new(), None, None) };
     let have = store.guild_permissions(g);
     let me = store.my_id();
     // `canManageTarget`: yourself, or someone below your highest role.
     let manage = u == me || rank(store, g, me) > rank(store, g, u);
     let patch = move |b: Value| move |s: &mut S| acc(s).social(Method::PATCH, format!("/guilds/{g}/members/{u}"), Some(b.clone()), Done::Nothing);
-    let mut out = vec![MenuEntry::Separator];
+    let mut toggles = Vec::new();
     if have.contains(P::MUTE_MEMBERS) && manage {
-        out.push(MenuEntry::Item(MenuItem::new("server-mute", t("Community mute")).checkbox(vs.mute).on_select(patch(json!({ "mute": !vs.mute })))));
+        toggles.push(MenuEntry::Item(MenuItem::new("server-mute", t("Community mute")).checkbox(vs.mute).on_select(patch(json!({ "mute": !vs.mute })))));
     }
     if have.contains(P::DEAFEN_MEMBERS) && manage {
-        out.push(MenuEntry::Item(MenuItem::new("server-deafen", t("Community deafen")).checkbox(vs.deaf).on_select(patch(json!({ "deaf": !vs.deaf })))));
+        toggles.push(MenuEntry::Item(MenuItem::new("server-deafen", t("Community deafen")).checkbox(vs.deaf).on_select(patch(json!({ "deaf": !vs.deaf })))));
     }
-    if can_moderate(store, g, u, P::MOVE_MEMBERS) {
-        let mut chans: Vec<_> = store.channels.values().filter(|c| c.guild_id == Some(g) && c.kind == ChannelType::GUILD_VOICE && Some(c.id) != vs.channel_id && store.permissions(c.id).contains(P::CONNECT)).collect();
-        chans.sort_by_key(|c| (c.position, c.id));
-        let moves: Vec<MenuEntry<S>> = chans
-            .into_iter()
-            .map(|c| MenuEntry::Item(MenuItem::new(format!("move-{}", c.id), c.name.clone().unwrap_or_default()).icon(crate::shell::channel_icon(c.kind)).on_select(patch(json!({ "channel_id": c.id })))))
-            .collect();
-        if !moves.is_empty() {
-            out.push(MenuEntry::Submenu("move".into(), t("Move to…").into(), moves));
-        }
-        let conn = vs.connection_id.clone();
-        out.push(MenuEntry::Item(MenuItem::new("disconnect", t("Disconnect")).icon(&icons::PHONE_X_FILL).danger().on_select(patch(json!({ "channel_id": null, "connection_id": conn })))));
+    if !can_moderate(store, g, u, P::MOVE_MEMBERS) {
+        return (toggles, None, None);
     }
-    if out.len() == 1 { Vec::new() } else { out }
+    let mut chans: Vec<_> = store.channels.values().filter(|c| c.guild_id == Some(g) && c.kind == ChannelType::GUILD_VOICE && Some(c.id) != vs.channel_id && store.permissions(c.id).contains(P::CONNECT)).collect();
+    chans.sort_by_key(|c| (c.position, c.id));
+    let moves: Vec<MenuEntry<S>> = chans
+        .into_iter()
+        .map(|c| MenuEntry::Item(MenuItem::new(format!("move-{}", c.id), c.name.clone().unwrap_or_default()).icon(crate::shell::channel_icon(c.kind)).on_select(patch(json!({ "channel_id": c.id })))))
+        .collect();
+    let moves = (!moves.is_empty()).then(|| MenuEntry::Submenu("move".into(), t("Move to…").into(), moves));
+    let conn = vs.connection_id.clone();
+    let disconnect = MenuEntry::Item(MenuItem::new("disconnect", t("Disconnect")).icon(&icons::PHONE_X_FILL).danger().on_select(patch(json!({ "channel_id": null, "connection_id": conn }))));
+    (toggles, moves, Some(disconnect))
 }
 
 // ---- Kick / ban / timeout -------------------------------------------------------------------

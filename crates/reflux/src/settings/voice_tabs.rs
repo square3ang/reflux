@@ -182,13 +182,14 @@ fn audio<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette, 
     // ---- Volume: 0–200 % with marks every 50 and a reset back to 100 %.
     let vol = |key: &'static str, name: &str, value: f32, input: bool| {
         let put = move |st: &mut Settings, x: f32| if input { st.input_volume = x } else { st.output_volume = x };
-        let marks = [0.0, 50.0, 100.0, 150.0, 200.0].map(|m: f32| (m, format!("{m}%"))).to_vec();
+        let max = crate::shell::voice::VOICE_VOLUME_MAX_PERCENT;
+        let marks = [0.0, max / 4.0, max / 2.0, max * 3.0 / 4.0, max].map(|m: f32| (m, format!("{m}%"))).to_vec();
         col()
             .key(format!("{key}-row"))
             .w_full()
             .child(slider_label(name, reset_icon(format!("{key}-reset"), value != 100.0, set(acc, move |st: &mut Settings| put(st, 100.0)), p), p))
             .child(
-                Slider::new(key, value, 0.0, 200.0)
+                Slider::new(key, value, 0.0, max)
                     .step(1.0)
                     .label(t(name))
                     .marks(marks, 100.0)
