@@ -393,7 +393,7 @@ pub(super) fn landing_tile<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
             sh.form.error = None;
             sh.dialog = Some(Dialog::Add(AddView::Import(Step::Url)));
         })
-        .child(row().size(48.0, 48.0).center().radius(24.0).fill(p.brand_primary).child(icon(&icons::DOWNLOAD_SIMPLE, 24.0).color(p.brand_primary_fill)))
+        .child(row().size(48.0, 48.0).center().radius(24.0).fill(p.brand_primary).child(icon(&icons::DOWNLOAD_SIMPLE_FILL, 24.0).color(p.brand_primary_fill)))
         .child(text(label).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
 }
 

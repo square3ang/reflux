@@ -162,7 +162,7 @@ pub fn field<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, r: &Role,
         .radius(8.0)
         .fill(if picked_image { p.brand_primary } else { p.background_tertiary })
         .border(1.0, p.background_modifier_accent)
-        .children(glyph.or_else(|| (!has).then(|| icon(&icons::IMAGE, 24.0).color(p.text_tertiary))));
+        .children(glyph.or_else(|| (!has).then(|| icon(&icons::IMAGE_FILL, 24.0).color(p.text_tertiary))));
     let upload = Button::<S>::new(t("Upload image")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::settings::crop::pick(acc, "role-icon", crate::settings::crop::Asset::RoleIcon));
     let channel = store.channels.values().find(|c| c.guild_id == Some(g)).map_or(g, |c| c.id);
     let choose = Button::new(t("Choose emoji")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("pick-role-emoji").on_press(move |s: &mut S| crate::shell::expr::open_for_form(acc(s), channel, "role-emoji")).el(p);

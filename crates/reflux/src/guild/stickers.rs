@@ -114,7 +114,7 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
             let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(title(x.name.clone(), p)).children((!detail.is_empty()).then(|| small(detail, p).truncate())));
             if mine {
                 line = line
-                    .child(icon_button(&icons::PENCIL_SIMPLE, t("Edit sticker"), p, move |s: &mut S| {
+                    .child(icon_button(&icons::PENCIL_SIMPLE_FILL, t("Edit sticker"), p, move |s: &mut S| {
                         let f = &mut acc(s).form;
                         f.data.insert("edit-sticker".into(), Value::String(id.to_string()));
                         for k in ["sticker-name", "sticker-desc", "sticker-tags"] {

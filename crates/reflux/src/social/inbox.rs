@@ -712,7 +712,7 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
             st.social(Method::DELETE, format!("/users/@me/saved-messages/{id}"), None, Done::Nothing);
         })
     } else {
-        MenuItem::new("bookmark", t("Bookmark message")).icon(&icons::BOOKMARK_SIMPLE).on_select(move |s: &mut S| {
+        MenuItem::new("bookmark", t("Bookmark message")).icon(&icons::BOOKMARK_SIMPLE_FILL).on_select(move |s: &mut S| {
             let st = acc(s);
             st.social.saved.insert(id);
             st.social(Method::POST, "/users/@me/saved-messages", Some(json!({ "channel_id": ch, "message_id": id })), Done::Nothing);
@@ -740,7 +740,7 @@ pub fn message_items<S: 'static>(store: &Store, st: &ShellState, c: &Channel, m:
         for a in &media {
             let label = if media.len() == 1 { t("Edit alt text").to_string() } else { format!("{} ({})", t("Edit alt text"), a.filename) };
             let (att, desc) = (a.id, a.description.clone().unwrap_or_default());
-            out.push(MenuEntry::Item(MenuItem::new(format!("alt-text-{att}"), label).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
+            out.push(MenuEntry::Item(MenuItem::new(format!("alt-text-{att}"), label).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| {
                 let st = acc(s);
                 st.open_social(Modal::AltText { channel: ch, message: id, attachment: att });
                 st.form.text.insert("alt".into(), rune::TextEdit::new(desc.clone()));

@@ -299,7 +299,7 @@ pub fn entries<S: 'static>(store: &Store, st: &ShellState, kind: Kind, text: &st
                 MenuItem::new(format!("provider-{}", kind.field()), label)
                     .icon(match kind {
                         Kind::Search => &crate::icons::MAGNIFYING_GLASS,
-                        Kind::Translate => &crate::icons::TRANSLATE,
+                        Kind::Translate => &crate::icons::TRANSLATE_FILL,
                     })
                     .on_select(move |s: &mut S| match &default {
                         Some(d) => search(&all, &d.id, &pick_text),

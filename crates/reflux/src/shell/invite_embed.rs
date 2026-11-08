@@ -149,7 +149,7 @@ fn loading(p: &Palette) -> El {
 
 /// `InviteNotFoundError`.
 fn unknown(p: &Palette) -> El {
-    let face = row().size(48.0, 48.0).center().radius(24.0).fill(p.background_tertiary).child(icon(&icons::QUESTION, 28.0).color(p.text_tertiary));
+    let face = row().size(48.0, 48.0).center().radius(24.0).fill(p.background_tertiary).child(icon(&icons::QUESTION_FILL, 28.0).color(p.text_tertiary));
     let header = col().gap(2.4).child(title(t("Unknown invite"), p.status_danger)).child(text(t("Try asking for a new invite.")).font(font(12.8, 400.0).lh(15.36)).color(p.text_tertiary));
     let button = Button::<()>::new(t("Invite unavailable")).fit_container().disabled(true).el(p);
     card(None, face, header, Some(button), p)

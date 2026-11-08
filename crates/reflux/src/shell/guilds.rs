@@ -156,7 +156,8 @@ fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcces
         .center()
         .radius(if lit { ICON * 0.3 } else { ICON / 2.0 })
         .fill(bg)
-        .child(icon(&icons::CHAT_CIRCLE, 28.0).color(fg));
+        // `ChatCircleIcon weight="fill"` (`.messageBubbleIcon`, 1.75rem).
+        .child(icon(&icons::CHAT_CIRCLE_FILL, 28.0).color(fg));
     let mentions: u32 = store.private_channels().iter().map(|c| store.mention_count(c.id)).sum();
     slot(None, selected, false, st, face, mention_badge(mentions as u64, true, p), p, acc)
         .label("Direct Messages")

@@ -47,22 +47,22 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
     let channels = can(store, g, Permissions::MANAGE_CHANNELS);
     let mut items: Vec<El> = Vec::new();
     if let Some(ch) = invitable_channel(store, st, g) {
-        items.push(item(t("Invite members"), &icons::USER_PLUS, false, p).on_press(move |s: &mut S| open_invite(acc(s), ch)));
+        items.push(item(t("Invite members"), &icons::USER_PLUS_FILL, false, p).on_press(move |s: &mut S| open_invite(acc(s), ch)));
     }
     if let Some(tab) = first_settings_tab(store, g) {
-        items.push(item(t("Community settings"), &icons::GEAR, false, p).on_press(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
+        items.push(item(t("Community settings"), &icons::GEAR_FILL, false, p).on_press(move |s: &mut S| acc(s).open_guild_settings(g, tab)));
     }
     if channels {
-        items.push(item(t("Create channel"), &icons::PLUS_CIRCLE, false, p).on_press(move |s: &mut S| {
+        items.push(item(t("Create channel"), &icons::PLUS_CIRCLE_FILL, false, p).on_press(move |s: &mut S| {
             acc(s).open_dialog(Dialog::CreateChannel { guild: g, parent: None, category: false })
         }));
-        items.push(item(t("Create category"), &icons::FOLDER_PLUS, false, p).on_press(move |s: &mut S| {
+        items.push(item(t("Create category"), &icons::FOLDER_PLUS_FILL, false, p).on_press(move |s: &mut S| {
             acc(s).open_dialog(Dialog::CreateChannel { guild: g, parent: None, category: true })
         }));
     }
-    items.push(item(t("Notification settings"), &icons::BELL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))));
-    items.push(item(t("Privacy settings"), &icons::SHIELD, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))));
-    items.push(item(t("Edit community profile"), &icons::USER_CIRCLE, false, p).on_press(move |s: &mut S| acc(s).open_community_profile(g)));
+    items.push(item(t("Notification settings"), &icons::BELL_FILL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Notifications(g))));
+    items.push(item(t("Privacy settings"), &icons::SHIELD_FILL, false, p).on_press(move |s: &mut S| acc(s).open_dialog(Dialog::Privacy(g))));
+    items.push(item(t("Edit community profile"), &icons::USER_CIRCLE_FILL, false, p).on_press(move |s: &mut S| acc(s).open_community_profile(g)));
     let hide = store.guild_settings.get(&Some(g)).is_some_and(|s| s.hide_muted_channels);
     let toggle_hide = move |s: &mut S| acc(s).intents.push(Intent::PatchGuildSettings { guild: Some(g), patch: json!({ "hide_muted_channels": !hide }) });
     items.push(
@@ -73,12 +73,12 @@ pub fn header_menu<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
             .child(row().size(20.0, 20.0).center().child(Checkbox::<S>::new(hide).size(18.75).el(p).inert())),
     );
     if !owner {
-        items.push(item(t("Delete my messages"), &icons::TRASH, true, p).on_press(move |s: &mut S| {
+        items.push(item(t("Delete my messages"), &icons::TRASH_FILL, true, p).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.popups.close();
             sh.nav.confirm_purge = Some(g);
         }));
-        items.push(item(t("Leave community"), &icons::SIGN_OUT, true, p).on_press(move |s: &mut S| {
+        items.push(item(t("Leave community"), &icons::SIGN_OUT_FILL, true, p).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.popups.close();
             sh.confirm_leave = Some(g);

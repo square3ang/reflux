@@ -187,7 +187,7 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
                         .center()
                         .gap(6.0)
                         .children(matches!(view, GifView::Favorites).then(|| icon(&icons::STAR_FILL, 18.0).color(Color::WHITE)))
-                        .children(matches!(view, GifView::Trending).then(|| icon(&icons::TREND_UP, 18.0).color(Color::WHITE)))
+                        .children(matches!(view, GifView::Trending).then(|| icon(&icons::TREND_UP_FILL, 18.0).color(Color::WHITE)))
                         .child(text(title.clone()).font(font(16.0, 700.0).lh(20.0)).color(Color::WHITE).truncate()),
                 )
                 .on_press(move |s: &mut S| {
@@ -224,7 +224,7 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
                 .label(if fav { crate::i18n::t("Remove from favorites") } else { crate::i18n::t("Add to favorites") })
-                .child(icon(if fav { &icons::STAR_FILL } else { &icons::STAR }, 18.0).color(if fav { p.status_idle } else { Color::WHITE }))
+                .child(icon(if fav { &icons::STAR_FILL } else { &icons::STAR_BOLD }, 18.0).color(if fav { p.status_idle } else { Color::WHITE }))
                 .on_press(move |s: &mut S| toggle_favorite(acc(s), &g2));
             let mut e = el()
                 .size(w, h)

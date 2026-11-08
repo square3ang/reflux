@@ -72,7 +72,7 @@ pub fn plutonium<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         .el(p);
     let link = card(atom, "Fluxer Plutonium".into(), t("Plans, perks, gifts and your subscription are all on one page.").into(), open, p);
     let manage = Button::new(t("Manage in browser")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("plutonium-manage").on_press(open_web(acc, "/channels/@premium")).el(p);
-    let sub = card(icon(&icons::CROWN, 24.0).color(p.text_secondary), t("Subscription").into(), status(store, st), manage, p);
+    let sub = card(icon(&icons::CROWN_FILL, 24.0).color(p.text_secondary), t("Subscription").into(), status(store, st), manage, p);
     col().w_full().gap(16.0).child(link).child(sub)
 }
 
@@ -127,7 +127,7 @@ pub fn gifts<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> E
                 .py(32.0)
                 .gap(8.0)
                 .items_center()
-                .child(icon(&icons::GIFT, 40.0).color(p.text_tertiary))
+                .child(icon(&icons::GIFT_FILL, 40.0).color(p.text_tertiary))
                 .child(text(t("No gifts yet")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary)),
         );
         return out.child(Button::new(t("Manage in browser")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("gifts-browser").on_press(open_web(acc, "/channels/@premium")).el(p));
@@ -214,7 +214,7 @@ pub fn gift_accept<S: 'static>(st: &ShellState, code: &str, p: &Palette, acc: Sh
     let (content, footer) = match gift {
         None if st.form.error.is_none() => (row().w_full().py(16.0).center().child(spinner(p.text_primary_muted)), None),
         None => {
-            let q = row().size(48.0, 48.0).center().radius(999.0).fill(p.background_tertiary).child(icon(&icons::QUESTION, 24.0).color(p.text_tertiary));
+            let q = row().size(48.0, 48.0).center().radius(999.0).fill(p.background_tertiary).child(icon(&icons::QUESTION_FILL, 24.0).color(p.text_tertiary));
             (line(q, t("Unknown gift").into(), p.status_danger, None, t("This gift code is invalid or already claimed.").into()), Some(dismiss()))
         }
         Some(g) => {

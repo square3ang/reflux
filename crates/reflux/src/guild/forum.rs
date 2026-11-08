@@ -72,7 +72,7 @@ pub(super) fn fields<S: 'static>(st: &ShellState, ch: &Channel, p: &Palette, acc
         .label(t("Pick an emoji"))
         .key("pick-reaction")
         .on_press(move |s: &mut S| crate::shell::expr::open_for_form(acc(s), forum, "reaction"))
-        .child(emoji.unwrap_or_else(|| icon(&icons::SMILEY, 20.0).color(p.text_primary_muted)));
+        .child(emoji.unwrap_or_else(|| icon(&icons::SMILEY_FILL, 20.0).color(p.text_primary_muted)));
     let mut r = row().gap(12.0).center_y().child(picker);
     if reaction.is_some() {
         r = r.child(Button::new(t("Remove")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).on_press(move |s: &mut S| {

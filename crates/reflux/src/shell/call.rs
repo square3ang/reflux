@@ -430,14 +430,19 @@ fn slot(content: El) -> El {
 
 /// The tile area: a near-square grid, or one focused/pinned tile over a strip of the rest.
 /// Tiles without video show the avatar on its colour, as Fluxer's full call view does.
-fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], p: &Palette, acc: ShellAccess<S>) -> El {
+fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let me = store.my_id();
     let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
     let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
     let all = tiles(&people);
     let state = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
     let make = |t: Tile, big: bool| state(t.user).map(|vs| tile(store, st, guild, t, vs, big, p, acc)).unwrap_or_else(el);
+    let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
+    let [gw, gh] = rune::memo::layout_size(grid_key).unwrap_or([960.0, 540.0]);
+    let packed = pack_grid(all.len(), gw, gh, compact);
     let focused = st.call.pinned(st.voice.focus).and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
+    // `gridOverflow`: a grid that can't fit every tile at its minimum size shows focus instead.
+    let focused = focused.or_else(|| (packed.visible < all.len()).then(|| all.first().copied()).flatten());
     if let Some(f) = focused {
         let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
         let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(row().w_full().grow(1.0).min_h(0.0).child(slot(make(f, true))));
@@ -453,13 +458,78 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
         }
         return c;
     }
-    let n = all.len().max(1);
-    let cols = (n as f32).sqrt().ceil() as usize;
-    let mut grid = col().w_full().h_full().gap(8.0).padding(16.0);
-    for chunk in all.chunks(cols) {
-        grid = grid.child(row().w_full().grow(1.0).min_h(0.0).gap(8.0).justify_center().children(chunk.iter().map(|t| slot(make(*t, false)))));
+    // `VoiceGridLayout`: the packed columns, each tile the computed 16:9 size, rows centred.
+    let mut grid = col().key(grid_key).w_full().h_full().min_w(0.0).min_h(0.0).gap(packed.gap).center();
+    for chunk in all.chunks(packed.columns.max(1)) {
+        grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().size(packed.tile[0], packed.tile[1]).child(make(*t, false)))));
     }
     grid
+}
+
+/// `resolveVoiceGridPackedLayoutMetrics`'s result.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Packed {
+    pub columns: usize,
+    pub gap: f32,
+    pub tile: [f32; 2],
+    /// How many tiles fit at the minimum size (fewer than the count = overflow).
+    pub visible: usize,
+}
+
+/// `resolveVoiceGridPackedLayoutMetrics`: the most tiles that fit at the minimum tile size
+/// (220px wide, 148 compact), and for that count the column count with the largest 16:9 tile.
+pub fn pack_grid(count: usize, width: f32, height: f32, compact: bool) -> Packed {
+    let gap = match count {
+        n if n >= 40 => 4.0,
+        n if compact && n >= 24 => 5.0,
+        n if n >= 24 => 6.0,
+        n if compact && n >= 12 => 6.0,
+        n if n >= 12 => 8.0,
+        n if n >= 6 => 10.0,
+        _ if compact => (height * 0.024).clamp(6.0, 10.0),
+        _ => 12.0,
+    };
+    let side = if compact {
+        (height * 0.02).clamp(6.0, 12.0)
+    } else if width <= 419.0 {
+        6.0
+    } else if width <= 759.0 {
+        8.0
+    } else {
+        12.0
+    };
+    let vert = if compact {
+        (height * 0.018).clamp(5.0, 10.0)
+    } else if height <= 359.0 {
+        8.0
+    } else if height <= 519.0 {
+        10.0
+    } else {
+        14.0
+    };
+    let (aw, ah) = ((width - side * 2.0).max(0.0), (height - vert * 2.0).max(0.0));
+    let min_w = if compact { 148.0 } else { 220.0 };
+    let min_h = min_w * 9.0 / 16.0;
+    for visible in (1..=count).rev() {
+        let mut best: Option<Packed> = None;
+        for columns in 1..=visible {
+            let rows = visible.div_ceil(columns);
+            let col_w = ((aw - gap * (columns - 1) as f32) / columns as f32).max(0.0);
+            let row_h = ((ah - gap * (rows - 1) as f32) / rows as f32).max(0.0);
+            let tw = col_w.min(row_h * 16.0 / 9.0);
+            let th = tw * 9.0 / 16.0;
+            if tw < min_w || th < min_h {
+                continue;
+            }
+            if best.is_none_or(|b| tw * th > b.tile[0] * b.tile[1]) {
+                best = Some(Packed { columns, gap, tile: [tw, th], visible });
+            }
+        }
+        if let Some(b) = best {
+            return b;
+        }
+    }
+    Packed { columns: 1, gap, tile: [0.0, 0.0], visible: 0 }
 }
 
 /// `.settingsButton`: the caret badge on a control's top-right corner (17px, 2px outside it,
@@ -740,7 +810,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(chat_pill(store, st, channel, true, p, acc));
     header = header.child(el().grow(1.0)).child(right);
     let body = if st.voice.connected {
-        layout(store, st, guild, &people, p, acc)
+        layout(store, st, guild, &people, false, p, acc)
     } else {
         row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
@@ -1448,14 +1518,9 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
             }
             content = content.child(list);
         } else {
-            let mut row_tiles = row().w_full().h_full().gap(8.0).justify_center().items_center();
-            for t in &tiles_all {
-                let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
-                if let Some(vs) = vs {
-                    row_tiles = row_tiles.child(el().grow(1.0).w(0.0).min_w(120.0).max_w(360.0).h_full().child(tile(store, st, Some(guild), *t, vs, false, p, acc)));
-                }
-            }
-            content = content.child(row_tiles);
+            // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
+            // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
+            content = content.child(col().w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, p, acc)));
         }
         // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
         let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
@@ -2178,7 +2243,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                             .cursor(rune::Cursor::Pointer)
                             .role("radio")
                             .label(name.clone())
-                            .child(icon(&icons::VIDEO_CAMERA, 18.0).color(if picked { p.brand_primary } else { p.text_primary_muted }))
+                            .child(icon(&icons::VIDEO_CAMERA_FILL, 18.0).color(if picked { p.brand_primary } else { p.text_primary_muted }))
                             .child(text(name).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
                             .on_press(move |s: &mut S| {
                                 let sh = acc(s);
@@ -2457,7 +2522,7 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let me = store.my_id();
     let mut m = Menu::new(TILE_MENU);
     let focused = st.call.layout == LayoutMode::Focus && st.voice.focus == Some(user);
-    m = m.item(MenuItem::new("pin", if focused { t("Unpin") } else { t("Pin") }).icon(if focused { &icons::PUSH_PIN_SIMPLE_SLASH } else { &icons::PUSH_PIN_SIMPLE }).on_select(move |s: &mut S| {
+    m = m.item(MenuItem::new("pin", if focused { t("Unpin") } else { t("Pin") }).icon(if focused { &icons::PUSH_PIN_SIMPLE_SLASH_FILL } else { &icons::PUSH_PIN_SIMPLE_FILL }).on_select(move |s: &mut S| {
         let sh = acc(s);
         sh.voice.focus = (!focused).then_some(user);
         sh.call.pin((!focused).then_some(user));
@@ -2480,13 +2545,13 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     let watching = st.voice.watching == Some(user);
     if streaming && watching {
         m = m
-            .item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })))
-            .item(MenuItem::new("pip-stream", "Picture in picture").icon(&icons::PICTURE_IN_PICTURE).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: true })));
+            .item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })))
+            .item(MenuItem::new("pip-stream", "Picture in picture").icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: true })));
     }
     if st.voice.videos.contains_key(&user) || (user == me && st.voice.camera) {
-        m = m.item(MenuItem::new("popout-camera", t("Pop out camera")).icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: Some(user), screen: false, pip: false })));
+        m = m.item(MenuItem::new("popout-camera", t("Pop out camera")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: false, pip: false })));
     }
-    m = m.item(MenuItem::new("popout-call", "Pop out call").icon(&icons::ARROW_SQUARE_OUT).on_select(op(acc, Op::PopOut { user: None, screen: false, pip: false })));
+    m = m.item(MenuItem::new("popout-call", "Pop out call").icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: None, screen: false, pip: false })));
     let set = &st.voice.settings;
     // Settings changes save and reach the mixer through `Op::Settings`.
     let tweak = move |s: &mut S, f: &dyn Fn(&mut super::voice::Settings)| {

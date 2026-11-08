@@ -514,8 +514,8 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     };
     let body = match r {
         Results::Loading => col().w_full().grow(1.0).center().child(spinner(p.text_primary_muted)),
-        Results::Indexing => message_state(&icons::CIRCLE_NOTCH, t("Indexing channel"), "This channel is being indexed. Try again in a moment."),
-        Results::Failed => message_state(&icons::WARNING_CIRCLE, t("Error"), t("An error occurred while searching.")),
+        Results::Indexing => message_state(&icons::CIRCLE_NOTCH_FILL, t("Indexing channel"), "This channel is being indexed. Try again in a moment."),
+        Results::Failed => message_state(&icons::WARNING_CIRCLE_FILL, t("Error"), t("An error occurred while searching.")),
         Results::Done { messages, .. } if messages.is_empty() => message_state(&icons::MAGNIFYING_GLASS, t("No results"), t("Try a different search query.")),
         Results::Done { messages, total } => {
             let mut list = col().w_full().pt(8.0).px(8.0).pb(12.0);

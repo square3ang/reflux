@@ -59,7 +59,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p:
         .color(p.text_tertiary)
         .link(rune::Link::new(at..line.len(), "dismiss").hover(rune::LinkPaint::new().underline(p.text_link)))
         .on_link(move |s: &mut S, _: &str, _: &mut rune::Tx| acc(s).intents.push(Intent::DropLocal { channel: ch, nonce: id }));
-    let footer = row().gap(4.0).py(4.0).center_y().child(icon(&icons::EYE, 16.0).color(p.text_tertiary)).child(link);
+    let footer = row().gap(4.0).py(4.0).center_y().child(icon(&icons::EYE_FILL, 16.0).color(p.text_tertiary)).child(link);
     let content = col().grow(1.0).min_w(0.0).child(head).child(markdown::render(&m.content, md)).child(footer);
     let gutter = col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_AVATAR_ALIGN_OFFSET).child(super::avatar(store, st, FLUXERBOT, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, p));
     // `.messageClientSystem`: the reply tint and a brand bar, hovered or not.

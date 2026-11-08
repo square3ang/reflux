@@ -25,18 +25,18 @@ type TabDef = (&'static str, &'static str, &'static str, &'static Icon, P);
 /// `GUILD_SETTINGS_TABS_DESCRIPTORS`. Explore needs the instance's discovery config, which Reflux
 /// doesn't read, so it isn't listed.
 const TABS: &[TabDef] = &[
-    ("overview", "", "Overview", &icons::GEAR, P::MANAGE_GUILD),
-    ("roles", "", "Roles", &icons::SHIELD, P::MANAGE_ROLES),
-    ("moderation", "", "Moderation", &icons::HAMMER, P::MANAGE_GUILD),
-    ("audit_log", "", "Activity log", &icons::BOOK_OPEN, P::VIEW_AUDIT_LOG),
-    ("emoji", "Expressions", "Emoji", &icons::SMILEY, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
-    ("stickers", "Expressions", "Stickers", &icons::STICKER, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
+    ("overview", "", "Overview", &icons::GEAR_FILL, P::MANAGE_GUILD),
+    ("roles", "", "Roles", &icons::SHIELD_FILL, P::MANAGE_ROLES),
+    ("moderation", "", "Moderation", &icons::HAMMER_FILL, P::MANAGE_GUILD),
+    ("audit_log", "", "Activity log", &icons::BOOK_OPEN_FILL, P::VIEW_AUDIT_LOG),
+    ("emoji", "Expressions", "Emoji", &icons::SMILEY_FILL, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
+    ("stickers", "Expressions", "Stickers", &icons::STICKER_FILL, P::CREATE_EXPRESSIONS.union(P::MANAGE_EXPRESSIONS)),
     ("vanity_url", "Community", "Vanity URL", &icons::LINK_BOLD, P::MANAGE_GUILD),
-    ("explore", "Community", "Explore", &icons::COMPASS, P::MANAGE_GUILD),
-    ("webhooks", "Integrations", "Webhooks", &icons::WEBHOOKS_LOGO, P::MANAGE_WEBHOOKS),
-    ("members", "People", "Members", &icons::USER, P::MANAGE_GUILD),
-    ("invites", "People", "Invites", &icons::TICKET, P::MANAGE_GUILD),
-    ("bans", "People", "Bans", &icons::PROHIBIT, P::BAN_MEMBERS),
+    ("explore", "Community", "Explore", &icons::COMPASS_FILL, P::MANAGE_GUILD),
+    ("webhooks", "Integrations", "Webhooks", &icons::WEBHOOKS_LOGO_FILL, P::MANAGE_WEBHOOKS),
+    ("members", "People", "Members", &icons::USER_FILL, P::MANAGE_GUILD),
+    ("invites", "People", "Invites", &icons::TICKET_FILL, P::MANAGE_GUILD),
+    ("bans", "People", "Bans", &icons::PROHIBIT_FILL, P::BAN_MEMBERS),
 ];
 
 /// Every tab id (for the demo).
@@ -92,7 +92,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
         }
     }
     if info.owner_id == store.my_id() {
-        nav = nav.child(nav_item(&icons::TRASH, t("Delete community"), false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteGuild(guild))));
+        nav = nav.child(nav_item(&icons::TRASH_FILL, t("Delete community"), false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteGuild(guild))));
     }
     nav = nav.children(super::overview_extra::threshold_button(store, guild, p, acc));
     let label = TABS.iter().find(|t| t.0 == tab).map_or(t("Community settings"), |x| t(x.2));
@@ -252,7 +252,7 @@ pub(super) fn image_field<S: 'static>(st: &ShellState, label: &str, key: &'stati
     let preview = match (&state, current) {
         (Some(Some(_)), _) => row().size(w, h).center().radius(radius).fill(p.brand_primary).child(icon(&icons::IMAGE_FILL, 28.0).color(p.brand_primary_fill)),
         (None, Load::Ready(px)) => el().size(w, h).radius(radius).pixels_fit(&px, rune::SurfaceFit::Fill),
-        _ => row().size(w, h).center().radius(radius).fill(p.background_tertiary).border(1.0, over(p.background_modifier_accent, p.background_tertiary)).child(icon(&icons::IMAGE, 28.0).color(p.text_tertiary)),
+        _ => row().size(w, h).center().radius(radius).fill(p.background_tertiary).border(1.0, over(p.background_modifier_accent, p.background_tertiary)).child(icon(&icons::IMAGE_FILL, 28.0).color(p.text_tertiary)),
     };
     let mut buttons = row().gap(8.0).child(Button::<S>::new(format!("Change {}", label.to_lowercase())).variant(ButtonVariant::Secondary).size(ButtonSize::Small).el(p).on_press_tx(crate::settings::crop::pick(acc, key, crate::settings::crop::Asset::for_key(key))));
     if has {

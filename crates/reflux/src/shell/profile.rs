@@ -354,7 +354,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
             // `UserProfileConnections`: hidden in streamer mode.
             if !conns.is_empty() && !store.mask_names {
                 c = c.child(col().gap(6.0).child(section_title(t("Connections"), p)).children(conns.into_iter().map(|n| {
-                    row().gap(8.0).center_y().child(rune::icon(&crate::icons::GLOBE, 16.0).color(p.text_secondary)).child(text(n).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
+                    row().gap(8.0).center_y().child(rune::icon(&crate::icons::GLOBE_FILL, 16.0).color(p.text_secondary)).child(text(n).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
                 })));
             }
             if prof.is_some_and(|v| v["profile_limited"].as_bool() == Some(true)) {

@@ -83,7 +83,7 @@ pub fn drop_zone<S: 'static>(st: &ShellState, label: &str, multiple: bool, p: &P
         .fill(if over { p.background_header_secondary } else { p.background_tertiary })
         .role("group")
         .label(t("Drag and drop area for file upload"))
-        .child(icon(&icons::UPLOAD_SIMPLE, 48.0).color(p.text_primary_muted))
+        .child(icon(&icons::UPLOAD_SIMPLE_FILL, 48.0).color(p.text_primary_muted))
         .child(text(label.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))
         .on_drop_files(move |s: &mut S, files, _| {
             let sh = acc(s);

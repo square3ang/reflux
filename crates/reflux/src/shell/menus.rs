@@ -83,7 +83,7 @@ fn user_menu<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
     }
     // Our own (CHANGE_NICKNAME); others' come from `social::moderation::member_items`.
     if let Some(g) = guild.filter(|&g| me && crate::guild::can(store, g, reflux_model::Permissions::CHANGE_NICKNAME)) {
-        m = m.item(MenuItem::new("nickname", t("Change nickname")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
+        m = m.item(MenuItem::new("nickname", t("Change nickname")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| super::status::open(acc(s), crate::settings::ShellModal::Nickname(g))));
     }
     if !me {
         m = m.separator().item(MenuItem::new("note", t("Add note")).icon(&icons::NOTE_PENCIL_FILL).on_select(move |s: &mut S| profile(s, true)));

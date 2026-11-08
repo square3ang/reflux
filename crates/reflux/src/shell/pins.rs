@@ -129,14 +129,14 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         .padding(16.0)
         .gap(4.0)
         .center_y()
-        .child(icon(&icons::PUSH_PIN, 24.0).color(p.text_primary_muted))
+        .child(icon(&icons::PUSH_PIN_FILL, 24.0).color(p.text_primary_muted))
         .child(text(t("Pinned messages")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary));
     let mut list = col().w_full().pt(8.0).px(12.0).pb(12.0);
     if pins.items.is_empty() && pins.loading {
         list = list.child(row().w_full().h(400.0).center().child(spinner(p.text_primary_muted)));
     } else if pins.items.is_empty() {
         let hint = if dm { "Pin messages here for everyone to see.".to_string() } else { "Members with \"Pin Messages\" can pin messages for everyone.".to_string() };
-        list = list.child(state(&icons::SPARKLE, 80.0, if pins.failed { "Couldn't load pins" } else { t("No pinned messages") }, &hint, 400.0, p));
+        list = list.child(state(&icons::SPARKLE_FILL, 80.0, if pins.failed { "Couldn't load pins" } else { t("No pinned messages") }, &hint, 400.0, p));
     } else {
         for (m, _) in &pins.items {
             list = list.child(card(store, st, c, m, can_unpin, p, acc));
@@ -159,7 +159,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
                 ),
             );
         } else {
-            list = list.child(state(&icons::FLAG_CHECKERED, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p));
+            list = list.child(state(&icons::FLAG_CHECKERED_FILL, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p));
         }
     }
     let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("pins-list").child(list), false, p);

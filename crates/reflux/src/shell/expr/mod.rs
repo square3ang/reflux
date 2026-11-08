@@ -744,7 +744,7 @@ fn rail<S: 'static>(store: &Store, st: &ShellState, rows: &[Row], scope: &'stati
     };
     let has = |cat: &str| rows.iter().any(|r| matches!(r, Row::Head { cat: c, .. } if c == cat));
     if has("frequently-used") {
-        list = list.child(button("frequently-used".into(), icon(&icons::CLOCK, 24.0).color(p.text_primary_muted).group_color(p.text_primary), "Frequently used".into()));
+        list = list.child(button("frequently-used".into(), icon(&icons::CLOCK_FILL, 24.0).color(p.text_primary_muted).group_color(p.text_primary), "Frequently used".into()));
     }
     for r in rows {
         if let Row::Head { cat, name, guild: Some(g) } = r {
@@ -935,7 +935,7 @@ fn menu_layer<S: 'static>(
         }));
     }
     if let Some(id) = id {
-        m = m.item(crate::ui::MenuItem::new("expr-copy-id", label("Copy emoji ID", "Copy sticker ID")).icon(&icons::CLIPBOARD_TEXT).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+        m = m.item(crate::ui::MenuItem::new("expr-copy-id", label("Copy emoji ID", "Copy sticker ID")).icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |s: &mut S, tx: &mut Tx| {
             tx.copy(id.to_string());
             close(s);
         }));
@@ -949,7 +949,7 @@ fn menu_layer<S: 'static>(
         let search = image_search::entries(store, st, &url, acc, close);
         m = m
             .separator()
-            .item(crate::ui::MenuItem::new("expr-copy-url", label("Copy emoji URL", "Copy sticker URL")).icon(&icons::LINK).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+            .item(crate::ui::MenuItem::new("expr-copy-url", label("Copy emoji URL", "Copy sticker URL")).icon(&icons::LINK_FILL).on_select_tx(move |s: &mut S, tx: &mut Tx| {
                 tx.copy(u.clone());
                 crate::desktop::toast(&mut acc(s).desktop, "Link copied to clipboard", true);
                 close(s);

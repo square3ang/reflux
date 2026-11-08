@@ -108,7 +108,7 @@ pub fn alignment_controls<S: 'static>(align: u64, p: &Palette, acc: ShellAccess<
             })
             .child(icon(glyph, 18.0).color(if on { p.text_primary } else { p.text_primary_muted }))
     };
-    row().gap(4.0).px(4.0).py(4.0).radius(8.0).fill(p.background_tertiary).child(seg(1, &icons::TEXT_ALIGN_LEFT, "Left")).child(seg(0, &icons::TEXT_ALIGN_CENTER, "Center")).child(seg(2, &icons::TEXT_ALIGN_RIGHT, "Right"))
+    row().gap(4.0).px(4.0).py(4.0).radius(8.0).fill(p.background_tertiary).child(seg(1, &icons::TEXT_ALIGN_LEFT_FILL, "Left")).child(seg(0, &icons::TEXT_ALIGN_CENTER_FILL, "Center")).child(seg(2, &icons::TEXT_ALIGN_RIGHT_FILL, "Right"))
 }
 
 /// `GuildVisitsSection`: saved at once, like Fluxer's `toggleFeature`.
@@ -140,7 +140,7 @@ pub fn advanced<S: 'static>(st: &ShellState, info: &Guild, p: &Palette, acc: She
             acc(s).form.data.insert("advanced".into(), json!(!open));
         })
         .child(text(t("Advanced")).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary))
-        .child(row().size(28.0, 28.0).center().radius(6.0).hover(p.background_modifier_hover).child(icon(if open { &icons::CARET_UP } else { &icons::CARET_DOWN }, 18.0).color(p.text_primary_muted)));
+        .child(row().size(28.0, 28.0).center().radius(6.0).hover(p.background_modifier_hover).child(icon(if open { &icons::CARET_UP_FILL } else { &icons::CARET_DOWN_FILL }, 18.0).color(p.text_primary_muted)));
     let mut c = col().w_full().gap(16.0).pt(24.0).pb(24.0).child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent)).child(head);
     if open {
         c = c

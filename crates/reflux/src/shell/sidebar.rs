@@ -54,7 +54,9 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         Some((_, l, _)) => el().child(plain.live_opacity(&l.frosted)).child(white.pin(Some(0.0), Some(0.0), None, None).live_opacity(&l.on_banner)),
         None => plain,
     };
-    let caret = if st.popups.is_open(crate::guild::HEADER_MENU) { &icons::X } else { &icons::CARET_DOWN };
+    // `CaretDownIcon weight="bold"`, turned over (`.caretIconOpen`) while the menu is open.
+    let caret = &icons::CARET_DOWN_BOLD;
+    let turn = if st.popups.is_open(crate::guild::HEADER_MENU) { std::f32::consts::PI } else { 0.0 };
     let name_el = |c: Color| text(name.clone()).font(font(16.0, 600.0).lh(20.0)).color(c).truncate();
     // `.headerContainer` / `.headerContent`: 56 tall, padding 0 16, gap 4.
     let mut header = row()
@@ -69,7 +71,7 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .key(crate::guild::HEADER_MENU)
         .on_press(move |s: &mut S| acc(s).popups.toggle(crate::guild::HEADER_MENU))
         .child(row().grow(1.0).shrink().min_w(0.0).child(tinted(name_el(Color::WHITE), name_el(p.text_primary)).w_full()))
-        .child(tinted(icon(caret, 16.0).color(Color::WHITE), icon(caret, 16.0).color(p.text_primary)));
+        .child(tinted(icon(caret, 16.0).color(Color::WHITE).rotate(turn), icon(caret, 16.0).color(p.text_primary).rotate(turn)));
     header = match &banner {
         Some(_) => header,
         None => header.fill(p.background_secondary).hover(p.background_modifier_hover).child(header_bar(p)),
@@ -265,9 +267,10 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
     // Muted channels show their (faded) unread pill only with "Show unread indicator on muted
     // channels".
     if unread && !selected && (!muted || crate::look::with(|l| l.faded_unread_muted)) {
-        // `.unreadIndicator` (inside the item, which is 8 in from the container's edge).
+        // `.unreadIndicator`: in `GenericChannelItem`'s container (`extraContent`), 4px past its
+        // left edge, so the list's edge cuts it to a half pill.
         container = container.child(
-            el().absolute(4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
+            el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
         );
     }
     container.key(format!("ch-{id}"))
@@ -626,7 +629,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         mic = mic.on_press(move |s: &mut S| acc(s).toggle_mute());
     }
     let deaf_label = if server_deaf { t("Deafened by moderators") } else if v.self_deaf { t("Undeafen") } else { t("Deafen") };
-    let mut speaker = control(if deaf { &icons::SPEAKER_SLASH } else { &icons::SPEAKER_HIGH }, deaf_label, deaf && !server_deaf, server_deaf);
+    let mut speaker = control(if deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, deaf_label, deaf && !server_deaf, server_deaf);
     if !server_deaf {
         speaker = speaker.on_press(move |s: &mut S| acc(s).toggle_deaf());
     }
@@ -665,7 +668,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
                 ),
         );
     let settings_label = if review { t("User settings, privacy review needed") } else { t("User Settings") };
-    let mut gear = control(&icons::GEAR, settings_label, false, false).on_press(move |s: &mut S| acc(s).open_settings(review.then_some("privacy_safety")));
+    let mut gear = control(&icons::GEAR_FILL, settings_label, false, false).on_press(move |s: &mut S| acc(s).open_settings(review.then_some("privacy_safety")));
     if review {
         gear = gear.child(el().pin(Some(21.0), Some(5.0), None, None).size(8.0, 8.0).radius(4.0).fill(p.status_danger).border(2.0, surface));
     }

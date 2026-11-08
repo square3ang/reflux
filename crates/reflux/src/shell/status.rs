@@ -119,6 +119,7 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .center_y()
             .cursor(rune::Cursor::Pointer)
             .role("button")
+            // `SmileyIcon weight="regular"` (`.customStatusPlaceholderIcon`).
             .child(rune::icon(&icons::SMILEY, 14.0).color(p.text_tertiary))
             .child(text(t("Set a custom status")).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary))
             .on_press(move |s: &mut S| open(acc(s), ShellModal::CustomStatus))

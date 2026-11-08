@@ -492,7 +492,7 @@ fn empty(searching: bool, p: &Palette) -> El {
         .px(16.0)
         .gap(8.0)
         .items_center()
-        .child(icon(&icons::CHATS_TEARDROP, 48.0).color(p.text_tertiary))
+        .child(icon(&icons::CHATS_TEARDROP_FILL, 48.0).color(p.text_tertiary))
         .child(text(title).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary))
         .child(text(hint).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))
 }
@@ -586,7 +586,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     let media = first.flatten().and_then(first_media);
     let thumb = |w: f32, h: f32, r: f32| match &media {
         Some((u, _)) => super::picture(st.media.get(&crate::media::fit_url(u, w, st.media.scale())), w, h, r, p),
-        None => row().size(w, h).center().radius(r).fill(p.background_tertiary).child(icon(&icons::IMAGE, 32.0).color(p.text_tertiary)),
+        None => row().size(w, h).center().radius(r).fill(p.background_tertiary).child(icon(&icons::IMAGE_FILL, 32.0).color(p.text_tertiary)),
     };
     let (thread, id, parent) = (post.clone(), post.id, post.parent_id);
     let mut c = if is_grid {
@@ -729,7 +729,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                     .center_y()
                     .radius(6.0)
                     .fill(p.background_secondary_alt)
-                    .child(icon(&icons::FILE_TEXT, 16.0).color(p.text_tertiary))
+                    .child(icon(&icons::FILE_TEXT_FILL, 16.0).color(p.text_tertiary))
                     .child(text(u.name.clone()).font(font(13.0, 500.0).lh(16.0)).color(p.text_primary).truncate().max_w(200.0))
                     .child(
                         row().size(20.0, 20.0).center().radius(4.0).hover(p.background_modifier_hover).cursor(rune::Cursor::Pointer).label(t("Remove")).child(icon(&icons::X_BOLD, 12.0).color(p.text_tertiary)).on_press(move |s: &mut S| acc(s).threads.uploads.retain(|x| x.id != uid)),

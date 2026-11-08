@@ -169,7 +169,7 @@ pub fn tags<S: 'static>(st: &ShellState, ch: &Channel, p: &Palette, acc: ShellAc
             let c2 = ch.clone();
             let mut pill = row().gap(4.0).center_y().child(crate::shell::forum::tag_pill(st, tag, None, false, p));
             if tag.moderated {
-                pill = pill.child(icon(&icons::LOCK, 14.0).color(p.text_primary_muted));
+                pill = pill.child(icon(&icons::LOCK_FILL, 14.0).color(p.text_primary_muted));
             }
             pill.child(
                 row()
@@ -182,7 +182,7 @@ pub fn tags<S: 'static>(st: &ShellState, ch: &Channel, p: &Palette, acc: ShellAc
                     .label(t("Edit tag"))
                     .key(format!("edit-tag-{id}"))
                     .on_press(move |s: &mut S| edit_tag(acc(s), &c2, Some(id)))
-                    .child(icon(&icons::PENCIL_SIMPLE, 14.0).color(p.text_primary_muted)),
+                    .child(icon(&icons::PENCIL_SIMPLE_FILL, 14.0).color(p.text_primary_muted)),
             )
         }))
     };
@@ -218,7 +218,7 @@ pub fn tag_modal<S: 'static>(st: &ShellState, ch: &Channel, p: &Palette, acc: Sh
     let glyph = if has_emoji {
         crate::shell::forum::forum_emoji(st, emoji_id, emoji_name.as_deref(), 24.0).unwrap_or_else(rune::el)
     } else {
-        icon(&icons::SMILEY, 20.0).color(p.text_primary_muted)
+        icon(&icons::SMILEY_FILL, 20.0).color(p.text_primary_muted)
     };
     let picker = row()
         .size(40.0, 40.0)

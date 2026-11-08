@@ -297,8 +297,8 @@ fn friend_row<S: 'static>(store: &Store, st: &ShellState, r: &Relationship, p: &
         let mut menu = Menu::new(more);
         if !bot && !in_call {
             menu = menu
-                .item(MenuItem::new("call", t("Start voice call")).icon(&icons::PHONE).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, false))))
-                .item(MenuItem::new("video", t("Start video call")).icon(&icons::VIDEO_CAMERA).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, true))))
+                .item(MenuItem::new("call", t("Start voice call")).icon(&icons::PHONE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, false))))
+                .item(MenuItem::new("video", t("Start video call")).icon(&icons::VIDEO_CAMERA_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(id, true))))
                 .separator();
         }
         menu

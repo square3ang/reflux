@@ -53,7 +53,7 @@ pub fn serialize(edit: &TextEdit) -> String {
 
 /// A channel pill's leading glyph.
 pub fn pill_icon(id: &str) -> Option<&'static Icon> {
-    id.starts_with("<#").then_some(&icons::HASH)
+    id.starts_with("<#").then_some(&icons::HASH_FILL)
 }
 
 /// Spelling underlines outside pills.
@@ -66,12 +66,12 @@ pub fn unpilled(spans: Vec<rune::Span>, edit: &TextEdit) -> Vec<rune::Span> {
 
 /// `FORMATS`: label, icon, Markdown wrapper.
 pub const FORMATS: [(&str, &Icon, &str); 6] = [
-    ("Bold", &icons::TEXT_B, "**"),
-    ("Italic", &icons::TEXT_ITALIC, "*"),
-    ("Underline", &icons::TEXT_UNDERLINE, "__"),
-    ("Strikethrough", &icons::TEXT_STRIKETHROUGH, "~~"),
+    ("Bold", &icons::TEXT_B_FILL, "**"),
+    ("Italic", &icons::TEXT_ITALIC_FILL, "*"),
+    ("Underline", &icons::TEXT_UNDERLINE_FILL, "__"),
+    ("Strikethrough", &icons::TEXT_STRIKETHROUGH_FILL, "~~"),
     ("Inline code", &icons::CODE, "`"),
-    ("Spoiler", &icons::EYE_SLASH, "||"),
+    ("Spoiler", &icons::EYE_SLASH_FILL, "||"),
 ];
 
 /// How many `c` sit just before `a` and just after `b`.
@@ -192,30 +192,30 @@ pub fn edit_items<S: 'static>(st: &ShellState, mut m: Menu<S>, after_spelling: b
     if after_spelling {
         m = m.separator();
     }
-    m.item(MenuItem::new("undo", "Undo").icon(&icons::ARROW_COUNTER_CLOCKWISE).on_select(move |s: &mut S| {
+    m.item(MenuItem::new("undo", "Undo").icon(&icons::ARROW_COUNTER_CLOCKWISE_FILL).on_select(move |s: &mut S| {
         menu_draft(acc(s)).undo();
         close(s);
     }))
-    .item(MenuItem::new("redo", "Redo").icon(&icons::ARROW_CLOCKWISE).on_select(move |s: &mut S| {
+    .item(MenuItem::new("redo", "Redo").icon(&icons::ARROW_CLOCKWISE_FILL).on_select(move |s: &mut S| {
         menu_draft(acc(s)).redo();
         close(s);
     }))
     .separator()
-    .item(MenuItem::new("cut", "Cut").icon(&icons::SCISSORS).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+    .item(MenuItem::new("cut", "Cut").icon(&icons::SCISSORS_FILL).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
         let c = acc(s);
         tx.copy(menu_draft(c).selected().to_string());
         menu_draft(c).insert("");
         close(s);
     }))
-    .item(MenuItem::new("copy", "Copy").icon(&icons::COPY).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+    .item(MenuItem::new("copy", "Copy").icon(&icons::COPY_FILL).disabled(!has_sel).on_select_tx(move |s: &mut S, tx: &mut Tx| {
         tx.copy(menu_draft(acc(s)).selected().to_string());
         close(s);
     }))
-    .item(MenuItem::new("paste", "Paste").icon(&icons::CLIPBOARD_TEXT).on_select_tx(move |s: &mut S, tx: &mut Tx| {
+    .item(MenuItem::new("paste", "Paste").icon(&icons::CLIPBOARD_TEXT_FILL).on_select_tx(move |s: &mut S, tx: &mut Tx| {
         tx.read_clipboard(move |s: &mut S, content: &rune::ClipboardContent, _| menu_draft(acc(s)).insert(content.text()));
         close(s);
     }))
-    .item(MenuItem::new("select-all", "Select all").icon(&icons::SELECTION).disabled(draft.text.is_empty()).on_select(move |s: &mut S| {
+    .item(MenuItem::new("select-all", "Select all").icon(&icons::SELECTION_FILL).disabled(draft.text.is_empty()).on_select(move |s: &mut S| {
         let c = menu_draft(acc(s));
         c.set_selection(0, c.text.len());
         close(s);

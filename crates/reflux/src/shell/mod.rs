@@ -1017,9 +1017,9 @@ pub(crate) fn channel_icon(kind: ChannelType) -> &'static Icon {
         ChannelType::GUILD_ANNOUNCEMENT => &ANNOUNCEMENT_CHANNEL,
         ChannelType::GUILD_FORUM => &FORUM_CHANNEL,
         ChannelType::GUILD_LINK => &LINK_CHANNEL,
-        ChannelType::GUILD_MEDIA => &crate::icons::IMAGES_SQUARE,
+        ChannelType::GUILD_MEDIA => &crate::icons::IMAGES_SQUARE_FILL,
         ChannelType::DM_PERSONAL_NOTES => &crate::icons::NOTE_PENCIL_BOLD,
-        t if t.is_thread() => &crate::icons::CHATS,
+        t if t.is_thread() => &crate::icons::CHATS_FILL,
         _ => &TEXT_CHANNEL,
     }
 }

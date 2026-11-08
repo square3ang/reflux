@@ -350,9 +350,9 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
             .on_press(move |s: &mut S| acc(s).voice.entrance_scope = Some(v.clone()))
     };
     let mut tiles = vec![
-        tile("global".into(), Some(&crate::icons::GLOBE_HEMISPHERE_WEST), None, label("global"), Some(t("Used by default unless a community or DM sound overrides it.").into())),
-        tile("guilds".into(), Some(&crate::icons::USERS_THREE), None, label("guilds"), Some(t("Used in communities that do not have their own sound.").into())),
-        tile("dms".into(), Some(&crate::icons::CHAT_CIRCLE_TEXT), None, label("dms"), Some(t("Used for all direct-message calls.").into())),
+        tile("global".into(), Some(&crate::icons::GLOBE_HEMISPHERE_WEST_FILL), None, label("global"), Some(t("Used by default unless a community or DM sound overrides it.").into())),
+        tile("guilds".into(), Some(&crate::icons::USERS_THREE_FILL), None, label("guilds"), Some(t("Used in communities that do not have their own sound.").into())),
+        tile("dms".into(), Some(&crate::icons::CHAT_CIRCLE_TEXT_FILL), None, label("dms"), Some(t("Used for all direct-message calls.").into())),
     ];
     if let Some(g) = here {
         tiles.push(tile(format!("guild:{g}"), None, Some(g), guild_name(g), Some(t("Used only in this community.").into())));

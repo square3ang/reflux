@@ -193,9 +193,9 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/call.rs:169` the store keeps a 200-message window and no total unread count, so a channel with
 - `crates/reflux/src/shell/call.rs:268` previews reuse Active Now's cached stream thumbnail; a call without one shows
 - `crates/reflux/src/shell/call.rs:417` other users' accent colours only arrive with their profile, which the tile
-- `crates/reflux/src/shell/call.rs:751` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:2162` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2444` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:821` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:2227` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2509` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -209,8 +209,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
-- `crates/reflux/src/shell/status.rs:128` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
-- `crates/reflux/src/shell/status.rs:143` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
+- `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
+- `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the

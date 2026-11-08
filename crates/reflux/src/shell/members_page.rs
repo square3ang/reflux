@@ -190,7 +190,7 @@ pub fn sidebar_row<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         .key("members-page-row")
         .hover_group()
         .on_press(move |s: &mut S| acc(s).open_members_page(g))
-        .child(icon(&icons::USERS, 20.0).color(fg).group_color(if selected { fg } else { p.text_chat }))
+        .child(icon(&icons::USERS_FILL, 20.0).color(fg).group_color(if selected { fg } else { p.text_chat }))
         .child(text(t("Members")).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_chat }).truncate().grow(1.0).shrink());
     let item = if selected { item.fill(p.surface_interactive_selected_bg) } else { item.hover(p.surface_interactive_hover_bg) };
     Some(col().w_full().child(row().w_full().pt(1.0).pb(2.0).child(item)).child(el().h(1.0).mx(12.0).my(6.0).fill(p.background_modifier_hover)))
@@ -206,7 +206,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .px(dim::CHANNEL_HEADER_PADDING_INLINE)
         .gap(8.0)
         .center_y()
-        .child(icon(&icons::USERS, 20.0).color(p.text_tertiary))
+        .child(icon(&icons::USERS_FILL, 20.0).color(p.text_tertiary))
         .child(text(t("Members")).font(font(16.0, 600.0).lh(24.0)).color(p.text_primary))
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
     let res: Option<Response> = st.social.data.get(KEY).and_then(|v| serde_json::from_value(v.clone()).ok());
@@ -250,7 +250,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let sort = Button::new(if oldest { t("Oldest first") } else { t("Newest first") })
         .variant(ButtonVariant::Secondary)
         .size(ButtonSize::Compact)
-        .icon(&icons::SORT_ASCENDING)
+        .icon(&icons::SORT_ASCENDING_FILL)
         .key("members-page-sort")
         .on_press(move |s: &mut S| {
             let sh = acc(s);

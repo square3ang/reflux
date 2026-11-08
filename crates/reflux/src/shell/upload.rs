@@ -329,7 +329,7 @@ fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S
     media = match preview {
         Load::Ready(px) => media.child(el().w_full().h_full().pixels_fit(&px, rune::SurfaceFit::Fill).opacity(if u.spoiler { 0.15 } else { 1.0 })),
         Load::Pending => media,
-        Load::Failed => media.child(icon(&icons::FILE_TEXT, 48.0).color(p.text_tertiary)),
+        Load::Failed => media.child(icon(&icons::FILE_TEXT_FILL, 48.0).color(p.text_tertiary)),
     };
     if u.spoiler {
         media = media.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(

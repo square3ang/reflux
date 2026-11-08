@@ -140,7 +140,7 @@ fn dots<S: 'static>(id: String, menu: RowMenu, p: &Palette, acc: ShellAccess<S>)
         .label(t("More keybind options"))
         .focusable(true)
         .focus_ring(4.0, 0.0, p.focus_primary)
-        .child(icon(&icons::DOTS_THREE_VERTICAL, 18.0).color(p.text_primary_muted).group_color(p.text_primary))
+        .child(icon(&icons::DOTS_THREE_VERTICAL_FILL, 18.0).color(p.text_primary_muted).group_color(p.text_primary))
         .on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.nav.key_menu = Some(menu.clone());

@@ -177,7 +177,7 @@ pub(crate) fn kit<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
     let buttons = col()
         .w_full()
         .gap(8.0)
-        .child(Button::<S>::new(t("Download PDF")).size(ButtonSize::Small).icon(&icons::DOWNLOAD_SIMPLE).key("rk-download").el(p).on_press_tx(download))
+        .child(Button::<S>::new(t("Download PDF")).size(ButtonSize::Small).icon(&icons::DOWNLOAD_SIMPLE_FILL).key("rk-download").el(p).on_press_tx(download))
         .child(Button::<S>::new(t("Print")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("rk-print").el(p).on_press_tx(print))
         .child(Button::<S>::new(t("Copy")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("rk-copy").el(p).on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(copy_key.clone())));
     let mut checks = col().w_full().gap(12.0);

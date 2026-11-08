@@ -348,7 +348,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                 .gap(10.0)
                 .child(
                     Button::new(t("Sign in with email"))
-                        .icon(&icons::ENVELOPE_SIMPLE)
+                        .icon(&icons::ENVELOPE_SIMPLE_FILL)
                         .fit_container()
                         .disabled(disabled)
                         .key("login-email")
@@ -361,7 +361,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                 .child(
                     Button::<State>::new(t("Sign in with a passkey"))
                         .variant(ButtonVariant::Secondary)
-                        .icon(&icons::KEY)
+                        .icon(&icons::KEY_FILL)
                         .fit_container()
                         .disabled(disabled)
                         .key("login-passkey")
@@ -371,7 +371,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                 // `AuthSsoPanel`: single sign-on runs in the browser, then hands the session back.
                 .children(s.app.instance.as_ref().map(|i| &i.discovery.sso).filter(|sso| sso.enabled).map(|sso| {
                     let label = sso.button_label.clone().or_else(|| sso.display_name.as_ref().map(|n| crate::i18n::tf("Continue with {providerName}", &[("providerName", n)]))).unwrap_or_else(|| t("Continue with SSO").into());
-                    Button::<State>::new(label).variant(ButtonVariant::Secondary).icon(&icons::BUILDINGS).fit_container().disabled(disabled).key("login-sso").on_press(|s: &mut State| crate::handoff::start(s, true)).el(p)
+                    Button::<State>::new(label).variant(ButtonVariant::Secondary).icon(&icons::BUILDINGS_FILL).fit_container().disabled(disabled).key("login-sso").on_press(|s: &mut State| crate::handoff::start(s, true)).el(p)
                 }))
                 .child(
                     Button::<State>::new(t("Sign in with your browser"))
@@ -386,7 +386,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                 .child(
                     Button::<State>::new(t("Register an account"))
                         .variant(ButtonVariant::Secondary)
-                        .icon(&icons::USER_PLUS)
+                        .icon(&icons::USER_PLUS_FILL)
                         .icon_gap(8.0)
                         .fit_container()
                         .key("login-register")
@@ -398,7 +398,7 @@ fn method_step(s: &State, p: &Palette) -> El {
                 .children(crate::session::fluxer_desktop_db().filter(|db| db.exists()).map(|_| {
                     Button::<State>::new("Import session from Fluxer desktop")
                         .variant(ButtonVariant::Secondary)
-                        .icon(&icons::DOWNLOAD_SIMPLE)
+                        .icon(&icons::DOWNLOAD_SIMPLE_FILL)
                         .fit_container()
                         .disabled(disabled)
                         .key("login-import")
@@ -519,7 +519,7 @@ fn mfa_step(s: &State, m: &crate::login::Mfa, p: &Palette) -> El {
         form = form.child(
             Button::new(label)
                 .variant(if codes { ButtonVariant::Secondary } else { ButtonVariant::Primary })
-                .icon(&icons::KEY)
+                .icon(&icons::KEY_FILL)
                 .fit_container()
                 .disabled(l.submitting)
                 .key("login-mfa-passkey")

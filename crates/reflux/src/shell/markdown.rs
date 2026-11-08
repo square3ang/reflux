@@ -476,11 +476,11 @@ fn block(node: &Node, md: &Md, color: Color, first: bool, last: bool) -> El {
             // `AlertRenderer`: a 4px bar in the alert's colour, its icon and title, then the body.
             use reflux_markdown::AlertType as A;
             let (c, glyph, title) = match alert_type {
-                A::Note => (p.alert_note_color, &crate::icons::INFO, t("Note")),
-                A::Tip => (p.alert_tip_color, &crate::icons::LIGHTBULB_FILAMENT, t("Tip")),
-                A::Important => (p.alert_important_color, &crate::icons::WARNING, t("Important")),
-                A::Warning => (p.alert_warning_color, &crate::icons::WARNING_OCTAGON, t("Warning")),
-                A::Caution => (p.alert_caution_color, &crate::icons::WARNING_CIRCLE, t("Caution")),
+                A::Note => (p.alert_note_color, &crate::icons::INFO_FILL, t("Note")),
+                A::Tip => (p.alert_tip_color, &crate::icons::LIGHTBULB_FILAMENT_FILL, t("Tip")),
+                A::Important => (p.alert_important_color, &crate::icons::WARNING_FILL, t("Important")),
+                A::Warning => (p.alert_warning_color, &crate::icons::WARNING_OCTAGON_FILL, t("Warning")),
+                A::Caution => (p.alert_caution_color, &crate::icons::WARNING_CIRCLE_FILL, t("Caution")),
             };
             let (size, _) = body_size();
             let title = row().gap(4.0).center_y().mb(4.0).child(rune::icon(glyph, size * 0.9375).color(c)).child(text(title).font(font(size * 0.9375, 600.0)).color(c));

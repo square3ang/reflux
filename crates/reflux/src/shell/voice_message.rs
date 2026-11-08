@@ -306,7 +306,7 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
                 .padding(12.0)
                 .radius(dim::RADIUS_2XL)
                 .fill(p.background_secondary)
-                .child(icon(&icons::MICROPHONE, 18.0).color(p.text_primary_muted))
+                .child(icon(&icons::MICROPHONE_FILL, 18.0).color(p.text_primary_muted))
                 .child(bars(&resample(&vm.bars, 24), 24, false, p)),
         );
         if vm.recording {
@@ -337,7 +337,7 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
         footer = footer.child(Button::new(t("Send")).icon(&icons::PAPER_PLANE_RIGHT_FILL).key("vm-send").disabled(short).on_press(move |s: &mut S| op(s, Op::RecordSend)).el(p));
     } else {
         let ch = vm.channel;
-        footer = footer.child(Button::new(t("Start recording")).icon(&icons::MICROPHONE).key("vm-retry").on_press(move |s: &mut S| op(s, Op::RecordStart(ch))).el(p));
+        footer = footer.child(Button::new(t("Start recording")).icon(&icons::MICROPHONE_FILL).key("vm-retry").on_press(move |s: &mut S| op(s, Op::RecordStart(ch))).el(p));
     }
     Some(Modal::new(t("Voice message"), close).body(body).footer(footer).el(p))
 }

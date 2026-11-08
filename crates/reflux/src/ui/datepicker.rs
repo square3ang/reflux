@@ -130,7 +130,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .h_full()
                     .center()
                     .hover_group()
-                    .child(icon(&icons::CALENDAR_BLANK, 18.0).color(p.text_tertiary).group_color(p.text_primary))
+                    .child(icon(&icons::CALENDAR_BLANK_FILL, 18.0).color(p.text_tertiary).group_color(p.text_primary))
                     .inert(),
             );
         if let Some(d) = self.description {
@@ -182,9 +182,9 @@ impl<'a, S: 'static> DatePicker<'a, S> {
             .px(4.0)
             .justify_between()
             .center_y()
-            .child(nav(&icons::CARET_LEFT, "prev", t("Previous month"), add_months(month, -1), first.is_some_and(|f| month <= f)))
+            .child(nav(&icons::CARET_LEFT_FILL, "prev", t("Previous month"), add_months(month, -1), first.is_some_and(|f| month <= f)))
             .child(text(month.format("%B %Y").to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
-            .child(nav(&icons::CARET_RIGHT, "next", t("Next month"), add_months(month, 1), last.is_some_and(|l| month >= l)));
+            .child(nav(&icons::CARET_RIGHT_FILL, "next", t("Next month"), add_months(month, 1), last.is_some_and(|l| month >= l)));
         let weekdays = row().role("row").children(["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(|d| row().size(DAY, 28.0).center().child(text(t(d)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted))));
         let mut grid = col().child(weekdays).focus_group().role("grid").label(t("Select a date and time"));
         for (w, wk) in weeks(month).into_iter().enumerate() {

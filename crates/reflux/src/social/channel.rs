@@ -128,7 +128,7 @@ pub fn bell_layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
 /// The bell button for the channel header.
 pub fn bell_button<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let open = st.popups.is_open(BELL);
-    let glyph = if store.is_muted(c) { &icons::BELL_SLASH } else { &icons::BELL };
+    let glyph = if store.is_muted(c) { &icons::BELL_SLASH_FILL } else { &icons::BELL_FILL };
     row()
         .size(32.0, 32.0)
         .center()

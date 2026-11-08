@@ -185,28 +185,28 @@ const fn tab(id: &'static str, cat: Cat, label: &'static str, icon: &'static run
 /// them. Subscriptions, Payments and Operator pass only appear once the account has one, so they're
 /// left out.
 const TABS: &[TabDef] = &[
-    tab("my_profile", Cat::Account, "Profile", &icons::USER),
-    tab("account_security", Cat::Account, "Account", &icons::SHIELD),
-    tab("privacy_safety", Cat::Account, "Privacy", &icons::EYE_SLASH),
-    tab("linked_accounts", Cat::Account, "Connections", &icons::USER_LIST),
-    tab("authorized_apps", Cat::Account, "Authorized apps", &icons::ROBOT),
-    tab("blocked_users", Cat::Account, "Blocked users", &icons::PROHIBIT),
-    tab("devices", Cat::Account, "Devices", &icons::DEVICES),
-    tab("plutonium", Cat::Billing, "Plutonium", &icons::ATOM),
-    tab("gift_inventory", Cat::Billing, "Gifts", &icons::GIFT),
-    tab("appearance", Cat::App, "Appearance", &icons::PAINT_BRUSH),
-    tab("themes", Cat::App, "Themes", &icons::SWATCHES),
-    tab("notifications", Cat::App, "Notifications", &icons::BELL),
-    tab("chat_settings", Cat::App, "Chat", &icons::CHAT_CIRCLE),
-    tab("voice_video", Cat::App, "Voice & video", &icons::MICROPHONE),
-    tab("accessibility", Cat::App, "Accessibility", &icons::PERSON_SIMPLE_CIRCLE),
+    tab("my_profile", Cat::Account, "Profile", &icons::USER_FILL),
+    tab("account_security", Cat::Account, "Account", &icons::SHIELD_FILL),
+    tab("privacy_safety", Cat::Account, "Privacy", &icons::EYE_SLASH_FILL),
+    tab("linked_accounts", Cat::Account, "Connections", &icons::USER_LIST_FILL),
+    tab("authorized_apps", Cat::Account, "Authorized apps", &icons::ROBOT_FILL),
+    tab("blocked_users", Cat::Account, "Blocked users", &icons::PROHIBIT_FILL),
+    tab("devices", Cat::Account, "Devices", &icons::DEVICES_FILL),
+    tab("plutonium", Cat::Billing, "Plutonium", &icons::ATOM_FILL),
+    tab("gift_inventory", Cat::Billing, "Gifts", &icons::GIFT_FILL),
+    tab("appearance", Cat::App, "Appearance", &icons::PAINT_BRUSH_FILL),
+    tab("themes", Cat::App, "Themes", &icons::SWATCHES_FILL),
+    tab("notifications", Cat::App, "Notifications", &icons::BELL_FILL),
+    tab("chat_settings", Cat::App, "Chat", &icons::CHAT_CIRCLE_FILL),
+    tab("voice_video", Cat::App, "Voice & video", &icons::MICROPHONE_FILL),
+    tab("accessibility", Cat::App, "Accessibility", &icons::PERSON_SIMPLE_CIRCLE_FILL),
     tab("language", Cat::App, "Language", &icons::TRANSLATE_BOLD),
-    tab("keybinds", Cat::App, "Keybinds", &icons::KEYBOARD),
+    tab("keybinds", Cat::App, "Keybinds", &icons::KEYBOARD_FILL),
     tab("desktop_settings", Cat::App, DESKTOP_APP, &icons::DESKTOP),
-    tab("advanced_settings", Cat::App, "Advanced", &icons::GEAR),
+    tab("advanced_settings", Cat::App, "Advanced", &icons::GEAR_FILL),
     tab("applications", Cat::Developer, "Applications", &icons::CODE_BOLD),
     tab("embed_debugger", Cat::Developer, "Embed debugger", &icons::CODE_BOLD),
-    tab("component_gallery", Cat::Developer, "Design system", &icons::PALETTE),
+    tab("component_gallery", Cat::Developer, "Design system", &icons::PALETTE_FILL),
 ];
 
 const DESKTOP_APP: &str = match std::env::consts::OS.as_bytes() {
@@ -644,16 +644,16 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
     {
         let base = base.trim_end_matches('/');
         let links = [
-            (&icons::SPARKLE, "What's new", format!("{base}/patch-notes")),
-            (&icons::CHAT_CIRCLE_DOTS, "Submit feedback", "https://feedback.fluxer.com".to_string()),
-            (&icons::HAND_HEART, "Donate", format!("{base}/donate")),
+            (&icons::SPARKLE_FILL, "What's new", format!("{base}/patch-notes")),
+            (&icons::CHAT_CIRCLE_DOTS_FILL, "Submit feedback", "https://feedback.fluxer.com".to_string()),
+            (&icons::HAND_HEART_FILL, "Donate", format!("{base}/donate")),
         ];
         for (i, label, url) in links {
             nav = nav.child(nav_item(i, t(label), false, false, p, &c).label(format!("{} ({})", t(label), t("Opens in browser"))).on_press(move |_: &mut S| open_url(&url)));
         }
     }
     if q.is_empty() {
-        nav = nav.child(nav_item(&icons::SIGN_OUT, t("Sign out"), false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
+        nav = nav.child(nav_item(&icons::SIGN_OUT_FILL, t("Sign out"), false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
     }
     let footer = col()
         .w_full()

@@ -91,7 +91,7 @@ fn add<S: 'static>(st: &ShellState, v: AddView, p: &Palette, acc: ShellAccess<S>
                             row()
                                 .w_full()
                                 .gap(12.0)
-                                .child(action(&icons::HOUSE, t("Create community"), p, go(AddView::Create)))
+                                .child(action(&icons::HOUSE_FILL, t("Create community"), p, go(AddView::Create)))
                                 .child(action(&icons::LINK_BOLD, t("Join community"), p, go(AddView::Join))),
                         )
                         .child(super::template::landing_tile(p, acc)),
@@ -594,7 +594,7 @@ fn overrides<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, guild_lev
         let is_cat = c.kind == ChannelType::GUILD_CATEGORY;
         let sub = (!is_cat).then(|| c.parent_id.and_then(|pid| store.channels.get(&pid)?.name.clone()).unwrap_or_else(|| t("No category").to_string()));
         let name = col().min_w(0.0).child(text(c.name.clone().unwrap_or_default()).font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).truncate()).children(sub.map(|s| text(s).font(font(12.0, 400.0).lh(16.8)).color(p.text_tertiary)));
-        let glyph: &'static Icon = if is_cat { &icons::FOLDER } else { crate::shell::channel_icon(c.kind) };
+        let glyph: &'static Icon = if is_cat { &icons::FOLDER_FILL } else { crate::shell::channel_icon(c.kind) };
         let check = |n: u32| cell(crate::ui::Checkbox::new(level == n).on_toggle(patch_ov(id, json!({ "message_notifications": n }))).el(p));
         let remove = row()
             .pin(None, Some(-12.0), None, None)

@@ -118,14 +118,14 @@ pub fn menu_items<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> Vec<crate
     let mut out = Vec::new();
     if m.kind != MediaKind::Video {
         let png = format!("{}{}format=png", m.proxy, if m.proxy.contains('?') { '&' } else { '?' });
-        out.push(MenuEntry::Item(MenuItem::new("media-copy", copy).icon(&icons::COPY).on_select(move |s: &mut S| acc(s).media.copy_image(png.clone()))));
+        out.push(MenuEntry::Item(MenuItem::new("media-copy", copy).icon(&icons::COPY_FILL).on_select(move |s: &mut S| acc(s).media.copy_image(png.clone()))));
     }
     let (url, name) = (m.url.clone(), m.filename.clone());
     if crate::look::with(|l| l.media_download_button) {
-        out.push(MenuEntry::Item(MenuItem::new("media-download", download).icon(&icons::DOWNLOAD_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))));
+        out.push(MenuEntry::Item(MenuItem::new("media-download", download).icon(&icons::DOWNLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx))));
     }
     let url = m.url.clone();
-    out.push(MenuEntry::Item(MenuItem::new("media-copy-link", copy_link).icon(&icons::LINK).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(url.clone()))));
+    out.push(MenuEntry::Item(MenuItem::new("media-copy-link", copy_link).icon(&icons::LINK_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| tx.copy(url.clone()))));
     let url = m.url;
     out.push(MenuEntry::Item(MenuItem::new("media-open-link", open_link).icon(&icons::ARROW_SQUARE_OUT).on_select_tx(move |_: &mut S, tx: &mut Tx| {
         let _ = tx.open_url(&url);
@@ -570,7 +570,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
         None => Load::Failed,
     };
     let mut pic = match load {
-        Load::Failed => row().size(w, h).center().radius(dim::MEDIA_BORDER_RADIUS).fill(p.background_secondary_alt).child(icon(&icons::IMAGE, 32.0).color(p.text_tertiary_muted)),
+        Load::Failed => row().size(w, h).center().radius(dim::MEDIA_BORDER_RADIUS).fill(p.background_secondary_alt).child(icon(&icons::IMAGE_FILL, 32.0).color(p.text_tertiary_muted)),
         Load::Ready(px) if !cover => el().size(w, h).radius(dim::MEDIA_BORDER_RADIUS).pixels_fit(&px, rune::SurfaceFit::Fit),
         l => super::picture(l, w, h, dim::MEDIA_BORDER_RADIUS, p),
     };
@@ -752,7 +752,7 @@ fn media_tools<S: 'static>(
     };
     let (url, name) = (a.url.clone().unwrap_or_default(), a.filename.clone());
     let what = if t.video { "Download video" } else if t.animated { "Download GIF" } else { "Download image" };
-    let download = tool(&icons::DOWNLOAD_SIMPLE, crate::i18n::t(what), 20.0, Tool::Plain, p, move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx));
+    let download = tool(&icons::DOWNLOAD_SIMPLE_FILL, crate::i18n::t(what), 20.0, Tool::Plain, p, move |_: &mut S, tx: &mut Tx| save_as(acc, url.clone(), name.clone(), tx));
     let att = a.clone();
     let star = match saved {
         Some(id) => tool(&icons::STAR_FILL, crate::i18n::t("Remove from favorites"), 20.0, Tool::Active, p, move |s: &mut S, _: &mut Tx| {
@@ -832,7 +832,7 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
             .fill(rgba(255, 255, 255, 0.14))
             .hover(rgba(255, 255, 255, 0.22))
             .cursor(rune::Cursor::Pointer)
-            .child(icon(&icons::ARROW_SQUARE_OUT, 16.0).color(Color::WHITE))
+            .child(icon(&icons::ARROW_SQUARE_OUT_FILL, 16.0).color(Color::WHITE))
             .child(text(crate::i18n::t("Open in browser")).font(font(13.0, 600.0).lh(16.0)).color(Color::WHITE))
             .on_press_tx(move |_: &mut S, tx: &mut Tx| {
                 let _ = tx.open_url(&url);
@@ -867,7 +867,7 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
         .child(text(format!("{} / {}", clock(clip.time()), clock(dur))).font(font(12.0, 500.0).mono().lh(16.0)).color(Color::WHITE))
         .child(el().grow(1.0).min_w(0.0).px(8.0).child(seek))
         .child(hud_button(if clip.muted() { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL }, crate::i18n::t("Mute"), move |_: &mut S| c3.set_muted(!c3.muted())))
-        .child(hud_button(&icons::CORNERS_OUT, "Full screen", move |s: &mut S| {
+        .child(hud_button(&icons::CORNERS_OUT_FILL, "Full screen", move |s: &mut S| {
             acc(s).media_ui.playing = None;
             open(s)
         }));
@@ -964,15 +964,15 @@ pub fn audio_player<S: 'static>(st: &ShellState, key: &str, a: &Attachment, p: &
 fn file_icon(name: &str) -> &'static rune::Icon {
     let ext = name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
     match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" => &icons::FILE_IMAGE,
-        "pdf" => &icons::FILE_PDF,
-        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => &icons::FILE_ARCHIVE,
-        "mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" | "wma" => &icons::FILE_AUDIO,
-        "mp4" | "webm" | "mov" | "avi" | "mkv" | "flv" | "wmv" => &icons::FILE_VIDEO,
-        "js" | "jsx" | "ts" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "css" | "html" | "json" | "xml" | "yml" | "yaml" | "sh" | "go" | "rs" | "rb" | "php" => &icons::FILE_CODE,
-        "xls" | "xlsx" | "csv" => &icons::FILE_XLS,
-        "ppt" | "pptx" => &icons::FILE_PPT,
-        _ => &icons::FILE_TEXT,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "svg" | "bmp" | "ico" => &icons::FILE_IMAGE_FILL,
+        "pdf" => &icons::FILE_PDF_FILL,
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "xz" => &icons::FILE_ARCHIVE_FILL,
+        "mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" | "wma" => &icons::FILE_AUDIO_FILL,
+        "mp4" | "webm" | "mov" | "avi" | "mkv" | "flv" | "wmv" => &icons::FILE_VIDEO_FILL,
+        "js" | "jsx" | "ts" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "css" | "html" | "json" | "xml" | "yml" | "yaml" | "sh" | "go" | "rs" | "rb" | "php" => &icons::FILE_CODE_FILL,
+        "xls" | "xlsx" | "csv" => &icons::FILE_XLS_FILL,
+        "ppt" | "pptx" => &icons::FILE_PPT_FILL,
+        _ => &icons::FILE_TEXT_FILL,
     }
 }
 

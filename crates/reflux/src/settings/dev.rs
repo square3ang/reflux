@@ -111,7 +111,7 @@ pub(super) fn applications<S: 'static>(st: &ShellState, p: &Palette, acc: ShellA
             .py(32.0)
             .gap(8.0)
             .items_center()
-            .child(icon(&icons::APP_WINDOW, 48.0).color(p.text_tertiary))
+            .child(icon(&icons::APP_WINDOW_FILL, 48.0).color(p.text_tertiary))
             .child(text(t("No applications yet")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
             .child(muted(tf("Create your first application to get started with the {apiName}.", &[("apiName", "Fluxer API")]), p))
     } else {
@@ -205,7 +205,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
                 .gap(8.0)
                 .items_end()
                 .child(col().grow(1.0).min_w(0.0).gap(8.0).child(label(t("Application ID"), p)).child(text(id.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).selectable(true)))
-                .child(Button::new(t("Copy ID")).variant(ButtonVariant::Secondary).icon(&icons::COPY).key("dev-copy-id").on_press_tx(move |_: &mut S, tx: &mut rune::Tx| tx.copy(copy_id.clone())).el(p)),
+                .child(Button::new(t("Copy ID")).variant(ButtonVariant::Secondary).icon(&icons::COPY_FILL).key("dev-copy-id").on_press_tx(move |_: &mut S, tx: &mut rune::Tx| tx.copy(copy_id.clone())).el(p)),
         );
 
     // Application information.
@@ -220,7 +220,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
                 .child(text(r.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary).grow(1.0).min_w(0.0).truncate())
                 .child(
                     Button::new(String::new())
-                        .icon(&icons::TRASH)
+                        .icon(&icons::TRASH_FILL)
                         .square()
                         .variant(ButtonVariant::Secondary)
                         .key(format!("dev-redir-del-{i}"))

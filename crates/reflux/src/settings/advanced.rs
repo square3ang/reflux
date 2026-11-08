@@ -470,7 +470,7 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
                 None if DIRECT.contains(&id) => return None,
                 None if tab != "advanced_settings" && super::visible_id(tab, store, st.premium) => crate::ui::Button::new(t("Open"))
                         .variant(ButtonVariant::Secondary)
-                        .icon_right(&icons::ARROW_RIGHT)
+                        .icon_right(&icons::ARROW_RIGHT_FILL)
                         .key(format!("advanced-open-{id}"))
                     .on_press(move |s: &mut S| super::open_tab(acc(s), tab))
                     .el(p),

@@ -198,7 +198,7 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         })
         .child(icon(&icons::STAR_FILL, 16.0).color(p.text_primary))
         .child(text("Favorites").font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).truncate().grow(1.0).shrink())
-        .child(icon(if open { &icons::X } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_primary))
+        .child(icon(if open { &icons::X_FILL } else { &icons::CARET_DOWN_BOLD }, 16.0).color(p.text_primary))
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(p.user_area_divider_color, p.background_secondary)));
     let a = mine(st);
     let hide = a.hide_muted_favorites;

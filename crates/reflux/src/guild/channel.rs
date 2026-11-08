@@ -20,10 +20,10 @@ use crate::i18n::t;
 
 /// (id, label, icon, permission needed).
 const TABS: &[(&str, &str, &Icon, P)] = &[
-    ("overview", "Overview", &icons::GEAR, P::MANAGE_CHANNELS),
-    ("permissions", "Permissions", &icons::SHIELD, P::MANAGE_ROLES),
-    ("invites", "Invites", &icons::TICKET, P::MANAGE_CHANNELS),
-    ("webhooks", "Webhooks", &icons::WEBHOOKS_LOGO, P::MANAGE_WEBHOOKS),
+    ("overview", "Overview", &icons::GEAR_FILL, P::MANAGE_CHANNELS),
+    ("permissions", "Permissions", &icons::SHIELD_FILL, P::MANAGE_ROLES),
+    ("invites", "Invites", &icons::TICKET_FILL, P::MANAGE_CHANNELS),
+    ("webhooks", "Webhooks", &icons::WEBHOOKS_LOGO_FILL, P::MANAGE_WEBHOOKS),
 ];
 
 /// The first tab you may open on a channel, if any.
@@ -92,7 +92,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, channel: Snowflake, tab:
     let mut nav = col().w_full().gap(3.0).child(nav_group(None, items, p));
     if have.contains(P::MANAGE_CHANNELS) {
         let label = if ch.kind == ChannelType::GUILD_CATEGORY { t("Delete category") } else { t("Delete channel") };
-        nav = nav.child(nav_item(&icons::TRASH, label, false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteChannel(channel))));
+        nav = nav.child(nav_item(&icons::TRASH_FILL, label, false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteChannel(channel))));
     }
     let label = TABS.iter().find(|t| t.0 == tab).map_or(t("Channel settings"), |x| t(x.1));
     let body = match tab {

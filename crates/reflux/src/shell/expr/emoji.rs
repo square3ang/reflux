@@ -20,7 +20,7 @@ const GRID: Grid = Grid { cell: 48.0, row_h: 48.0, cols: 11, kind: "emoji" };
 
 /// The unicode categories' rail icons, in [`data::CATEGORIES`] order.
 const CAT_ICONS: [&rune::Icon; 8] =
-    [&icons::SMILEY, &icons::LEAF, &icons::BOWL_FOOD, &icons::GAME_CONTROLLER, &icons::BICYCLE, &icons::MAGNET, &icons::HEART, &icons::FLAG];
+    [&icons::SMILEY_FILL, &icons::LEAF_FILL, &icons::BOWL_FOOD_FILL, &icons::GAME_CONTROLLER_FILL, &icons::BICYCLE_FILL, &icons::MAGNET_FILL, &icons::HEART_FILL, &icons::FLAG_FILL];
 
 /// The surrogate a unicode emoji sends at skin tone `tone`.
 fn surrogate(e: &Emoji, tone: u8) -> &str {

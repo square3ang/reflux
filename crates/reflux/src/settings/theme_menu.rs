@@ -100,8 +100,8 @@ pub fn menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer
     };
     let mut m = Menu::new(menu_id(&th.id))
         .placement(Placement::BottomEnd)
-        .item(MenuItem::new("theme-details", t("Edit details")).icon(&icons::PENCIL_SIMPLE).on_select(with(|s, acc, id| acc(s).open_account_modal(AccountModal::ThemeDetails(id)))))
-        .item(MenuItem::new("theme-css", t(if read_only(th) { "View CSS" } else { "Edit CSS" })).icon(&icons::FILE_CSS).on_select({
+        .item(MenuItem::new("theme-details", t("Edit details")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(with(|s, acc, id| acc(s).open_account_modal(AccountModal::ThemeDetails(id)))))
+        .item(MenuItem::new("theme-css", t(if read_only(th) { "View CSS" } else { "Edit CSS" })).icon(&icons::FILE_CSS_FILL).on_select({
             let (id, pal) = (id.clone(), *p);
             move |s: &mut S| {
                 if let Some(th) = acc(s).prefs.look.themes.iter().find(|x| x.id == id) {
@@ -110,20 +110,20 @@ pub fn menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer
             }
         }));
     if at.is_some_and(|i| i > 0) {
-        m = m.item(MenuItem::new("theme-up", t("Move up")).icon(&icons::ARROW_UP).on_select(with(|s, acc, id| update(s, acc, move |l| move_enabled(l, &id, -1)))));
+        m = m.item(MenuItem::new("theme-up", t("Move up")).icon(&icons::ARROW_UP_FILL).on_select(with(|s, acc, id| update(s, acc, move |l| move_enabled(l, &id, -1)))));
     }
     if at.is_some_and(|i| i + 1 < n) {
-        m = m.item(MenuItem::new("theme-down", t("Move down")).icon(&icons::ARROW_DOWN).on_select(with(|s, acc, id| update(s, acc, move |l| move_enabled(l, &id, 1)))));
+        m = m.item(MenuItem::new("theme-down", t("Move down")).icon(&icons::ARROW_DOWN_FILL).on_select(with(|s, acc, id| update(s, acc, move |l| move_enabled(l, &id, 1)))));
     }
     if th.linked_path.is_none() {
         let id = th.id.clone();
-        m = m.item(MenuItem::new("theme-link", t("Link file")).icon(&icons::LINK_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| link(acc, id.clone(), tx)));
+        m = m.item(MenuItem::new("theme-link", t("Link file")).icon(&icons::LINK_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| link(acc, id.clone(), tx)));
     } else if th.folder_path.is_none() {
-        m = m.item(MenuItem::new("theme-unlink", t("Unlink")).icon(&icons::LINK_BREAK).on_select(with(|s, acc, id| update(s, acc, move |l| unlink(l, &id, now())))));
+        m = m.item(MenuItem::new("theme-unlink", t("Unlink")).icon(&icons::LINK_BREAK_FILL).on_select(with(|s, acc, id| update(s, acc, move |l| unlink(l, &id, now())))));
     }
     let (css, file) = (th.css.clone(), if th.file_name.to_lowercase().ends_with(".css") { th.file_name.clone() } else { format!("{}.css", th.file_name) });
     m = m
-        .item(MenuItem::new("theme-export", t("Export")).icon(&icons::DOWNLOAD_SIMPLE).on_select_tx(move |_: &mut S, tx: &mut Tx| {
+        .item(MenuItem::new("theme-export", t("Export")).icon(&icons::DOWNLOAD_SIMPLE_FILL).on_select_tx(move |_: &mut S, tx: &mut Tx| {
             let css = css.clone();
             let options = rune::FileDialogOptions { title: t("Export").into(), file_name: Some(file.clone()), ..Default::default() }.filter("CSS", &["css"]);
             tx.save_file(options, move |s: &mut S, r, _| {
@@ -134,9 +134,9 @@ pub fn menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer
                 }
             });
         }))
-        .item(MenuItem::new("theme-duplicate", t("Duplicate")).icon(&icons::COPY).on_select(with(|s, acc, id| update(s, acc, move |l| duplicate(l, &id, now())))));
+        .item(MenuItem::new("theme-duplicate", t("Duplicate")).icon(&icons::COPY_FILL).on_select(with(|s, acc, id| update(s, acc, move |l| duplicate(l, &id, now())))));
     if th.folder_path.is_none() {
-        m = m.separator().item(MenuItem::new("theme-delete", t("Delete theme")).icon(&icons::TRASH).danger().on_select(with(|s, acc, id| acc(s).open_account_modal(AccountModal::ThemeDelete(id)))));
+        m = m.separator().item(MenuItem::new("theme-delete", t("Delete theme")).icon(&icons::TRASH_FILL).danger().on_select(with(|s, acc, id| acc(s).open_account_modal(AccountModal::ThemeDelete(id)))));
     }
     m.el(&st.popups, pops, p, layer);
 }

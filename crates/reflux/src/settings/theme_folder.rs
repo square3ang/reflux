@@ -306,7 +306,7 @@ pub fn rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
                 .radius(8.0)
                 .fill(p.form_surface_background)
                 .border(1.0, p.background_modifier_accent)
-                .child(rune::icon(&crate::icons::FOLDER_OPEN, 18.0).color(p.text_secondary))
+                .child(rune::icon(&crate::icons::FOLDER_OPEN_FILL, 18.0).color(p.text_secondary))
                 .child(info)
                 .child(control)
         })

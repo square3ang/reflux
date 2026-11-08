@@ -269,9 +269,9 @@ pub fn parts(gal: &Gallery, stacked: bool) -> (El, Vec<El>) {
         .on_secondary_press(|s: &mut State, at, _| pops(s).open_at("g-menu", [at.x, at.y]));
     Menu::new("g-menu")
         .group("Message")
-        .item(MenuItem::new("reply", "Reply").icon(&icons::ARROW_BEND_UP_LEFT))
-        .item(MenuItem::new("edit", "Edit message").icon(&icons::PENCIL_SIMPLE).shortcut("Ctrl+E"))
-        .item(MenuItem::new("copy", "Copy text").icon(&icons::COPY).hint("Copies the raw markdown"))
+        .item(MenuItem::new("reply", "Reply").icon(&icons::ARROW_BEND_UP_LEFT_FILL))
+        .item(MenuItem::new("edit", "Edit message").icon(&icons::PENCIL_SIMPLE_FILL).shortcut("Ctrl+E"))
+        .item(MenuItem::new("copy", "Copy text").icon(&icons::COPY_FILL).hint("Copies the raw markdown"))
         .separator()
         .submenu(
             "status",
@@ -287,7 +287,7 @@ pub fn parts(gal: &Gallery, stacked: bool) -> (El, Vec<El>) {
         .item(MenuItem::new("nope", "Disabled item").disabled(true))
         .separator()
         .separator()
-        .item(MenuItem::new("delete", "Delete message").icon(&icons::TRASH).danger())
+        .item(MenuItem::new("delete", "Delete message").icon(&icons::TRASH_FILL).danger())
         .el(&gal.popups, pops, p, &mut layer);
     let list = col().w_full().children((1..=30).map(|i| {
         row().w_full().h(32.0).px(10.0).center_y().child(text(format!("Row {i}")).font(font(14.0, 400.0)).color(p.text_primary))

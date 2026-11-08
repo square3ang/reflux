@@ -104,7 +104,7 @@ fn view(e: &Editor, cx: &mut Cx<Editor>) -> El {
             Button::new(t("Move back into Fluxer"))
                 .variant(ButtonVariant::Secondary)
                 .size(ButtonSize::Small)
-                .icon(&crate::icons::ARROW_SQUARE_IN)
+                .icon(&crate::icons::ARROW_SQUARE_IN_FILL)
                 .on_press(|_: &mut Editor| hide())
                 .el(p),
         )

@@ -195,7 +195,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             let pic = match st.media.get(&full_url(it, st.media.scale())) {
                 Load::Ready(px) => pic.pixels_fit(&px, rune::SurfaceFit::Fit),
                 Load::Pending => pic.child(fill().center().child(crate::ui::spinner(Color::WHITE))),
-                Load::Failed => pic.fill(p.background_secondary_alt).child(fill().center().child(icon(&icons::IMAGE, 48.0).color(p.text_tertiary_muted))),
+                Load::Failed => pic.fill(p.background_secondary_alt).child(fill().center().child(icon(&icons::IMAGE_FILL, 48.0).color(p.text_tertiary_muted))),
             };
             if it.video {
                 let (k, url, failed) = (key.clone(), it.url.clone(), clip.as_ref().map(|c| c.state()));

@@ -214,7 +214,7 @@ fn youtube<S: 'static>(st: &ShellState, e: &Embed, v: &EmbedMedia, p: &Palette, 
         .border(1.0, rgba(255, 255, 255, 0.12))
         .backdrop_blur(16.0)
         .child(button(&icons::PLAY_FILL, t("Play video"), url.clone()))
-        .child(button(&icons::ARROW_SQUARE_OUT, t("Open in new tab"), url));
+        .child(button(&icons::ARROW_SQUARE_OUT_FILL, t("Open in new tab"), url));
     super::picture(poster, w, h, 4.0, p).fill(p.background_primary).child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(group))
 }
 

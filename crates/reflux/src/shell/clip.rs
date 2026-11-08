@@ -161,7 +161,7 @@ pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellA
         }))
         .child(el().w(64.0).child(volume));
     if let Some(full) = full {
-        bar = bar.child(hud(&icons::CORNERS_OUT, crate::i18n::t("Enter fullscreen"), move |s: &mut S| full(s)));
+        bar = bar.child(hud(&icons::CORNERS_OUT_FILL, crate::i18n::t("Enter fullscreen"), move |s: &mut S| full(s)));
     }
     frame.child(el().w_full().h_full().pixels_fit(&c.pixels, rune::SurfaceFit::Fit)).child(bar)
 }

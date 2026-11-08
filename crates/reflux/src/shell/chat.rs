@@ -252,7 +252,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     }
     let mut right = row().gap(dim::CHANNEL_HEADER_ACTIONS_GAP).center_y();
     let cid = c.id;
-    let pins = action(&icons::PUSH_PIN, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
+    let pins = action(&icons::PUSH_PIN_FILL, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
         .key(super::pins::POPOUT)
         .on_press(move |s: &mut S| super::pins::open(acc(s), cid));
     let forum = reflux_store::threads::is_forum(c.kind);
@@ -261,15 +261,15 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         right = right.children(super::threads::header_button(store, st, c, p, acc));
         if !forum {
             right = right.child(pins).child(
-                action(&icons::USERS, "Toggle Member List", st.member_list)
+                action(&icons::USERS_FILL, "Toggle Member List", st.member_list)
                     .key("toggle-members")
                     .on_press(move |s: &mut S| acc(s).member_list ^= true),
             );
         }
     } else {
         right = right
-            .child(super::call::header_action(store, st, c, false, action(&icons::PHONE, "Start Voice Call", false), acc))
-            .child(super::call::header_action(store, st, c, true, action(&icons::VIDEO_CAMERA, "Start Video Call", false), acc))
+            .child(super::call::header_action(store, st, c, false, action(&icons::PHONE_FILL, "Start Voice Call", false), acc))
+            .child(super::call::header_action(store, st, c, true, action(&icons::VIDEO_CAMERA_FILL, "Start Video Call", false), acc))
             .child(pins);
     }
     if !forum {
@@ -1608,15 +1608,15 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 .gap(dim::COMPOSER_ACTION_GAP)
                 .center_y()
                 .key("composer-expr")
-                .children((look.show_gif_button && super::expr::gif::enabled(st)).then(|| button(&icons::GIF, t("GIFs")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
-                .children(look.show_memes_button.then(|| button(&icons::IMAGE_SQUARE, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes))))
-                .children(look.show_stickers_button.then(|| button(&icons::STICKER, t("Stickers")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers))))
-                .children(look.show_emoji_button.then(|| button(&icons::SMILEY, t("Emojis")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))))
+                .children((look.show_gif_button && super::expr::gif::enabled(st)).then(|| button(&icons::GIF_FILL, t("GIFs")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Gifs))))
+                .children(look.show_memes_button.then(|| button(&icons::IMAGE_SQUARE_FILL, "Memes").on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Memes))))
+                .children(look.show_stickers_button.then(|| button(&icons::STICKER_FILL, t("Stickers")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Stickers))))
+                .children(look.show_emoji_button.then(|| button(&icons::SMILEY_FILL, t("Emojis")).on_press(move |s: &mut S| super::expr::toggle(acc(s), cid, super::expr::Tab::Emojis))))
                 .children(look.show_send_button.then(|| {
                     // `desktopSendDisabled`: nothing to send, over the limit or in slowmode.
                     let empty = draft.text.trim().is_empty() && (slot == Slot::Create || (if slot == Slot::Pane { &st.threads.uploads } else { &st.uploads }).is_empty());
                     let blocked = empty || draft.text.chars().count() > limit || st.cooldowns.get(&cid).is_some_and(|t| *t > st.now_ms) || mock_slow.is_some();
-                    let b = button(&icons::PAPER_PLANE_RIGHT, t("Send message")).key(format!("composer-send-{}", slot as u8));
+                    let b = button(&icons::PAPER_PLANE_RIGHT_FILL, t("Send message")).key(format!("composer-send-{}", slot as u8));
                     let submit = submit.clone();
                     if blocked { b.opacity(0.5) } else { b.on_press(move |s: &mut S| submit(s)) }
                 }))

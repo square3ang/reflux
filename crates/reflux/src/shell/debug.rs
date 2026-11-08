@@ -43,7 +43,7 @@ impl ShellState {
 
 /// A developer-mode menu item that opens `subject`'s debug modal.
 pub fn item<S: 'static>(id: &str, label: &str, subject: Subject, acc: ShellAccess<S>) -> MenuItem<S> {
-    MenuItem::new(id.to_string(), label.to_string()).icon(&crate::icons::BUG).on_select(move |s: &mut S| acc(s).open_debug(subject))
+    MenuItem::new(id.to_string(), label.to_string()).icon(&crate::icons::BUG_FILL).on_select(move |s: &mut S| acc(s).open_debug(subject))
 }
 
 fn json_of(v: impl serde::Serialize) -> Value {

@@ -461,7 +461,7 @@ pub(super) fn starter_message<S: 'static>(store: &Store, st: &ShellState, m: &Me
             .px(16.0)
             .gap(8.0)
             .center_y()
-            .child(icon(&icons::TRASH, 16.0).color(p.text_tertiary))
+            .child(icon(&icons::TRASH_FILL, 16.0).color(p.text_tertiary))
             .child(text(t("Original message was deleted.")).font(font(14.0, 400.0).italic().lh(20.0)).color(p.text_tertiary)),
     }
 }
@@ -491,7 +491,7 @@ fn browser_parent<'a>(store: &'a Store, c: &'a Channel) -> Option<&'a Channel> {
 /// The header's Threads button (`ThreadsButton`), for text and announcement channels and threads.
 pub(super) fn header_button<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     browser_parent(store, c)?;
-    Some(header_icon(&icons::CHATS, t("Threads"), st.popups.is_open(BROWSER), p).key(BROWSER).on_press(move |s: &mut S| {
+    Some(header_icon(&icons::CHATS_FILL, t("Threads"), st.popups.is_open(BROWSER), p).key(BROWSER).on_press(move |s: &mut S| {
         let st = acc(s);
         st.popups.toggle(BROWSER);
         st.threads.tab = Tab::Active;
@@ -530,7 +530,7 @@ pub(super) fn parent_crumb<S: 'static>(store: &Store, c: &Channel, p: &Palette, 
 pub(super) fn notification_button<S: 'static>(st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let id = t.id;
     let open = st.popups.is_open(MENU) && st.threads.menu == Some(id) && st.popups.at.is_none();
-    header_icon(&icons::BELL, "Notification Settings", open, p).key(MENU).on_press(move |s: &mut S| {
+    header_icon(&icons::BELL_FILL, "Notification Settings", open, p).key(MENU).on_press(move |s: &mut S| {
         let st = acc(s);
         st.threads.menu = Some(id);
         st.popups.at = None;
@@ -559,8 +559,8 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
         let id = t.id;
         if !forum_post {
             actions = actions
-                .child(header_icon(&icons::USERS, crate::i18n::t("Thread members"), st.popups.is_open(MEMBERS), p).key(MEMBERS).on_press(move |s: &mut S| acc(s).popups.toggle(MEMBERS)))
-                .child(header_icon(&icons::ARROWS_OUT_SIMPLE, crate::i18n::t("Open in full view"), false, p).on_press(move |s: &mut S| open_full(acc(s), id)));
+                .child(header_icon(&icons::USERS_FILL, crate::i18n::t("Thread members"), st.popups.is_open(MEMBERS), p).key(MEMBERS).on_press(move |s: &mut S| acc(s).popups.toggle(MEMBERS)))
+                .child(header_icon(&icons::ARROWS_OUT_SIMPLE_FILL, crate::i18n::t("Open in full view"), false, p).on_press(move |s: &mut S| open_full(acc(s), id)));
         }
         actions = actions.child(header_icon(&icons::DOTS_THREE_BOLD, crate::i18n::t("Thread settings"), false, p).key(MENU).on_press(move |s: &mut S| {
             let st = acc(s);
@@ -581,7 +581,7 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
         .gap(dim::CHANNEL_HEADER_NAME_GAP)
         .center_y();
     if !forum_post {
-        header = header.child(icon(&icons::CHATS, dim::CHANNEL_HEADER_ICON_SIZE).color(p.text_primary_muted));
+        header = header.child(icon(&icons::CHATS_FILL, dim::CHANNEL_HEADER_ICON_SIZE).color(p.text_primary_muted));
     }
     header = header
         .child(text(title).font(font(16.0, 500.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink())
@@ -659,7 +659,7 @@ pub(super) fn composer_area<S: 'static>(store: &Store, st: &ShellState, t: &Chan
                     .center()
                     .radius(dim::FOOTER_BOX_RADIUS)
                     .fill(p.background_textarea)
-                    .child(icon(&icons::LOCK_SIMPLE, 20.0).color(p.text_primary_muted))
+                    .child(icon(&icons::LOCK_SIMPLE_FILL, 20.0).color(p.text_primary_muted))
                     .child(text(crate::i18n::t("This thread is locked. Only moderators can send messages.")).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary_muted)),
             ),
         ];
@@ -667,11 +667,11 @@ pub(super) fn composer_area<S: 'static>(store: &Store, st: &ShellState, t: &Chan
     let mut out = Vec::new();
     let post = t.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| rules::is_forum(p.kind));
     if rules::is_archived(t) {
-        out.push(notice(&icons::ARCHIVE, crate::i18n::t("This thread is closed. Sending a message will open it again."), None));
+        out.push(notice(&icons::ARCHIVE_FILL, crate::i18n::t("This thread is closed. Sending a message will open it again."), None));
     } else if !post && !r.member && r.join {
         let id = t.id;
         let join = Button::new(crate::i18n::t("Join thread")).size(ButtonSize::Small).key(format!("thread-join-{id}")).on_press(move |s: &mut S| op(acc(s), Op::Join(id))).el(p);
-        out.push(notice(&icons::CHATS, crate::i18n::t("Join this thread to follow it in your channel list and get notifications."), Some(join)));
+        out.push(notice(&icons::CHATS_FILL, crate::i18n::t("Join this thread to follow it in your channel list and get notifications."), Some(join)));
     }
     out.push(super::chat::composer(store, st, t, p, acc, if pane { super::chat::Slot::Pane } else { super::chat::Slot::Main }));
     out
@@ -691,7 +691,7 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
         .w_full()
         .gap(16.0)
         .padding(16.0)
-        .child(row().size(64.0, 64.0).center().radius(32.0).fill(p.background_modifier_accent).child(icon(&icons::CHATS, 32.0).color(p.text_primary)))
+        .child(row().size(64.0, 64.0).center().radius(32.0).fill(p.background_modifier_accent).child(icon(&icons::CHATS_FILL, 32.0).color(p.text_primary)))
         .child(
             Input::new("thread-name", &st.threads.name, move |s: &mut S| &mut acc(s).threads.name)
                 .label(t("Thread name"))
@@ -824,7 +824,7 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
         .pr(12.0)
         .gap(8.0)
         .center_y()
-        .child(icon(&icons::CHATS, 20.0).color(p.text_primary_muted))
+        .child(icon(&icons::CHATS_FILL, 20.0).color(p.text_primary_muted))
         .child(text(t("Threads")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0));
     if store.can_create_thread(parent, CreateKind::Public) || store.can_create_thread(parent, CreateKind::Private) {
         header = header.child(Button::new(t("Create thread")).size(ButtonSize::Small).key("thread-browser-create").on_press(move |s: &mut S| start_create(acc(s), pid, None)).el(p));
@@ -1023,7 +1023,7 @@ fn empty_search(p: &Palette) -> El {
         .padding(32.0)
         .gap(8.0)
         .center()
-        .child(icon(&icons::CHATS, 48.0).color(p.text_tertiary))
+        .child(icon(&icons::CHATS_FILL, 48.0).color(p.text_tertiary))
         .child(text(t("No threads match")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
         .child(text(t("Try a different name or check the other tab.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
 }
@@ -1042,7 +1042,7 @@ pub fn browser_search(store: &Store, st: &ShellState) -> Option<(Snowflake, Stri
 fn browser_item<S: 'static>(st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut meta = row().gap(6.0).center_y();
     if t.kind == ChannelType::PRIVATE_THREAD {
-        meta = meta.child(icon(&icons::LOCK_SIMPLE, 14.0).color(p.text_primary_muted));
+        meta = meta.child(icon(&icons::LOCK_SIMPLE_FILL, 14.0).color(p.text_primary_muted));
     }
     let small = font(13.0, 400.0).lh(16.0);
     meta = meta
@@ -1071,7 +1071,7 @@ fn empty(p: &Palette) -> El {
         .padding(32.0)
         .gap(8.0)
         .center()
-        .child(icon(&icons::CHATS, 48.0).color(p.text_tertiary))
+        .child(icon(&icons::CHATS_FILL, 48.0).color(p.text_tertiary))
         .child(text(t("There are no threads")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
         .child(
             text(t("Stay focused on a conversation with a thread, a temporary text channel."))
@@ -1131,20 +1131,20 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     }
     if store.has_unread(id) || store.mention_count(id) > 0 {
         let last = t.last_message_id.unwrap_or(id);
-        m = m.item(MenuItem::new("thread-read", "Mark as read").icon(&icons::ENVELOPE_OPEN).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(vec![(id, last)])))).separator();
+        m = m.item(MenuItem::new("thread-read", "Mark as read").icon(&icons::ENVELOPE_OPEN_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::MarkRead(vec![(id, last)])))).separator();
     }
     let parent = t.parent_id;
     if st.threads.panel != Some(Panel::Thread(id)) && st.channel != Some(id) {
-        m = m.item(MenuItem::new("thread-open", crate::i18n::t("Open thread")).icon(&icons::ARROW_SQUARE_OUT).on_select(move |s: &mut S| open(acc(s), parent, id)));
+        m = m.item(MenuItem::new("thread-open", crate::i18n::t("Open thread")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(move |s: &mut S| open(acc(s), parent, id)));
     }
     if st.channel != Some(id) {
-        m = m.item(MenuItem::new("thread-full", crate::i18n::t("Open in full view")).icon(&icons::ARROWS_OUT_SIMPLE).on_select(move |s: &mut S| open_full(acc(s), id)));
+        m = m.item(MenuItem::new("thread-full", crate::i18n::t("Open in full view")).icon(&icons::ARROWS_OUT_SIMPLE_FILL).on_select(move |s: &mut S| open_full(acc(s), id)));
     }
     m = m.separator();
     if r.member {
         let muted = t.member.as_ref().is_some_and(|x| x.muted);
         m = m
-            .item(MenuItem::new("thread-mute", if muted { crate::i18n::t("Unmute thread") } else { crate::i18n::t("Mute thread") }).icon(&icons::BELL_SLASH).on_select(move |s: &mut S| {
+            .item(MenuItem::new("thread-mute", if muted { crate::i18n::t("Unmute thread") } else { crate::i18n::t("Mute thread") }).icon(&icons::BELL_SLASH_FILL).on_select(move |s: &mut S| {
                 op(acc(s), Op::MemberSettings { thread: id, body: if muted { serde_json::json!({ "muted": false }) } else { serde_json::json!({ "muted": true, "mute_config": null }) } })
             }))
             .submenu("thread-notify", crate::i18n::t("Notification settings"), notification_items(store, t, acc))
@@ -1153,7 +1153,7 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     if r.edit {
         let meta = t.thread_metadata.clone().unwrap_or_default();
         let (tname, auto, invitable, slowmode) = (t.name.clone().unwrap_or_default(), meta.auto_archive_duration.max(60), meta.invitable.unwrap_or(true), t.rate_limit_per_user);
-        m = m.item(MenuItem::new("thread-edit", crate::i18n::t("Edit thread")).icon(&icons::PENCIL_SIMPLE).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-edit", crate::i18n::t("Edit thread")).icon(&icons::PENCIL_SIMPLE_FILL).on_select(move |s: &mut S| {
             let st = acc(s);
             st.popups.close();
             st.threads.settings = Some(Settings { thread: id, name: TextEdit::new(tname.clone()), auto_archive: auto, invitable, slowmode });
@@ -1161,22 +1161,22 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
     }
     let archived = rules::is_archived(t);
     if if archived { r.unarchive } else { r.archive } {
-        m = m.item(MenuItem::new("thread-archive", if archived { crate::i18n::t("Open thread again") } else { crate::i18n::t("Close thread") }).icon(&icons::ARCHIVE).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-archive", if archived { crate::i18n::t("Open thread again") } else { crate::i18n::t("Close thread") }).icon(&icons::ARCHIVE_FILL).on_select(move |s: &mut S| {
             op(acc(s), Op::Patch { channel: id, body: serde_json::json!({ "archived": !archived }) })
         }));
     }
     if r.lock {
         let locked = rules::is_locked(t);
-        m = m.item(MenuItem::new("thread-lock", if locked { crate::i18n::t("Unlock thread") } else { crate::i18n::t("Lock thread") }).icon(if locked { &icons::LOCK_SIMPLE_OPEN } else { &icons::LOCK_SIMPLE }).on_select(move |s: &mut S| {
+        m = m.item(MenuItem::new("thread-lock", if locked { crate::i18n::t("Unlock thread") } else { crate::i18n::t("Lock thread") }).icon(if locked { &icons::LOCK_SIMPLE_OPEN_FILL } else { &icons::LOCK_SIMPLE_FILL }).on_select(move |s: &mut S| {
             op(acc(s), Op::Patch { channel: id, body: serde_json::json!({ "locked": !locked }) })
         }));
     }
     if !r.member && r.join {
-        m = m.item(MenuItem::new("thread-join", crate::i18n::t("Join thread")).icon(&icons::SIGN_IN).on_select(move |s: &mut S| op(acc(s), Op::Join(id))));
+        m = m.item(MenuItem::new("thread-join", crate::i18n::t("Join thread")).icon(&icons::SIGN_IN_FILL).on_select(move |s: &mut S| op(acc(s), Op::Join(id))));
     }
     if r.member && r.leave {
         let private = t.kind == ChannelType::PRIVATE_THREAD;
-        let mut item = MenuItem::new("thread-leave", crate::i18n::t("Leave thread")).icon(&icons::SIGN_OUT).on_select(move |s: &mut S| {
+        let mut item = MenuItem::new("thread-leave", crate::i18n::t("Leave thread")).icon(&icons::SIGN_OUT_FILL).on_select(move |s: &mut S| {
             let st = acc(s);
             if private {
                 st.threads.confirm = Some(Confirm::LeavePrivate(id));
@@ -1190,7 +1190,7 @@ fn menu<S: 'static>(store: &Store, st: &ShellState, t: &Channel, acc: ShellAcces
         m = m.item(item);
     }
     if r.delete {
-        m = m.item(MenuItem::new("thread-delete", crate::i18n::t("Delete thread")).icon(&icons::TRASH).danger().on_select(move |s: &mut S| acc(s).threads.confirm = Some(Confirm::Delete(id))));
+        m = m.item(MenuItem::new("thread-delete", crate::i18n::t("Delete thread")).icon(&icons::TRASH_FILL).danger().on_select(move |s: &mut S| acc(s).threads.confirm = Some(Confirm::Delete(id))));
     }
     m = m.separator();
     let link = format!("{}/channels/{}/{}", st.web_base.trim_end_matches('/'), t.guild_id.map_or("@me".into(), |g| g.to_string()), id);

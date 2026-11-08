@@ -1306,10 +1306,10 @@ pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
             sh.intents.push(Intent::Voice(Op::Settings));
         }))
         .child(viewer_button("stream-pin", if st.voice.stream_pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }, if st.voice.stream_pinned { t("Unpin stream") } else { t("Pin stream") }, st.voice.stream_pinned, p, move |s: &mut S| acc(s).voice.toggle_watch_pin()))
-        .child(viewer_button("stream-fullscreen", if st.voice.stream_fullscreen { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }, if st.voice.stream_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, st.voice.stream_fullscreen, p, move |s: &mut S| {
+        .child(viewer_button("stream-fullscreen", if st.voice.stream_fullscreen { &icons::CORNERS_IN_FILL } else { &icons::CORNERS_OUT_FILL }, if st.voice.stream_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, st.voice.stream_fullscreen, p, move |s: &mut S| {
             acc(s).voice.stream_fullscreen ^= true;
         }))
-        .child(viewer_button("stream-popout", &icons::ARROW_SQUARE_OUT, t("Pop out stream"), false, p, move |s: &mut S| {
+        .child(viewer_button("stream-popout", &icons::ARROW_SQUARE_OUT_FILL, t("Pop out stream"), false, p, move |s: &mut S| {
             acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
         }))
         .child(viewer_button("stream-settings", &icons::DOTS_THREE_BOLD, t("Stream settings"), false, p, move |s: &mut S| {
@@ -1640,13 +1640,13 @@ fn stream_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
         }))
         .separator()
         .item(MenuItem::new("stream-pin", if pinned { t("Unpin stream") } else { t("Pin stream") }).icon(if pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }).checkbox(pinned).on_select(move |s: &mut S| acc(s).voice.toggle_watch_pin()))
-        .item(MenuItem::new("stream-fullscreen", if full { t("Exit fullscreen") } else { t("Enter fullscreen") }).icon(if full { &icons::CORNERS_IN } else { &icons::CORNERS_OUT }).on_select(move |s: &mut S| {
+        .item(MenuItem::new("stream-fullscreen", if full { t("Exit fullscreen") } else { t("Enter fullscreen") }).icon(if full { &icons::CORNERS_IN_FILL } else { &icons::CORNERS_OUT_FILL }).on_select(move |s: &mut S| {
             acc(s).voice.stream_fullscreen ^= true;
         }))
-        .item(MenuItem::new("stream-popout", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT).on_select(move |s: &mut S| {
+        .item(MenuItem::new("stream-popout", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(move |s: &mut S| {
             acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
         }))
-        .item(MenuItem::new("stream-pip", t("Picture-in-picture")).icon(&icons::PICTURE_IN_PICTURE).on_select(move |s: &mut S| {
+        .item(MenuItem::new("stream-pip", t("Picture-in-picture")).icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(move |s: &mut S| {
             acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: true }))
         }));
     if failed {
