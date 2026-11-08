@@ -8,8 +8,7 @@
 //! `com.apple.security.device.screen-capture` and `com.apple.security.device.audio-input`
 //! entitlements (Fluxer ships both).
 
-/// The picker/settings id for the whole system mix (Windows and macOS).
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+/// The picker/settings id for the whole system mix (on Linux: every app but this one).
 pub const SYSTEM_ID: &str = "system";
 /// The mixer's sample rate; `StreamAudio::push` takes samples at this rate.
 #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
@@ -33,11 +32,11 @@ pub fn available() -> bool {
 
 /// Picker entries: `(setting id, label)`. Linux lists PipeWire applications; Windows and macOS
 /// offer the system mix.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 pub fn sources() -> Vec<(String, String)> {
     #[cfg(target_os = "linux")]
     {
-        if available() { crate::gst::audio_apps() } else { Vec::new() }
+        // `AudioSourcePickerLinux`: "Entire system audio" above the apps.
+        if available() { std::iter::once((SYSTEM_ID.to_string(), crate::i18n::t("Entire system audio").to_string())).chain(crate::gst::audio_apps()).collect() } else { Vec::new() }
     }
     #[cfg(any(windows, target_os = "macos"))]
     {

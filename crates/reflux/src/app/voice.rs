@@ -266,21 +266,11 @@ fn run_op(s: &mut State, op: Op) {
         }
         Op::UploadTrim => upload_trim(s),
         Op::PopOut { user, screen, pip } => crate::popout::open(s, user, screen, pip),
-        Op::LoadAudioSources => {
-            #[cfg(target_os = "linux")]
-            {
-                if crate::gst::available() {
-                    spawn(async move {
-                        let apps = tokio::task::spawn_blocking(crate::gst::audio_apps).await.unwrap_or_default();
-                        update(move |s| s.app.shell.voice.audio_sources = Some(apps));
-                    });
-                }
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                s.app.shell.voice.audio_sources = Some(crate::audio_share::sources());
-            }
-        }
+        // `pw-dump` on Linux runs off the UI thread.
+        Op::LoadAudioSources => spawn(async move {
+            let apps = tokio::task::spawn_blocking(crate::audio_share::sources).await.unwrap_or_default();
+            update(move |s| s.app.shell.voice.audio_sources = Some(apps));
+        }),
         Op::LoadScreenSources => {
             if reflux_voice::can_list_sources() && !rune::is_headless() && !s.app.voice.screen_sources_loading {
                 s.app.voice.screen_sources_loading = true;

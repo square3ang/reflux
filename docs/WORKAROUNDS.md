@@ -160,11 +160,11 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/real.rs:205` no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
 - `crates/reflux/src/app.rs:880` Rune shifts the offset by what lands above the view but not a running
 - `crates/reflux/src/app.rs:893` Rune's virtual list holds the topmost row in view, which at the top of what's
-- `crates/reflux/src/app/voice.rs:1124` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1310` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1758` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1767` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
-- `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
+- `crates/reflux/src/app/voice.rs:1114` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1300` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1748` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1757` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/audio_share/mod.rs:167` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
@@ -177,6 +177,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
+- `crates/reflux/src/gst.rs:386` Fluxer's virtmic links new streams as PipeWire announces them; this rescans
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
 - `crates/reflux/src/i18n.rs:11` Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
 - `crates/reflux/src/mf.rs:100` rodio's speed shifts the pitch (no `preservesPitch` like playbin's scaletempo);
@@ -186,7 +187,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/popout.rs:6` on Wayland the compositor ignores always-on-top and placement (winit can't ask for
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
-- `crates/reflux/src/session.rs:231` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
+- `crates/reflux/src/session.rs:230` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
 - `crates/reflux/src/settings/advanced.rs:551` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).

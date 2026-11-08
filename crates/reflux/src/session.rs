@@ -186,7 +186,6 @@ pub fn load() -> Saved {
     // `screenShareAudioDefaultOnMigratedV1`: Fluxer defaults `screenShareAudioSourceMode` to
     // `system`; old saves (and new ones) have no value, so turn it on once. After this flag,
     // `None` is the user's explicit "No audio" pick.
-    #[cfg(any(windows, target_os = "macos"))]
     if !s.screen_audio_defaulted {
         s.screen_audio_defaulted = true;
         if s.voice_settings.stream_audio.is_none() {

@@ -34,14 +34,26 @@ fn tight(data: &[u8], w: usize, h: usize, stride: usize) -> Vec<u8> {
 /// Applications playing audio, from `pw-dump`'s JSON: (`object.serial`, name), without our
 /// own process (its audio is the call).
 #[cfg_attr(not(all(feature = "gst", target_os = "linux")), allow(dead_code))]
-fn parse_apps(json: &str, own_pid: u32) -> Vec<(String, String)> {
+/// `running`: only streams PipeWire is playing now (a corked one can't negotiate a format).
+fn parse_apps(json: &str, own_pid: u32, running: bool) -> Vec<(String, String)> {
     let Ok(serde_json::Value::Array(objects)) = serde_json::from_str(json) else { return Vec::new() };
+    let ours = |v: &serde_json::Value| v.as_u64() == Some(own_pid as u64) || v.as_str() == Some(&own_pid.to_string());
+    // Our own output through the ALSA plugin ("PipeWire ALSA [reflux]") carries no process id;
+    // its client's `pipewire.sec.pid` does.
+    let own_clients: Vec<u64> = objects
+        .iter()
+        .filter(|o| o["type"] == "PipeWire:Interface:Client" && (ours(&o["info"]["props"]["pipewire.sec.pid"]) || ours(&o["info"]["props"]["application.process.id"])))
+        .filter_map(|o| o["id"].as_u64())
+        .collect();
     let mut out: Vec<(String, String)> = objects
         .iter()
         .filter_map(|o| {
             let props = &o["info"]["props"];
             (props["media.class"] == "Stream/Output/Audio").then_some(())?;
-            if props["application.process.id"].as_u64() == Some(own_pid as u64) || props["application.process.id"].as_str() == Some(&own_pid.to_string()) {
+            if running && o["info"]["state"] != "running" {
+                return None;
+            }
+            if ours(&props["application.process.id"]) || props["client.id"].as_u64().is_some_and(|c| own_clients.contains(&c)) {
                 return None;
             }
             let serial = match &props["object.serial"] {
@@ -295,16 +307,41 @@ mod imp {
 
     /// The applications playing audio right now (PipeWire), for screen share audio.
     pub fn audio_apps() -> Vec<(String, String)> {
+        apps(false)
+    }
+
+    fn apps(running: bool) -> Vec<(String, String)> {
         let out = std::process::Command::new("pw-dump").output();
         match out {
-            Ok(o) if o.status.success() => super::parse_apps(&String::from_utf8_lossy(&o.stdout), std::process::id()),
+            Ok(o) if o.status.success() => super::parse_apps(&String::from_utf8_lossy(&o.stdout), std::process::id(), running),
             _ => Vec::new(),
         }
     }
 
-    /// Captures one PipeWire node's audio as interleaved stereo f32 at 48 kHz.
+    /// Captures one PipeWire node's audio as interleaved stereo f32 at 48 kHz, or every
+    /// application's but ours mixed together ([`crate::audio_share::SYSTEM_ID`]).
     pub struct AudioCapture {
         pipeline: gst::Pipeline,
+        stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    }
+
+    fn stereo_caps() -> gst::Caps {
+        gst::Caps::builder("audio/x-raw").field("format", "F32LE").field("rate", 48_000i32).field("channels", 2i32).field("layout", "interleaved").build()
+    }
+
+    /// `pipewiresrc` for one node → the mixer.
+    fn add_branch(pipeline: &gst::Pipeline, mixer: &gst::Element, src: gst::Element) -> Option<()> {
+        let convert = gst::ElementFactory::make("audioconvert").build().ok()?;
+        let resample = gst::ElementFactory::make("audioresample").build().ok()?;
+        let filter = gst::ElementFactory::make("capsfilter").property("caps", stereo_caps()).build().ok()?;
+        let chain = [&src, &convert, &resample, &filter];
+        pipeline.add_many(chain).ok()?;
+        gst::Element::link_many(chain).ok()?;
+        filter.link(mixer).ok()?;
+        for e in chain {
+            let _ = e.sync_state_with_parent();
+        }
+        Some(())
     }
 
     impl AudioCapture {
@@ -312,6 +349,9 @@ mod imp {
         pub fn start(node: &str, mut sink: impl FnMut(&[f32]) + Send + 'static) -> Option<Self> {
             if !init() {
                 return None;
+            }
+            if node == crate::audio_share::SYSTEM_ID {
+                return Self::system(sink);
             }
             let src = gst::ElementFactory::make("pipewiresrc").property_from_str("target-object", node).build().ok()?;
             let convert = gst::ElementFactory::make("audioconvert").build().ok()?;
@@ -338,12 +378,78 @@ mod imp {
             pipeline.add_many([&src, &convert, &resample, appsink.upcast_ref()]).ok()?;
             gst::Element::link_many([&src, &convert, &resample, appsink.upcast_ref()]).ok()?;
             pipeline.set_state(gst::State::Playing).map_err(|e| eprintln!("reflux: stream audio: {e}")).ok()?;
-            Some(Self { pipeline })
+            Some(Self { pipeline, stop: None })
+        }
+
+        /// "Entire system audio" (`screenShareAudioSourceMode: 'system'`): every application
+        /// stream but ours, so the call's own voices don't go back out with the stream.
+        // shortcut: Fluxer's virtmic links new streams as PipeWire announces them; this rescans
+        // `pw-dump` every 3 s instead, so an app that starts playing joins within 3 s, and a
+        // stream that ends leaves its idle branch in the pipeline until the share stops.
+        fn system(mut sink: impl FnMut(&[f32]) + Send + 'static) -> Option<Self> {
+            let pipeline = gst::Pipeline::new();
+            let mixer = gst::ElementFactory::make("audiomixer").build().ok()?;
+            // A silent live input keeps the mixer clocked while no app is playing.
+            let silence = gst::ElementFactory::make("audiotestsrc").property_from_str("wave", "silence").property("is-live", true).build().ok()?;
+            let appsink = gst_app::AppSink::builder()
+                .caps(&stereo_caps())
+                .sync(false)
+                .callbacks(
+                    gst_app::AppSinkCallbacks::builder()
+                        .new_sample(move |s| {
+                            let sample = s.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                            if let Some(map) = sample.buffer().and_then(|b| b.map_readable().ok()) {
+                                let pcm: Vec<f32> = map.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+                                sink(&pcm);
+                            }
+                            Ok(gst::FlowSuccess::Ok)
+                        })
+                        .build(),
+                )
+                .build();
+            let out = gst::ElementFactory::make("capsfilter").property("caps", stereo_caps()).build().ok()?;
+            pipeline.add_many([&mixer, &out, appsink.upcast_ref()]).ok()?;
+            gst::Element::link_many([&mixer, &out, appsink.upcast_ref()]).ok()?;
+            add_branch(&pipeline, &mixer, silence)?;
+            let mut linked = std::collections::HashSet::new();
+            let link_new = move |pipeline: &gst::Pipeline, mixer: &gst::Element, linked: &mut std::collections::HashSet<String>| {
+                for (serial, _) in apps(true) {
+                    if linked.insert(serial.clone())
+                        && let Ok(src) = gst::ElementFactory::make("pipewiresrc").property_from_str("target-object", &serial).build()
+                        && add_branch(pipeline, mixer, src).is_none()
+                    {
+                        eprintln!("reflux: system audio: couldn't capture node {serial}");
+                    }
+                }
+            };
+            // Playing before any app joins: a node that can't negotiate (a corked stream) fails its
+            // own branch, not the whole capture's state change.
+            pipeline.set_state(gst::State::Playing).map_err(|e| eprintln!("reflux: system audio: {e}")).ok()?;
+            link_new(&pipeline, &mixer, &mut linked);
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (flag, weak) = (stop.clone(), pipeline.downgrade());
+            std::thread::Builder::new()
+                .name("system-audio-scan".into())
+                .spawn(move || {
+                    while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        let Some(pipeline) = weak.upgrade() else { break };
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+                        link_new(&pipeline, &mixer, &mut linked);
+                    }
+                })
+                .ok()?;
+            Some(Self { pipeline, stop: Some(stop) })
         }
     }
 
     impl Drop for AudioCapture {
         fn drop(&mut self) {
+            if let Some(stop) = &self.stop {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let _ = self.pipeline.set_state(gst::State::Null);
         }
     }
@@ -357,6 +463,23 @@ mod imp {
         use std::time::{Duration, Instant};
 
         use super::*;
+
+        /// Needs a PipeWire session with another app playing (e.g. a near-silent
+        /// `gst-launch-1.0 audiotestsrc volume=0.0005 ! pipewiresink`).
+        #[test]
+        #[ignore]
+        fn system_audio_hears_other_apps() {
+            let peak = Arc::new(Mutex::new(0f32));
+            let p = peak.clone();
+            let cap = AudioCapture::start(crate::audio_share::SYSTEM_ID, move |pcm| {
+                let mut m = p.lock().unwrap();
+                *m = pcm.iter().fold(*m, |a, s| a.max(s.abs()));
+            })
+            .expect("system capture starts");
+            std::thread::sleep(Duration::from_secs(2));
+            drop(cap);
+            assert!(*peak.lock().unwrap() > 0.0, "no audio from other apps");
+        }
 
         fn encode(name: &str, desc: &str) -> std::path::PathBuf {
             assert!(init());
@@ -556,10 +679,16 @@ mod tests {
         let json = r#"[
             {"info":{"props":{"media.class":"Stream/Output/Audio","object.serial":42,"application.name":"Firefox","media.name":"Video","application.process.id":10}}},
             {"info":{"props":{"media.class":"Stream/Output/Audio","object.serial":43,"application.name":"reflux","application.process.id":7}}},
+            {"info":{"props":{"media.class":"Stream/Output/Audio","object.serial":44,"application.name":"PipeWire ALSA [reflux]","client.id":145}}},
+            {"info":{"state":"idle","props":{"media.class":"Stream/Output/Audio","object.serial":45,"application.name":"mpv","application.process.id":11}}},
             {"info":{"props":{"media.class":"Audio/Sink","object.serial":1}}},
-            {"type":"PipeWire:Interface:Client"}
+            {"type":"PipeWire:Interface:Client"},
+            {"id":145,"type":"PipeWire:Interface:Client","info":{"props":{"pipewire.sec.pid":7}}}
         ]"#;
-        assert_eq!(super::parse_apps(json, 7), vec![("42".to_string(), "Firefox — Video".to_string())]);
+        let firefox = ("42".to_string(), "Firefox — Video".to_string());
+        assert_eq!(super::parse_apps(json, 7, false), vec![firefox.clone(), ("45".to_string(), "mpv".to_string())]);
+        // The running-only scan also skips the corked stream (Firefox has no state here: also skipped).
+        assert_eq!(super::parse_apps(json, 7, true), Vec::<(String, String)>::new());
     }
 
     #[test]
