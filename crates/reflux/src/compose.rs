@@ -15,12 +15,15 @@ use crate::theme::Palette;
 // ---- pills ----
 
 /// The pill an autocomplete insert becomes: `<@id> `, `<#id> ` or `<a:name:id> ` and the
-/// completion's label give `(token, label)`; anything else stays text.
-// shortcut: a custom emoji pill shows `:name:`, not the emoji image.
+/// completion's label give `(token, label)`; anything else stays text. A custom emoji's label
+/// is [`emoji_label`], under its image.
 pub fn pill_for(insert: &str, label: &str) -> Option<(String, String)> {
     let token = insert.trim_end();
     if !(token.starts_with('<') && token.ends_with('>')) {
         return None;
+    }
+    if emoji_pill(token).is_some() {
+        return Some((token.to_string(), emoji_label()));
     }
     let label = match token.as_bytes().get(1) {
         Some(b'@') => format!("@{label}"),
@@ -60,6 +63,174 @@ pub fn pill_icon(id: &str) -> Option<&'static Icon> {
 pub fn unpilled(spans: Vec<rune::Span>, edit: &TextEdit) -> Vec<rune::Span> {
     let pills: Vec<_> = edit.pills().map(|(r, _)| r).collect();
     spans.into_iter().filter(|s| !pills.iter().any(|r| (s.start as usize) < r.end && r.start < s.end as usize)).collect()
+}
+
+// ---- emoji ----
+
+/// The custom emoji a pill id (`<:name:id>` / `<a:name:id>`) stands for.
+pub fn emoji_pill(id: &str) -> Option<Snowflake> {
+    let t = id.strip_prefix('<')?.strip_suffix('>')?;
+    let t = t.strip_prefix('a').unwrap_or(t).strip_prefix(':')?;
+    let (name, id) = t.rsplit_once(':')?;
+    (!name.is_empty()).then_some(())?;
+    id.parse().ok().map(Snowflake)
+}
+
+/// `.customEmoji` in the composer: 1.375em (22px at 16px) and 1px either side.
+pub const EMOJI_SIDE: f32 = 22.0;
+
+/// A custom emoji pill's label: no-break spaces that, with the chip's margin and padding
+/// (Rune's `PillMetrics` at 16px: 2 × 7.68), make the pill `.customEmoji`'s 24px. The emoji's
+/// image is drawn over it; the chip itself is transparent.
+pub fn emoji_label() -> String {
+    let nbsp = rune::text::advance("\u{a0}", crate::theme::font(16.0, 400.0)).max(1.0);
+    let room = EMOJI_SIDE + 2.0 - 2.0 * (16.0f32 * 0.12 + 16.0 * 0.36);
+    "\u{a0}".repeat(((room / nbsp).round() as usize).max(1))
+}
+
+/// What a typed `:name:` becomes (`resolveTypedEmojiToken`): a unicode emoji's text, or a
+/// custom emoji's pill `(token, label)`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Typed {
+    Text(String),
+    Pill(String, String),
+}
+
+/// The custom emoji usable in a channel, as autocomplete names them (`name`, `name~1`…), each
+/// with its `<a:name:id>` token.
+pub type CustomEmoji = std::rc::Rc<Vec<(String, String)>>;
+
+/// `resolveTypedEmojiToken`: unicode by shortcode first, then a usable custom emoji.
+pub fn resolve(name: &str, custom: &[(String, String)]) -> Option<Typed> {
+    if let Some(e) = crate::shell::emoji::by_name(name) {
+        return Some(Typed::Text(e.glyph.clone()));
+    }
+    custom.iter().find(|(n, _)| n == name).map(|(_, token)| Typed::Pill(token.clone(), emoji_label()))
+}
+
+/// `TYPED_EMOJI_SHORTCODE_PATTERN`'s name characters.
+fn name_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '+' | '~' | '.' | '-')
+}
+
+/// `SHORTCODE_WORD_BOUNDARY_CHAR`.
+fn word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `findTypedEmojiShortcode` over `text[from..to]`: each `:name:` (2+ name characters) not
+/// inside a word, a `<:custom:id>`, inline code, a URL or after a backslash, as (range, name).
+pub fn shortcodes(text: &str, from: usize, to: usize) -> Vec<(std::ops::Range<usize>, &str)> {
+    let mut out = Vec::new();
+    let mut i = from;
+    while let Some(a) = text.get(i..to).and_then(|s| s.find(':')).map(|k| i + k) {
+        let rest = &text[a + 1..to];
+        let n = rest.find(|c: char| !name_char(c)).unwrap_or(rest.len());
+        let b = a + 1 + n;
+        let closed = text[b..to].starts_with(':');
+        let name = &text[a + 1..b];
+        let before = text[..a].chars().next_back();
+        let after = text[(b + 1).min(text.len())..].chars().next();
+        let word_start = text[..a].rfind(char::is_whitespace).map_or(0, |k| k + 1);
+        let ok = closed
+            && name.chars().count() >= 2
+            && !before.is_some_and(word_char)
+            && !after.is_some_and(word_char)
+            && !text[..a].ends_with('<')
+            && !text[..a].ends_with("<a")
+            && !text[..a].ends_with('\\')
+            && text[..a].matches('`').count().is_multiple_of(2)
+            && !text[word_start..a].contains("://");
+        if ok {
+            out.push((a..b + 1, name));
+            i = b + 1;
+        } else {
+            i = a + 1;
+        }
+    }
+    out
+}
+
+/// `isReactionShorthandText`: `+:name:` alone reacts to the last message, so it stays text.
+fn reaction_shorthand(text: &str) -> bool {
+    text.trim().strip_prefix("+:").is_some_and(|r| r.ends_with(':') && !r[..r.len() - 1].contains([':', ' ']))
+}
+
+/// The `:name:`s in `edit.text[from..to]` that resolve, outside pills.
+fn resolved(edit: &TextEdit, from: usize, to: usize, custom: &[(String, String)]) -> Vec<(std::ops::Range<usize>, Typed)> {
+    if reaction_shorthand(&edit.text) {
+        return Vec::new();
+    }
+    let pills: Vec<_> = edit.pills().map(|(r, _)| r).collect();
+    shortcodes(&edit.text, from, to)
+        .into_iter()
+        .filter(|(r, _)| !pills.iter().any(|p| r.start < p.end && p.start < r.end))
+        .filter_map(|(r, name)| Some((r, resolve(name, custom)?)))
+        .collect()
+}
+
+/// Puts each `(range, emoji)` in (ranges in order, not overlapping) and keeps the caret where
+/// it was relative to the text around it.
+fn apply(e: &mut TextEdit, edits: &[(std::ops::Range<usize>, Typed)]) {
+    let mut caret = e.focus;
+    for (r, typed) in edits.iter().rev() {
+        let len = match typed {
+            Typed::Text(s) => {
+                e.set_selection(r.start, r.end);
+                e.insert(s);
+                s.len()
+            }
+            Typed::Pill(token, label) => {
+                e.replace_with_pill(r.clone(), token.clone(), label);
+                label.len()
+            }
+        };
+        if r.end <= caret {
+            caret = caret - (r.end - r.start) + len;
+        }
+    }
+    e.set_selection(caret, caret);
+}
+
+/// `resolveTypedEmojiShortcodes` on send: every `:name:` left in the draft that resolves
+/// becomes its emoji. One undo step.
+pub fn convert(edit: &mut TextEdit, custom: &[(String, String)]) {
+    let edits = resolved(edit, 0, edit.text.len(), custom);
+    if !edits.is_empty() {
+        edit.undo_group(|e| apply(e, &edits));
+    }
+}
+
+/// The closing `:` of a typed shortcode (`ComposerEmojiShortcode`): `:name` just before the
+/// caret becomes its emoji instead of taking the colon. False (the field types the colon)
+/// otherwise.
+pub fn typed_colon(edit: &mut TextEdit, custom: &[(String, String)]) -> bool {
+    let (a, b) = edit.range();
+    let Some(start) = edit.text[..a].rfind(':').filter(|_| a == b && !reaction_shorthand(&format!("{}:", &edit.text[..a]))) else { return false };
+    let with = format!("{}:{}", &edit.text[..a], &edit.text[a..]);
+    let Some(name) = shortcodes(&with, start, a + 1).into_iter().find(|(r, _)| r.end == a + 1).map(|(_, n)| n) else { return false };
+    if edit.pills().any(|(r, _)| start < r.end && r.start < a) {
+        return false;
+    }
+    let Some(typed) = resolve(name, custom) else { return false };
+    edit.undo_group(|e| apply(e, &[(start..a, typed)]));
+    true
+}
+
+/// Pastes `text` with its shortcodes as emoji: copying a custom emoji puts `:name:` on the
+/// clipboard, and Fluxer's composer turns it back into the emoji. False when nothing in it
+/// converts (the field pastes as usual).
+pub fn paste(edit: &mut TextEdit, text: &str, custom: &[(String, String)]) -> bool {
+    if reaction_shorthand(text) || shortcodes(text, 0, text.len()).iter().all(|(_, n)| resolve(n, custom).is_none()) {
+        return false;
+    }
+    let (a, _) = edit.range();
+    edit.undo_group(|e| {
+        e.insert(text);
+        let edits = resolved(e, a, a + text.len(), custom);
+        apply(e, &edits);
+    });
+    true
 }
 
 // ---- selection formatting toolbar ----
@@ -359,6 +530,35 @@ fn finish(st: &mut ShellState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcodes_follow_typed_emoji_match() {
+        let names = |t: &str| shortcodes(t, 0, t.len()).into_iter().map(|(_, n)| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(names("hi :smile: and :party~1:"), ["smile", "party~1"]);
+        assert!(names("a:smile:b").is_empty(), "inside a word");
+        assert!(names("<:fluxer:123> <a:fluxer:4>").is_empty(), "custom emoji markdown");
+        assert!(names("`:smile:` \\:smile: https://x.y/:smile:").is_empty(), "code, escaped, URL");
+        assert!(names(":x: 12:30:45").is_empty(), "one letter; a time");
+    }
+
+    #[test]
+    fn typed_colon_and_send_convert_emoji() {
+        let custom = vec![("fluxer".to_string(), "<:fluxer:9>".to_string())];
+        let mut e = TextEdit::new("hi :smile");
+        e.set_caret(e.text.len());
+        assert!(typed_colon(&mut e, &custom));
+        assert_eq!(e.text, "hi 😄");
+        e.insert(" :fluxer");
+        assert!(typed_colon(&mut e, &custom));
+        assert_eq!(serialize(&e), "hi 😄 <:fluxer:9>");
+        assert!(!typed_colon(&mut TextEdit::new(":nope"), &custom), "unknown names type the colon");
+        let mut e = TextEdit::new("+:smile:");
+        convert(&mut e, &custom);
+        assert_eq!(e.text, "+:smile:", "a reaction shorthand stays");
+        let mut e = TextEdit::new("");
+        assert!(paste(&mut e, "x :fluxer: y", &custom));
+        assert_eq!(serialize(&e), "x <:fluxer:9> y");
+    }
 
     #[test]
     fn pills_serialize_to_tokens() {

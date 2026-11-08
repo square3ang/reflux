@@ -104,7 +104,17 @@ fn pick(st: &mut ShellState, item: &Item, shift: bool, _: &mut Tx) {
             let end = st.composer.anchor.max(st.composer.focus);
             let after = st.composer.text.get(end..).and_then(|s| s.chars().next());
             let space = if after.is_none_or(|c| !c.is_whitespace()) { " " } else { "" };
-            st.composer.insert(&format!("{}{space}", wire(item, tone)));
+            match item {
+                // `ComposerCustomEmojiNode`: the emoji's image in the draft, sent as its token.
+                Item::Emoji { .. } => {
+                    let (a, b) = st.composer.range();
+                    st.composer.undo_group(|e| {
+                        e.replace_with_pill(a..b, wire(item, tone), &crate::compose::emoji_label());
+                        e.insert(space);
+                    });
+                }
+                _ => st.composer.insert(&format!("{}{space}", wire(item, tone))),
+            }
         }
         Some(For::React { channel, message }) => st.intents.push(Intent::React { channel, message, emoji: reaction_emoji(item, tone), add: true }),
         Some(For::Form { key, .. }) => {

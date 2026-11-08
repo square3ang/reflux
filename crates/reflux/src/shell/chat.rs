@@ -1558,10 +1558,17 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     };
     let spelling = if st.prefs.spellcheck { crate::compose::unpilled(crate::desktop::spell::spans(&draft.text, draft.range().0, p.status_danger), draft) } else { Vec::new() };
     // Enter and the send button: start the thread, confirm a mass mention, or send.
+    let custom = super::autocomplete::custom_emoji_cache(store, st, c);
     let submit = {
         let mass = crate::social::mass_mention(store, c, &st.composer.text).filter(|_| slot == Slot::Main);
         let suggested = suggested.clone();
-        std::rc::Rc::new(move |s: &mut S| match (slot, mass) {
+        let custom = custom.clone();
+        std::rc::Rc::new(move |s: &mut S| {
+            // `resolveTypedEmojiShortcodes`: `:name:`s left in the draft go as emoji.
+            if send_ok && slot != Slot::Create {
+                in_slot(acc(s), slot, |st| crate::compose::convert(&mut st.composer, &custom));
+            }
+            match (slot, mass) {
             _ if !send_ok => {}
             // `handleSubmit`: files in the tray need ATTACH_FILES.
             (Slot::Main | Slot::Pane, _) if !attach_ok && !(if slot == Slot::Pane { &acc(s).threads.uploads } else { &acc(s).uploads }).is_empty() => super::gating::deny_attach(acc(s), false, true),
@@ -1572,17 +1579,27 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 st.social.pending_send = (limit, slow);
             }
             _ => in_slot(acc(s), slot, |st| send(st, cid, limit, slow)),
+            }
         })
     };
+    let field_key = match slot {
+        Slot::Main => "composer",
+        Slot::Pane => "thread-composer",
+        Slot::Create => "thread-create-composer",
+    };
+    // `ComposerCustomEmoji`: custom emoji pills are transparent chips with the image over them.
+    let emoji: Vec<_> = draft.pills().filter_map(|(r, id)| Some((r, crate::compose::emoji_pill(id)?))).collect();
+    let hl = |i: usize| format!("{field_key}-e{i}");
     let field = text_input(draft, font(16.0, 400.0).lh(22.0))
-        .key(match slot {
-            Slot::Main => "composer",
-            Slot::Pane => "thread-composer",
-            Slot::Create => "thread-create-composer",
-        })
+        .key(field_key)
         .decorations(spelling)
         .pill_colors(p.markup_mention_fill, Some(p.markup_mention_text))
         .pill_icon(crate::compose::pill_icon)
+        .pill_style(|id| match crate::compose::emoji_pill(id) {
+            Some(_) => rune::PillStyle::new().bg(Color::TRANSPARENT).fg(Color::TRANSPARENT),
+            None => rune::PillStyle::new(),
+        })
+        .text_highlights(emoji.iter().enumerate().map(|(i, (r, _))| rune::TextHighlight::new(r.clone(), Color::TRANSPARENT).key(hl(i))))
         .on_secondary_press(move |s: &mut S, at, _| {
             crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y], slot != Slot::Main);
         })
@@ -1594,15 +1611,21 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             let st = acc(s);
             if slot == Slot::Main { &mut st.composer } else { &mut st.threads.composer }
         })
-        .on_input_key(move |s: &mut S, k, _| {
+        .on_input_key({
+            let custom = custom.clone();
+            move |s: &mut S, k, _| {
             in_slot(acc(s), slot, |st| {
+                // `ComposerEmojiShortcode`: the closing colon of `:name:` makes it the emoji.
+                if k.key == Key::Text(":".into()) && !(k.mods.cmd || k.mods.ctrl || k.mods.alt) && crate::compose::typed_colon(&mut st.composer, &custom) {
+                    return true;
+                }
                 // The create pane neither sends typing nor edits the last message.
                 if slot == Slot::Create && matches!(k.key, Key::Text(_)) {
                     return false;
                 }
                 composer_key(st, cid, k, last_own.as_ref(), ac_keys.as_ref())
             })
-        })
+        }})
         // A pasted image joins the tray.
         .on_input_paste(move |s: &mut S, content, _| match content.image() {
             Some(_) if slot == Slot::Main && !attach_ok => {
@@ -1613,7 +1636,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 super::upload::add_png(acc(s), img.png().to_vec());
                 true
             }
-            _ => false,
+            _ => in_slot(acc(s), slot, |st| crate::compose::paste(&mut st.composer, content.text(), &custom)),
         })
         .disabled(!send_ok)
         // Enter sends; Shift+Enter is the field's own newline.
@@ -1621,6 +1644,19 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             let submit = submit.clone();
             move |s: &mut S, _| submit(s)
         });
+    // Each custom emoji's image, 22px, centred on its pill and on the line's bottom
+    // (`vertical-align: bottom`), where the field laid them out last frame.
+    let images: Vec<El> = emoji
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (_, id))| {
+            let [fx, fy, _, _] = rune::memo::layout(field_key)?;
+            let ph = rune::memo::layout(&hl(i))?;
+            let crate::media::Load::Ready(px) = st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())) else { return None };
+            let side = crate::compose::EMOJI_SIDE;
+            Some(el().absolute(ph[0] - fx + (ph[2] - side) / 2.0, ph[1] - fy + ph[3] - side).size(side, side).pixels_fit(&px, rune::SurfaceFit::Fit).inert().key(format!("{}-img", hl(i))))
+        })
+        .collect();
     // The thread side panel has its own "+" menu and tray; the new-thread pane has none.
     let plus_id = if slot == Slot::Pane { "thread-composer-plus" } else { "composer-plus" };
     let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id);
@@ -1644,7 +1680,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
         // `max-height: 50svh`: the field scrolls past half the window.
         .child({
-            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).smooth_wheel::<S>(format!("composer-{slot:?}")).child(field);
+            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).smooth_wheel::<S>(format!("composer-{slot:?}")).child(col().w_full().child(field).children(images));
             if send_ok { column } else { column.inert() }
         })
         // `TextareaButtons` renders nothing while disabled.

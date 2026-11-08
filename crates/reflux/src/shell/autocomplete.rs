@@ -134,28 +134,9 @@ pub fn completions(store: &Store, st: &ShellState, c: &Channel, t: &Trigger) -> 
         }
         ':' => {
             let (custom_ok, emoji_ok) = crate::look::with(|l| (l.autocomplete_custom_emojis, l.autocomplete_emojis));
-            let mut order = super::expr::guild_order(store, st);
-            if let Some(i) = c.guild_id.and_then(|g| order.iter().position(|x| *x == g)) {
-                let g = order.remove(i);
-                order.insert(0, g);
-            }
-            let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-            for gid in order {
-                if !custom_ok {
-                    break;
-                }
-                let Some(g) = store.guilds.get(&gid) else { continue };
-                for e in &g.emojis {
-                    let n = seen.entry(e.name.clone()).or_insert_with(|| usize::from(emoji::by_name(&e.name).is_some()));
-                    let name = if *n == 0 { e.name.clone() } else { format!("{}~{n}", e.name) };
-                    *n += 1;
-                    if !super::expr::can_use(store, st, Some(c), gid, Permissions::USE_EXTERNAL_EMOJIS) {
-                        continue;
-                    }
-                    if let Some(r) = rank(&name) {
-                        let (a, raw, id) = (if e.animated { "a" } else { "" }, &e.name, e.id);
-                        out.push((r, Completion { glyph: Glyph::CustomEmoji(id), label: format!(":{name}:"), detail: String::new(), insert: format!("<{a}:{raw}:{id}> ") }));
-                    }
+            for (name, token, id) in if custom_ok { custom_emojis(store, st, c) } else { Vec::new() } {
+                if let Some(r) = rank(&name) {
+                    out.push((r, Completion { glyph: Glyph::CustomEmoji(id), label: format!(":{name}:"), detail: String::new(), insert: format!("{token} ") }));
                 }
             }
             if emoji_ok {
@@ -177,6 +158,48 @@ pub fn completions(store: &Store, st: &ShellState, c: &Channel, t: &Trigger) -> 
     }
     sort(&mut out);
     out.into_iter().take(MAX).map(|x| x.1).collect()
+}
+
+/// The custom emoji usable in `c` as `:name:` names them (`Emoji.getAllEmojis`): every
+/// community's, the open one first, a repeated name (or a unicode one's) with `~1`, `~2`…
+/// (`buildAllEmojis`), each with its `<a:name:id>` token and id.
+pub fn custom_emojis(store: &Store, st: &ShellState, c: &Channel) -> Vec<(String, String, Snowflake)> {
+    let mut order = super::expr::guild_order(store, st);
+    if let Some(i) = c.guild_id.and_then(|g| order.iter().position(|x| *x == g)) {
+        let g = order.remove(i);
+        order.insert(0, g);
+    }
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for gid in order {
+        let Some(g) = store.guilds.get(&gid) else { continue };
+        let usable = super::expr::can_use(store, st, Some(c), gid, Permissions::USE_EXTERNAL_EMOJIS);
+        for e in &g.emojis {
+            let n = seen.entry(e.name.clone()).or_insert_with(|| usize::from(emoji::by_name(&e.name).is_some()));
+            let name = if *n == 0 { e.name.clone() } else { format!("{}~{n}", e.name) };
+            *n += 1;
+            if usable {
+                out.push((name, format!("<{}:{}:{}>", if e.animated { "a" } else { "" }, e.name, e.id), e.id));
+            }
+        }
+    }
+    out
+}
+
+/// [`custom_emojis`] as names and tokens for the composer's handlers, rebuilt only when the
+/// channel or the number of emoji changes.
+pub fn custom_emoji_cache(store: &Store, st: &ShellState, c: &Channel) -> crate::compose::CustomEmoji {
+    type Cached = Option<((Snowflake, usize, bool), crate::compose::CustomEmoji)>;
+    thread_local!(static CACHE: std::cell::RefCell<Cached> = const { std::cell::RefCell::new(None) });
+    let key = (c.id, store.guilds.values().map(|g| g.emojis.len()).sum::<usize>(), st.limits.global_expressions);
+    CACHE.with_borrow_mut(|cache| match cache {
+        Some((k, v)) if *k == key => v.clone(),
+        _ => {
+            let v = std::rc::Rc::new(custom_emojis(store, st, c).into_iter().map(|(n, t, _)| (n, t)).collect::<Vec<_>>());
+            *cache = Some((key, v.clone()));
+            v
+        }
+    })
 }
 
 fn sort(out: &mut [(u8, Completion)]) {
