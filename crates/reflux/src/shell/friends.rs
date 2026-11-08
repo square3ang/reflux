@@ -1,6 +1,7 @@
 //! Home's friends page (`direct_message/DMFriendsView`, `AddFriendView`, `AddFriendForm`,
 //! `friends/FriendListItem`, `FriendsListSection`, `views/FriendsList`, `PendingFriendsView`).
 
+use crate::ui::SmoothWheel;
 use reflux_model::{Relationship, RelationshipType, Snowflake};
 use reflux_store::Store;
 use rune::{Color, El, ScrollSpec, Shadow, TextEdit, col, el, icon, row, text, text_input};
@@ -186,7 +187,7 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
         }
         c = c.child(rows);
     }
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("friends-list").child(c);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("friends-list").key("friends-list").child(c);
     scroller(viewport, false, p)
 }
 

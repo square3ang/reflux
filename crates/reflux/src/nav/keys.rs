@@ -3,6 +3,7 @@
 //! (`KeyboardShortcutsCheatsheetModal`) and the first-Tab `KeyboardModeIntroModal`. Kept per
 //! account on this device ([`super::AccountPrefs`]).
 
+use crate::ui::SmoothWheel;
 use rune::{Color, El, Key, KeyEvent, Shadow, col, el, icon, row, text};
 use serde::{Deserialize, Serialize};
 
@@ -670,7 +671,7 @@ fn cheatsheet<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .label(t("Keybinds"))
         .focusable(true)
         .focus_ring(2.0, -2.0, p.focus_primary)
-        .scroll(rune::ScrollSpec { stick_bottom: false })
+        .scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("keybinds")
         .child(row().w_full().gap(12.0).px(14.0).py(14.0).items_start().children(cols))
         .modal(true, close);
     el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

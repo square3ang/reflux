@@ -4,6 +4,7 @@
 //! Channels sit in favorites categories (collapsible, renamable), may carry a nickname, and drag
 //! to reorder ([`super::favorites_drag`]).
 
+use crate::ui::SmoothWheel;
 use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
 use rune::{El, ScrollSpec, TextEdit, Tx, col, el, icon, row, text};
@@ -269,7 +270,7 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         .focus_group()
         .role("list")
         .on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(LIST_MENU, [at.x, at.y]));
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("favorites-channels").child(list);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("favorites-channels").key("favorites-channels").child(list);
     col().w(dim::LAYOUT_SIDEBAR_WIDTH).h_full().min_h(0.0).fill(p.background_secondary).child(header).child(scroller(viewport, false, p))
 }
 
@@ -673,7 +674,7 @@ fn add_modal<S: 'static>(store: &Store, st: &ShellState, g: Option<Snowflake>, p
         if n == 0 {
             rows = rows.child(text("No channels available").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).py(16.0));
         }
-        let viewport = col().w_full().h(320.0).scroll(ScrollSpec { stick_bottom: false }).key("favorite-picker").child(rows);
+        let viewport = col().w_full().h(320.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("favorite-picker").key("favorite-picker").child(rows);
         body = body.child(scroller(viewport, false, p));
     }
     Modal::new("Add favorite channels", close).size(ModalSize::Medium).body(body).el(p)

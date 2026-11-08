@@ -3,6 +3,7 @@
 //! social items (`MessageContextMenu`: forward, bookmark, suppress embeds, publish, remove all
 //! reactions, report).
 
+use crate::ui::SmoothWheel;
 use reflux_model::{Channel, ChannelType, Message, MessageFlags, Permissions as P, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
@@ -241,7 +242,7 @@ fn other_accounts_section<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
         }
         groups = groups.child(group);
     }
-    Some(section.child(col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(groups)))
+    Some(section.child(col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("inbox-section").child(groups)))
 }
 
 pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
@@ -324,7 +325,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     if let Some(others) = other_accounts_section(st, p, acc) {
         content = content.child(others);
     }
-    let content = content.child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("inbox-list").child(list.padding(12.0)), false, p)));
+    let content = content.child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("inbox-list").key("inbox-list").child(list.padding(12.0)), false, p)));
     let surface = row()
         .pin(None, Some(56.0), Some(16.0), Some(8.0))
         .w(600.0)
@@ -856,7 +857,7 @@ pub fn forward<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, msg: S
     let preview = store.messages(ch).iter().find(|m| m.id == msg).map(|m| {
         col().w_full().max_h(160.0).clip_rounded(6.0).py(8.0).radius(6.0).fill(p.background_secondary).border(1.0, over(p.background_header_secondary, p.background_secondary)).inert().child(crate::shell::preview(store, st, m, format!("fwd-m{msg}"), p, acc))
     });
-    let mut items = vec![field(st, acc, "q", "", "", "Search", p), col().w_full().h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().gap(2.0).children(rows))];
+    let mut items = vec![field(st, acc, "q", "", "", "Search", p), col().w_full().h(240.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("inbox-picker").child(col().w_full().gap(2.0).children(rows))];
     items.extend(preview);
     items.push(field(st, acc, "comment", "", "", t("Add a comment (optional)"), p));
     items.extend(error(st, p));

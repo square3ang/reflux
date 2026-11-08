@@ -1,6 +1,7 @@
 //! The invite modal's friend list (`RecipientList` / `useRecipientItems`): friends (DM'd ones
 //! first) then group DMs, each with an Invite button that sends the link there.
 
+use crate::ui::SmoothWheel;
 use reflux_model::{ChannelType, RelationshipType, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
@@ -79,7 +80,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, link: Option<String>, p:
     let list = if rows.is_empty() {
         text(t("No friends found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)
     } else {
-        col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).child(col().w_full().children(rows))
+        col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("invite-friends-list").child(col().w_full().children(rows))
     };
     Some(col().w_full().gap(8.0).child(super::field(st, acc, "friend-search", "", "", t("Search friends"), p)).child(list))
 }

@@ -102,7 +102,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                         (e, h)
                     })
                     .collect();
-                super::gif::masonry(cols, w, tiles, p)
+                super::gif::masonry::<S>(cols, w, tiles, p)
             }
         }
         Some(Fetched::Failed(_)) => col().w_full().h_full().child(super::empty_state("Couldn't load saved media", None, p)),

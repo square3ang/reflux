@@ -86,23 +86,23 @@ thread_local! {
     static WHEEL: std::cell::RefCell<std::collections::HashMap<String, (rune::ScrollPos, Option<f32>)>> = Default::default();
 }
 
-/// Chromium's smooth wheel scrolling on the vertical viewport keyed `key` (the key is set here):
-/// a notched wheel's line steps glide instead of jumping, each adding to where the glide was
-/// heading. Trackpads and free-spinning wheels (`precise`) and modified wheels scroll as before.
+/// Chromium's smooth wheel scrolling on a vertical scroll viewport: a notched wheel's line
+/// steps glide instead of jumping, each adding to where the glide was heading. Trackpads and
+/// free-spinning wheels (`precise`) and modified wheels scroll as before. `key` names a marker
+/// (`{key}-wheel`, absolute and empty) the glide finds the viewport by, so it must be unique
+/// among what's on screen; the viewport's own key is left alone.
 pub fn smooth_wheel<S: 'static>(viewport: El, key: &str) -> El {
     smooth_wheel_with::<S>(viewport, key, |_| {})
 }
 
 /// [`smooth_wheel`] for a viewport that also follows its offset with `f` (`on_scroll_offset`).
 pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::ScrollPos) + 'static) -> El {
-    let (k1, k2) = (key.to_owned(), key.to_owned());
+    let mark = format!("{key}-wheel");
+    let (k1, k2) = (mark.clone(), mark.clone());
     viewport
-        .key(key)
+        .child(el().absolute(0.0, 0.0).size(0.0, 0.0).inert().key(mark))
         .on_scroll_offset(move |pos| {
-            WHEEL.with_borrow_mut(|m| {
-                let e = m.entry(k1.clone()).or_insert((pos, None));
-                e.0 = pos;
-            });
+            WHEEL.with_borrow_mut(|m| m.entry(k1.clone()).or_insert((pos, None)).0 = pos);
             f(pos);
         })
         .on_wheel(move |_: &mut S, e: rune::WheelEvent, tx: &mut rune::Tx| {
@@ -123,6 +123,17 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
             tx.scroll_to_with(k2.clone(), to.0, to.1, rune::Spring::new(0.15, 0.0));
             true
         })
+}
+
+/// [`smooth_wheel`] chained after `.scroll(…)`.
+pub trait SmoothWheel {
+    fn smooth_wheel<S: 'static>(self, key: impl AsRef<str>) -> El;
+}
+
+impl SmoothWheel for El {
+    fn smooth_wheel<S: 'static>(self, key: impl AsRef<str>) -> El {
+        smooth_wheel::<S>(self, key.as_ref())
+    }
 }
 
 #[cfg(test)]

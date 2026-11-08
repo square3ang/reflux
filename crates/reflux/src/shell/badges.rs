@@ -2,6 +2,7 @@
 //! `BadgeListModal` it and `GuildBadgesModal` open from their `+N` pill, and the hover tooltips
 //! of badge rows (a profile's and [`super::invite_embed::guild_badge`]'s).
 
+use crate::ui::SmoothWheel;
 use rune::{Align, El, col, el, icon, row, text};
 use serde_json::Value;
 
@@ -267,7 +268,7 @@ pub fn list_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>)
             None => r,
         }
     }));
-    let body = col().w_full().max_h(560.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(list);
+    let body = col().w_full().max_h(560.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("badges-modal").child(list);
     Some(crate::ui::modal::Modal::new(t("Badges"), close).body(body).el(p))
 }
 

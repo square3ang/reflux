@@ -4,6 +4,7 @@
 //! gateway for matching members (op 8, `MemberSearch.fetchMembersInBackground`); `@@` searches
 //! all users.
 
+use crate::ui::SmoothWheel;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -452,7 +453,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .role("dialog")
         .label(t("Quick switcher"))
         .child(row().w_full().padding(12.0).child(input))
-        .child(col().w_full().h(320.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("switcher-results").child(list), false, p)))
+        .child(col().w_full().h(320.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("switcher-results").key("switcher-results").child(list), false, p)))
         .child(footer)
         .modal(true, move |s: &mut S| acc(s).switcher = None);
     Some(

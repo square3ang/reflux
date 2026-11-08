@@ -5,6 +5,7 @@
 // hover info, swatches, lint and the outline target the DOM, which Reflux doesn't have (only
 // `:root` variables apply).
 
+use crate::ui::SmoothWheel;
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -410,7 +411,7 @@ pub fn popup<S: 'static>(l: &List, which: usize, p: &Palette, edit: impl Fn(&mut
         .fill(p.background_primary)
         .border(1.0, p.background_modifier_accent)
         .box_shadow(rune::Shadow { x: 0.0, y: 8.0, blur: 24.0, spread: 0.0, color: crate::ui::rgba(0, 0, 0, 0.28), inset: false })
-        .child(crate::ui::scroller(rows.key("quick-css-rows").scroll(rune::ScrollSpec { stick_bottom: false }), false, p))
+        .child(crate::ui::scroller(rows.key("quick-css-rows").scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("quick-css-rows"), false, p))
 }
 
 #[cfg(test)]

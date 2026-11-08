@@ -2,6 +2,7 @@
 //! `EditGroupModal`, `ChangeFriendNicknameModal`, `ChangeGroupDMNicknameModal`, and the group
 //! items of the user and channel menus.
 
+use crate::ui::SmoothWheel;
 use reflux_model::{ChannelType, RelationshipType, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
@@ -93,7 +94,7 @@ pub fn create_dm<S: 'static>(store: &Store, st: &ShellState, group: Option<Snowf
             .w_full()
             .align(rune::Align::Center)
     } else {
-        col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(col().w_full().gap(2.0).children(rows))
+        col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("dm-picker-list").child(col().w_full().gap(2.0).children(rows))
     };
     let mut items = vec![desc(t("Choose friends to message."), p), field(st, acc, "q", "", "", "Search friends", p), list];
     if let Some(c) = group {

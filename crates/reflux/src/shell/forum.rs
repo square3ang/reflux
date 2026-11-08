@@ -5,6 +5,7 @@
 // search off on the instance (`FEATURE_TEMPORARILY_DISABLED`) older posts page `archived/public`
 // and the search filters loaded posts by name, as before.
 
+use crate::ui::SmoothWheel;
 use std::collections::{HashMap, HashSet};
 
 use reflux_model::{Channel, ChannelFlags, ForumTag, Message, ReactionEmoji, Snowflake};
@@ -224,7 +225,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         // The first older page waits for a press while 25+ posts are active (`needsFirstPage`).
         content = content.child(notice().child(more(t("Load older posts"), "forum-older", true)));
     }
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("forum-posts").items_center().child(content);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("forum-posts").key("forum-posts").items_center().child(content);
     col().grow(1.0).min_w(0.0).h_full().min_h(0.0).fill(p.background_primary).key(format!("forum-{}", c.id)).child(scroller(viewport, true, p))
 }
 

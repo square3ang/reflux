@@ -1,6 +1,7 @@
 //! Privacy (`tabs/privacy_safety_tab/*`), Devices (`DevicesTab`), Authorized apps
 //! (`AuthorizedAppsTab`) and Connections (`LinkedAccountsTab`), and their dialogs.
 
+use crate::ui::SmoothWheel;
 use reflux_model::{FriendSourceFlags, GroupDmAddPermissionFlags, IncomingCallFlags, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
@@ -363,7 +364,7 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
         .child(Button::new(if changed { t("Save changes") } else { t("Keep my current settings") }).key("privacy-review-save").on_press(save).el(p));
     // `Modal.Content` scrolls: the card stays inside the window (`max-height: 100svh - 3rem`).
     let [_, vh] = rune::memo::layout_size(crate::shell::BODY_KEY).unwrap_or([1280.0, 800.0]);
-    let body = crate::ui::scroller(col().w_full().max_h((vh - 200.0).max(220.0)).scroll(ScrollSpec { stick_bottom: false }).child(body), false, p);
+    let body = crate::ui::scroller(col().w_full().max_h((vh - 200.0).max(220.0)).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("privacy-body").child(body), false, p);
     Modal::new(t("Who can message you?"), close).body(body).footer(footer).el(p)
 }
 

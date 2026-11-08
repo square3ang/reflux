@@ -5,6 +5,7 @@
 //! in [`crate::shell::search_providers`], reverse image search in
 //! [`crate::shell::expr::image_search`].
 
+use crate::ui::SmoothWheel;
 use reflux_store::Store;
 use rune::{El, col, icon, row};
 use crate::ui::mark::marked as text;
@@ -340,7 +341,7 @@ fn configure<S: 'static>(
             .key("provider-scroll")
             .w_full()
             .max_h(h - 136.0)
-            .scroll(rune::ScrollSpec { stick_bottom: false })
+            .scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("provider-scroll")
             .child(body.pr(8.0)),
         false,
         p,

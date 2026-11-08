@@ -3,6 +3,7 @@
 //! (`ThreadSidePanel`, `ThreadCreatePane`, `ThreadComposerArea`), the header's thread browser
 //! (`ThreadBrowser`), the thread menu (`useThreadMenuData`) and settings (`ThreadSettingsModal`).
 
+use crate::ui::SmoothWheel;
 use std::collections::HashMap;
 
 use reflux_model::{Channel, ChannelType, Message, NotificationLevel, Snowflake, ThreadMemberFlags};
@@ -722,7 +723,7 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
                 .child(col().grow(1.0).min_w(0.0).inert().child(super::chat::message_preview(store, st, m, &md, p, acc))),
         );
     }
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: true }).key("thread-create").justify_end().child(body);
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: true }).smooth_wheel::<S>("thread-create").key("thread-create").justify_end().child(body);
     col()
         .w_full()
         .grow(1.0)
@@ -745,7 +746,7 @@ fn members_popout<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &P
         .box_shadow(popout_shadow(p, 0.24, 0.14))
         .role("dialog")
         .label(crate::i18n::t("Thread members"))
-        .child(scroller(col().w_full().scroll(ScrollSpec { stick_bottom: false }).key("thread-members-popout").child(roster(store, st, t, p, acc)), false, p))
+        .child(scroller(col().w_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("thread-members-popout").key("thread-members-popout").child(roster(store, st, t, p, acc)), false, p))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     anchor(surface, MEMBERS, Placement::BottomEnd, 8.0)
 }
@@ -800,7 +801,7 @@ fn roster<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, 
 
 /// `ThreadMembersPanel`: a full-view thread's member list.
 pub(super) fn members_column<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("thread-member-list").child(roster(store, st, t, p, acc));
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("thread-member-list").key("thread-member-list").child(roster(store, st, t, p, acc));
     col().w(dim::LAYOUT_MEMBER_LIST_WIDTH).h_full().min_h(0.0).fill(p.background_secondary_lighter).child(scroller(viewport, false, p))
 }
 
@@ -910,7 +911,7 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
             }
         }
     }
-    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("thread-browser").child(list), false, p);
+    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("thread-browser").key("thread-browser").child(list), false, p);
     let surface = col()
         .size(480.0, 576.0)
         .radius(8.0)

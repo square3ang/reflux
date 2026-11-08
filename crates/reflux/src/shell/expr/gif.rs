@@ -1,6 +1,7 @@
 //! The GIFs tab (`GifPicker`): featured categories with Favorites and Trending tiles, then a
 //! masonry grid of results. Picking sends the GIF's page URL.
 
+use crate::ui::SmoothWheel;
 use rune::{Color, El, Tx, col, el, icon, row, text};
 use serde_json::Value;
 
@@ -249,7 +250,7 @@ pub(super) fn columns() -> (usize, f32) {
 }
 
 /// Each (tile, height) into the shortest column, scrolling.
-pub(super) fn masonry(cols: usize, w: f32, tiles: Vec<(El, f32)>, p: &Palette) -> El {
+pub(super) fn masonry<S: 'static>(cols: usize, w: f32, tiles: Vec<(El, f32)>, p: &Palette) -> El {
     let mut columns: Vec<(El, f32)> = (0..cols).map(|_| (col().w(w).gap(GAP), 0.0)).collect();
     for (e, h) in tiles {
         let c = columns.iter_mut().min_by(|a, b| a.1.total_cmp(&b.1)).expect("at least one column");
@@ -257,7 +258,7 @@ pub(super) fn masonry(cols: usize, w: f32, tiles: Vec<(El, f32)>, p: &Palette) -
         c.1 += h + GAP;
     }
     let grid = row().w_full().items_start().gap(GAP).px(10.0).pb(16.0).children(columns.into_iter().map(|c| c.0));
-    col().w_full().h_full().pt(12.0).fill(p.background_tertiary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).key("gif-grid-scroll").child(grid), false, p))
+    col().w_full().h_full().pt(12.0).fill(p.background_tertiary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("gif-grid-scroll").key("gif-grid-scroll").child(grid), false, p))
 }
 
 /// (search bar with the back button and title, masonry grid).
@@ -304,7 +305,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
             let line = if st.expr.gif == GifView::Favorites { t("No favorite GIFs yet") } else { "No GIFs match that search" };
             col().w_full().h_full().child(super::empty_state(line, None, p))
         }
-        Ok(v) => masonry(cols, w, v.iter().map(|t| tile(st, t, w, p, acc)).collect(), p),
+        Ok(v) => masonry::<S>(cols, w, v.iter().map(|t| tile(st, t, w, p, acc)).collect(), p),
         Err("") => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
         Err(msg) => col().w_full().h_full().child(super::empty_state(msg, None, p)),
     };
