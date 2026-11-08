@@ -195,7 +195,8 @@ impl Call {
             eprintln!("reflux-voice: no microphone");
         }
         let track = LocalAudioTrack::create_audio_track("microphone", RtcAudioSource::Native(audio.source.clone()));
-        let opts = TrackPublishOptions { source: TrackSource::Microphone, ..Default::default() };
+        // `AudioPublishOptions`: `dtx: false, red: true` (the SDK drops RED under E2EE, as livekit-client does).
+        let opts = TrackPublishOptions { source: TrackSource::Microphone, dtx: false, red: true, ..Default::default() };
         self.publish(LocalTrack::Audio(track.clone()), opts, (0, 0)).await?;
         if muted {
             track.mute();
@@ -268,7 +269,7 @@ impl Call {
     pub async fn publish_stream_audio(&self) -> Result<StreamAudio, Error> {
         let source = NativeAudioSource::new(AudioSourceOptions::default(), audio::RATE, 2, 0);
         let track = LocalAudioTrack::create_audio_track("screen_share_audio", RtcAudioSource::Native(source.clone()));
-        let opts = TrackPublishOptions { source: TrackSource::ScreenshareAudio, ..Default::default() };
+        let opts = TrackPublishOptions { source: TrackSource::ScreenshareAudio, dtx: false, red: true, ..Default::default() };
         let sid = self.publish(LocalTrack::Audio(track), opts, (0, 0)).await?;
         Ok(StreamAudio { sid, source, pending: Mutex::default() })
     }
