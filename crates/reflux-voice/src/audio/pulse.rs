@@ -216,7 +216,7 @@ pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: A
 }
 
 /// Records `device` at 48 kHz mono through the server into `chain`.
-pub(super) fn open_input(device: Option<&str>, mut chain: MicChain) -> Option<IoThread> {
+pub(super) fn open_input(device: Option<&str>, chain: MicChain) -> Option<IoThread> {
     open_capture(device, Arc::new(Mutex::new(move |samples: &[f32]| chain.feed(samples.iter().copied()))))
 }
 

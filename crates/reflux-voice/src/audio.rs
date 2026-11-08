@@ -405,7 +405,7 @@ impl Engine {
         let (level, speaking, noise_state) = (self.level.clone(), self.speaking.clone(), self.noise_state.clone());
         let monitor = (self.mixer.clone(), self.monitor.clone());
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let mut chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
+            let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -499,7 +499,7 @@ fn build_output<T: SizedSample + FromSample<f32>>(device: &cpal::Device, cfg: &c
     Some(stream)
 }
 
-fn build_input<T: SizedSample>(device: &cpal::Device, cfg: &cpal::SupportedStreamConfig, mut chain: MicChain) -> Option<cpal::Stream>
+fn build_input<T: SizedSample>(device: &cpal::Device, cfg: &cpal::SupportedStreamConfig, chain: MicChain) -> Option<cpal::Stream>
 where
     f32: FromSample<T>,
 {
@@ -536,8 +536,36 @@ fn to_i16(s: f32) -> i16 {
 }
 
 /// Mic samples → 48 kHz → 10 ms frames → gain → APM → RNNoise / DeepFilterNet → gate → the WebRTC
-/// source.
+/// source, on its own thread: the capture callback only hands over blocks, so a slow frame (the
+/// DeepFilterNet round trip, a busy APM) can't stall the device and drop audio.
 struct MicChain {
+    blocks: std::sync::mpsc::SyncSender<Vec<f32>>,
+}
+
+/// How many capture blocks may wait for the worker (each is 20 ms: 80 ms of slack, then the
+/// newest block is dropped rather than holding the device).
+const CHAIN_QUEUE: usize = 4;
+
+impl MicChain {
+    #[allow(clippy::too_many_arguments)]
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(CHAIN_QUEUE);
+        std::thread::spawn(move || {
+            let mut inner = MicChainInner { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), deep: crate::deepfilter::Deep::new(noise_state), gate: None, speaking, level, monitor };
+            for block in rx {
+                inner.feed(block);
+            }
+        });
+        Self { blocks: tx }
+    }
+
+    /// Hands one capture block over; never blocks (a full queue drops it).
+    fn feed(&self, mono: impl Iterator<Item = f32>) {
+        let _ = self.blocks.try_send(mono.collect());
+    }
+}
+
+struct MicChainInner {
     resampler: Resampler,
     pending: Vec<f32>,
     source: NativeAudioSource,
@@ -553,26 +581,8 @@ struct MicChain {
     monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
 }
 
-impl MicChain {
-    #[allow(clippy::too_many_arguments)]
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
-        Self {
-            resampler: Resampler::new(rate, RATE),
-            pending: Vec::new(),
-            source,
-            apm,
-            processing,
-            denoise: nnnoiseless::DenoiseState::new(),
-            deep: crate::deepfilter::Deep::new(noise_state),
-            gate: None,
-            speaking,
-            level,
-            monitor,
-        }
-    }
-
-    fn feed(&mut self, mono: impl Iterator<Item = f32>) {
-        let input: Vec<f32> = mono.collect();
+impl MicChainInner {
+    fn feed(&mut self, input: Vec<f32>) {
         self.resampler.process(&input, &mut self.pending);
         let p = *self.processing.lock().unwrap();
         while self.pending.len() >= FRAME {
