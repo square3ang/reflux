@@ -216,14 +216,17 @@ pub fn fire(action: Action, pressed: bool) {
             PTT.store(pressed, Ordering::Relaxed);
             crate::app::update(|_| {});
         }
-        Action::ToggleMute if pressed => crate::app::update(move |s| {
+        // A frame must run to send the voice state: unfocused, nothing else asks for one.
+        Action::ToggleMute if pressed => crate::app::update_tx(move |s, tx| {
             if !(hook && s.desktop.focused) {
-                s.app.shell.toggle_mute()
+                s.app.shell.toggle_mute();
+                tx.wake_after(std::time::Duration::ZERO);
             }
         }),
-        Action::ToggleDeafen if pressed => crate::app::update(move |s| {
+        Action::ToggleDeafen if pressed => crate::app::update_tx(move |s, tx| {
             if !(hook && s.desktop.focused) {
-                s.app.shell.toggle_deaf()
+                s.app.shell.toggle_deaf();
+                tx.wake_after(std::time::Duration::ZERO);
             }
         }),
         _ => {}

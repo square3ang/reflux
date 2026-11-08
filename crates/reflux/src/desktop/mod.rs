@@ -564,9 +564,20 @@ fn on_tray(e: TrayEvent) {
                 app::show_window();
                 app::update(|s| s.app.shell.open_settings(None));
             }
-            "mute" => app::update(|s| s.app.shell.toggle_mute()),
-            "deafen" => app::update(|s| s.app.shell.toggle_deaf()),
-            "disconnect" => app::update(|s| s.app.shell.leave_voice()),
+            // `update` applies at once but a frame still has to run to send the voice state
+            // and rebuild this menu; unfocused, none comes on its own, so ask for one.
+            "mute" => app::update_tx(|s, tx| {
+                s.app.shell.toggle_mute();
+                tx.wake_after(std::time::Duration::ZERO);
+            }),
+            "deafen" => app::update_tx(|s, tx| {
+                s.app.shell.toggle_deaf();
+                tx.wake_after(std::time::Duration::ZERO);
+            }),
+            "disconnect" => app::update_tx(|s, tx| {
+                s.app.shell.leave_voice();
+                tx.wake_after(std::time::Duration::ZERO);
+            }),
             "quit" => app::quit(),
             _ => {}
         },
