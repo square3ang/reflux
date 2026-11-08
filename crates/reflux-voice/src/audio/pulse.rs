@@ -195,8 +195,27 @@ pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: A
         let _ = tx.send(true);
         let mut mix = vec![0.0f32; FRAME];
         let mut pcm = vec![0u8; FRAME * CHANNELS as usize * 4];
+        // `REFLUX_DEBUG_AUDIO=1`: the output gain and level every five seconds, so a volume
+        // swing (users report one after a few minutes) can be traced to the gain or the audio.
+        let debug = std::env::var_os("REFLUX_DEBUG_AUDIO").is_some_and(|v| v != "0");
+        let mut logged = std::time::Instant::now();
+        let mut peak = 0f32;
         while !st.load(Ordering::Relaxed) {
             mixer.lock().unwrap().mix(&mut mix);
+            if debug {
+                peak = mix.iter().fold(peak, |a, s| a.max(s.abs()));
+                if logged.elapsed() >= std::time::Duration::from_secs(5) {
+                    let m = mixer.lock().unwrap();
+                    let sources: Vec<(String, usize)> = m.sources.iter().map(|(s, b)| (format!("{:?}/{}", s.kind, s.user), b.len())).collect();
+                    eprintln!(
+                        "reflux-voice: out gain {:.3}, 5s peak {:.3}, deaf {}, watching {:?}, users {:?}, streams {:?}, buffers {sources:?}",
+                        m.output, peak, m.deaf, m.watching, m.user_volume, m.stream_volume
+                    );
+                    drop(m);
+                    peak = 0.0;
+                    logged = std::time::Instant::now();
+                }
+            }
             for (out, s) in pcm.as_chunks_mut::<8>().0.iter_mut().zip(&mix) {
                 // Mono in, the same sample on both channels.
                 out[..4].copy_from_slice(&s.to_le_bytes());
