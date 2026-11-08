@@ -107,11 +107,14 @@ impl<S: 'static> Menu<S> {
             return;
         }
         let m = surface(&self.id, self.entries, popups, access, p, None).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
+        let mut late = Vec::new();
         let m = match popups.at {
-            Some(at) => anchor_at_point(layer, m, &self.id, at),
+            Some(at) => anchor_at_point(&mut late, m, &self.id, at),
             None => anchor(m, &self.id, self.placement, 4.0),
         };
-        layer.push(m);
+        let _ = layer;
+        late.push(m);
+        late.into_iter().for_each(super::overlay::late);
     }
 }
 

@@ -114,7 +114,7 @@ fn section(t: &str, p: &Palette, body: El) -> El {
 
 pub fn view(gal: &Gallery, _cx: &mut Cx<State>) -> El {
     let (body, layer) = parts(gal, false);
-    rune_kit::root(body, layer)
+    super::root(body, layer)
 }
 
 /// The gallery and its overlays: three columns for the screen, `stacked` for a settings tab.

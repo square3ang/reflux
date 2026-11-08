@@ -36,7 +36,13 @@ pub use select::Select;
 /// and each overlay land their inner changes at once (`instant_changes`): a modal or popout keeps
 /// its own entrance/exit fade, and hover colours keep their transitions.
 pub fn root(base: rune::El, layer: Vec<rune::El>) -> rune::El {
-    rune_kit::root(base.instant_changes(), layer.into_iter().map(rune::El::instant_changes))
+    let late = overlay::take_late();
+    rune_kit::root(base.instant_changes(), layer.into_iter().chain(late).map(rune::El::instant_changes))
+}
+
+/// Drops popups queued by an unfinished view.
+pub fn reset_late() {
+    let _ = overlay::take_late();
 }
 
 pub fn enters(k: &rune::KeyEvent) -> bool {

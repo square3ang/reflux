@@ -37,7 +37,7 @@ impl<'a, S: 'static> Select<'a, S> {
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
     pub fn on_choose(mut self, f: impl Fn(&mut S, &str) + 'static) -> Self { self.on_choose = Some(Rc::new(f)); self }
 
-    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
+    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, _layer: &mut Vec<El>) -> El {
         let open = popups.is_open(self.id);
         let bg = p.form_surface_background;
         let border = if open { p.background_modifier_accent_focus } else { p.background_modifier_accent };
@@ -151,7 +151,7 @@ impl<'a, S: 'static> Select<'a, S> {
                 .modal(true, move |s: &mut S| access(s).close())
                 // react-select's menu has no enter/exit animation.
                 .transition(rune::Transition::none());
-            layer.push(anchor(popup, self.id, Placement::BottomStart, 4.0));
+            super::overlay::late(anchor(popup, self.id, Placement::BottomStart, 4.0));
         }
 
         match self.label {

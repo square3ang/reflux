@@ -1783,6 +1783,7 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         layer.push(hide_own_camera(dont_ask, p, acc));
     }
     let Some(m) = &st.voice.modal else { return };
+    let mut pops = Vec::new();
     let close = move |s: &mut S| {
         let sh = acc(s);
         if sh.voice.modal == Some(Modal::CameraPreview) {
@@ -1860,13 +1861,16 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
             crate::ui::Modal::new(title, close).body(body_text(&desc, p)).footer(buttons)
         }
         Modal::NewDevice(d) => new_device(d, p, acc, close),
-        Modal::CameraPreview => camera_preview(st, p, acc, close, layer),
-        Modal::ScreenShare => screen_picker(st, p, acc, close, layer),
+        Modal::CameraPreview => camera_preview(st, p, acc, close, &mut pops),
+        Modal::ScreenShare => screen_picker(st, p, acc, close, &mut pops),
         Modal::AudioProcessing => audio_processing(st, p, acc, close),
         Modal::Trim => trimmer(st, p, acc, close),
     };
     let _ = store;
     layer.push(modal.el(p));
+    // A select's list anchors to its trigger inside the modal, so it must come after it: before
+    // it, the anchor isn't placed yet (the list lands at the window's corner) and the dimmer covers it.
+    layer.extend(pops);
 }
 
 /// `VoiceP2pConsentModal`: what a P2P call means, then start / join it (or a standard call).

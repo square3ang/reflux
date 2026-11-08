@@ -69,7 +69,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
     }
     pub fn on_pick(mut self, f: impl Fn(&mut S, NaiveDate) + 'static) -> Self { self.on_pick = Some(Rc::new(f)); self }
 
-    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
+    pub fn el(self, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, _layer: &mut Vec<El>) -> El {
         let month = shown(popups, self.id);
         let bg = p.form_surface_background;
         let border = if month.is_some() { p.background_modifier_accent_focus } else { p.background_modifier_accent };
@@ -250,7 +250,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .child(row().grow(1.0).px(8.0).py(5.0).radius(6.0).fill(surface).border(1.0, over(p.background_modifier_accent, surface)).child(input)),
             );
         }
-        layer.push(anchor(pop.role("dialog").label(t("Date picker")).modal(true, move |s: &mut S| access(s).close()), self.id, Placement::BottomStart, 8.0));
+        super::overlay::late(anchor(pop.role("dialog").label(t("Date picker")).modal(true, move |s: &mut S| access(s).close()), self.id, Placement::BottomStart, 8.0));
         c
     }
 }

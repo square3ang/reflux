@@ -88,6 +88,23 @@ impl Placement {
     }
 }
 
+thread_local! {
+    static LATE: std::cell::RefCell<Vec<El>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Queues an open popup (select list, date picker, menu) for the end of the window's overlays.
+/// An anchored overlay must come after its anchor, and above the modal holding it; the
+/// callers' own `layer` order can't promise that (a modal builder that adds its selects' lists
+/// before the caller pushes the modal itself), so [`super::root`] mounts these last.
+pub fn late(e: El) {
+    LATE.with(|l| l.borrow_mut().push(e));
+}
+
+/// The queued popups, in the order they were opened in the view.
+pub(crate) fn take_late() -> Vec<El> {
+    LATE.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
 /// Places `content` on `placement` of the element keyed `anchor`, `gap` away; it flips when it
 /// doesn't fit and stays 8pt inside the window (Floating UI's `flip` + `shift({padding: 8})`).
 pub fn anchor(content: El, anchor: &str, placement: Placement, gap: f32) -> El {

@@ -61,6 +61,8 @@ fn init() -> State {
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
+    // Popups left by a view that bailed (a crash) don't belong to this frame.
+    ui::reset_late();
     let scale = cx.env().scale;
     s.app.shell.media.set_scale(scale);
     if let Some(d) = &s.shell_demo {
