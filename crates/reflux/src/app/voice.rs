@@ -1813,7 +1813,7 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     let v = &s.app.shell.voice;
     let in_call = s.app.voice.call.is_some() && !(v.self_mute || v.self_deaf);
     let vad_mode = (in_call && !v.settings.ptt() && v.settings.processing != "studio")
-        .then_some(Mode::Activity { threshold: v.settings.vad_threshold, auto: v.settings.vad_auto });
+        .then_some(Mode::Activity { threshold: 20.0 * v.settings.vad_rms().log10(), auto: v.settings.vad_auto });
     let recording = v.voice_message.as_ref().is_some_and(|m| m.recording);
     let need = vad_mode.is_some() || recording;
     mic_test(s);

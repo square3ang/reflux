@@ -368,6 +368,7 @@ pub struct Settings {
     pub ptt_key: Option<String>,
     pub ptt_release_ms: u64,
     pub vad_auto: bool,
+    /// `vadThreshold`: 0..100 (50 = Fluxer's default); settings saved before held dBFS (< 0).
     pub vad_threshold: f32,
     pub show_connection_ids: bool,
     /// `showVoiceConnectionAvatarStack` / `showVoiceConnectionId`: the connection panel's
@@ -426,7 +427,7 @@ impl Default for Settings {
             ptt_key: None,
             ptt_release_ms: 20,
             vad_auto: true,
-            vad_threshold: -60.0,
+            vad_threshold: 50.0,
             show_connection_ids: false,
             panel_avatars: true,
             panel_connection_id: true,
@@ -491,6 +492,24 @@ impl Settings {
         }
     }
 
+    /// The activity threshold on Fluxer's 0..100 scale; an older dBFS value maps to the
+    /// same RMS on it.
+    pub fn vad_percent(&self) -> f32 {
+        let t = self.vad_threshold;
+        if t >= 0.0 {
+            return t.min(100.0);
+        }
+        let rms = 10f32.powf(t / 20.0);
+        let p = if rms <= 0.008 { 50.0 * (rms / 3e-4).ln() / (0.008f32 / 3e-4).ln() } else { 50.0 + 50.0 * (rms - 0.008) / (0.04 - 0.008) };
+        p.clamp(0.0, 100.0)
+    }
+
+    /// `vadThresholdToGateRms`: logarithmic from 0.0003 to 0.008 up to 50, linear to 0.04 above.
+    pub fn vad_rms(&self) -> f32 {
+        let t = self.vad_percent();
+        if t <= 50.0 { 3e-4 * (0.008f32 / 3e-4).powf(t / 50.0) } else { 0.008 + (t - 50.0) / 50.0 * (0.04 - 0.008) }
+    }
+
     /// What the mic path runs at the input volume.
     pub fn mic_processing(&self) -> reflux_voice::Processing {
         let (echo_cancellation, noise, auto_gain_control) = self.processing();
@@ -498,7 +517,7 @@ impl Settings {
         // custom profile turned automatic sensitivity off.
         let gate = (!self.ptt() && self.processing != "studio").then(|| reflux_voice::GateConfig {
             auto: self.processing != "custom" || self.vad_auto,
-            threshold_rms: 10f32.powf(self.vad_threshold / 20.0),
+            threshold_rms: self.vad_rms(),
         });
         reflux_voice::Processing { echo_cancellation, noise, auto_gain_control, input_gain: self.input_volume / 100.0, gate }
     }
@@ -1677,6 +1696,16 @@ fn stream_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vad_threshold_follows_fluxers_scale() {
+        let at = |t: f32| Settings { vad_threshold: t, ..Default::default() };
+        assert!((at(0.0).vad_rms() - 3e-4).abs() < 1e-7 && (at(50.0).vad_rms() - 0.008).abs() < 1e-6 && (at(100.0).vad_rms() - 0.04).abs() < 1e-6);
+        // A saved -63 dBFS keeps its RMS and reads as 13 %.
+        let old = at(-63.0);
+        assert_eq!(old.vad_percent().round(), 13.0);
+        assert!((old.vad_rms() - 10f32.powf(-63.0 / 20.0)).abs() < 1e-6);
+    }
 
     #[test]
     fn new_devices_group_by_card() {

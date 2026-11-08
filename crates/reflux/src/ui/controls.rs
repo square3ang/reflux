@@ -252,12 +252,20 @@ pub struct Slider<S: 'static> {
     key: String,
     label: Option<String>,
     on_change: Option<Rc<dyn Fn(&mut S, f32)>>,
+    /// `markers` with `onMarkerRender`'s labels, and `factoryDefaultValue` (its mark is green).
+    marks: Vec<(f32, String)>,
+    factory: Option<f32>,
+    /// `onValueRender`: the value in a tooltip over the thumb.
+    tip: Option<String>,
 }
 
 impl<S: 'static> Slider<S> {
     pub fn new(key: impl Into<String>, value: f32, min: f32, max: f32) -> Self {
-        Self { value, min, max, step: 1.0, mini: false, disabled: false, key: key.into(), label: None, on_change: None }
+        Self { value, min, max, step: 1.0, mini: false, disabled: false, key: key.into(), label: None, on_change: None, marks: Vec::new(), factory: None, tip: None }
     }
+    /// Marks above the track (`markerPosition="above"`), the `factory` one green.
+    pub fn marks(mut self, marks: Vec<(f32, String)>, factory: f32) -> Self { (self.marks, self.factory) = (marks, Some(factory)); self }
+    pub fn tip(mut self, t: impl Into<String>) -> Self { self.tip = Some(t.into()); self }
     pub fn step(mut self, s: f32) -> Self { self.step = s; self }
     pub fn mini(mut self) -> Self { self.mini = true; self }
     pub fn disabled(mut self, d: bool) -> Self { self.disabled = d; self }
@@ -269,6 +277,7 @@ impl<S: 'static> Slider<S> {
         let (h, thumb, track) = if self.mini { (20.0, 12.0, 4.0) } else { (26.0, 16.0, 6.0) };
         let span = (self.max - self.min).max(f32::EPSILON);
         let frac = ((self.value - self.min) / span).clamp(0.0, 1.0);
+        let marks = (!self.marks.is_empty()).then(|| self.mark_lane(thumb, span, p));
         let light = is_light(p);
         let end = if light { mix(p.brand_primary_foreground, rgb(0x11, 0x11, 0x11), 72.0) } else { mix(p.brand_primary_light, Color::WHITE, 84.0) };
         let mut bar = el()
@@ -296,6 +305,20 @@ impl<S: 'static> Slider<S> {
             .box_shadow(sh(0.0, 6.0, 14.0, 0.0, rgba(0, 0, 0, 0.18), false))
             // `.sliderControl:hover .grabber`: the border turns brand 62%.
             .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(thumb / 2.0).border(2.0, mix(p.brand_primary, p.background_primary, 62.0)).group_opacity(0.0, if self.disabled { 0.0 } else { 1.0 }).inert());
+        // `SliderTooltipPortal`: Fluxer shows it while the thumb is hovered or dragged.
+        // shortcut: it shows while the whole control is hovered (Rune's hover group), which also
+        // covers a drag that stays on the track; a per-thumb hover needs its own state.
+        let grab = match &self.tip {
+            Some(tip) if !self.disabled => grab.child(
+                row()
+                    .pin(Some(-60.0), None, Some(-60.0), Some(thumb + 8.0))
+                    .justify_center()
+                    .inert()
+                    .group_opacity(0.0, 1.0)
+                    .child(super::overlay::tooltip_surface(tip, super::overlay::Placement::Top, super::overlay::TooltipKind::Normal, false, p)),
+            ),
+            _ => grab,
+        };
         // Free space split frac : 1 - frac puts the thumb's left edge at frac of the track.
         let thumb_row = row()
             .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -318,8 +341,13 @@ impl<S: 'static> Slider<S> {
             .range_value(self.value as f64, self.min as f64, self.max as f64)
             .range_step(self.step as f64)
             .hover_group();
+        // `.slider.hasMarks.marksAbove`: the marks take a 24px lane over the control.
+        let with_marks = |ctl: El| match marks {
+            Some(lane) => col().w_full().pt(24.0).child(lane).child(ctl),
+            None => ctl,
+        };
         if self.disabled {
-            return ctl.opacity(0.55).disabled(true);
+            return with_marks(ctl.opacity(0.55).disabled(true));
         }
         if let Some(f) = self.on_change {
             let (min, max, step) = (self.min, self.max, self.step);
@@ -336,7 +364,27 @@ impl<S: 'static> Slider<S> {
                 // Home / End take the slider to its ends, as AppKit's do.
                 .on_step_limit(move |s: &mut S, max_end, _| end(s, if max_end { max } else { min }));
         }
-        ctl
+        with_marks(ctl)
+    }
+
+    /// `.marks`: each mark's value over a 2x8 dash, centred on its value (the ends flush with
+    /// the track's ends), inset by half a thumb like the track.
+    fn mark_lane(&self, thumb: f32, span: f32, p: &Palette) -> El {
+        const W: f32 = 48.0;
+        let last = self.marks.len() - 1;
+        let lane = row().pin(Some(thumb / 2.0), Some(0.0), Some(thumb / 2.0), None).h(24.0).inert();
+        lane.children(self.marks.iter().enumerate().map(|(i, (v, label))| {
+            let f = ((v - self.min) / span).clamp(0.0, 1.0);
+            let on = self.factory == Some(*v);
+            let (fg, dash) = if on { (p.accent_success, p.accent_success) } else { (p.text_secondary, mix(p.interactive_muted, rgb(0x72, 0x76, 0x7d), 78.0)) };
+            let mark = col().w(W).gap(3.0).child(text(label.clone()).font(font(11.0, 600.0).lh(14.0)).color(fg)).child(el().size(2.0, 8.0).radius(1.0).fill(dash));
+            let (mark, x) = match i {
+                0 => (mark.items_start(), 0.0),
+                i if i == last => (mark.items_end(), -W),
+                _ => (mark.items_center(), -W / 2.0),
+            };
+            row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(el().w_frac(f)).child(el().w(0.0).h_full().child(mark.pin(Some(x), Some(0.0), None, None)))
+        }))
     }
 }
 

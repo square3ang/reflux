@@ -1014,8 +1014,9 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.voice_message = Some(super::voice::VoiceMessage { channel: Snowflake(GENERAL), recording: false, secs: 4.2, end: 3.6, start: 0.4, bars, playing, ..Default::default() });
             return;
         }
-        "meter" => {
+        "meter" | "meter-ptt" => {
             st.open_settings(Some("voice_video"));
+            st.voice.settings.push_to_talk = scene == "meter-ptt";
             (st.voice.mic_test, st.voice.level) = (true, -28.0);
             (st.voice.settings.vad_auto, st.voice.settings.processing) = (false, "custom".into());
             return;
