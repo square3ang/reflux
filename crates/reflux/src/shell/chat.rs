@@ -486,12 +486,15 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 let mut body = message(store, st, m, head, &md.body(format!("m{}", m.id), Some((m.id, &copy))), p, acc);
                 if !is_pending(m) {
                     let id = m.id;
+                    // Leaving has a short grace: the action bar sits above the message's rect,
+                    // so the pointer crosses a gap on its way there.
                     body = body
+                        .hover_delays(std::time::Duration::ZERO, std::time::Duration::from_millis(140))
                         .on_hover_change(move |s: &mut S, inside, _| {
                             let st = acc(s);
                             if inside {
                                 st.hover_msg = Some(id);
-                            } else if st.hover_msg == Some(id) {
+                            } else if st.hover_msg == Some(id) && st.bar_msg != Some(id) {
                                 st.hover_msg = None;
                             }
                         })
@@ -519,9 +522,16 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                         });
                     }
                     let editing = st.editing.as_ref().is_some_and(|e| e.0 == id);
-                    if !editing && (st.hover_msg == Some(id) || active == Some(id)) {
+                    if !editing && (st.hover_msg == Some(id) || st.bar_msg == Some(id) || active == Some(id)) {
                         let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(id).is_none()), ..perms };
-                        body = body.child(action_bar(m, c, perms, st, p, acc, layer));
+                        body = body.child(action_bar(m, c, perms, st, p, acc, layer)).on_hover_change(move |s: &mut S, inside, _| {
+                            let st = acc(s);
+                            if inside {
+                                st.bar_msg = Some(id);
+                            } else if st.bar_msg == Some(id) {
+                                st.bar_msg = None;
+                            }
+                        });
                     }
                 } else if st.failed.contains_key(&m.id) {
                     let id = m.id;

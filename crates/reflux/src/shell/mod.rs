@@ -290,6 +290,10 @@ pub struct ShellState {
     pub popups: Popups,
     /// The message under the pointer (shows its action bar).
     pub hover_msg: Option<Snowflake>,
+    /// The message whose action bar the pointer is on: the bar sits above the message's rect,
+    /// so being on it isn't being on the message (`hover_msg` would drop and the bar vanish
+    /// under the pointer). Fluxer keeps the row hovered through DOM ancestry instead.
+    pub bar_msg: Option<Snowflake>,
     /// The channel row under the pointer (its `hoverAffordance` icons show).
     pub hover_channel: Option<Snowflake>,
     /// Shift is down (the action bar's Shift to expand).
@@ -453,6 +457,7 @@ impl Default for ShellState {
             birthday: Default::default(),
             popups: Popups::default(),
             hover_msg: None,
+            bar_msg: None,
             hover_channel: None,
             active_msg: None,
             msg_selection: None,
