@@ -47,3 +47,7 @@ pub enum NoiseState {
 
 // Shared with both implementations: `reflux_voice::audio::Resampler`.
 mod resample;
+// The stub only carries the settings.
+#[cfg_attr(not(feature = "webrtc"), allow(dead_code))]
+mod gate;
+pub use gate::GateConfig;

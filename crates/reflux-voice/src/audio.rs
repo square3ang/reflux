@@ -155,11 +155,13 @@ pub struct Processing {
     pub auto_gain_control: bool,
     /// Linear input gain (input volume / 100).
     pub input_gain: f32,
+    /// The voice-activity gate (`voice_activity` transmit mode), `None` when off.
+    pub gate: Option<crate::GateConfig>,
 }
 
 impl Default for Processing {
     fn default() -> Self {
-        Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0 }
+        Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0, gate: None }
     }
 }
 
@@ -518,7 +520,7 @@ fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * 32767.0) as i16
 }
 
-/// Mic samples → 48 kHz → 10 ms frames → gain → APM → RNNoise / DeepFilterNet → the WebRTC
+/// Mic samples → 48 kHz → 10 ms frames → gain → APM → RNNoise / DeepFilterNet → gate → the WebRTC
 /// source.
 struct MicChain {
     resampler: Resampler,
@@ -528,6 +530,8 @@ struct MicChain {
     processing: Arc<Mutex<Processing>>,
     denoise: Box<nnnoiseless::DenoiseState<'static>>,
     deep: crate::deepfilter::Deep,
+    /// `fluxer-voice-gate`, kept while the gate stays on (a new one seeds its floor again).
+    gate: Option<crate::gate::Gate>,
     level: Arc<AtomicU32>,
     monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
 }
@@ -542,6 +546,7 @@ impl MicChain {
             processing,
             denoise: nnnoiseless::DenoiseState::new(),
             deep: crate::deepfilter::Deep::new(noise_state),
+            gate: None,
             level,
             monitor,
         }
@@ -571,6 +576,17 @@ impl MicChain {
             }
             let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0;
             self.level.store(peak.to_bits(), Ordering::Relaxed);
+            // `VoiceInputProcessor`: noise suppression → the gate → the track. The meter reads
+            // the level before it, as the worklet reports it.
+            match p.gate {
+                Some(cfg) => {
+                    let gate = self.gate.get_or_insert_with(|| crate::gate::Gate::new(cfg.auto));
+                    let mut f: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
+                    gate.process(cfg, &mut f);
+                    pcm = f.into_iter().map(to_i16).collect();
+                }
+                None => self.gate = None,
+            }
             if self.monitor.1.load(Ordering::Relaxed) {
                 let out: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
                 self.monitor.0.lock().unwrap().push(Source { kind: Kind::Monitor, user: 0, conn: String::new() }, &out);

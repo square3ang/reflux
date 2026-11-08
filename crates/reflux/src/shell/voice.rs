@@ -490,7 +490,13 @@ impl Settings {
     /// What the mic path runs at the input volume.
     pub fn mic_processing(&self) -> reflux_voice::Processing {
         let (echo_cancellation, noise, auto_gain_control) = self.processing();
-        reflux_voice::Processing { echo_cancellation, noise, auto_gain_control, input_gain: self.input_volume / 100.0 }
+        // `isVoiceActivityGateEnabled`: voice activity outside studio; `gateAuto` unless a
+        // custom profile turned automatic sensitivity off.
+        let gate = (!self.ptt() && self.processing != "studio").then(|| reflux_voice::GateConfig {
+            auto: self.processing != "custom" || self.vad_auto,
+            threshold_rms: 10f32.powf(self.vad_threshold / 20.0),
+        });
+        reflux_voice::Processing { echo_cancellation, noise, auto_gain_control, input_gain: self.input_volume / 100.0, gate }
     }
 
     /// Copies the playback preferences into the call's mixer.

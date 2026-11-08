@@ -83,11 +83,13 @@ pub mod audio {
         pub noise: crate::Noise,
         pub auto_gain_control: bool,
         pub input_gain: f32,
+        /// The voice-activity gate (`voice_activity` transmit mode), `None` when off.
+        pub gate: Option<crate::GateConfig>,
     }
 
     impl Default for Processing {
         fn default() -> Self {
-            Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0 }
+            Self { echo_cancellation: true, noise: crate::Noise::default(), auto_gain_control: true, input_gain: 1.0, gate: None }
         }
     }
 

@@ -64,6 +64,9 @@ pub struct VoiceRt {
     mic_test: Option<(reflux_voice::audio::Engine, MicTestKey)>,
     vad: Arc<Mutex<(Option<Mode>, Gate, bool)>>,
     ptt: Gate,
+    /// Whether the mic track is enabled: push-to-talk switches it; voice activity leaves it on
+    /// for the gate in the mic path (`Processing::gate`).
+    track_open: bool,
     /// A DM call we started: ring these once connected; stop ringing them when leaving.
     pending_ring: Option<(Snowflake, Vec<Snowflake>)>,
     rang: Option<(Snowflake, Vec<Snowflake>)>,
@@ -655,6 +658,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             let v = &mut s.app.shell.voice;
             (v.connected, v.encrypted, v.server) = (true, c.encrypted, Some((host, room)));
             c.set_mic_gate(false); // the next tick opens it per voice activity / push-to-talk
+            s.app.voice.track_open = false;
             s.app.shell.voice.transmitting = false;
             s.app.voice.call = Some(c);
             apply_self(s);
@@ -798,6 +802,7 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
             let v = &mut s.app.shell.voice;
             (v.connected, v.encrypted, v.server) = (true, false, None);
             c.set_mic_gate(false);
+            s.app.voice.track_open = false;
             s.app.shell.voice.transmitting = false;
             s.app.voice.call = Some(c);
             apply_self(s);
@@ -1769,10 +1774,14 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     } else {
         true
     };
-    if open != s.app.shell.voice.transmitting {
-        s.app.shell.voice.transmitting = open;
+    s.app.shell.voice.transmitting = open;
+    // Voice activity fades the voice in and out in the mic path (`fluxer-voice-gate`); turning
+    // the track on and off a tick after speech starts cut the start of words.
+    let track = open || (in_call && vad_mode.is_some());
+    if track != s.app.voice.track_open {
+        s.app.voice.track_open = track;
         if let Some(call) = &s.app.voice.call {
-            call.set_mic_gate(open);
+            call.set_mic_gate(track);
         }
     }
 
