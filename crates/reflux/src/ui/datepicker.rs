@@ -274,7 +274,7 @@ mod tests {
             s.picked = Some(d);
             s.pops.close();
         }).el(&pops, |s: &mut State| &mut s.pops, p, &mut layer);
-        rune::col().w_full().h_full().child(field).children(layer)
+        crate::ui::root(rune::col().w_full().h_full().child(field), layer)
     }
 
     fn press(rt: &mut rune::Runtime<State>, k: Key) {
