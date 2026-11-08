@@ -2,7 +2,9 @@
 //! (read-only mode lets op 4 through only for it, and for leaving). Joins through the app's own
 //! intents, then checks: VOICE_SERVER_UPDATE → LiveKit connect (and whether the grant carried an
 //! E2EE key), the gateway's voice state echo, the mic published (a generated tone by default, as
-//! a headless run has no one speaking; `REFLUX_TEST_TONE=0` uses the real microphone), ping, our
+//! a headless run has no one speaking; `REFLUX_TEST_TONE=0` uses the real microphone and
+//! `REFLUX_TEST_SAMPLE=<48 kHz mono wav>` a recorded clip through the same chain), ping, the
+//! microphone's probe and per-second peak, our
 //! own speaking, self mute / deafen echoes, six screen-share quality
 //! cases (resolution, frame rate, bitrate, the Screen share preset, the VP9 SVC mode; each one's
 //! published frame size, encoded fps, bytes sent, target bitrate and encoder), a device share
@@ -359,6 +361,23 @@ impl Run {
                 let me = s.app.store.my_id();
                 if first {
                     say(format!("transmitting: {}, self_mute {}", sh.voice.transmitting, sh.voice.self_mute));
+                    // Tell a silent device from a silent room: capture the input directly for a
+                    // moment, beside the chain's own level (the published track's).
+                    let dev = sh.voice.input.clone();
+                    let peak = Arc::new(std::sync::atomic::AtomicU32::new(0));
+                    let p = peak.clone();
+                    let cap = reflux_voice::audio::capture(dev.as_deref(), move |block: &[f32]| {
+                        let m = block.iter().fold(0f32, |a, s| a.max(s.abs()));
+                        p.fetch_max(m.to_bits(), Ordering::Relaxed);
+                    });
+                    std::thread::sleep(Duration::from_millis(1500));
+                    drop(cap);
+                    let raw = f32::from_bits(peak.load(Ordering::Relaxed));
+                    say(format!(
+                        "mic probe: device {:?}, 1.5s peak {raw:.3} (0..1), chain {:?}",
+                        dev,
+                        call.as_ref().map(|c| c.mic_level())
+                    ));
                 }
                 // The mic chain's level, so a silent run shows whether the device is delivering.
                 if since.as_secs() != self.mic_logged {

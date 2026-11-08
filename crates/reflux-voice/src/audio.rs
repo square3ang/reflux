@@ -404,6 +404,33 @@ impl Engine {
         let (source, apm, processing, name) = (self.source.clone(), self.apm.clone(), self.processing.clone(), name.map(str::to_string));
         let (level, speaking, noise_state) = (self.level.clone(), self.speaking.clone(), self.noise_state.clone());
         let monitor = (self.mixer.clone(), self.monitor.clone());
+        // `REFLUX_TEST_SAMPLE=<wav>`: a recorded clip through the same chain, so speech-like
+        // audio exercises the noise suppression and the gate (the tone is a pure sine).
+        if let Some(path) = std::env::var_os("REFLUX_TEST_SAMPLE") {
+            match read_wav(std::path::Path::new(&path)) {
+                Some((samples, rate)) if rate == RATE && !samples.is_empty() => {
+                    let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
+                    let stop = Arc::new(AtomicBool::new(false));
+                    let st = stop.clone();
+                    std::thread::spawn(move || {
+                        let mut at = 0usize;
+                        while !st.load(Ordering::Relaxed) {
+                            let frame = (0..FRAME).map(|_| {
+                                let s = samples[at % samples.len()];
+                                at += 1;
+                                s
+                            });
+                            chain.feed(frame);
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    });
+                    *slot = Some(IoThread { stop });
+                    return true;
+                }
+                Some((_, rate)) => eprintln!("reflux-voice: REFLUX_TEST_SAMPLE must be {RATE} Hz mono (is {rate})"),
+                None => eprintln!("reflux-voice: couldn't read REFLUX_TEST_SAMPLE"),
+            }
+        }
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
             let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
             let stop = Arc::new(AtomicBool::new(false));
@@ -519,6 +546,38 @@ where
 
 /// Sample `n` of a 150 Hz buzz with harmonics, syllable-like 4 Hz bursts: loud enough for the
 /// server's speaker detection and not the steady tone RNNoise removes.
+/// A 16-bit PCM mono WAV's samples and rate (`REFLUX_TEST_SAMPLE`; convert with
+/// `ffmpeg -i in.wav -ar 48000 -ac 1 -c:a pcm_s16le out.wav`).
+fn read_wav(path: &std::path::Path) -> Option<(Vec<f32>, u32)> {
+    let b = std::fs::read(path).ok()?;
+    if b.len() < 44 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return None;
+    }
+    let (mut rate, mut bits, mut channels, mut data) = (0u32, 0u16, 0u16, None);
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let len = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        let body = b.get(i + 8..i + 8 + len)?;
+        match id {
+            b"fmt " => {
+                channels = u16::from_le_bytes([body[2], body[3]]);
+                rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
+                bits = u16::from_le_bytes([body[14], body[15]]);
+            }
+            b"data" => data = Some(body),
+            _ => {}
+        }
+        i += 8 + len + (len & 1);
+    }
+    let data = data?;
+    if bits != 16 || channels != 1 {
+        return None;
+    }
+    let samples = data.as_chunks::<2>().0.iter().map(|p| i16::from_le_bytes(*p) as f32 / 32768.0).collect();
+    Some((samples, rate))
+}
+
 pub fn test_tone(n: u64) -> f32 {
     let t = n as f32 / RATE as f32;
     let voice: f32 = (1..6).map(|h| (std::f32::consts::TAU * 150.0 * h as f32 * t).sin() / h as f32).sum();
