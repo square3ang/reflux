@@ -56,21 +56,48 @@ impl Preview {
 pub const MIN_WINDOW_WIDTH: f32 = 1100.0;
 
 /// Stream keys whose previews the visible sidebar shows (`canViewStreamPreview`: CONNECT in guilds).
+/// `useStreamPreview`'s key for a live share: `{guild|dm}:{channel}:{connection}`.
+pub fn stream_key(store: &Store, guild: Option<Snowflake>, channel: Snowflake, user: Snowflake) -> Option<String> {
+    let v = store.voice_states.get(&(guild, user))?;
+    if !v.self_stream || v.channel_id != Some(channel) {
+        return None;
+    }
+    Some(format!("{}:{channel}:{}", guild.map_or("dm".to_string(), |g| g.to_string()), v.connection_id.clone()?))
+}
+
+/// The fetched still for `key`, decoded (cached by its fetch time).
+pub fn preview_pixels(st: &ShellState, key: &str) -> Option<rune::Pixels> {
+    let entry = st.voice.previews.get(key)?;
+    let bytes = entry.bytes.clone()?;
+    match st.media.local(&format!("stream-preview:{key}:{}", entry.fetched_ms), move || Ok(bytes.to_vec())) {
+        crate::media::Load::Ready(px) => Some(px),
+        _ => None,
+    }
+}
+
 pub fn wanted_previews(store: &Store, st: &ShellState) -> Vec<String> {
-    // `useStreamPreview` in the call tiles: every live share in the call we're in, as a still,
-    // so a tile shows the thumbnail until we watch it.
+    // `useStreamPreview` in the call tiles and on a sidebar row's hover card: every live share
+    // we may draw a still for, as a thumbnail until we watch the stream.
+    let me = store.my_id();
     let mut out = Vec::new();
-    if let Some((guild, channel)) = st.voice.channel {
-        let me = store.my_id();
+    let mut want = |guild: Option<Snowflake>, channel: Snowflake| {
         out.extend(
             store
                 .voice_states
                 .iter()
                 .filter(|((g, u), v)| *g == guild && *u != me && v.channel_id == Some(channel) && v.self_stream)
-                .filter_map(|(_, v)| {
-                    v.connection_id.as_ref().map(|conn| format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string())))
-                }),
+                .filter_map(|(_, v)| v.connection_id.as_ref().map(|c| format!("{}:{channel}:{c}", guild.map_or("dm".to_string(), |g| g.to_string())))),
         );
+    };
+    if let Some((guild, channel)) = st.voice.channel {
+        want(guild, channel);
+    }
+    if let Some(guild) = st.guild {
+        for c in store.channels.values().filter(|c| c.guild_id == Some(guild) && c.kind == ChannelType::GUILD_VOICE) {
+            if store.permissions(c.id).contains(Permissions::CONNECT) {
+                want(Some(guild), c.id);
+            }
+        }
     }
     if st.guild.is_some() || st.channel.is_some() || !shown(st) {
         return out;

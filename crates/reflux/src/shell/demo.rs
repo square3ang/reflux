@@ -1092,7 +1092,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
     }
-    if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
+    if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "tile-preview" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "bar-tip" | "panel-share-menu" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
         | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" | "call-connecting" | "call-reconnecting" | "no-video" | "call-speaking") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
@@ -1296,6 +1296,26 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
             st.voice.screen = true;
             fake_frames(&st.voice.own_share, 200);
+        }
+        // `useStreamPreview`: a share nobody watches draws the uploaded still at brightness .4
+        // under the watch prompt, not a blank surface.
+        "tile-preview" => {
+            let (w, h) = (640u32, 360u32);
+            let mut rgb = image::RgbImage::new(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let c = image::Rgb([((x * 255) / w) as u8, ((y * 255) / h) as u8, 160]);
+                    rgb.put_pixel(x, y, c);
+                }
+            }
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
+                .encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+                .ok();
+            // The scene's share is Grace Hopper's (`c1004`).
+            let key = format!("{HQ}:2301:c1004");
+            st.voice.previews.insert(key, super::active_now::Preview { bytes: Some(std::sync::Arc::new(bytes)), fetched_ms: 1, missing: 0, loading: false });
+            st.voice.watching = None;
         }
         "tile-stream" => {
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));

@@ -221,9 +221,10 @@ fn watch(sh: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, user
     }
 }
 
-/// The stream picture the hover card shows; `useStreamPreview` isn't fetched yet.
-fn card_preview(_st: &ShellState, _user: Snowflake) -> Option<&Pixels> {
-    None
+/// The stream picture the hover card shows (`useStreamPreview`'s still for that channel).
+fn card_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, channel: Snowflake, user: Snowflake) -> Option<Pixels> {
+    let key = super::active_now::stream_key(store, guild, channel, user)?;
+    super::active_now::preview_pixels(st, &key)
 }
 
 /// `StreamWatchHoverPopout`: while the LIVE row keyed `key` (or this card) is hovered, the
@@ -246,8 +247,8 @@ fn stream_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowfla
     // `.previewList`: 120 tall on voice-surface-2; the picture (contain, brightness 0.6) or the
     // fallback text, and the hover label over a voice-overlay scrim.
     let mut preview = el().w_full().h(120.0).fill(p.voice_surface_2).hover_group().cursor(rune::Cursor::Pointer).role("button").label(hover_label.to_string());
-    preview = match card_preview(st, user) {
-        Some(px) => preview.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(p.voice_surface_0).child(el().w_full().h_full().pixels_fit(px, rune::SurfaceFit::Fit).opacity(0.6))),
+    preview = match card_preview(store, st, guild, channel, user) {
+        Some(px) => preview.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(p.voice_surface_0).child(el().w_full().h_full().pixels_fit(&px, rune::SurfaceFit::Fit).opacity(0.6))),
         None => preview.child(
             row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).padding(12.0).center().child(text(t("No preview yet")).font(font(13.6, 400.0)).color(p.text_primary_muted).align(rune::Align::Center).wrap()),
         ),

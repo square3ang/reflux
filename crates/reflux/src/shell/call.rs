@@ -318,14 +318,8 @@ fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
 /// `useStreamPreview`: the uploaded preview frame for a participant's stream, if one is loaded.
 fn stream_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake) -> Option<Pixels> {
     let channel = st.voice.channel?.1;
-    let conn = store.voice_states.get(&(guild, user))?.connection_id.clone()?;
-    let key = format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string()));
-    let entry = st.voice.previews.get(&key)?;
-    let bytes = entry.bytes.clone()?;
-    match st.media.local(&format!("stream-preview:{key}:{}", entry.fetched_ms), move || Ok(bytes.to_vec())) {
-        crate::media::Load::Ready(px) => Some(px),
-        _ => None,
-    }
+    let key = super::active_now::stream_key(store, guild, channel, user)?;
+    super::active_now::preview_pixels(st, &key)
 }
 
 /// `VoiceParticipantTile`'s `presentation`: a grid tile, the focused tile, or one in the focus
