@@ -92,6 +92,8 @@ pub struct Run {
     device_restarted: bool,
     device_stopping: bool,
     device_ok: bool,
+    /// The last whole second the Speaking step logged the mic level.
+    mic_logged: u64,
     /// `useScreensharePreviewUploader` checked during the first device-share case.
     preview_checked: bool,
     preview_due: bool,
@@ -142,6 +144,7 @@ impl Run {
             device_restarted: false,
             device_stopping: false,
             device_ok: false,
+            mic_logged: u64::MAX,
             preview_checked: false,
             preview_due: false,
             camera_case: 0,
@@ -356,6 +359,11 @@ impl Run {
                 let me = s.app.store.my_id();
                 if first {
                     say(format!("transmitting: {}, self_mute {}", sh.voice.transmitting, sh.voice.self_mute));
+                }
+                // The mic chain's level, so a silent run shows whether the device is delivering.
+                if since.as_secs() != self.mic_logged {
+                    self.mic_logged = since.as_secs();
+                    say(format!("mic peak {:.3} (0..1), transmitting {}, speaking {}", call.as_ref().map_or(0.0, |c| c.mic_level()), sh.voice.transmitting, sh.voice.speaking.contains(&me)));
                 }
                 // RNNoise may eat the tone; after 12 s try direct input.
                 if since > Duration::from_secs(12) && sh.voice.settings.processing != "studio" {
