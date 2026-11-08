@@ -1049,7 +1049,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             }
         }
     }
-    if matches!(scene, "call" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
+    if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
         | "compact" | "compact-tall" | "compact-unread" | "compact-stream") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
@@ -1190,6 +1190,12 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.screen_sources = Some(list);
             st.voice.audio_sources = Some(vec![("42".into(), "Firefox — Video".into())]);
             st.voice.settings.stream_audio = Some("42".into());
+        }
+        // Our own live share in the grid: its tile draws the local track.
+        "own-share" => {
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
+            st.voice.screen = true;
+            fake_frames(&st.voice.own_share, 200);
         }
         "tile-stream" => {
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));

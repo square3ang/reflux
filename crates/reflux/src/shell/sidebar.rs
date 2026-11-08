@@ -214,9 +214,24 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         }
         item = item.child(t);
     }
-    if let Some(b) = mention_badge(mentions as u64, true, p) {
+    // `hoverAffordancesActive`: hovered, selected, or its context menu is open.
+    let menu = st.popups.open.is_some() && st.target == Some(Target::Channel(id));
+    let affordances = (selected || st.hover_channel == Some(id) || menu) && c.kind != ChannelType::GUILD_CATEGORY;
+    // `showMentionBadge`: not while the affordances show.
+    if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances) {
         item = item.child(b);
     }
+    if affordances {
+        item = item.child(affordance_icons(store, c, selected, p, acc));
+    }
+    item = item.on_hover_change(move |s: &mut S, inside, _| {
+        let st = acc(s);
+        if inside {
+            st.hover_channel = Some(id);
+        } else if st.hover_channel == Some(id) {
+            st.hover_channel = None;
+        }
+    });
     item = if selected {
         item.fill(p.surface_interactive_selected_bg)
     } else {
@@ -256,6 +271,42 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         );
     }
     container.key(format!("ch-{id}"))
+}
+
+/// `ChannelItem`'s `hoverAffordance` icons (`ChannelItemIcon`, 16px, 4 apart): Open chat on
+/// voice channels, Invite members, Channel settings.
+fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let id = c.id;
+    let voice = c.kind == ChannelType::GUILD_VOICE;
+    let button = |glyph: &'static rune::Icon, label: &str| {
+        let (rest, hover) = if selected { (p.surface_interactive_selected_color, p.surface_interactive_selected_color) } else { (p.text_primary_muted, p.text_primary) };
+        row()
+            .size(16.0, 16.0)
+            .center()
+            .radius(999.0)
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label.to_owned())
+            .hover_group()
+            .child(icon(glyph, 16.0).color(rest).group_color(hover))
+    };
+    let mut r = row().gap(4.0).center_y().ml(8.0);
+    if voice && !crate::look::with(|l| l.join_double_click) {
+        r = r.child(button(&icons::CHAT_TEARDROP_FILL, t("Open chat")).on_press(move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.call_view = false;
+            sh.select_channel(id);
+        }));
+    }
+    let invitable = matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
+        && store.permissions(id).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
+    if invitable {
+        r = r.child(button(&icons::USER_PLUS_FILL, t("Invite members")).on_press(move |s: &mut S| crate::guild::open_invite(acc(s), id)));
+    }
+    if let Some(tab) = crate::guild::first_channel_tab(store, id) {
+        r = r.child(button(&icons::GEAR_FILL, t("Channel settings")).on_press(move |s: &mut S| acc(s).open_channel_settings(id, tab, voice)));
+    }
+    r
 }
 
 /// Members connected to a voice channel, under its row (`VoiceParticipantItem`): 24px avatar

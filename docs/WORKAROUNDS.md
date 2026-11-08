@@ -190,11 +190,11 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
 - `crates/reflux/src/shell/call.rs:166` the store keeps a 200-message window and no total unread count, so a channel with
 - `crates/reflux/src/shell/call.rs:265` previews reuse Active Now's cached stream thumbnail; a call without one shows
-- `crates/reflux/src/shell/call.rs:742` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:756` Rune has no pointer-move event, so the chrome hides after the idle timeout
-- `crates/reflux/src/shell/call.rs:766` `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
-- `crates/reflux/src/shell/call.rs:2107` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2369` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:749` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:763` Rune has no pointer-move event, so the chrome hides after the idle timeout
+- `crates/reflux/src/shell/call.rs:773` `on_hover_change` reports enter/leave only; Fluxer also re-shows the chrome
+- `crates/reflux/src/shell/call.rs:2114` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2376` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -203,7 +203,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/markdown.rs:94` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:367` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
 - `crates/reflux/src/shell/markdown.rs:398` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:761` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/mod.rs:764` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and

@@ -450,7 +450,14 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
         let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
         let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(row().w_full().grow(1.0).min_h(0.0).child(slot(make(f, true))));
         if !rest.is_empty() {
-            c = c.child(row().w_full().h(112.0).gap(8.0).justify_center().children(rest.into_iter().map(|t| el().w(199.0).h(112.0).child(make(t, false)))));
+            // `.focusLayoutMembersRow`: 7.25rem high, 0.375rem padding, scrolls sideways when it
+            // overflows; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`), so the
+            // inner row is at least the viewport's last width.
+            const ROW_H: f32 = 116.0;
+            let tile_h = ROW_H - 12.0;
+            let inner_w = rune::memo::layout_size("call-strip").map_or(0.0, |[w, _]| w);
+            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.into_iter().map(|t| el().w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
+            c = c.child(row().key("call-strip").w_full().h(ROW_H).scroll_x().child(inner));
         }
         return c;
     }

@@ -287,6 +287,8 @@ pub struct ShellState {
     pub popups: Popups,
     /// The message under the pointer (shows its action bar).
     pub hover_msg: Option<Snowflake>,
+    /// The channel row under the pointer (its `hoverAffordance` icons show).
+    pub hover_channel: Option<Snowflake>,
     /// Shift is down (the action bar's Shift to expand).
     pub shift_held: bool,
     /// The message the open menu or picker belongs to (keeps its action bar up).
@@ -447,6 +449,7 @@ impl Default for ShellState {
             birthday: Default::default(),
             popups: Popups::default(),
             hover_msg: None,
+            hover_channel: None,
             active_msg: None,
             msg_selection: None,
             reply: None,
