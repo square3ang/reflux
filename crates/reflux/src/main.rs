@@ -116,6 +116,7 @@ fn main() {
         families: theme::FAMILIES,
         scenes: ui::gallery::SCENES,
         poll: Some(|s: &mut State, _, tx| {
+            ui::misc::retarget_wheels(tx);
             if crash::shown().is_some() {
                 crash::poll(s);
                 return false;

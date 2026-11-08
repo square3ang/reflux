@@ -1706,6 +1706,15 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 st.expr.fetched.insert(super::attachments::GEO.into(), super::expr::Fetched::Done(json!({"countryCode": "GB"})));
             }
         }
+        // A long history of mixed rows: scrolling up mounts rows taller than the list's estimate.
+        "long" => {
+            for i in 0..300u32 {
+                let author = [1001, 1002, 1003, 1004][(i % 4) as usize];
+                let extra = if i % 7 == 0 { json!({"attachments": [att(9400 + u64::from(i), "shot.png", "image/png", 1200, 800, json!({}))]}) } else { json!({}) };
+                let text = if i % 3 == 0 { format!("message {i}, long enough to wrap onto a second line of the chat column at this width, and then some more words") } else { format!("message {i}") };
+                msgs.push(message(at(0, 12 + i / 60, i % 60), 0, author, &text, extra));
+            }
+        }
         "blur" => {
             store.settings.sensitive_content_guild_filter = 1;
             msgs.push(message(t(1), 0, 1006, "careful", json!({"attachments": [att(9301, "x.png", "image/png", 1200, 800, json!({"flags": 16}))]})));

@@ -39,6 +39,7 @@ Rules:
 | The thread composer's long placeholder is cut near the field width | Rune wraps a placeholder even in a single-line field | `shell/threads.rs` | single-line placeholders clip |
 | Spinner dots only fade (no 0.8 scale) | Rune's looping motion is opacity, rotation or slide; the scale-capable `Sequence` runs once | `ui/misc.rs` | looping scale keyframes |
 | Scrollbars keep rune-kit's 2pt edge gap and 24pt minimum thumb (Fluxer's regular bar: 4 in, 40 minimum) | `ScrollBarStyle` has no gap / minimum knobs | `ui/misc.rs` | rune-kit exposes them |
+| The smooth wheel moves its glide's target by the content's growth while it glides up (a frame late, `retarget_wheels`), and older message pages that arrive mid-glide wait for it to stop (`app::fetch_older`) | a virtual list moves the offset by what's measured or added above the view, but not a running glide's target, so the glide flew on by that much (rows measured from the 48pt estimate, a whole page) | `ui/misc.rs`, `app.rs`, `main.rs` | Rune shifts `glide_to` with the anchor |
 | Scaled markdown spans (headings) keep even half-leading, so their baseline differs a little from Fluxer's | Rune lays out a scaled span with its own line height | `shell/markdown.rs` | per-span baseline control |
 | Jumbo emoji can't be selected or copied in place ("Copy text" has them); one-line previews keep emoji as text | the emoji are image overlays, not text; truncated one-line text has no overlay slots | `shell/markdown.rs` | inline images in text runs |
 | Recovery kit "Print" opens the PDF in the system viewer | Rune can't print | `settings/recovery_kit.rs` | a print API |
@@ -155,14 +156,14 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:18` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
 - `crates/reflux-voice/src/lib.rs:26` Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
-- `crates/reflux/src/app/voice.rs:1098` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1268` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1713` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1722` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app.rs:880` Rune shifts the offset by what lands above the view but not a running
+- `crates/reflux/src/app/voice.rs:1122` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1308` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1756` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1765` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
-- `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
-- `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
-- `crates/reflux/src/compose.rs:183` Undo and Redo are always enabled (Rune doesn't expose the history depth).
+- `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
+- `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
@@ -177,50 +178,58 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/i18n.rs:11` Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
 - `crates/reflux/src/mf.rs:100` rodio's speed shifts the pitch (no `preservesPitch` like playbin's scaletempo);
 - `crates/reflux/src/mf.rs:157` readers open and close one at a time, and an E_UNEXPECTED open is retried: under
-- `crates/reflux/src/nav/keys.rs:81` a Tab inside a field moves focus without showing the intro.
+- `crates/reflux/src/nav/keys.rs:82` a Tab inside a field moves focus without showing the intro.
 - `crates/reflux/src/passkey.rs:14` no hybrid (phone) flow off Windows.
 - `crates/reflux/src/popout.rs:6` on Wayland the compositor ignores always-on-top and placement (winit can't ask for
 - `crates/reflux/src/popout.rs:36` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:231` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
-- `crates/reflux/src/settings/advanced.rs:550` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+- `crates/reflux/src/settings/advanced.rs:551` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
-- `crates/reflux/src/settings/look_tabs.rs:708` sizes, spacing and other non-colour, non-font variables can't be overridden
+- `crates/reflux/src/settings/look_tabs.rs:709` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being
-- `crates/reflux/src/shell/call.rs:172` the store keeps a 200-message window and no total unread count, so a channel with
-- `crates/reflux/src/shell/call.rs:271` previews reuse Active Now's cached stream thumbnail; a call without one shows
-- `crates/reflux/src/shell/call.rs:420` other users' accent colours only arrive with their profile, which the tile
-- `crates/reflux/src/shell/call.rs:837` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:2250` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2532` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/settings/voice_tabs.rs:339` pressing records in place ("Press a key…") instead of opening Fluxer's recorder
+- `crates/reflux/src/settings/voice_tabs.rs:378` Fluxer's system-wide keybind hint and setup alert live in Reflux's Desktop tab
+- `crates/reflux/src/settings/voice_tabs.rs:511` opens the Advanced tab at its top; Fluxer scrolls to its Media section.
+- `crates/reflux/src/settings/voice_tabs.rs:694` Fluxer's bars are slanted (`clip-path` parallelograms); these are plain rounded bars.
+- `crates/reflux/src/shell/attachments.rs:552` plain text; Fluxer links it to the attachment-expiry help article.
+- `crates/reflux/src/shell/call.rs:175` the store keeps a 200-message window and no total unread count, so a channel with
+- `crates/reflux/src/shell/call.rs:274` previews reuse Active Now's cached stream thumbnail; a call without one shows
+- `crates/reflux/src/shell/call.rs:453` other users' accent colours only arrive with their profile, which the tile
+- `crates/reflux/src/shell/call.rs:902` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:2317` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2600` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
 - `crates/reflux/src/shell/embeds.rs:191` play opens the video in the browser; Fluxer swaps in the YouTube iframe.
 - `crates/reflux/src/shell/markdown.rs:62` Reflux's chrome text isn't selectable, so the setting changes nothing yet.
 - `crates/reflux/src/shell/markdown.rs:94` a scaled span keeps its half-leading even, so the line's baseline lands where that
-- `crates/reflux/src/shell/markdown.rs:367` jumbo emoji can't be selected or copied (no text); "Copy text" has them.
-- `crates/reflux/src/shell/markdown.rs:398` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:764` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/markdown.rs:393` emoji in one-line previews stay text (Fluxer draws 1.25em images).
+- `crates/reflux/src/shell/mod.rs:786` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
-- `crates/reflux/src/shell/search.rs:73` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+- `crates/reflux/src/shell/search.rs:74` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
 - `crates/reflux/src/shell/sidebar.rs:74` the `banner` variant's drop shadow isn't drawn.
+- `crates/reflux/src/shell/sidebar.rs:327` case-insensitive by name like `DISPLAY_NAME_COLLATOR`, without its numeric collation or join-order snapshot.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
 - `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
-- `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
+- `crates/reflux/src/shell/threads.rs:689` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-- `crates/reflux/src/shell/voice.rs:1522` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+- `crates/reflux/src/shell/voice.rs:1555` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sans` and `system-ui` are left to Rune's own fallbacks.
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
+- `crates/reflux/src/ui/controls.rs:309` it shows while the whole control is hovered (Rune's hover group), which also
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:219` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
+- `crates/reflux/src/ui/misc.rs:157` a virtual list keeps what's on screen when rows above it are measured
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 
