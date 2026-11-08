@@ -233,7 +233,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/mod.rs:800` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
-- `crates/reflux/src/shell/search.rs:74` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+- `crates/reflux/src/shell/search.rs:77` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
 - `crates/reflux/src/shell/sidebar.rs:74` the `banner` variant's drop shadow isn't drawn.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
@@ -255,7 +255,7 @@ crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sa
 - `crates/reflux/src/ui/menu.rs:227` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
-- `crates/reflux/src/ui/misc.rs:160` a virtual list keeps what's on screen when rows above it are measured
+- `crates/reflux/src/ui/misc.rs:169` a virtual list keeps what's on screen when rows above it are measured
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 

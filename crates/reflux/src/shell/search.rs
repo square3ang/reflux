@@ -46,6 +46,9 @@ pub struct Search {
     pub nav: Option<(String, usize)>,
     /// `ChannelSearch.scope`: `current` unless the scope menu picked another.
     pub scope: &'static str,
+    /// The pointer is on the filter/value popout: it outlives the field's focus for the
+    /// press, which would otherwise unmount the row before the release ran its handler.
+    pub popup_hover: bool,
 }
 
 /// `getScopeOptionsForChannel`: (value, label, icon) for a DM or a community.
@@ -273,11 +276,13 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
     let scope = st.channel.map(|c| store.channels.get(&c).and_then(|ch| ch.guild_id).unwrap_or(c));
     let mut picks: Vec<Pick> = Vec::new();
     let mut values = false;
-    if s.query.focused && !has_text {
+    // A press on a row takes the field's focus, which alone would unmount the popout before
+    // the press ran; staying while the pointer is on it keeps the row alive for its press.
+    if (s.query.focused || s.popup_hover) && !has_text {
         let history = scope.and_then(|k| st.prefs.search_history.get(&k)).map(Vec::as_slice).unwrap_or_default();
         picks = OPTIONS.iter().map(|(k, _)| Pick::Filter(k)).chain(history.iter().take(5).map(|q| Pick::Recent(q.clone()))).collect();
         layer.push(options(st, scope, history, selected(s, false), p, acc));
-    } else if s.query.focused
+    } else if (s.query.focused || s.popup_hover)
         && let Some((title, list)) = suggest(store, st.guild, &s.query.text).filter(|(_, l)| !l.is_empty())
     {
         values = true;
@@ -408,10 +413,20 @@ fn suggestions<S: 'static>(store: &Store, st: &ShellState, title: &'static str, 
         c = c.child(
             r.child(text(sg.label).font(font(14.0, 600.0)).color(p.text_primary).truncate().shrink())
                 .child(text(sg.meta).font(font(14.0, 400.0)).color(p.text_primary_muted).truncate().shrink())
-                .on_press(move |s: &mut S| apply(acc(s), &pick)),
+                .on_drag(pick_on_press(move |s: &mut S| apply(acc(s), &pick))),
         );
     }
-    anchor(c, "search-bar", crate::ui::Placement::BottomEnd, 8.0)
+    anchor(c.on_hover_change(move |s: &mut S, on, _| acc(s).search.popup_hover = on), "search-bar", crate::ui::Placement::BottomEnd, 8.0)
+}
+
+/// The pointer's press picks on the way down: the field loses focus on that same press, which
+/// takes the popout off screen before a release (`on_press`) could run the row.
+fn pick_on_press<S: 'static>(go: impl Fn(&mut S) + 'static) -> impl Fn(&mut S, &mut rune::Drag, &mut rune::Tx) + 'static {
+    move |s: &mut S, d: &mut rune::Drag, _: &mut rune::Tx| {
+        if d.phase == rune::Phase::Down {
+            go(s);
+        }
+    }
 }
 
 /// A 32px popout row, lit when hovered or arrowed to.
@@ -454,11 +469,11 @@ fn options<S: 'static>(st: &ShellState, scope: Option<reflux_model::Snowflake>, 
                 option_row(sel == Some(OPTIONS.len() + i), p)
                     .key(format!("search-history-{i}"))
                     .child(text(q.clone()).font(font(14.0, 500.0)).color(p.text_primary).truncate())
-                    .on_press(move |s: &mut S| apply(acc(s), &pick)),
+                    .on_drag(pick_on_press(move |s: &mut S| apply(acc(s), &pick))),
             );
         }
     }
-    anchor(c, "search-bar", crate::ui::Placement::BottomEnd, 8.0)
+    anchor(c.on_hover_change(move |s: &mut S, on, _| acc(s).search.popup_hover = on), "search-bar", crate::ui::Placement::BottomEnd, 8.0)
 }
 
 /// `ChannelSearchResults`: 420 wide beside the chat.

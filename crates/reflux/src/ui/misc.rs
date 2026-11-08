@@ -110,6 +110,12 @@ fn debug_wheel() -> bool {
     *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_WHEEL").is_some())
 }
 
+/// `REFLUX_DEBUG_SCROLL`: log a message list's offsets (history paging's anchoring).
+pub(crate) fn debug_scroll() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_SCROLL").is_some())
+}
+
 /// A [`smooth_wheel`] viewport's last scroll position, its glide, and how far rows measured
 /// above the view moved it since the glide was last retargeted.
 struct Wheel {
@@ -149,6 +155,9 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
     viewport
         .child(el().absolute(0.0, 0.0).size(0.0, 0.0).inert().key(mark))
         .on_scroll_offset(move |pos| {
+            if debug_scroll() && k1.starts_with("msgs") {
+                eprintln!("scroll {k1}: offset {:.1} max {:.1}", pos.offset[1], pos.max[1]);
+            }
             if debug_wheel() {
                 let (hand, instant, _) = rune::scroll_watch_state();
                 if hand {

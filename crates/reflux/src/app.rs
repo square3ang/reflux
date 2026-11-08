@@ -895,7 +895,12 @@ pub(crate) fn prepend_older(store: &mut Store, tx: &mut rune::Tx, channel: Snowf
     // loaded the next page, on to the channel's start. Holding the first message lands the
     // page above it, as Fluxer does.
     if let Some(m) = store.messages.get(&channel).and_then(|w| w.messages.first()) {
+        if crate::ui::misc::debug_scroll() {
+            eprintln!("scroll: prepend {} msgs above {}", page.len(), m.id);
+        }
         tx.keep_on_screen(crate::shell::chat::row_key(m, store.my_id()));
+    } else if crate::ui::misc::debug_scroll() {
+        eprintln!("scroll: prepend {} msgs with nothing loaded", page.len());
     }
     store.prepend_messages(channel, page, PAGE as usize);
 }
