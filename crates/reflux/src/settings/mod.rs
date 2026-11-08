@@ -384,6 +384,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
 /// The full-window settings modal user, community and channel settings share: the backdrop and
 /// card, a sidebar (`head` over the scrolling `nav`), and a content pane titled `title` around
 /// `body`. Escape and the close button call `close`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn frame<S: 'static>(label: &str, title: &str, link: Option<String>, head: Vec<El>, nav: El, body: El, close: impl Fn(&mut S) + Clone + 'static, p: &Palette) -> El {
     // The layer covers the window; its size from the last frame stands in for the viewport.
     let [w, h] = rune::memo::layout_size(LAYER_KEY).unwrap_or([1280.0, 800.0]);
