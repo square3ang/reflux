@@ -87,9 +87,25 @@ const RUNE_LINE: f32 = 40.0;
 /// `ozone/wayland: Fix high resolution scroll handling` (M140; Fluxer's Electron 44 is M146).
 const WHEEL_STEP: f32 = 120.0;
 
+/// A wheel glide from `.0` to `.1`, set at `.2`.
+type Glide = (f32, f32, std::time::Instant);
+
+/// How long after a tick the next one still adds to its glide (the glide is ~0.15 s).
+const GLIDE_FOR: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Where the next tick starts from: the running glide's target while the offset is still on its
+/// way there, else the offset. A target the offset left (older messages loading above re-anchor
+/// it, the list following its end) would send the next tick back to it, thousands of points off.
+fn wheel_base(at: f32, glide: Option<Glide>, now: std::time::Instant) -> f32 {
+    match glide {
+        Some((from, to, t)) if now.duration_since(t) < GLIDE_FOR && at >= from.min(to) - 2.0 && at <= from.max(to) + 2.0 => to,
+        _ => at,
+    }
+}
+
 thread_local! {
-    /// Each [`smooth_wheel`] viewport's last scroll position and where its glide is heading.
-    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, (rune::ScrollPos, Option<f32>)>> = Default::default();
+    /// Each [`smooth_wheel`] viewport's last scroll position and its glide: (from, to, when).
+    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, (rune::ScrollPos, Option<Glide>)>> = Default::default();
 }
 
 /// Chromium's smooth wheel scrolling on a vertical scroll viewport: a notched wheel's line
@@ -119,9 +135,9 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
             let Some(to) = WHEEL.with_borrow_mut(|w| {
                 let (pos, aim) = w.get_mut(&k2)?;
                 let at = pos.offset[1];
-                let base = aim.filter(|a| (a - at).abs() > 1.0).unwrap_or(at);
-                let to = (base - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0));
-                *aim = Some(to);
+                let now = std::time::Instant::now();
+                let to = (wheel_base(at, *aim, now) - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0));
+                *aim = Some((at, to, now));
                 Some((pos.offset[0], to))
             }) else {
                 return false;
@@ -144,6 +160,17 @@ impl SmoothWheel for El {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tick_adds_to_a_running_glide_only() {
+        use super::wheel_base;
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert_eq!(wheel_base(50.0, Some((0.0, 120.0, t)), t), 120.0, "on its way: adds to the target");
+        assert_eq!(wheel_base(3050.0, Some((0.0, 120.0, t)), t), 3050.0, "re-anchored: from where it is");
+        assert_eq!(wheel_base(50.0, Some((0.0, 120.0, t)), t + Duration::from_secs(1)), 50.0, "an old glide");
+        assert_eq!(wheel_base(50.0, None, t), 50.0);
+    }
+
     use super::*;
 
     #[test]
