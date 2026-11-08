@@ -1090,6 +1090,28 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         st.voice.pings = vec![40, 44, 41, 52, 47, 42, 39, 61, 45, 42];
     }
     match scene {
+        // The channel list's voice rows: a user limit, a user on two devices, a LIVE row's
+        // hover card, the devices expanded, a collapsed category connected or not.
+        "sidebar" | "sidebar-card" | "sidebar-grouped" | "sidebar-collapsed" | "sidebar-collapsed-away" => {
+            if let Some(c) = store.channels.get_mut(&Snowflake(2301)) {
+                c.user_limit = Some(10);
+            }
+            for (conn, mobile) in [("c1001a", false), ("c1001b", true)] {
+                apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": conn, "is_mobile": mobile, "self_mute": true}));
+            }
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1002", "channel_id": "2302", "connection_id": "c1002", "mute": true}));
+            match scene {
+                "sidebar-card" => st.stream_card.0 = Some("vu-2301-1004".into()),
+                "sidebar-grouped" => drop(st.voice_expanded.insert(Snowflake(1001))),
+                "sidebar-collapsed" => drop(st.collapsed.insert(Snowflake(2300))),
+                "sidebar-collapsed-away" => {
+                    st.collapsed.insert(Snowflake(2300));
+                    st.voice.channel = None;
+                    apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": null, "connection_id": "demo"}));
+                }
+                _ => {}
+            }
+        }
         "focus" => {
             st.voice.focus = Some(Snowflake(1004));
             st.voice.watching = None;

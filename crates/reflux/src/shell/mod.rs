@@ -44,6 +44,7 @@ pub mod skeleton;
 pub mod skeleton_memory;
 mod search_query;
 mod sidebar;
+mod voice_list;
 pub mod status;
 pub mod switcher;
 mod switcher_extra;
@@ -294,6 +295,11 @@ pub struct ShellState {
     pub bar_msg: Option<Snowflake>,
     /// The channel row under the pointer (its `hoverAffordance` icons show).
     pub hover_channel: Option<Snowflake>,
+    /// `StreamWatchHoverPopout`: the key of the LIVE participant row under the pointer, and of
+    /// the row whose card is under it.
+    pub stream_card: (Option<String>, Option<String>),
+    /// `GroupedVoiceParticipant`: users whose connections are listed.
+    pub voice_expanded: HashSet<Snowflake>,
     /// Shift is down (the action bar's Shift to expand).
     pub shift_held: bool,
     /// The message the open menu or picker belongs to (keeps its action bar up).
@@ -457,6 +463,8 @@ impl Default for ShellState {
             hover_msg: None,
             bar_msg: None,
             hover_channel: None,
+            stream_card: (None, None),
+            voice_expanded: HashSet::new(),
             active_msg: None,
             msg_selection: None,
             reply: None,
