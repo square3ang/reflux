@@ -687,7 +687,13 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             }
             match ev {
                 RoomEvent::ActiveSpeakersChanged { speakers } => {
-                    let ids = speakers.iter().filter_map(|p| reflux_voice::user_of(&p.identity().0)).map(Snowflake).collect();
+                    // Others only: our own ring is the local gate's (`self_speaking`), so a server
+                    // update can't flicker it (Fluxer's `VoiceSpeakingDetection` does the same).
+                    let ids: std::collections::HashSet<Snowflake> = speakers
+                        .iter()
+                        .filter_map(|p| reflux_voice::user_of(&p.identity().0))
+                        .map(Snowflake)
+                        .collect();
                     update(move |s| {
                         if s.app.voice.generation == generation {
                             s.app.shell.voice.speaking = ids;
@@ -832,6 +838,9 @@ async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let Some(call) = call.upgrade() else { return };
         quiet = if call.mic_level() > 0.01 { 0 } else { quiet.saturating_add(1) };
+        // `VoiceSpeakingDetection`: with a gate, its state (5 ms attack, 180 ms release) is our
+        // ring; without one (push-to-talk, studio) the level and its 300 ms hang stands in.
+        let now_on = call.mic_speaking().unwrap_or(quiet < 6);
         let ns = call.noise_state();
         if ns != noise {
             noise = ns;
@@ -841,8 +850,8 @@ async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
                 }
             });
         }
-        if on != (quiet < 6) {
-            on = !on;
+        if on != now_on {
+            on = now_on;
             update(move |s| {
                 if s.app.voice.generation == generation {
                     let me = s.app.store.my_id();

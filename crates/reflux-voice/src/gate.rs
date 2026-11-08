@@ -66,7 +66,6 @@ impl Gate {
     }
 
     /// Whether the gate is open for speech.
-    #[cfg(test)]
     pub fn speaking(&self) -> bool {
         self.speaking
     }

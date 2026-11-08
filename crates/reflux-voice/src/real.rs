@@ -159,6 +159,11 @@ impl Call {
 
     /// The level of the last 10 ms the microphone sent (0..1 peak), for speaking rings when
     /// no server reports them.
+    /// The gate's speaking state (`None`: push-to-talk or studio has no gate).
+    pub fn mic_speaking(&self) -> Option<bool> {
+        self.audio.as_ref().and_then(|a| a.speaking())
+    }
+
     pub fn mic_level(&self) -> f32 {
         self.audio.as_ref().map_or(0.0, |a| a.level())
     }

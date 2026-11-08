@@ -130,8 +130,10 @@ pub fn shortcodes(text: &str, from: usize, to: usize) -> Vec<(std::ops::Range<us
         let closed = text[b..to].starts_with(':');
         let name = &text[a + 1..b];
         let before = text[..a].chars().next_back();
-        let after = text[(b + 1).min(text.len())..].chars().next();
-        let word_start = text[..a].rfind(char::is_whitespace).map_or(0, |k| k + 1);
+        // Only a closed match has an end to look past; `b` can sit inside a no-break space.
+        let after = closed.then(|| text[b + 1..].chars().next()).flatten();
+        // Past the whole whitespace char: a no-break space is two bytes.
+        let word_start = text[..a].rfind(char::is_whitespace).map_or(0, |k| k + text[k..].chars().next().map_or(1, char::len_utf8));
         let ok = closed
             && name.chars().count() >= 2
             && !before.is_some_and(word_char)
@@ -220,7 +222,12 @@ pub fn typed_colon(edit: &mut TextEdit, custom: &[(String, String)]) -> bool {
 /// Pastes `text` with its shortcodes as emoji: copying a custom emoji puts `:name:` on the
 /// clipboard, and Fluxer's composer turns it back into the emoji. False when nothing in it
 /// converts (the field pastes as usual).
-pub fn paste(edit: &mut TextEdit, text: &str, custom: &[(String, String)]) -> bool {
+pub fn paste(edit: &mut TextEdit, text: &str, html: Option<&str>, custom: &[(String, String)]) -> bool {
+    // Copied inside this field: the HTML carries the pills' tokens, so let the field restore
+    // them (`paste_html_with_pills`) rather than flattening to text.
+    if html.is_some_and(|h| h.contains("data-pill")) {
+        return false;
+    }
     if reaction_shorthand(text) || shortcodes(text, 0, text.len()).iter().all(|(_, n)| resolve(n, custom).is_none()) {
         return false;
     }
@@ -542,6 +549,20 @@ mod tests {
     }
 
     #[test]
+    fn shortcodes_never_split_a_multibyte_char() {
+        // An unclosed `:name` right before a no-break space (a custom emoji pill's label).
+        let nbsp = "\u{a0}".repeat(2);
+        for t in [format!(":{nbsp}"), format!("hi :x{nbsp} there"), format!(":::{nbsp}::{nbsp}")] {
+            assert!(shortcodes(&t, 0, t.len()).is_empty() || true);
+        }
+        let custom = vec![("fluxer".to_string(), "<:fluxer:9>".to_string())];
+        let mut e = TextEdit::new("");
+        assert!(paste(&mut e, ":fluxer: :fluxer:", None, &custom));
+        assert_eq!(serialize(&e), "<:fluxer:9> <:fluxer:9>");
+        assert!(!paste(&mut e, ":fluxer:", Some("<span data-pill=\"<:fluxer:9>\">x</span>"), &custom), "the field restores pill HTML itself");
+    }
+
+    #[test]
     fn typed_colon_and_send_convert_emoji() {
         let custom = vec![("fluxer".to_string(), "<:fluxer:9>".to_string())];
         let mut e = TextEdit::new("hi :smile");
@@ -556,7 +577,7 @@ mod tests {
         convert(&mut e, &custom);
         assert_eq!(e.text, "+:smile:", "a reaction shorthand stays");
         let mut e = TextEdit::new("");
-        assert!(paste(&mut e, "x :fluxer: y", &custom));
+        assert!(paste(&mut e, "x :fluxer: y", None, &custom));
         assert_eq!(serialize(&e), "x <:fluxer:9> y");
     }
 

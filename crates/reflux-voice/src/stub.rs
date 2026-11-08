@@ -277,6 +277,11 @@ impl Call {
         0.0
     }
 
+    /// No engine: never speaking.
+    pub fn mic_speaking(&self) -> Option<bool> {
+        None
+    }
+
     pub fn noise_state(&self) -> crate::NoiseState {
         crate::NoiseState::Idle
     }

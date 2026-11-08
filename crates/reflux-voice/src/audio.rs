@@ -295,12 +295,19 @@ fn config(supported: Vec<cpal::SupportedStreamConfigRange>, default: cpal::Suppo
 
 type Apm = Arc<Mutex<Option<AudioProcessingModule>>>;
 
+/// The local speaking ring from the gate: 0 = no gate (push-to-talk, studio), 1 = quiet,
+/// 2 = talking. Fluxer's own ring is the worklet's speaking state, not the server's list.
+pub const SPEAKING_NONE: u8 = 0;
+pub type Speaking = Arc<AtomicU8>;
+
 /// The call's audio: the remote mix out, and the mic into [`Engine::source`].
 pub struct Engine {
     pub mixer: Arc<Mutex<Mixer>>,
     pub source: NativeAudioSource,
     /// Peak of the last frame sent (`f32` bits).
     level: Arc<AtomicU32>,
+    /// The gate's speaking state ([`Speaking`]).
+    speaking: Speaking,
     processing: Arc<Mutex<Processing>>,
     apm: Apm,
     /// [`crate::NoiseState`] as a `u8`, written by the mic chain.
@@ -321,13 +328,21 @@ impl Engine {
     pub fn new() -> Self {
         // No WebRTC processing on the source: ours runs before it; queue 0 = 10 ms frames, sync.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), RATE, 1, 0);
-        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default(), monitor: Arc::default() };
+        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), speaking: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default(), monitor: Arc::default() };
         engine.set_processing(Processing::default());
         engine
     }
 
     pub fn level(&self) -> f32 {
         f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+
+    /// The gate's speaking state (`None` while push-to-talk or studio has no gate).
+    pub fn speaking(&self) -> Option<bool> {
+        match self.speaking.load(Ordering::Relaxed) {
+            SPEAKING_NONE => None,
+            v => Some(v == 2),
+        }
     }
 
     pub fn noise_state(&self) -> crate::NoiseState {
@@ -387,10 +402,10 @@ impl Engine {
         let mut slot = self.input.lock().unwrap();
         *slot = None;
         let (source, apm, processing, name) = (self.source.clone(), self.apm.clone(), self.processing.clone(), name.map(str::to_string));
-        let (level, noise_state) = (self.level.clone(), self.noise_state.clone());
+        let (level, speaking, noise_state) = (self.level.clone(), self.speaking.clone(), self.noise_state.clone());
         let monitor = (self.mixer.clone(), self.monitor.clone());
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let mut chain = MicChain::new(RATE, source, apm, processing, level, noise_state, monitor);
+            let mut chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -407,14 +422,14 @@ impl Engine {
             return true;
         }
         #[cfg(target_os = "linux")]
-        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), noise_state.clone(), monitor.clone())) {
+        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), speaking.clone(), noise_state.clone(), monitor.clone())) {
             *slot = Some(thread);
             return true;
         }
         *slot = run_stream(move || {
             let device = input_device(name.as_deref())?;
             let cfg = config(device.supported_input_configs().ok()?.collect(), device.default_input_config().ok()?);
-            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, noise_state, monitor);
+            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, speaking, noise_state, monitor);
             match cfg.sample_format() {
                 cpal::SampleFormat::F32 => build_input::<f32>(&device, &cfg, chain),
                 cpal::SampleFormat::I16 => build_input::<i16>(&device, &cfg, chain),
@@ -532,12 +547,15 @@ struct MicChain {
     deep: crate::deepfilter::Deep,
     /// `fluxer-voice-gate`, kept while the gate stays on (a new one seeds its floor again).
     gate: Option<crate::gate::Gate>,
+    /// [`Speaking`]: whether the gate says we're talking.
+    speaking: Speaking,
     level: Arc<AtomicU32>,
     monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
 }
 
 impl MicChain {
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
         Self {
             resampler: Resampler::new(rate, RATE),
             pending: Vec::new(),
@@ -547,6 +565,7 @@ impl MicChain {
             denoise: nnnoiseless::DenoiseState::new(),
             deep: crate::deepfilter::Deep::new(noise_state),
             gate: None,
+            speaking,
             level,
             monitor,
         }
@@ -584,8 +603,12 @@ impl MicChain {
                     let mut f: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
                     gate.process(cfg, &mut f);
                     pcm = f.into_iter().map(to_i16).collect();
+                    self.speaking.store(u8::from(gate.speaking()) + 1, Ordering::Relaxed);
                 }
-                None => self.gate = None,
+                None => {
+                    self.gate = None;
+                    self.speaking.store(SPEAKING_NONE, Ordering::Relaxed);
+                }
             }
             if self.monitor.1.load(Ordering::Relaxed) {
                 let out: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();

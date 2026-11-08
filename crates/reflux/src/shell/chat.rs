@@ -1636,7 +1636,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 super::upload::add_png(acc(s), img.png().to_vec());
                 true
             }
-            _ => in_slot(acc(s), slot, |st| crate::compose::paste(&mut st.composer, content.text(), &custom)),
+            _ => in_slot(acc(s), slot, |st| crate::compose::paste(&mut st.composer, content.text(), content.html(), &custom)),
         })
         .disabled(!send_ok)
         // Enter sends; Shift+Enter is the field's own newline.
