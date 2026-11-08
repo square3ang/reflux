@@ -65,7 +65,7 @@ pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
     let tray = switch(st, p, acc, t(if mac { "Show menu bar icon" } else { "Show system tray icon" }), None, |p| p.tray, |p, v| p.tray = v);
     let close = switch_if(st, p, acc, t(if mac { "Close to menu bar" } else { "Close to tray" }), None, !pr.tray, |p| p.close_to_tray, |p, v| p.close_to_tray = v);
     let window = col().w_full().gap(16.0).child(login).child(minimized).child(remember).child(tray).child(close);
-    let global = switch(
+    let mut global = switch(
         st,
         p,
         acc,
@@ -74,6 +74,22 @@ pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
         |p| p.global_shortcuts,
         |p, v| p.global_shortcuts = v,
     );
+    // Wayland's portal: the desktop owns the keys, so it also owns the dialog that sets them
+    // (`GlobalShortcutsPortal.configure`). Without assigned keys the shortcuts never fire.
+    if crate::desktop::shortcuts::portal() {
+        global = global.child(
+            row()
+                .w_full()
+                .mt(8.0)
+                .child(
+                    crate::ui::Button::new(t("Configure global shortcuts…"))
+                        .variant(crate::ui::ButtonVariant::Secondary)
+                        .key("configure-global-shortcuts")
+                        .on_press(|_: &mut S| crate::desktop::shortcuts::configure())
+                        .el(p),
+                ),
+        );
+    }
     col().w_full().child(section(t("Desktop window"), window, true, p)).child(section(t("Keybinds"), global, false, p))
 }
 
@@ -298,12 +314,13 @@ fn spellcheck<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         crate::ui::Button::new(t("Add")).variant(crate::ui::ButtonVariant::Secondary).size(crate::ui::ButtonSize::Small).disabled(typed.is_empty()).key("spell-add").on_press(add).el(p),
     );
     let words = if st.prefs.words.is_empty() {
-        text(t("No personal words yet.")).font(font(13.0, 400.0).lh(17.6).italic()).color(p.text_primary_muted)
+        text(t("No personal words yet.")).key("none").font(font(13.0, 400.0).lh(17.6).italic()).color(p.text_primary_muted)
     } else {
         row().w_full().flex_wrap().gaps(6.0, 6.0).children(st.prefs.words.iter().map(|w| {
             let word = w.clone();
             let label = tf("Remove \"{word}\" from dictionary", &[("word", w)]);
             row()
+                .key(format!("w-{w}"))
                 .py(4.0)
                 .pl(10.0)
                 .pr(8.0)

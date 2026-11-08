@@ -279,7 +279,8 @@ pub fn boot(s: &mut State) {
     window::set_zoom(p.zoom);
     crate::look::set(&p.look);
     spell::configure(p);
-    shortcuts::start(p.global_shortcuts);
+    let triggers = shortcuts::preferred_triggers(&s.app.shell);
+    shortcuts::start(p.global_shortcuts, triggers);
     if !rune::is_headless() && p.autostart != autostart::is_enabled() {
         p.autostart = !p.autostart;
         crate::session::save(&s.app.saved);

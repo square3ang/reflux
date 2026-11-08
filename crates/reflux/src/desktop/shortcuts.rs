@@ -140,6 +140,49 @@ impl Binding {
     }
 }
 
+/// `comboToXdgTrigger`: a keybinding as the portal's `preferred_trigger` (`CTRL+SHIFT+m`).
+/// Key names are XKB keysyms, as the shortcuts XDG spec (and Fluxer) writes them.
+pub fn xdg_trigger(key: GKey, mods: Mods) -> Option<String> {
+    let key = match key {
+        GKey::Char(c) if c.is_ascii_alphanumeric() => c.to_ascii_lowercase().to_string(),
+        GKey::Char(' ') => "space".to_string(),
+        GKey::Up => "Up".into(),
+        GKey::Down => "Down".into(),
+        GKey::Left => "Left".into(),
+        GKey::Right => "Right".into(),
+        GKey::Escape => "Escape".into(),
+        GKey::Tab => "Tab".into(),
+        GKey::Enter => "Return".into(),
+        GKey::Backspace => "BackSpace".into(),
+        GKey::Delete => "Delete".into(),
+        GKey::Insert => "Insert".into(),
+        GKey::Home => "Home".into(),
+        GKey::End => "End".into(),
+        GKey::PageUp => "Prior".into(),
+        GKey::PageDown => "Next".into(),
+        GKey::F(n) if (1..=24).contains(&n) => format!("F{n}"),
+        _ => return None,
+    };
+    let mut parts = Vec::new();
+    if mods.ctrl {
+        parts.push("CTRL");
+    }
+    if mods.alt {
+        parts.push("ALT");
+    }
+    if mods.shift {
+        parts.push("SHIFT");
+    }
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
+/// What the portal should pre-fill for each action (`preferredTrigger`), from the user's own
+/// keybinds. Push-to-talk takes its key without modifiers, as it does in the app.
+pub fn preferred_triggers(sh: &crate::shell::ShellState) -> Vec<(Action, Option<String>)> {
+    bindings(sh).into_iter().map(|b| (b.action, xdg_trigger(b.key, b.mods.unwrap_or_default()))).collect()
+}
+
 static ENABLED: AtomicBool = AtomicBool::new(true);
 static STARTED: AtomicBool = AtomicBool::new(false);
 static PTT: AtomicBool = AtomicBool::new(false);
@@ -251,17 +294,38 @@ pub fn sync(binds: Vec<Binding>) {
     }
 }
 
-/// Starts listening once, in a windowed run.
-pub fn start(enabled: bool) {
+/// Starts listening once, in a windowed run. `triggers` are the portal's preferred ones.
+pub fn start(enabled: bool, triggers: Vec<(Action, Option<String>)>) {
     set_enabled(enabled);
     if rune::is_headless() || STARTED.swap(true, Ordering::Relaxed) {
         return;
     }
     #[cfg(target_os = "linux")]
     if wayland() {
-        return portal::start();
+        return portal::start(triggers);
     }
+    let _ = triggers;
     HOOK.store(super::hooks::start(), Ordering::Relaxed);
+}
+
+/// Whether the desktop asks the user to assign our global shortcuts itself (Wayland's portal).
+/// The shortcuts only fire once they have keys: the portal keeps what the user last assigned,
+/// and a first prompt that was dismissed leaves them unassigned until [`configure`] runs.
+pub fn portal() -> bool {
+    #[cfg(target_os = "linux")]
+    if wayland() {
+        return true;
+    }
+    false
+}
+
+/// Opens the desktop's own shortcut dialog for our actions (`ConfigureShortcuts`), where the
+/// user assigns their keys. Does nothing where there is no such portal.
+pub fn configure() {
+    #[cfg(target_os = "linux")]
+    if wayland() {
+        portal::configure();
+    }
 }
 
 /// `LinuxSessionType`: Wayland sessions use the portal; X11 ones a hook.
@@ -272,30 +336,63 @@ fn wayland() -> bool {
 
 #[cfg(target_os = "linux")]
 mod portal {
+    use std::sync::Mutex;
+
     use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
     use futures_util::StreamExt;
 
-    use super::{ACTIONS, fire};
+    use super::{ACTIONS, Action, fire};
 
-    pub fn start() {
-        crate::app::spawn(async {
-            if let Err(e) = portal().await {
+    /// The portal task asks for its shortcut dialog.
+    static CONFIGURE: Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>> = Mutex::new(None);
+
+    pub fn start(triggers: Vec<(Action, Option<String>)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        *CONFIGURE.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        crate::app::spawn(async move {
+            if let Err(e) = portal(triggers, rx).await {
                 eprintln!("reflux: global shortcuts portal unavailable: {e}");
             }
         });
     }
 
-    async fn portal() -> ashpd::Result<()> {
+    /// `LinuxPortalShortcutsManager.configure`: the portal's own shortcut dialog, v2.
+    pub fn configure() {
+        let tx = CONFIGURE.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(tx) = tx {
+            let _ = tx.send(());
+        }
+    }
+
+    async fn portal(triggers: Vec<(Action, Option<String>)>, mut configure: tokio::sync::mpsc::UnboundedReceiver<()>) -> ashpd::Result<()> {
         let gs = GlobalShortcuts::new().await?;
         let session = gs.create_session(Default::default()).await?;
-        let shortcuts: Vec<NewShortcut> = ACTIONS.iter().map(|&(_, id, desc)| NewShortcut::new(id, desc)).collect();
+        // `preferred_trigger`s let the backend pre-fill the keys; KDE keeps what the user
+        // assigns in the dialog and never overrides it from here.
+        let shortcuts: Vec<NewShortcut> = ACTIONS
+            .iter()
+            .map(|&(action, id, desc)| {
+                let t = triggers.iter().find(|(a, _)| *a == action).and_then(|(_, t)| t.clone());
+                NewShortcut::new(id, desc).preferred_trigger(t.as_deref())
+            })
+            .collect();
         gs.bind_shortcuts(&session, &shortcuts, None, Default::default()).await?.response()?;
         let down = gs.receive_activated().await?.map(|a| (a.shortcut_id().to_string(), true));
         let up = gs.receive_deactivated().await?.map(|a| (a.shortcut_id().to_string(), false));
-        let mut events = futures_util::stream::select(down, up);
-        while let Some((id, pressed)) = events.next().await {
-            if let Some(&(action, ..)) = ACTIONS.iter().find(|(_, i, _)| *i == id) {
-                fire(action, pressed);
+        let mut events = futures_util::stream::select(down, up).fuse();
+        loop {
+            tokio::select! {
+                e = events.next() => {
+                    let Some((id, pressed)) = e else { break };
+                    if let Some(&(action, ..)) = ACTIONS.iter().find(|(_, i, _)| *i == id) {
+                        fire(action, pressed);
+                    }
+                }
+                Some(()) = configure.recv() => {
+                    if let Err(e) = gs.configure_shortcuts(&session, None, Default::default()).await {
+                        eprintln!("reflux: configuring global shortcuts: {e}");
+                    }
+                }
             }
         }
         Ok(())

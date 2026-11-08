@@ -453,7 +453,7 @@ fn slot(content: El, key: &'static str) -> El {
 
 /// The tile area: a near-square grid, or one focused/pinned tile over a strip of the rest.
 /// Tiles without video show the avatar on its colour, as Fluxer's full call view does.
-fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, hud_visible: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let me = store.my_id();
     let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
     let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
@@ -506,7 +506,8 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
                 .child(icon(&icons::USERS_THREE_BOLD, 16.0).color(Color::WHITE))
                 .child(icon(if shown { &icons::CARET_DOWN_BOLD } else { &icons::CARET_UP_BOLD }, 16.0).color(Color::WHITE))
                 .on_press(move |s: &mut S| acc(s).call.focus_members_row = !shown);
-            if !hud_visible {
+            // Part of the chrome (`--voice-hud-opacity`): it fades with the control bar.
+            if st.call.hud_until.is_some_and(|t| t <= Instant::now()) {
                 toggle = toggle.opacity(0.0).inert();
             }
             c = c.child(toggle);
@@ -871,7 +872,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(chat_pill(store, st, channel, true, p, acc));
     header = header.child(el().grow(1.0)).child(right);
     let body = if st.voice.connected {
-        layout(store, st, guild, &people, false, hud_visible, p, acc)
+        layout(store, st, guild, &people, false, p, acc)
     } else {
         row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
@@ -1588,7 +1589,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
         } else {
             // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
             // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
-            content = content.child(col().w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, true, p, acc)));
+            content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, p, acc)));
         }
         // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
         let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
