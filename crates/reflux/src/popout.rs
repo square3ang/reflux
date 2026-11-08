@@ -126,7 +126,7 @@ fn view(s: &Popout, _cx: &mut Cx<Popout>) -> El {
 
 /// `VoicePopoutHost`: the call pop-out is the same call view — tiles, then the control bar
 /// floating at the bottom.
-pub(crate) fn call_view(tiles: &[Tile], bar: Bar, p: &Palette) -> El {
+fn call_view(tiles: &[Tile], bar: Bar, p: &Palette) -> El {
     let root = col().w_full().h_full().fill(rgb(0, 0, 0));
     if tiles.is_empty() {
         return root;
