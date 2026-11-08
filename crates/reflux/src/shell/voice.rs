@@ -656,6 +656,8 @@ pub enum Modal {
     Refused(String),
     /// `CallNotRingableModal`.
     NotRingable,
+    /// `DisableScreenSharePiPConfirmModal`.
+    DisableScreenPip,
     /// `requestStartCall`'s confirm, with "Confirm before starting calls" on.
     /// `tip`: opened from a header button, where Shift would have skipped it.
     StartCall { channel: Snowflake, video: bool, tip: bool },

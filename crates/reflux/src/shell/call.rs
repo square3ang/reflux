@@ -118,6 +118,10 @@ pub struct CallUi {
     pub fullscreen_from_compact: bool,
     /// `VoiceCallLayout.focusMembersRowVisible`: focus layout's row of the other participants.
     pub focus_members_row: bool,
+    /// `IncomingCallUI`'s drag past its 6pt threshold: the pointer's travel so far.
+    pub incoming_drag: Option<[f32; 2]>,
+    /// The PiP overlay's drag in progress: the pointer's travel so far.
+    pub pip_drag: Option<[f32; 2]>,
 }
 
 impl Default for CallUi {
@@ -140,6 +144,8 @@ impl Default for CallUi {
             app_fullscreen: false,
             fullscreen_from_compact: false,
             focus_members_row: true,
+            incoming_drag: None,
+            pip_drag: None,
         }
     }
 }
@@ -1471,87 +1477,300 @@ pub fn e2ee_badge() -> El {
         .child(text("Encrypted").font(font(11.0, 600.0).lh(13.0)).color(success()))
 }
 
-/// `CompactVoiceCallView` over a DM / group DM with an active call: tiles, then Join or the
-/// control bar.
+/// `getCallParticipantLayoutMetrics`: the largest avatar (40..88) whose wrapped rows fit the
+/// row's box, with a gap of an 18th of its smaller side (8..16).
+fn call_avatar_metrics(count: usize, w: f32, h: f32) -> (f32, f32) {
+    if count == 0 || w <= 0.0 || h <= 0.0 {
+        return (64.0, 12.0);
+    }
+    let (w, h) = (w.max(40.0), h.max(40.0));
+    let gap = (w.min(h) / 18.0).round().clamp(8.0, 16.0);
+    let mut best = 40.0f32;
+    for cols in 1..=count {
+        let rows = count.div_ceil(cols);
+        let by_w = (w - gap * (cols - 1) as f32) / cols as f32;
+        let by_h = (h - gap * (rows - 1) as f32) / rows as f32;
+        best = best.max(by_w.min(by_h).min(88.0).floor());
+    }
+    (best.clamp(40.0, 88.0), gap)
+}
+
+/// `CallParticipantsRow`: us, the call's participants, then the recipients being rung, as
+/// wrapped avatars sized to the row. Someone being rung is dimmed with a pulsing ring.
+/// Right-click opens the voice participant menu, or the user menu for someone not in the call.
+#[allow(clippy::too_many_arguments)]
+fn call_participants_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, ringing: &[Snowflake], people: &[(Snowflake, &VoiceState)], surface: Color, p: &Palette, acc: ShellAccess<S>) -> El {
+    let me = store.my_id();
+    let in_call = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
+    let mut ids: Vec<Snowflake> = Vec::new();
+    for u in std::iter::once(me).chain(people.iter().map(|(u, _)| *u)).chain(c.recipients.iter().map(|u| u.id)).chain(ringing.iter().copied()) {
+        if !ids.contains(&u) && (in_call(u).is_some() || ringing.contains(&u)) {
+            ids.push(u);
+        }
+    }
+    let key = format!("call-participants-{}", c.id);
+    let [w, h] = rune::memo::layout_size(&key).unwrap_or([0.0, 0.0]);
+    let (size, gap) = call_avatar_metrics(ids.len(), w, h);
+    let mut list = row().w_full().flex_wrap().justify_center().items_center().gaps(gap, gap);
+    for u in ids {
+        let name = store.display_name(None, u);
+        let face = match in_call(u) {
+            Some(vs) => super::voice::voice_avatar(store, st, u, size, st.voice.speaking.contains(&u), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, surface, p).participant_menu(u, None, acc),
+            None => {
+                // `.callParticipantRinging`: a 2.2s white ring spreading max(8, 18%) and fading.
+                // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread
+                // instead of growing; brightness(.55) saturate(.85) is a .55 dim over the dark banner.
+                let spread = (size * 0.18).round().max(8.0) / 2.0;
+                el().size(size, size)
+                    .child(el().pin(Some(-spread), Some(-spread), Some(-spread), Some(-spread)).radius(999.0).fill(rgba(255, 255, 255, 0.25)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 1.0)))
+                    .child(avatar(store, st, u, size, None, surface, p).dim(0.55))
+                    .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::User { user: u, guild: None, dm: None }, [at.x, at.y]))
+            }
+        };
+        list = list.child(face.key(format!("p-{u}")).role("button").label(name));
+    }
+    row().key(key).w_full().h_full().min_h(0.0).center().role("group").label(t("Call participants")).child(list)
+}
+
+/// `DMChannelView`'s call surface: once this device is in the call, the compact call view
+/// (`ChannelCompactCallSurface`) with `CallParticipantsRow` as its avatar fallback; before that
+/// the resizable `.callBanner`: the participants row over `CallControls`.
 pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> Option<El> {
     if !matches!(c.kind, ChannelType::DM | ChannelType::GROUP_DM) {
         return None;
     }
     let call = store.calls.get(&c.id)?;
-    let people = participants(store, None, c.id);
-    let joined = st.voice.channel == Some((None, c.id));
-    let me = store.my_id();
-    let ringing: Vec<Snowflake> = call.ringing.iter().copied().filter(|u| *u != me).collect();
-    let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
-    let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
-    let all = tiles(&visible);
-    // `hasRenderableCallMedia`: any screen share, or a camera that's on.
-    let has_media = all.iter().any(|t| t.screen || video(st, me, *t).is_some());
-    let mut row_tiles = row().w_full().h(150.0).gap(8.0).justify_center().items_center();
-    if !has_media {
-        for (u, vs) in &visible {
-            let user = *u;
-            let name = store.display_name(None, user);
-            let mut face = col()
-                .w(135.0)
-                .h_full()
-                .center()
-                .gap(6.0)
-                .child(avatar(store, st, user, 64.0, None, surface_3(), p))
-                .child(
-                    row()
-                        .gap(4.0)
-                        .center_y()
-                        .child(text(name).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.9)).max_w(110.0).truncate())
-                        .child(if vs.mute || vs.self_mute { icon(&icons::MICROPHONE_SLASH_FILL, 12.0).color(danger()) } else { el() }),
-                );
-            if st.voice.speaking.contains(u) {
-                face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(12.0).border(2.0, p.status_online));
-            }
-            row_tiles = row_tiles.child(face.key(format!("f-{user}")));
-        }
-    } else {
-        for t in &all {
-            let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
-            if let Some(vs) = vs {
-                row_tiles = row_tiles.child(el().key(format!("t-{}-{}", t.user, t.screen as u8)).w(240.0).h_full().child(tile(store, st, None, *t, vs, false, p, acc)));
-            }
-        }
-    }
-    // Recipients being rung show dimmed with a ring button state.
-    for u in ringing.iter().filter(|u| !people.iter().any(|(x, _)| x == *u)) {
-        row_tiles = row_tiles.child(
-            col()
-                .key(format!("r-{u}"))
-                .w(135.0)
-                .h(135.0)
-                .center()
-                .gap(8.0)
-                .radius(12.0)
-                .fill(surface_3())
-                .opacity(0.6)
-                .child(avatar(store, st, *u, 64.0, None, surface_3(), p))
-                .child(text("Ringing…").font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72))),
-        );
-    }
     let ch = c.id;
-    let footer = if joined {
-        control_bar(store, st, p, acc)
+    let people = participants(store, None, ch);
+    let me = store.my_id();
+    let here = st.voice.channel == Some((None, ch));
+    // `callExistsAndOngoing`: someone's in it, someone's being rung, or we started it.
+    if people.is_empty() && call.ringing.is_empty() && !here {
+        return None;
+    }
+    if here && st.voice.connected {
+        // `.compactCallParticipantsRow`: at most 42rem wide.
+        let fallback = call_participants_row(store, st, c, &call.ringing, &people, rgb(0, 0, 0), p, acc).max_w(672.0);
+        return Some(compact_call(store, st, None, ch, &people, Some(fallback), p, acc));
+    }
+    // `useCallHeaderState`'s controls variant.
+    let incoming = call.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&ch);
+    let mut controls = row().gaps(12.0, 12.0).flex_wrap().justify_center().items_center();
+    controls = if here {
+        controls.child(Button::<S>::new(t("Connecting...")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).submitting(true).key("dm-call-connecting").el(p))
+    } else if incoming {
+        // shortcut: Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
+        controls
+            .child(Button::new(t("Accept")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).key("dm-call-accept").on_press(op(acc, Op::AcceptCall(ch))).el(p))
+            .child(Button::new(t("Reject")).variant(ButtonVariant::Danger).icon(&icons::X_BOLD).key("dm-call-reject").on_press(op(acc, Op::DeclineCall(ch))).el(p))
+            .child(Button::new(t("Ignore")).variant(ButtonVariant::Secondary).icon(&icons::BELL_SLASH_FILL).key("dm-call-ignore").on_press(ignore_call(acc, ch, me)).el(p))
+    } else if people.iter().any(|(u, _)| *u == me) {
+        controls.child(Button::new(t("Join on this device")).variant(ButtonVariant::Secondary).icon(&icons::PHONE_FILL).key("dm-call-join-here").on_press(op(acc, Op::AcceptCall(ch))).el(p))
     } else {
-        Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p)
+        controls.child(Button::new(t("Join call")).icon(&icons::PHONE_FILL).key("dm-join-call").on_press(op(acc, Op::AcceptCall(ch))).el(p))
     };
-    let mut strip = col().w_full().pt(16.0).pb(12.0).gap(12.0).items_center().fill(surface_1()).child(row_tiles).child(footer);
+    let mut inner = col().w_full().gap(8.0).items_center().child(controls);
+    // `VoiceE2EEIndicator variant="call"`: "P2P" for a peer-to-peer call; a DM call is only
+    // known to be encrypted once connecting to it.
     if super::voice::is_p2p(store, None, ch) {
         let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
         let tip = crate::ui::Tooltip::new("dm-call-p2p", t("Direct connection. Audio and video go directly between the people in the call, who can see each other's IP address."));
-        strip = strip.child(tip.el(p2p_indicator(joined && !st.voice.p2p_failed.is_empty(), p), &st.popups, pops, p, layer));
+        inner = inner.child(tip.el(p2p_indicator(here && !st.voice.p2p_failed.is_empty(), p), &st.popups, pops, p, layer));
+    } else if here && st.voice.encrypted {
+        inner = inner.child(e2ee_badge());
     }
-    Some(strip)
+    // `.callBanner` (`--voice-surface-0`) in `.compactCallWrapper` (black, a 1px
+    // `--voice-overlay-light` bottom border), resized like the compact call view.
+    let banner = col()
+        .w_full()
+        .h_full()
+        .fill(surface_0())
+        .child(row().w_full().grow(1.0).min_h(0.0).center().px(16.0).py(12.0).child(call_participants_row(store, st, c, &call.ringing, &people, surface_0(), p, acc)))
+        .child(row().w_full().justify_center().px(16.0).pb(24.0).child(inner));
+    // `.compactCallResizePill`: 36x4, `--voice-overlay-light-strong`.
+    let handle = compact_resize_handle(ch, acc).child(row().w_full().h_full().center().child(el().size(36.0, 4.0).radius(999.0).fill(rgba(255, 255, 255, 0.2))));
+    Some(
+        col()
+            .key(format!("dm-call-{ch}"))
+            .w_full()
+            .h(compact_call_height(st, ch))
+            .fill(rgb(0, 0, 0))
+            .child(banner)
+            .child(handle)
+            .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(rgba(255, 255, 255, 0.12))),
+    )
+}
+
+/// `CallCommands.ignoreCall`: stop ringing just us.
+fn ignore_call<S: 'static>(acc: ShellAccess<S>, ch: Snowflake, me: Snowflake) -> impl Fn(&mut S) + 'static {
+    move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.dismissed_calls.insert(ch);
+        sh.intents.push(Intent::Voice(Op::Ring(ch, me, false)));
+    }
+}
+
+/// The compact call's height: its saved height, kept under `getCompactHeightMax` (the window
+/// leaves room for the chat under it).
+fn compact_call_height(st: &ShellState, ch: Snowflake) -> f32 {
+    let window_h = rune::memo::layout_size(super::BODY_KEY).map_or(800.0, |[_, h]| h);
+    let max_h = (window_h - COMPACT_CHAT_RESERVE).clamp(COMPACT_HEIGHT_MIN, COMPACT_HEIGHT_MAX);
+    compact_height(st.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT)).min(max_h)
+}
+
+/// `.resizeHandle` / `.compactCallResizeHandle`: the 16px strip along the bottom edge; dragging
+/// or the arrow keys resize the call and save its height.
+fn compact_resize_handle<S: 'static>(ch: Snowflake, acc: ShellAccess<S>) -> El {
+    el()
+        .key(format!("compact-call-resize-{ch}"))
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .h(16.0)
+        .cursor(rune::Cursor::ResizeRow)
+        .role("separator")
+        .label(t("Resize call view"))
+        .focusable(true)
+        .on_step(move |s: &mut S, delta, _| {
+            let sh = acc(s);
+            let h = sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT);
+            sh.prefs.compact_call_heights.insert(ch, compact_height(h + delta as f32 * 16.0));
+            let prefs = sh.prefs.clone();
+            sh.intents.push(Intent::Prefs(Box::new(prefs)));
+        })
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Down {
+                d.data = compact_height(sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
+            }
+            sh.prefs.compact_call_heights.insert(ch, compact_height(d.data + d.dy));
+            if d.phase == rune::Phase::Up {
+                let prefs = sh.prefs.clone();
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            }
+        })
+}
+
+/// Whether the joined compact call shows only avatars (`data-voice-call-avatar-mode`): no
+/// screen share and no camera on (`hasRenderableCallMedia`).
+pub fn compact_avatar_mode(store: &Store, st: &ShellState, guild: Option<Snowflake>, ch: Snowflake) -> bool {
+    let me = store.my_id();
+    let people = participants(store, guild, ch);
+    let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    !tiles(&visible).iter().any(|t| t.screen || video(st, me, *t).is_some())
+}
+
+/// `CompactVoiceCallView`: the joined call above a channel's chat — the participants' avatars
+/// (or `avatar_fallback`), or the call layout once someone has a camera or stream on, with the
+/// control bar, the chat / pop-out / fullscreen corner buttons and the resize handle.
+#[allow(clippy::too_many_arguments)]
+fn compact_call<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, ch: Snowflake, people: &[(Snowflake, &VoiceState)], avatar_fallback: Option<El>, p: &Palette, acc: ShellAccess<S>) -> El {
+    let height = compact_call_height(st, ch);
+    let width = rune::memo::layout_size(&format!("compact-call-{ch}")).map_or(640.0, |[w, _]| w);
+    let me = store.my_id();
+    let visible = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
+    let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
+    let tiles_all = tiles(&visible);
+    // `hasRenderableCallMedia`: any screen share, or a camera that's on.
+    let has_media = tiles_all.iter().any(|t| t.screen || video(st, me, *t).is_some());
+    // `CompactVoiceCallView.module.css`'s reserves: the edge padding, the control bar's
+    // (56px buttons + padding) and what the content keeps clear of it.
+    let edge = (height * 0.045).clamp(12.0, 24.0);
+    let control_h = 58.0 + (height * 0.04).clamp(16.0, 24.0) + 12.0;
+    let control_reserve = control_h + (height * 0.055).clamp(16.0, 28.0);
+    let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
+    let pad_bottom = edge.max(footer.min(height * 0.34));
+    let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
+    let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
+    if people.is_empty() {
+        content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
+    } else if !has_media && let Some(fallback) = avatar_fallback {
+        content = content.child(fallback.key("avatars"));
+    } else if !has_media {
+        // `audioAvatarLayout` + `VoiceParticipantWrappedAvatarList`: wrapping avatars,
+        // clamp(44, 18% of the smaller side, 88), with their mute / deafen badges.
+        let content_h = height - pad_top - pad_bottom;
+        let size = (width.min(content_h + pad_top + pad_bottom) * 0.18).clamp(44.0, 88.0);
+        let gap = (height * 0.024).clamp(8.0, 16.0);
+        let mut list = row().w_full().max_w(768.0).flex_wrap().justify_center().items_center().gaps(gap, gap);
+        for (u, vs) in &visible {
+            let user = *u;
+            let name = store.display_name(guild, user);
+            let face = super::voice::voice_avatar(store, st, user, size, st.voice.speaking.contains(&user), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, rgb(0, 0, 0), p)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(name)
+                .on_press(move |s: &mut S| {
+                    let sh = acc(s);
+                    let next = (sh.call.pinned(sh.voice.focus) != Some(user)).then_some(user);
+                    sh.voice.focus = next;
+                    sh.call.pin(next);
+                });
+            list = list.child(face.key(format!("a-{user}")));
+        }
+        content = content.child(list.key("avatars"));
+    } else {
+        // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
+        // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
+        content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, guild, people, true, p, acc)));
+    }
+    // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
+    let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
+        row()
+            .key(key)
+            .size(42.0, 42.0)
+            .center()
+            .radius(14.0)
+            .fill(rgb(0, 0, 0))
+            .border(1.0, rgba(255, 255, 255, 0.12))
+            .shadow(3.0, 10.0, rgba(0, 0, 0, 0.26))
+            .hover(rgb(0x11, 0x11, 0x11))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label)
+            .hover_group()
+            .child(icon(glyph, 21.0).color(rgba(255, 255, 255, 0.9)).group_color(Color::WHITE))
+    };
+    let unread = unread_messages(store, ch);
+    let mut chat = corner("voice-chat-toggle", &icons::CHAT_TEARDROP_FILL, t("Hide chat").to_string()).on_press(move |s: &mut S| acc(s).voice.call_view = true);
+    if unread > 0 {
+        chat = chat.child(
+            row()
+                .pin(None, Some(-6.4), Some(-6.4), None)
+                .min_w(14.0)
+                .h(14.0)
+                .px(4.0)
+                .center()
+                .radius(999.0)
+                .fill(p.status_danger)
+                .border(1.5, rgb(0, 0, 0))
+                .child(text(if unread > 9 { "9+".to_string() } else { unread.to_string() }).font(font(9.0, 700.0).lh(9.0)).color(Color::WHITE)),
+        );
+    }
+    let popout = corner("compact-call-popout", &icons::ARROW_SQUARE_OUT_BOLD, t("Pop out call").to_string()).on_press(op(acc, Op::PopOut { user: None, screen: false, pip: false }));
+    let full = corner("compact-call-fullscreen", &icons::CORNERS_OUT_BOLD, t("Enter fullscreen").to_string()).on_press(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.call_view = true;
+        sh.call.app_fullscreen = true;
+        sh.call.fullscreen_from_compact = true;
+    });
+    let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pt((height * 0.04).clamp(16.0, 24.0)).px(16.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc));
+    col()
+        .key(format!("compact-call-{ch}"))
+        .w_full()
+        .h(height)
+        .fill(rgb(0, 0, 0))
+        .clip_rounded(0.0)
+        .child(content)
+        .child(controls)
+        .child(el().pin(Some(12.0), None, None, Some(12.0)).child(chat))
+        .child(row().pin(None, None, Some(12.0), Some(12.0)).gap(8.0).child(popout).child(full))
+        .child(compact_resize_handle(ch, acc))
+        // `.compactCallWrapper`'s 1px `--voice-overlay-light` bottom border.
+        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(rgba(255, 255, 255, 0.12)))
 }
 
 /// `ChannelCompactCallSurface`: the call above a voice channel's text chat — the channel's
-/// participants and a Join button, or, once joined, the tiles with the call controls. The
-/// surface resizes by its bottom handle and remembers that height per channel.
+/// participants and a Join button, or, once joined, the compact call view. The surface resizes
+/// by its bottom handle and remembers that height per channel.
 pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     if c.kind != ChannelType::GUILD_VOICE {
         return None;
@@ -1561,138 +1780,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     let joined = st.voice.channel == Some((Some(guild), c.id));
     let ch = c.id;
     if joined {
-        // `getCompactHeightMax`: the window keeps room for the chat under the call.
-        let window_h = rune::memo::layout_size(super::BODY_KEY).map_or(800.0, |[_, h]| h);
-        let max_h = (window_h - COMPACT_CHAT_RESERVE).clamp(COMPACT_HEIGHT_MIN, COMPACT_HEIGHT_MAX);
-        let height = compact_height(st.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT)).min(max_h);
-        let width = rune::memo::layout_size(&format!("compact-call-{ch}")).map_or(640.0, |[w, _]| w);
-        let me = store.my_id();
-        let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
-        let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
-        let tiles_all = tiles(&visible);
-        // `hasRenderableCallMedia`: any screen share, or a camera that's on.
-        let has_media = tiles_all.iter().any(|t| t.screen || video(st, me, *t).is_some());
-        // `CompactVoiceCallView.module.css`'s reserves: the edge padding, the control bar's
-        // (56px buttons + padding) and what the content keeps clear of it.
-        let edge = (height * 0.045).clamp(12.0, 24.0);
-        let control_h = 58.0 + (height * 0.04).clamp(16.0, 24.0) + 12.0;
-        let control_reserve = control_h + (height * 0.055).clamp(16.0, 28.0);
-        let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
-        let pad_bottom = edge.max(footer.min(height * 0.34));
-        let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
-        let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
-        if people.is_empty() {
-            content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
-        } else if !has_media {
-            // `audioAvatarLayout` + `VoiceParticipantWrappedAvatarList`: wrapping avatars,
-            // clamp(44, 18% of the smaller side, 88), with their mute / deafen badges.
-            let content_h = height - pad_top - pad_bottom;
-            let size = (width.min(content_h + pad_top + pad_bottom) * 0.18).clamp(44.0, 88.0);
-            let gap = (height * 0.024).clamp(8.0, 16.0);
-            let mut list = row().w_full().max_w(768.0).flex_wrap().justify_center().items_center().gaps(gap, gap);
-            for (u, vs) in &visible {
-                let user = *u;
-                let name = store.display_name(Some(guild), user);
-                let face = super::voice::voice_avatar(store, st, user, size, st.voice.speaking.contains(&user), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, rgb(0, 0, 0), p)
-                    .cursor(rune::Cursor::Pointer)
-                    .role("button")
-                    .label(name)
-                    .on_press(move |s: &mut S| {
-                        let sh = acc(s);
-                        let next = (sh.call.pinned(sh.voice.focus) != Some(user)).then_some(user);
-                        sh.voice.focus = next;
-                        sh.call.pin(next);
-                    });
-                list = list.child(face.key(format!("a-{user}")));
-            }
-            content = content.child(list.key("avatars"));
-        } else {
-            // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
-            // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
-            content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, Some(guild), &people, true, p, acc)));
-        }
-        // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
-        let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
-            row()
-                .key(key)
-                .size(42.0, 42.0)
-                .center()
-                .radius(14.0)
-                .fill(rgb(0, 0, 0))
-                .border(1.0, rgba(255, 255, 255, 0.12))
-                .shadow(3.0, 10.0, rgba(0, 0, 0, 0.26))
-                .hover(rgb(0x11, 0x11, 0x11))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(label)
-                .hover_group()
-                .child(icon(glyph, 21.0).color(rgba(255, 255, 255, 0.9)).group_color(Color::WHITE))
-        };
-        let unread = unread_messages(store, ch);
-        let mut chat = corner("voice-chat-toggle", &icons::CHAT_TEARDROP_FILL, t("Hide chat").to_string()).on_press(move |s: &mut S| acc(s).voice.call_view = true);
-        if unread > 0 {
-            chat = chat.child(
-                row()
-                    .pin(None, Some(-6.4), Some(-6.4), None)
-                    .min_w(14.0)
-                    .h(14.0)
-                    .px(4.0)
-                    .center()
-                    .radius(999.0)
-                    .fill(p.status_danger)
-                    .border(1.5, rgb(0, 0, 0))
-                    .child(text(if unread > 9 { "9+".to_string() } else { unread.to_string() }).font(font(9.0, 700.0).lh(9.0)).color(Color::WHITE)),
-            );
-        }
-        let popout = corner("compact-call-popout", &icons::ARROW_SQUARE_OUT_BOLD, t("Pop out call").to_string()).on_press(op(acc, Op::PopOut { user: None, screen: false, pip: false }));
-        let full = corner("compact-call-fullscreen", &icons::CORNERS_OUT_BOLD, t("Enter fullscreen").to_string()).on_press(move |s: &mut S| {
-            let sh = acc(s);
-            sh.voice.call_view = true;
-            sh.call.app_fullscreen = true;
-            sh.call.fullscreen_from_compact = true;
-        });
-        let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pt((height * 0.04).clamp(16.0, 24.0)).px(16.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc));
-        let handle = el()
-            .key(format!("compact-call-resize-{ch}"))
-            .w_full()
-            .h(8.0)
-            .cursor(rune::Cursor::ResizeRow)
-            .role("separator")
-            .label(t("Resize call view"))
-            .focusable(true)
-            .on_step(move |s: &mut S, delta, _| {
-                let sh = acc(s);
-                let h = sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT);
-                sh.prefs.compact_call_heights.insert(ch, compact_height(h + delta as f32 * 16.0));
-                let prefs = sh.prefs.clone();
-                sh.intents.push(Intent::Prefs(Box::new(prefs)));
-            })
-            .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
-                let sh = acc(s);
-                if d.phase == rune::Phase::Down {
-                    d.data = compact_height(sh.prefs.compact_call_heights.get(&ch).copied().unwrap_or(COMPACT_HEIGHT_DEFAULT));
-                }
-                sh.prefs.compact_call_heights.insert(ch, compact_height(d.data + d.dy));
-                if d.phase == rune::Phase::Up {
-                    let prefs = sh.prefs.clone();
-                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
-                }
-            });
-        // `.resizeHandle`: the 16px strip along the bottom edge.
-        let handle = handle.pin(Some(0.0), None, Some(0.0), Some(0.0)).h(16.0);
-        return Some(
-            col()
-                .key(format!("compact-call-{ch}"))
-                .w_full()
-                .h(height)
-                .fill(rgb(0, 0, 0))
-                .clip_rounded(0.0)
-                .child(content)
-                .child(controls)
-                .child(el().pin(Some(12.0), None, None, Some(12.0)).child(chat))
-                .child(row().pin(None, None, Some(12.0), Some(12.0)).gap(8.0).child(popout).child(full))
-                .child(handle),
-        );
+        return Some(compact_call(store, st, Some(guild), ch, &people, None, p, acc));
     }
     let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
     let mut faces = row().gap(6.0).center_y();
@@ -1712,27 +1800,47 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     Some(strip)
 }
 
-/// `CallButtons`: start a voice / video call from the DM header (join it when one runs).
-pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, video: bool, el_: El, acc: ShellAccess<S>) -> El {
+/// `CallButtons`: the DM header's voice and video call buttons. Voice starts, joins or (selected,
+/// in the call) leaves it; video starts the call with the camera or joins it, and once in the
+/// call turns the camera on or off (selected while it's on). A system DM can't host calls.
+pub fn header_action<S: 'static>(store: &Store, st: &ShellState, c: &Channel, video: bool, action: &dyn Fn(&'static rune::Icon, &str, bool) -> El, acc: ShellAccess<S>) -> El {
     let ch = c.id;
     let active = store.calls.contains_key(&ch);
-    let joined = st.voice.channel == Some((None, ch));
-    if joined {
-        return el_.opacity(0.5);
+    let in_call = st.voice.connected && st.voice.channel == Some((None, ch));
+    let count = participants(store, None, ch).len();
+    let system = c.kind == ChannelType::DM && c.recipients.iter().any(|u| u.id == super::client_system::FLUXERBOT);
+    let label = match video {
+        _ if system => t(if video { "System DMs cannot host video calls" } else { "System DMs cannot host voice calls" }).to_string(),
+        false if in_call => t("Leave voice call").to_string(),
+        false if active => t("Join voice call").to_string(),
+        false => t("Start voice call").to_string(),
+        true if in_call => t(if st.voice.camera { "Turn off camera" } else { "Turn on camera" }).to_string(),
+        true if active && count > 0 => crate::i18n::tp("{count, plural, one {Join video call (# participant)} other {Join video call (# participants)}}", count as i64, &[]),
+        true if active => t("Join video call").to_string(),
+        true => t("Start video call").to_string(),
+    };
+    let selected = in_call && (!video || st.voice.camera);
+    let b = action(if video { &icons::VIDEO_CAMERA_FILL } else { &icons::PHONE_FILL }, &label, selected);
+    if system {
+        return b.disabled(true).opacity(0.5).cursor(rune::Cursor::NotAllowed);
     }
     // `canOfferP2pCall`: the rollout is on and everyone fits in a P2P call.
     let (p2p_on, cap) = st.voice.p2p_rollout;
     let offer_p2p = !active && p2p_on && c.recipients.iter().filter(|u| u.id != store.my_id()).count() < cap;
-    el_.on_press(move |s: &mut S| {
+    b.on_press(move |s: &mut S| {
         let sh = acc(s);
         // `getCallStartRequestOptions`: Shift skips the P2P offer and the confirmation.
         let bypass = sh.shift_held;
-        if offer_p2p && !bypass {
+        if in_call {
+            sh.intents.push(if video { Intent::Voice(Op::ToggleCamera) } else { Intent::LeaveVoice });
+        } else if active {
+            sh.intents.push(Intent::Voice(Op::AcceptCall(ch)));
+        } else if offer_p2p && !bypass {
             sh.voice.modal = Some(Modal::P2pConsent { guild: None, channel: ch, start: true, allow_standard: true, video, always: false });
-        } else if !active && !bypass && crate::look::with(|l| l.confirm_calls) {
+        } else if !bypass && crate::look::with(|l| l.confirm_calls) {
             sh.voice.modal = Some(Modal::StartCall { channel: ch, video, tip: true });
         } else {
-            start_call(sh, ch, active, video);
+            start_call(sh, ch, false, video);
         }
     })
 }
@@ -1797,14 +1905,28 @@ fn camera_after_join(sh: &mut ShellState, video: bool) {
     }
 }
 
-/// `IncomingCallUI`: the first call ringing us that we haven't answered or dismissed.
-/// The developer tools' `MockIncomingCall` comes first; its buttons only dismiss it.
+/// `INCOMING_CALL_OVERLAY_WIDTH` / `_HEIGHT`.
+const INCOMING_W: f32 = 320.0;
+const INCOMING_H: f32 = 400.0;
+
+/// `IncomingCallManager`'s card position: where it was dragged to (else the window's centre),
+/// plus the drag in progress, kept inside the window.
+fn incoming_pos(st: &ShellState) -> (f32, f32) {
+    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let (x, y) = st.prefs.incoming_call_pos.unwrap_or(((w / 2.0 - INCOMING_W / 2.0).max(0.0), (h / 2.0 - INCOMING_H / 2.0).max(0.0)));
+    let [dx, dy] = st.call.incoming_drag.unwrap_or_default();
+    ((x + dx).clamp(0.0, (w - INCOMING_W).max(0.0)), (y + dy).clamp(0.0, (h - INCOMING_H).max(0.0)))
+}
+
+/// `IncomingCallUI`: the first call ringing us that we haven't answered or ignored, in a card
+/// dragged by its top strip. The developer tools' `MockIncomingCall` comes first; its buttons
+/// only dismiss it.
 pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let me = store.my_id();
     let mock = super::devtools::mock_call(store, st);
     let mocked = mock.is_some();
-    let (caller, name, channel) = match mock {
-        Some((caller, name)) => (caller, name, Snowflake(0)),
+    let (caller, name, channel, group) = match mock {
+        Some((caller, name)) => (caller, name, Snowflake(0), None),
         None => {
             let call = store
                 .calls
@@ -1812,19 +1934,25 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                 .filter(|c| c.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&c.channel_id) && st.voice.channel != Some((None, c.channel_id)))
                 .min_by_key(|c| c.channel_id)?;
             let ch = store.channels.get(&call.channel_id);
-            let caller = call.voice_states.first().and_then(|v| v.user_id).or_else(|| ch.and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me)))?;
-            let name = match ch {
-                Some(c) if c.kind == ChannelType::GROUP_DM => super::chat::channel_title(store, c),
-                _ => store.display_name(None, caller),
-            };
-            (caller, name, call.channel_id)
+            // `resolveInitiatorUserId`: a DM's other recipient, else whoever else is being rung.
+            let other = ch.filter(|c| c.kind == ChannelType::DM).and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me));
+            let caller = other.or_else(|| call.ringing.iter().copied().find(|u| *u != me)).or_else(|| call.ringing.first().copied())?;
+            match ch {
+                Some(c) if c.kind == ChannelType::GROUP_DM => (caller, super::chat::channel_title(store, c), call.channel_id, Some(c)),
+                _ => (caller, store.display_name(None, caller), call.channel_id, None),
+            }
         }
     };
     let end_mock = move |s: &mut S| acc(s).devtools.mock_call = None;
     let decline: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::DeclineCall(channel))) };
     let accept: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::AcceptCall(channel))) };
+    let ignore: std::rc::Rc<dyn Fn(&mut S)> = if mocked { std::rc::Rc::new(end_mock) } else { std::rc::Rc::new(ignore_call(acc, channel, me)) };
     let secondary = rgba(235, 235, 245, 0.55);
-    let circle = |i: &'static rune::Icon, bg: Color, hover: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
+    let shadow = |y: f32, blur: f32, color: Color| Shadow { x: 0.0, y, blur, spread: 0.0, color, inset: false };
+    // `.circleButton`: 64px, its colour's glow; hover is the lighter colour.
+    // shortcut: Rune has no brightness filter or pressed offset, so hover only swaps the colour
+    // and a press doesn't move the button 1px down.
+    let circle = |glyph: El, bg: Color, hover: Color, glow: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
         col()
             .gap(10.0)
             .items_center()
@@ -1835,66 +1963,241 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                     .radius(32.0)
                     .fill(bg)
                     .hover(hover)
+                    .box_shadow(shadow(6.0, 16.0, glow))
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
                     .label(label.to_string())
-                    .child(icon(i, 28.0).color(Color::WHITE))
+                    .child(glyph)
                     .on_press(move |s: &mut S| on(s)),
             )
             .child(text(label.to_string()).font(font(13.0, 500.0).lh(16.0)).color(rgba(235, 235, 245, 0.7)))
     };
-    let card = col()
-        .w(320.0)
+    let face = match group {
+        Some(c) => super::group_avatar(store, st, c, 80.0, rgb(0x2c, 0x2c, 0x2e), p),
+        None => avatar(store, st, caller, 80.0, None, rgb(0x2c, 0x2c, 0x2e), p),
+    };
+    // `.avatar`: a 96px shell with a 2.2s ring pulse spreading 10px.
+    // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread.
+    let face = el()
+        .size(96.0, 96.0)
+        .child(el().pin(Some(-5.0), Some(-5.0), Some(-5.0), Some(-5.0)).radius(999.0).fill(rgba(255, 255, 255, 0.18)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 0.5)))
+        .child(row().w_full().h_full().center().radius(999.0).fill(rgba(255, 255, 255, 0.04)).box_shadow(shadow(12.0, 28.0, rgba(0, 0, 0, 0.45))).clip_rounded(48.0).child(face));
+    let stack = col()
+        .w_full()
         .pt(26.0)
         .px(24.0)
         .pb(22.0)
-        .gap(16.0)
         .items_center()
-        .radius(28.0)
-        .linear_gradient(std::f32::consts::PI, [(0.0, rgb(0x2c, 0x2c, 0x2e)), (1.0, rgb(0x1c, 0x1c, 0x1e))])
-        .border(1.0, rgba(255, 255, 255, 0.08))
-        .box_shadow(rune::Shadow { x: 0.0, y: 24.0, blur: 60.0, spread: 0.0, color: rgba(0, 0, 0, 0.55), inset: false })
-        .role("dialog")
-        .label(t("Incoming call"))
         .child(
             row()
                 .gap(6.0)
                 .center_y()
+                .mb(18.0)
                 .child(icon(&icons::PHONE_INCOMING_FILL, 14.0).color(secondary))
                 .child(text(t("Incoming call")).font(font(13.0, 500.0).lh(16.0)).color(secondary)),
         )
-        .child(avatar(store, st, caller, 96.0, None, rgb(0x2c, 0x2c, 0x2e), p))
+        .child(face.mb(16.0))
         .child(
             col()
                 .w_full()
-                .gap(4.0)
                 .items_center()
-                .child(text(name).font(font(22.0, 600.0).lh(26.4)).color(Color::WHITE).truncate())
-                .child(text(t("Voice call")).font(font(14.0, 400.0).lh(18.0)).color(secondary)),
+                .mb(28.0)
+                .child(text(name).font(font(22.0, 600.0).lh(26.4).tracking(-0.22)).color(Color::WHITE).truncate())
+                .child(text(t("Voice call")).font(font(14.0, 400.0).lh(18.0)).color(secondary).mt(4.0)),
         )
         .child(
             row()
                 .gap(56.0)
-                .pt(8.0)
-                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), t("Decline"), decline))
-                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), t("Accept"), accept)),
+                .mb(14.0)
+                // `.circleButtonIconRotated`: the phone turned 135°.
+                .child(circle(icon(&icons::PHONE_FILL, 28.0).color(Color::WHITE).rotate(std::f32::consts::FRAC_PI_4 * 3.0), rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), rgba(255, 59, 48, 0.45), t("Reject"), decline))
+                .child(circle(icon(&icons::PHONE_FILL, 28.0).color(Color::WHITE), rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), rgba(52, 199, 89, 0.45), t("Accept"), accept)),
         )
-        .child(
-            text(t("Ignore"))
-                .font(font(13.0, 500.0).lh(16.0))
-                .color(rgba(235, 235, 245, 0.5))
+        .child({
+            let ignore = ignore.clone();
+            // `.ignoreLink`: 14/500, white on a faint pill while hovered.
+            row()
+                .mt(6.0)
+                .px(14.0)
+                .py(8.0)
+                .radius(999.0)
+                .hover(rgba(255, 255, 255, 0.06))
+                .hover_group()
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .on_press(move |s: &mut S| {
-                    let st = acc(s);
-                    if mocked {
-                        st.devtools.mock_call = None;
-                    } else {
-                        st.voice.dismissed_calls.insert(channel);
-                    }
-                }),
+                .label(t("Ignore"))
+                .child(text(t("Ignore")).font(font(14.0, 500.0).lh(18.0)).color(rgba(235, 235, 245, 0.5)).group_color(Color::WHITE))
+                .on_press(move |s: &mut S| ignore(s))
+        });
+    // `.dragHandle`: an 18px strip with a 36x5 pill 4px above its bottom; the card moves once
+    // the pointer has gone 6pt, and lands (saved) where it's let go.
+    let handle = row()
+        .pin(Some(0.0), Some(0.0), Some(0.0), None)
+        .h(18.0)
+        .pb(4.0)
+        .justify_center()
+        .items_end()
+        .cursor(if st.call.incoming_drag.is_some() { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
+        .child(el().size(36.0, 5.0).radius(999.0).fill(rgba(235, 235, 245, 0.28)))
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Up {
+                if sh.call.incoming_drag.is_some() && !d.cancelled() {
+                    sh.prefs.incoming_call_pos = Some(incoming_pos(sh));
+                    let prefs = sh.prefs.clone();
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                }
+                sh.call.incoming_drag = None;
+            } else if sh.call.incoming_drag.is_some() || d.dx * d.dx + d.dy * d.dy > 36.0 {
+                sh.call.incoming_drag = Some([d.dx, d.dy]);
+            }
+        });
+    let card = col()
+        .w(INCOMING_W)
+        .radius(28.0)
+        .linear_gradient(std::f32::consts::PI, [(0.0, rgb(0x2c, 0x2c, 0x2e)), (1.0, rgb(0x1c, 0x1c, 0x1e))])
+        .border(1.0, rgba(255, 255, 255, 0.08))
+        .box_shadow(shadow(24.0, 60.0, rgba(0, 0, 0, 0.55)))
+        .box_shadow(shadow(4.0, 12.0, rgba(0, 0, 0, 0.35)))
+        .box_shadow(Shadow { inset: true, ..shadow(1.0, 0.0, rgba(255, 255, 255, 0.06)) })
+        .clip_rounded(28.0)
+        // `CARD_MOTION`: fades in from .94 scale, 8px lower.
+        .transition(rune::Transition::opacity().combined(rune::Transition::scale(0.94)).combined(rune::Transition::offset(0.0, 8.0)))
+        .key(format!("incoming-call-{channel}"))
+        .role("dialog")
+        .label(t("Incoming call"))
+        // `.card`'s highlight: radial-gradient(140% 100% at 50% 0%, white 6%, transparent 60%).
+        // shortcut: no backdrop blur behind the card.
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).inert().radial_gradient([0.5, 0.0], [INCOMING_W * 1.4, INCOMING_H], [(0.0, rgba(255, 255, 255, 0.06)), (0.6, rgba(255, 255, 255, 0.0))]))
+        .child(stack)
+        .child(handle)
+        // Escape is Ignore while focus is in the card.
+        .on_key(move |s: &mut S, k: &rune::KeyEvent, _| {
+            if k.key != rune::Key::Escape {
+                return false;
+            }
+            ignore(s);
+            true
+        });
+    let (x, y) = incoming_pos(st);
+    Some(el().pin(Some(x), Some(y), None, None).child(card))
+}
+
+const PIP_MENU: &str = "pip-overlay-menu";
+/// `PiPOverlay`'s default width (16:9) and `EDGE_PADDING`.
+const PIP_W: f32 = 320.0;
+const PIP_H: f32 = PIP_W * 9.0 / 16.0;
+const PIP_PAD: f32 = 20.0;
+
+/// The PiP's top-left in the window: its saved corner (`Corner`, bottom-right by default), plus
+/// the drag in progress, kept inside the window.
+fn pip_pos(st: &ShellState) -> (f32, f32) {
+    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let corner = st.prefs.pip_corner.unwrap_or(3);
+    let x = if corner & 1 == 1 { w - PIP_W - PIP_PAD } else { PIP_PAD };
+    let y = if corner & 2 == 2 { h - PIP_H - PIP_PAD } else { PIP_PAD };
+    let [dx, dy] = st.call.pip_drag.unwrap_or_default();
+    ((x + dx).clamp(0.0, (w - PIP_W).max(0.0)), (y + dy).clamp(0.0, (h - PIP_H).max(0.0)))
+}
+
+/// The corner nearest to where the PiP was let go: bit 1 right, bit 2 bottom.
+fn pip_corner(x: f32, y: f32, w: f32, h: f32) -> u8 {
+    u8::from(x + PIP_W / 2.0 > w / 2.0) | (u8::from(y + PIP_H / 2.0 > h / 2.0) << 1)
+}
+
+/// `PiPOverlay` (`ScreenSharePiPStateMachine`): the watched stream, small in a corner, while
+/// the call's own view isn't on screen. Hovering shows "Back to call" with the channel's name
+/// and the streamer with their viewer count; a double-click goes back to the call, right-click
+/// offers to disable these popouts, and a drag moves it to another corner.
+// shortcut: no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
+// snaps to the nearest corner. A DM call's watched stream always fills the main column, so this
+// shows for community calls only.
+pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let (Some((Some(guild), ch)), Some(user)) = (st.voice.channel, st.voice.watching) else { return };
+    if !st.voice.connected || st.channel == Some(ch) || st.voice.call_view || st.voice.stream_fullscreen || crate::look::with(|l| l.disable_screen_pip) {
+        return;
+    }
+    let channel = store.channels.get(&ch).map(|c| c.name.clone().unwrap_or_default()).unwrap_or_default();
+    let viewers = super::voice::spectators_for(store, Some(guild), user).len();
+    let back = move |s: &mut S| acc(s).select_guild(Some(guild), Some(ch));
+    let header = row()
+        .pin(Some(0.0), Some(0.0), Some(0.0), None)
+        .h(48.0)
+        .px(20.0)
+        .py(8.0)
+        .items_start()
+        .linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.78)), (1.0, rgba(0, 0, 0, 0.0))])
+        .child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .min_w(0.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Back to call"))
+                .on_press(back)
+                .child(icon(&icons::ARROW_LEFT_BOLD, 14.0).color(Color::WHITE))
+                .child(text(channel).font(font(13.0, 600.0).lh(15.6)).color(Color::WHITE).truncate().shrink()),
         );
-    Some(el().pin(Some(0.0), Some(24.0), Some(0.0), None).child(row().w_full().justify_center().child(card)))
+    let mut right = row().gap(6.0).center_y();
+    if viewers > 0 {
+        right = right.child(
+            row()
+                .gap(3.0)
+                .center_y()
+                .child(icon(&icons::EYE_FILL, 14.0).color(rgba(255, 255, 255, 0.72)))
+                .child(text(viewers.to_string()).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72))),
+        );
+    }
+    let footer = row()
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .h(48.0)
+        .px(20.0)
+        .py(8.0)
+        .items_end()
+        .gap(8.0)
+        .linear_gradient(0.0, [(0.0, rgba(0, 0, 0, 0.78)), (1.0, rgba(0, 0, 0, 0.0))])
+        .child(text(store.display_name(Some(guild), user)).font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().grow(1.0).min_w(0.0))
+        .child(right);
+    // `.hoverOverlay`: header and footer fade in while the pointer is on the PiP (or dragging it).
+    let dragging = st.call.pip_drag.is_some();
+    let hud = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(header).child(footer);
+    let hud = if dragging { hud } else { hud.group_opacity(0.0, 1.0) };
+    let card = el()
+        .key("pip-overlay")
+        .size(PIP_W, PIP_H)
+        .radius(12.0)
+        .clip_rounded(12.0)
+        .fill(surface_2())
+        .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 32.0, spread: 0.0, color: rgba(0, 0, 0, 0.4), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 8.0, spread: 0.0, color: rgba(0, 0, 0, 0.2), inset: false })
+        .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
+        .hover_group()
+        .child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit))
+        .child(hud)
+        .on_double_press(back)
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PIP_MENU, [at.x, at.y]))
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Up {
+                if sh.call.pip_drag.is_some() && !d.cancelled() {
+                    let (x, y) = pip_pos(sh);
+                    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+                    sh.prefs.pip_corner = Some(pip_corner(x, y, w, h));
+                    let prefs = sh.prefs.clone();
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                }
+                sh.call.pip_drag = None;
+            } else if sh.call.pip_drag.is_some() || d.dx * d.dx + d.dy * d.dy > 16.0 {
+                sh.call.pip_drag = Some([d.dx, d.dy]);
+            }
+        });
+    let (x, y) = pip_pos(st);
+    layer.push(el().pin(Some(x), Some(y), None, None).child(card));
+    // `PiPOverlayContextMenu`.
+    Menu::new(PIP_MENU)
+        .item(MenuItem::new("pip-disable", t("Disable screen share picture-in-picture popouts")).icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(move |s: &mut S| acc(s).voice.modal = Some(Modal::DisableScreenPip)))
+        .el(&st.popups, pops(acc), p, layer);
 }
 
 // ---- Dialogs -----------------------------------------------------------------------------------
@@ -2004,6 +2307,25 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     };
     let ok = |label: &str| Button::new(label.to_string()).key("voice-modal-ok").on_press(close).el(p);
     let modal = match m {
+        // `DisableScreenSharePiPConfirmModal`.
+        Modal::DisableScreenPip => {
+            let path = format!("{} > {}", t("User Settings"), t("Voice & video"));
+            let confirm = move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.modal = None;
+                let mut prefs = sh.prefs.clone();
+                prefs.look.disable_screen_pip = true;
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            };
+            crate::ui::Modal::new(t("Disable screen share picture-in-picture popouts?"), close)
+                .body(body_text(&crate::i18n::tf("This will close the current popout and stop screen share picture-in-picture popouts from opening automatically. You can turn them back on in {audioVideoSettingsPath}.", &[("audioVideoSettingsPath", &path)]), p))
+                .footer(
+                    row()
+                        .gap(8.0)
+                        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("pip-disable-cancel").on_press(close).el(p))
+                        .child(Button::new(t("Disable popouts")).key("pip-disable-confirm").on_press(confirm).el(p)),
+                )
+        }
         Modal::ChannelFull => crate::ui::Modal::new("Channel full", close)
             .body(body_text("This voice channel has reached its user limit. Try again later.", p))
             .footer(ok(t("Okay"))),
@@ -2753,6 +3075,24 @@ mod tests {
         let t = tiles(&people);
         assert_eq!(t.len(), 3);
         assert!(t[1].screen && t[1].user == Snowflake(1));
+    }
+
+    #[test]
+    fn pip_snaps_to_the_nearest_corner() {
+        assert_eq!(pip_corner(10.0, 10.0, 1280.0, 800.0), 0);
+        assert_eq!(pip_corner(900.0, 10.0, 1280.0, 800.0), 1);
+        assert_eq!(pip_corner(10.0, 600.0, 1280.0, 800.0), 2);
+        assert_eq!(pip_corner(900.0, 600.0, 1280.0, 800.0), 3);
+    }
+
+    #[test]
+    fn call_avatar_metrics_fit_the_row() {
+        assert_eq!(call_avatar_metrics(0, 600.0, 200.0), (64.0, 12.0));
+        // Two avatars in a wide row hit the 88 cap; the gap is 200/18 rounded.
+        assert_eq!(call_avatar_metrics(2, 600.0, 200.0), (88.0, 11.0));
+        // Six in a small box: 3x2 at (200-16)/3 wide or (100-8)/2 tall, floored, min 40.
+        assert_eq!(call_avatar_metrics(6, 200.0, 100.0), (46.0, 8.0));
+        assert_eq!(call_avatar_metrics(9, 100.0, 60.0).0, 40.0);
     }
 
     #[test]

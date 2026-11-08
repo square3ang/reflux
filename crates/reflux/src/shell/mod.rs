@@ -817,7 +817,8 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         // members strip and other streams stay reachable; a DM call keeps the stream viewer.
         _ if st.voice.watching.is_some() && st.voice.channel.is_some_and(|(g, _)| g.is_none()) => voice::viewer(store, st, p, acc).unwrap_or_else(el),
         (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc, &mut layer),
-        _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, _)| g.is_some()) => call::view(store, st, p, acc).unwrap_or_else(el),
+        // A DM call's "Hide chat" shows its call view while that DM is open.
+        _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, c)| g.is_some() || st.channel == Some(c)) => call::view(store, st, p, acc).unwrap_or_else(el),
         (Some(_), _) if st.social.members.as_ref().is_some_and(|m| Some(m.guild) == st.guild) => members_page::view(store, st, p, acc, &mut layer).unwrap_or_else(el),
         (None, None) => row().grow(1.0).min_w(0.0).h_full().child(friends::view(store, st, p, acc, &mut layer)).children(active_now::view(store, st, p, acc)),
         _ => chat::main(store, st, channel, p, acc, &mut layer),
@@ -893,6 +894,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     voice::layer(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
     voice_message::volume_layer(st, p, acc, &mut layer);
+    call::pip(store, st, p, acc, &mut layer);
     layer.extend(call::incoming(store, st, p, acc));
     birthday::view(store, st, p, acc, &mut layer);
     layer.extend(badges::list_modal(st, p, acc));

@@ -43,7 +43,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         let mut content = row().w_full().grow(1.0).min_h(0.0).child(super::forum::view(store, st, c, p, acc, layer));
         content = content.children(super::threads::panel(store, st, c, p, acc, layer));
         super::threads::layer(store, st, Some(c), p, acc, layer);
-        return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter).child(header(store, st, c, p, acc, layer)).child(content);
+        return col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter).child(header(store, st, c, p, acc, layer, false)).child(content);
     }
     let mut chat = col()
         .grow(1.0)
@@ -101,14 +101,25 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
     super::pins::popout(store, st, c, p, acc, layer);
     super::threads::layer(store, st, Some(c), p, acc, layer);
     super::upload::plus_menu(store, st, c, false, p, acc, layer);
-    col()
-        .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .fill(p.background_secondary_lighter)
-        .child(header(store, st, c, p, acc, layer))
-        .children(super::call::dm_strip(store, st, c, p, acc, layer))
-        .child(content.key("content"))
+    let top = match super::call::dm_strip(store, st, c, p, acc, layer) {
+        None => header(store, st, c, p, acc, layer, false),
+        // `.voiceActiveHeaderWrapper`: the header over the call's black. Once joined it floats over
+        // the compact call and fades in while the pointer is over either (220ms), unless the
+        // call shows only avatars (it sits above them) or is popped out.
+        Some(strip) => {
+            let head = el().pin(Some(0.0), Some(0.0), Some(0.0), None).child(header(store, st, c, p, acc, layer, true));
+            let joined = st.voice.channel == Some((None, c.id)) && st.voice.connected;
+            let avatars = joined && super::call::compact_avatar_mode(store, st, None, c.id);
+            let wrap = col().w_full().fill(Color::BLACK).key("voice-header-wrapper");
+            if joined && !avatars {
+                let shown = crate::popout::call_open(c.id);
+                wrap.hover_group().child(strip).child(if shown { head } else { head.group_opacity(0.0, 1.0) })
+            } else {
+                wrap.pt(dim::LAYOUT_HEADER_HEIGHT).child(strip).child(head)
+            }
+        }
+    };
+    col().grow(1.0).min_w(0.0).h_full().fill(p.background_secondary_lighter).child(top).child(content.key("content"))
 }
 
 /// `.dropTarget` overlay while files are dragged over the chat.
@@ -216,8 +227,11 @@ pub(crate) fn channel_title(store: &Store, c: &Channel) -> String {
     }
 }
 
-fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
-    let muted = p.text_primary_muted;
+/// `ChannelHeader`; `call` is `.headerContainerCallActive` (a call runs in this DM): white text
+/// and icons over the call's black, no fill or bottom border.
+fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>, call: bool) -> El {
+    let (muted, primary, tertiary) = if call { (Color::WHITE, Color::WHITE, Color::WHITE) } else { (p.text_primary_muted, p.text_primary, p.text_tertiary) };
+    let surface = if call { Color::BLACK } else { p.background_secondary_lighter };
     let action = |i: &'static rune::Icon, label: &str, selected: bool| {
         row()
             .size(dim::CHANNEL_HEADER_ACTION_SIZE, dim::CHANNEL_HEADER_ACTION_SIZE)
@@ -227,29 +241,29 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
             .cursor(rune::Cursor::Pointer)
             .role("button").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
             .label(label.to_string())
-            .child(icon(i, dim::CHANNEL_HEADER_ACTION_ICON_SIZE).color(if selected { p.text_primary } else { muted }).group_color(p.text_primary))
+            .child(icon(i, dim::CHANNEL_HEADER_ACTION_ICON_SIZE).color(if selected { primary } else { muted }).group_color(primary))
     };
     let mut left = row().grow(1.0).min_w(0.0).center_y();
     left = left.children(super::threads::parent_crumb(store, c, p, acc));
     if c.kind == ChannelType::DM {
         let other = c.recipients.iter().find(|u| u.id != store.my_id()).map(|u| u.id).unwrap_or_default();
-        left = left.child(avatar(store, st, other, 24.0, None, p.background_secondary_lighter, p));
+        left = left.child(avatar(store, st, other, 24.0, None, surface, p));
     } else {
         left = left.child(icon(channel_icon(c.kind), dim::CHANNEL_HEADER_ICON_SIZE).color(muted));
     }
     left = left.child(
         text(channel_title(store, c))
             .font(font(16.0, 500.0).lh(24.0))
-            .color(p.text_primary)
+            .color(primary)
             .truncate()
             .shrink()
             .ml(dim::CHANNEL_HEADER_NAME_GAP),
     );
     if let Some(topic) = c.topic.as_ref().filter(|t| !t.is_empty()) {
         left = left
-            .child(text("•").font(font(16.0, 400.0).lh(24.0)).color(p.background_modifier_hover).mx(dim::CHANNEL_HEADER_TOPIC_DIVIDER_GAP))
+            .child(text("•").font(font(16.0, 400.0).lh(24.0)).color(if call { Color::WHITE } else { p.background_modifier_hover }).mx(dim::CHANNEL_HEADER_TOPIC_DIVIDER_GAP))
             .child(
-                markdown::inline_text(topic, &Md::new(store, &st.media, c.guild_id, p, "topic"), font(13.0, 400.0).lh(18.0), p.text_tertiary)
+                markdown::inline_text(topic, &Md::new(store, &st.media, c.guild_id, p, "topic"), font(13.0, 400.0).lh(18.0), tertiary)
                     .grow(1.0)
                     .shrink()
                     .pr(dim::SPACING_5)
@@ -279,8 +293,8 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         }
     } else {
         right = right
-            .child(super::call::header_action(store, st, c, false, action(&icons::PHONE_FILL, "Start Voice Call", false), acc))
-            .child(super::call::header_action(store, st, c, true, action(&icons::VIDEO_CAMERA_FILL, "Start Video Call", false), acc))
+            .child(super::call::header_action(store, st, c, false, &action, acc))
+            .child(super::call::header_action(store, st, c, true, &action, acc))
             .child(pins);
     }
     if !forum {
@@ -288,13 +302,16 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     }
     right = right.children(super::devtools::button(store, st, p, acc, layer));
     right = right.child(crate::social::inbox_button(st, p, acc));
-    row()
-        .w_full()
-        .h(dim::LAYOUT_HEADER_HEIGHT)
-        .px(dim::CHANNEL_HEADER_PADDING_INLINE)
-        .gap(dim::CHANNEL_HEADER_GAP)
-        .center_y()
-        .fill(p.background_secondary_lighter)
+    let bar = row().w_full().h(dim::LAYOUT_HEADER_HEIGHT).px(dim::CHANNEL_HEADER_PADDING_INLINE).gap(dim::CHANNEL_HEADER_GAP).center_y();
+    if call {
+        // `.headerContainerCallActive::before`: a black fade from the header's top to 72px below it.
+        let fade = el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(dim::LAYOUT_HEADER_HEIGHT + 72.0).inert().linear_gradient(
+            std::f32::consts::PI,
+            [(0.0, Color { a: 0.96, ..Color::BLACK }), (0.42, Color { a: 0.86, ..Color::BLACK }), (0.72, Color { a: 0.58, ..Color::BLACK }), (1.0, Color { a: 0.0, ..Color::BLACK })],
+        );
+        return bar.child(fade).child(left).child(right);
+    }
+    bar.fill(p.background_secondary_lighter)
         .child(left)
         .child(right)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)))

@@ -157,7 +157,8 @@ pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
             let title = if screen { crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name)]) } else { name };
             (title, video)
         }
-        None => (s.app.store.channels.get(&v.channel.map_or(Snowflake(0), |(_, c)| c)).and_then(|c| c.name.clone()).unwrap_or_default(), None),
+        // A DM has no name of its own: its recipients' names.
+        None => (s.app.store.channels.get(&v.channel.map_or(Snowflake(0), |(_, c)| c)).map(|c| crate::shell::chat::channel_title(&s.app.store, c)).unwrap_or_default(), None),
     };
     if user.is_none() {
         close_where(|x| x.starts_with("call:") && x != k);
@@ -184,6 +185,12 @@ pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
         slot.win.focus();
     });
     sync(s);
+}
+
+/// `isCallPopoutOpenForChannel`.
+pub fn call_open(channel: Snowflake) -> bool {
+    let k = key(None, false, channel);
+    SLOTS.with(|s| s.borrow().iter().any(|x| x.key.as_deref() == Some(k.as_str())))
 }
 
 /// Hides every pop-out (the call ended).

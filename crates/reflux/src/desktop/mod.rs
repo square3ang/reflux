@@ -116,6 +116,10 @@ pub struct Prefs {
     pub compact_call_heights: std::collections::HashMap<Snowflake, f32>,
     /// `VoicePrompts.skipHideOwnCameraConfirm`.
     pub skip_hide_own_camera_confirm: bool,
+    /// `incoming_call_overlay_position`: where the incoming call card was dragged to.
+    pub incoming_call_pos: Option<(f32, f32)>,
+    /// The screen share PiP's corner: bit 1 right, bit 2 bottom (`None` = bottom-right).
+    pub pip_corner: Option<u8>,
 }
 
 impl Default for Prefs {
@@ -163,6 +167,8 @@ impl Default for Prefs {
             authenticator_offered: Default::default(),
             compact_call_heights: Default::default(),
             skip_hide_own_camera_confirm: false,
+            incoming_call_pos: None,
+            pip_corner: None,
         }
     }
 }

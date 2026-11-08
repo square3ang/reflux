@@ -997,21 +997,29 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.modal = Some(Modal::P2pConsent { guild: None, channel: Snowflake(8001), start: true, allow_standard: true, video: false, always: false });
             return;
         }
-        "incoming" | "dm" | "p2p" | "p2p-join" | "p2p-failed" => {
+        // `dm-join`: a call we're not in; `dm-connecting`: joining it; `dm-ring`: our call ringing 1001.
+        "incoming" | "dm" | "p2p" | "p2p-join" | "p2p-failed" | "dm-join" | "dm-connecting" | "dm-ring" => {
             let p2p = scene.starts_with("p2p");
             let mut states = vec![json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001", "p2p": p2p})];
+            if scene == "dm-ring" {
+                states = vec![json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true})];
+            }
             if scene == "dm" || scene == "p2p" || scene == "p2p-failed" {
                 states.push(json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true, "p2p": p2p}));
             }
             for v in &states {
                 apply(store, "VOICE_STATE_UPDATE", v.clone());
             }
-            let ringing = if scene == "incoming" { json!([ME.to_string()]) } else { json!([]) };
+            let ringing = match scene {
+                "incoming" => json!([ME.to_string()]),
+                "dm-ring" => json!(["1001"]),
+                _ => json!([]),
+            };
             apply(store, "CALL_CREATE", json!({"channel_id": "8001", "message_id": "1", "region": null, "ringing": ringing, "voice_states": states, "recipients": ["1001", ME.to_string()]}));
             (st.guild, st.channel) = (None, Some(Snowflake(8001)));
-            if scene == "dm" || scene == "p2p" || scene == "p2p-failed" {
+            if matches!(scene, "dm" | "p2p" | "p2p-failed" | "dm-connecting" | "dm-ring") {
                 st.voice.channel = Some((None, Snowflake(8001)));
-                (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (true, true, !p2p);
+                (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (scene != "dm-connecting", true, !p2p);
                 st.voice.speaking.insert(Snowflake(1001));
             }
             match scene {
@@ -1072,6 +1080,10 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         watch_scene(st, scene);
         if scene == "watch-source-ended" {
             st.voice.share_ended = true;
+        }
+        // The PiP overlay: the stream keeps playing while another channel is open.
+        if scene == "watch-pip" {
+            (st.guild, st.channel, st.voice.call_view) = (Some(Snowflake(HQ)), Some(Snowflake(GENERAL)), false);
         }
         if matches!(scene, "watch-spectators" | "watch-profile") {
             let key = format!("{}:2301:c1004", HQ);
