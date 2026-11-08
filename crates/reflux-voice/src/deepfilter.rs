@@ -101,10 +101,19 @@ fn spawn(state: Arc<AtomicU8>) -> Worker {
             }
             let mut out = vec![0.0; frame.len()];
             if !run(&frame, &mut out) {
+                eprintln!("reflux-voice: DeepFilterNet failed on a frame; using RNNoise");
+                state.store(3, Ordering::Relaxed);
+                return;
+            }
+            // A non-finite output means the model's state went bad and stays so: it would send
+            // silence from then on.
+            if !out.iter().all(|x| x.is_finite()) {
+                eprintln!("reflux-voice: DeepFilterNet's output went non-finite; using RNNoise");
+                state.store(3, Ordering::Relaxed);
                 return;
             }
             for x in out.iter_mut() {
-                *x = if x.is_finite() { *x * OUTPUT_GAIN } else { 0.0 };
+                *x *= OUTPUT_GAIN;
             }
             if out_tx.send(out).is_err() {
                 return;

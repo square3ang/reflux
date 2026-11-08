@@ -553,9 +553,21 @@ impl MicChain {
     fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(CHAIN_QUEUE);
         std::thread::spawn(move || {
-            let mut inner = MicChainInner { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), deep: crate::deepfilter::Deep::new(noise_state), gate: None, speaking, level, monitor };
-            for block in rx {
-                inner.feed(block);
+            let mut inner = MicChainInner { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), deep: crate::deepfilter::Deep::new(noise_state), gate: None, speaking, level, monitor, watch: Watch::default() };
+            let mut stalled = false;
+            loop {
+                match rx.recv_timeout(Duration::from_secs(3)) {
+                    Ok(block) => {
+                        stalled = false;
+                        inner.feed(block);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        if !std::mem::replace(&mut stalled, true) {
+                            eprintln!("reflux-voice: no microphone audio for 3 s (the input stopped delivering)");
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
             }
         });
         Self { blocks: tx, dropped: Default::default() }
@@ -592,6 +604,42 @@ struct MicChainInner {
     speaking: Speaking,
     level: Arc<AtomicU32>,
     monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
+    watch: Watch,
+}
+
+/// Each stage's peak over [`Watch::WINDOW`], to tell which one turned loud input into silence.
+#[derive(Default)]
+struct Watch {
+    since: Option<std::time::Instant>,
+    /// Input, after APM, after noise suppression, sent.
+    peaks: [f32; 4],
+    reported: Option<std::time::Instant>,
+}
+
+impl Watch {
+    const WINDOW: Duration = Duration::from_secs(5);
+
+    fn frame(&mut self, peaks: [f32; 4], what: impl FnOnce() -> String) {
+        let now = std::time::Instant::now();
+        let since = *self.since.get_or_insert(now);
+        for (m, p) in self.peaks.iter_mut().zip(peaks) {
+            *m = m.max(p);
+        }
+        if now.duration_since(since) < Self::WINDOW {
+            return;
+        }
+        let [input, apm, denoised, sent] = std::mem::take(&mut self.peaks);
+        self.since = Some(now);
+        // Speech-loud input (-26 dBFS) all window long, and not a sample of it sent.
+        if input > 0.05 && sent == 0.0 && self.reported.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
+            self.reported = Some(now);
+            eprintln!("reflux-voice: 5 s of mic input (peak {input:.3}) went out silent: after APM {apm:.3}, after noise suppression {denoised:.3}; {}", what());
+        }
+    }
+}
+
+fn peak(s: &[i16]) -> f32 {
+    s.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0
 }
 
 impl MicChainInner {
@@ -601,9 +649,11 @@ impl MicChainInner {
         while self.pending.len() >= FRAME {
             let mut frame: Vec<f32> = self.pending.drain(..FRAME).map(|s| s * p.input_gain).collect();
             let mut pcm: Vec<i16> = frame.iter().copied().map(to_i16).collect();
+            let input = peak(&pcm);
             if let Some(apm) = self.apm.lock().unwrap().as_mut() {
                 let _ = apm.process_stream(&mut pcm, RATE as i32, 1);
             }
+            let after_apm = peak(&pcm);
             let deep = p.noise == crate::Noise::DeepFilter && {
                 let input: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
                 self.deep.process(&input, &mut frame)
@@ -616,8 +666,8 @@ impl MicChainInner {
                 self.denoise.process_frame(&mut frame, &scaled);
                 pcm = frame.iter().map(|&s| s.clamp(-32768.0, 32767.0) as i16).collect();
             }
-            let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32 / 32768.0;
-            self.level.store(peak.to_bits(), Ordering::Relaxed);
+            let denoised = peak(&pcm);
+            self.level.store(denoised.to_bits(), Ordering::Relaxed);
             // `VoiceInputProcessor`: noise suppression → the gate → the track. The meter reads
             // the level before it, as the worklet reports it.
             match p.gate {
@@ -637,6 +687,8 @@ impl MicChainInner {
                 let out: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
                 self.monitor.0.lock().unwrap().push(Source { kind: Kind::Monitor, user: 0, conn: String::new() }, &out);
             }
+            let gate = self.gate.as_ref().map(|g| g.speaking());
+            self.watch.frame([input, after_apm, denoised, peak(&pcm)], || format!("noise {:?} (DeepFilterNet ran: {deep}), gate {:?} (speaking {gate:?})", p.noise, p.gate));
             let af = AudioFrame { data: pcm.into(), sample_rate: RATE, num_channels: 1, samples_per_channel: FRAME as u32 };
             // Queue 0: the frame goes straight to the sinks, so this future is already done.
             let _ = self.source.capture_frame(&af).now_or_never();
