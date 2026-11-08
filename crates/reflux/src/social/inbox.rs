@@ -70,14 +70,16 @@ pub fn inbox_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S
         .label(t("Inbox"))
         .key(INBOX)
         .child(icon(&INBOX_ICON, 20.0).color(if open { p.text_primary } else { p.text_primary_muted }).group_color(p.text_primary))
-        .on_press(move |s: &mut S| {
-            let st = acc(s);
-            st.social.inbox_open ^= true;
-            if st.social.inbox_open {
-                let t = st.social.inbox_tab;
-                load(st, t);
-            }
-        })
+        .on_press(move |s: &mut S| toggle(acc(s)))
+}
+
+/// Opens or closes the inbox popout, loading its tab on open.
+pub fn toggle(st: &mut ShellState) {
+    st.social.inbox_open ^= true;
+    if st.social.inbox_open {
+        let t = st.social.inbox_tab;
+        load(st, t);
+    }
 }
 
 fn messages_of(v: Option<&Value>) -> Option<Vec<Message>> {

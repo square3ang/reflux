@@ -71,10 +71,6 @@ pub struct Voice {
     pub entrance_scope: Option<String>,
     /// Active Now stream previews by stream key.
     pub previews: HashMap<String, super::active_now::Preview>,
-    /// `useStreamPreview`: the sharing tile under the pointer, subscribed for a live picture.
-    pub preview_user: Option<Snowflake>,
-    /// Its latest frame (`lkParticipantTile`'s `screensharePreviewBackground`).
-    pub live_previews: HashMap<Snowflake, Pixels>,
     pub stream: Pixels,
     /// Microphone and speaker names (`None` until listed), and the chosen ones.
     pub devices: Option<(Vec<String>, Vec<String>)>,
@@ -1277,7 +1273,7 @@ fn panel_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, lay
         .el(&st.popups, super::pops(acc), p, layer);
 }
 
-const SPECTATORS_BTN: &str = "stream-spectators-btn";
+pub(crate) const SPECTATORS_BTN: &str = "stream-spectators-btn";
 const STREAM_MENU: &str = "stream-settings";
 
 /// The screen share being watched, in place of the chat column (`WatchStreamOverlay`,
@@ -1306,7 +1302,8 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .child(el().grow(1.0))
         .child(stream_controls(store, st, p, acc));
     let last_frame = st.voice.stream.size() != (0, 0);
-    let mut body = el().w_full().grow(1.0).min_h(0.0).fill(Color::BLACK);
+    let [bw, bh] = rune::memo::layout_size("stream-viewer-body").unwrap_or([960.0, 540.0]);
+    let mut body = el().key("stream-viewer-body").w_full().grow(1.0).min_h(0.0).fill(Color::BLACK);
     // `useOwnScreenSharePreviewState`: our own stream draws live; with "Pause my screen share
     // preview in the background" on, an unfocused window freezes it under the paused card.
     let paused = st.voice.self_stream && st.desktop.unfocused && crate::look::with(|l| l.pause_preview_unfocused);
@@ -1315,19 +1312,19 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
             body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
         }
         // An own stream's tile (`isOwnScreenShare && isOwnStreamPreviewPaused`).
-        self_preview(p).key("paused")
+        self_preview(bh, p).key("paused")
     } else {
         match state {
             WatchState::Failed(code) => failure_frame(code, p).key("failed"),
             WatchState::Ended => {
                 body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
-                ended_overlay(p, acc).key("ended")
+                ended_overlay(bh, p, acc).key("ended")
             }
             WatchState::Buffering if last_frame => {
                 body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
-                buffering_frame(true, p).key("buffering-corner")
+                buffering_frame(true, bw).key("buffering-corner")
             }
-            WatchState::Buffering => buffering_frame(false, p).key("buffering"),
+            WatchState::Buffering => buffering_frame(false, bw).key("buffering"),
             _ => {
                 body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
                 el().key("live")
@@ -1570,13 +1567,12 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
     card.child(crate::ui::misc::scroller(list.max_h(272.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("voice-watchers"), false, p))
 }
 
-/// `ScreenShareBufferingFrame`: nine dots orbiting the centre over black; `corner` is the small
-/// pill over a dimmed last frame. `last-frame` dims the kept frame (`ScreenShareBufferingFrame`
-/// `variant="corner"`).
-fn buffering_frame(corner: bool, _p: &Palette) -> El {
+/// `ScreenShareBufferingFrame`: nine dots orbiting the centre over black, sized by the frame's
+/// width (`0.833333cqw` dots on a `1.641836cqw` orbit); `corner` is the 40px pill (4px dots on
+/// an 8px orbit) over a dimmed last frame (`variant="corner"`).
+pub(crate) fn buffering_frame(corner: bool, width: f32) -> El {
     let mut dots = el().w_full().h_full();
-    let orbit = if corner { 8.0 } else { 24.0 };
-    let dot = if corner { 3.0 } else { 6.0 };
+    let (orbit, dot) = if corner { (8.0, 4.0) } else { (width * 0.01641836, width * 0.00833333) };
     for i in 0..9 {
         let angle = i as f32 * std::f32::consts::TAU / 9.0;
         // shortcut: the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
@@ -1588,7 +1584,7 @@ fn buffering_frame(corner: bool, _p: &Palette) -> El {
                 .center()
                 .child(
                     el()
-                        .size(orbit * 2.0, orbit * 2.0)
+                        .size(orbit * 2.0 + dot, orbit * 2.0 + dot)
                         .rotate(angle)
                         .child(row().w_full().h_full().justify_center().items_start().child(el().size(dot, dot).radius(dot / 2.0).fill(Color::WHITE).looping(opacity))),
                 ),
@@ -1603,7 +1599,7 @@ fn buffering_frame(corner: bool, _p: &Palette) -> El {
 }
 
 /// `ScreenShareBufferingFrame status="failed"`: "Watching failed :(" and the error code.
-fn failure_frame(code: i32, _p: &Palette) -> El {
+pub(crate) fn failure_frame(code: i32, _p: &Palette) -> El {
     let subtext = tf("error code {code}", &[("code", &code.to_string())]);
     el()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -1621,24 +1617,28 @@ fn failure_frame(code: i32, _p: &Palette) -> El {
         .label(t("Watching failed :("))
 }
 
-/// `streamEndedOverlay`: "Stream ended" and the secondary "Stop watching" button.
-fn ended_overlay<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
+/// `streamEndedOverlay`: "Stream ended" and the secondary "Stop watching" button (144px min),
+/// on `--voice-overlay-strong`, sized by the frame's height `h` (`cqh`).
+pub(crate) fn ended_overlay<S: 'static>(h: f32, p: &Palette, acc: ShellAccess<S>) -> El {
+    let title = (h * 0.06).clamp(13.0, 16.0);
     el()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .center()
-        .fill(rgba(0, 0, 0, 0.72))
+        .fill(rgba(0, 0, 0, 0.78))
         .child(
             col()
-                .gap(12.0)
+                .gap((h * 0.05).clamp(6.0, 12.0))
+                .padding((h * 0.06).clamp(8.0, 16.0))
                 .items_center()
-                .child(text(t("Stream ended")).font(font(16.0, 600.0).lh(19.2)).color(Color::WHITE))
+                .child(text(t("Stream ended")).font(font(title, 600.0).lh(title * 1.2)).color(p.text_primary))
                 .child(
                     crate::ui::Button::new(t("Stop watching"))
                         .variant(crate::ui::ButtonVariant::Secondary)
                         .size(crate::ui::ButtonSize::Compact)
                         .key("stream-ended-stop")
                         .on_press(move |s: &mut S| stop_watching(s, acc))
-                        .el(p),
+                        .el(p)
+                        .min_w(144.0),
                 ),
         )
         .role("alert")
@@ -1647,21 +1647,23 @@ fn ended_overlay<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
 
 /// `PREVIEW_PAUSED_TO_SAVE_RESOURCES_DESCRIPTOR` + `YOUR_STREAM_IS_STILL_LIVE_DESCRIPTOR` on our
 /// own stream while it is paused (an unfocused window with "pause in the background" on, or a
-/// capture-device share, which has no local track to draw).
-fn self_preview(_p: &Palette) -> El {
+/// capture-device share, which has no local track to draw): `.selfStreamOverlay.paused` over the
+/// frozen frame, sized by the frame's height `h` (`cqh`); short frames drop the subtext, then the icon.
+pub(crate) fn self_preview(h: f32, p: &Palette) -> El {
+    let (glyph, title, sub) = ((h * 0.18).clamp(28.0, 56.0), (h * 0.07).clamp(13.0, 20.0), (h * 0.045).clamp(11.0, 14.0));
+    let mut c = col().gap((h * 0.05).clamp(6.0, 12.0)).items_center().padding((h * 0.08).clamp(8.0, 24.0));
+    if h > 108.0 {
+        c = c.child(icon(&icons::PAUSE_FILL, glyph).color(p.text_primary));
+    }
+    c = c.child(text(t("Preview paused to save resources")).font(font(title, 600.0).lh(title * 1.2)).color(p.text_primary).align(rune::Align::Center));
+    if h > 140.0 {
+        c = c.child(text(t("Your stream is still live")).font(font(sub, 400.0).lh(sub * 1.25)).color(p.text_secondary).align(rune::Align::Center));
+    }
     el()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .fill(rgb(0x0d, 0x0d, 0x0f))
+        .fill(rgba(0, 0, 0, 0.78))
         .center()
-        .child(
-            col()
-                .gap(8.0)
-                .items_center()
-                .padding(16.0)
-                .child(icon(&icons::PAUSE_FILL, 48.0).color(Color::WHITE))
-                .child(text(t("Preview paused to save resources")).font(font(18.0, 600.0).lh(21.6)).color(Color::WHITE).align(rune::Align::Center))
-                .child(text(t("Your stream is still live")).font(font(14.0, 400.0).lh(17.5)).color(rgba(255, 255, 255, 0.7)).align(rune::Align::Center)),
-        )
+        .child(c)
         .role("status")
         .label(t("Your stream is still live"))
 }
