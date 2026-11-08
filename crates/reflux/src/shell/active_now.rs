@@ -57,14 +57,31 @@ pub const MIN_WINDOW_WIDTH: f32 = 1100.0;
 
 /// Stream keys whose previews the visible sidebar shows (`canViewStreamPreview`: CONNECT in guilds).
 pub fn wanted_previews(store: &Store, st: &ShellState) -> Vec<String> {
-    if st.guild.is_some() || st.channel.is_some() || !shown(st) {
-        return Vec::new();
+    // `useStreamPreview` in the call tiles: every live share in the call we're in, as a still,
+    // so a tile shows the thumbnail until we watch it.
+    let mut out = Vec::new();
+    if let Some((guild, channel)) = st.voice.channel {
+        let me = store.my_id();
+        out.extend(
+            store
+                .voice_states
+                .iter()
+                .filter(|((g, u), v)| *g == guild && *u != me && v.channel_id == Some(channel) && v.self_stream)
+                .filter_map(|(_, v)| {
+                    v.connection_id.as_ref().map(|conn| format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string())))
+                }),
+        );
     }
-    activities(store)
-        .into_iter()
-        .filter(|a| a.guild.is_none() || store.permissions(a.channel).contains(Permissions::CONNECT))
-        .filter_map(|a| a.stream_key)
-        .collect()
+    if st.guild.is_some() || st.channel.is_some() || !shown(st) {
+        return out;
+    }
+    out.extend(
+        activities(store)
+            .into_iter()
+            .filter(|a| a.guild.is_none() || store.permissions(a.channel).contains(Permissions::CONNECT))
+            .filter_map(|a| a.stream_key),
+    );
+    out
 }
 
 fn shown(st: &ShellState) -> bool {

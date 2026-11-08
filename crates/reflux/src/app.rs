@@ -30,6 +30,7 @@ mod guild;
 pub(crate) mod idle;
 mod invites;
 mod previews;
+mod share_preview;
 mod threads;
 pub(crate) use guild::entered;
 pub mod live;
@@ -1014,6 +1015,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     crate::desktop::tick(s, tx);
     voice::tick(s, tx);
     previews::tick(s, tx);
+    share_preview::tick(s, tx);
     idle::tick(s, tx);
     cache::tick(s);
     live::on_poll(s, tx);

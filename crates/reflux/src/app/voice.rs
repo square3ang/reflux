@@ -83,6 +83,11 @@ pub struct VoiceRt {
     p2p_agreed: Option<Snowflake>,
     /// The `/experiments` poll loop of this session.
     pub(super) rollout: Option<tokio::task::AbortHandle>,
+    /// `useScreensharePreviewUploader`'s uploaded still.
+    pub(super) preview_upload: super::share_preview::Upload,
+    /// The latest frame of our share, kept only when `want_own_frame` asks for one.
+    pub(super) own_frame: Arc<Mutex<Option<super::share_preview::Still>>>,
+    pub(super) want_own_frame: Arc<std::sync::atomic::AtomicBool>,
     /// `syncConversionWatchdog`: the armed timer's token, while our state says the server took the
     /// call off P2P and no standard grant has arrived yet.
     conversion: Option<u64>,
@@ -1584,7 +1589,14 @@ fn render_own_share(s: &mut State) {
     }
     let (Some(track), Some(b)) = (s.app.voice.share.as_ref().and_then(|sh| sh.track()), super::BRIDGE.get()) else { return };
     let pixels = s.app.shell.voice.own_share.clone();
-    let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| pixels.set(w, h, rgba)));
+    // The uploader keeps one frame when it asks, rather than copying every one.
+    let (frame, want) = (s.app.voice.own_frame.clone(), s.app.voice.want_own_frame.clone());
+    let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| {
+        if want.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            *frame.lock().unwrap() = Some((w, h, rgba.clone()));
+        }
+        pixels.set(w, h, rgba);
+    }));
     s.app.voice.own_render = Some(task.abort_handle());
 }
 
