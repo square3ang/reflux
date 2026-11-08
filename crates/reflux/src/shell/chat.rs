@@ -1253,7 +1253,12 @@ pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Mess
     let g = store.channels.get(&m.channel_id).and_then(|c| c.guild_id);
     match reference(store, m) {
         Reference::Loaded(r) => {
-            let name = author_name(store, r);
+            // A reply pings its author unless it is to yourself: the line marks that with `@`
+            // (`replyMentioning`).
+            let mut name = author_name(store, r);
+            if r.author.id != store.my_id() {
+                name.insert(0, '@');
+            }
             line = line
                 .child(avatar(store, st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP))
                 .child(
