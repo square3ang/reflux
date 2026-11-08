@@ -1,12 +1,14 @@
 //! `--live=voice`: a short real voice session in the one channel `REFLUX_VOICE_CHANNEL` names
 //! (read-only mode lets op 4 through only for it, and for leaving). Joins through the app's own
 //! intents, then checks: VOICE_SERVER_UPDATE → LiveKit connect (and whether the grant carried an
-//! E2EE key), the gateway's voice state echo, the mic published (`REFLUX_TEST_TONE=1` for a
-//! generated tone), ping, our own speaking, self mute / deafen echoes, six screen-share quality
+//! E2EE key), the gateway's voice state echo, the mic published (a generated tone by default, as
+//! a headless run has no one speaking; `REFLUX_TEST_TONE=0` uses the real microphone), ping, our
+//! own speaking, self mute / deafen echoes, six screen-share quality
 //! cases (resolution, frame rate, bitrate, the Screen share preset, the VP9 SVC mode; each one's
 //! published frame size, encoded fps, bytes sent, target bitrate and encoder), a device share
 //! (`Devices` in the picker), screen share audio from another app, the camera quality presets if
-//! one exists (each track: server sid, RTP sent, SFU receiver reports), and a clean leave.
+//! one exists (each track: server sid, RTP sent, SFU receiver reports), and a clean leave. The
+//! SVC case is skipped, not failed, in a build without a VP9 encoder.
 //! `REFLUX_LIVE_SCREEN_CAPTURE=1` uses the real X11 capturer instead of the test pattern.
 
 use std::sync::{Arc, Mutex};
@@ -111,6 +113,13 @@ impl Run {
         let ch = reflux_net::voice_channel().and_then(|c| c.parse().ok()).map(Snowflake);
         if ch.is_none() {
             say("REFLUX_VOICE_CHANNEL is not set; nothing to do");
+        }
+        // The mic check needs sound, and a headless run has no one speaking into the real
+        // microphone: use the generated tone unless the caller asked for the real one.
+        if std::env::var_os("REFLUX_TEST_TONE").is_none() {
+            // SAFETY: setup, before the audio engine or any capture thread is started.
+            unsafe { std::env::set_var("REFLUX_TEST_TONE", "1") };
+            say("no REFLUX_TEST_TONE: the mic check uses a generated tone");
         }
         Some(Run {
             step: if ch.is_some() { Step::Preflight } else { Step::Done },
@@ -819,6 +828,11 @@ fn compare_screens(cases: &[ScreenStats]) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     let expect = [(1280, 720), (852, 480), (1920, 1080), (1920, 1080), (1920, 1080), (1280, 720)];
     for (i, (s, (w, h))) in cases.iter().zip(expect).enumerate() {
+        if SCREEN_CASES[i].svc != "auto" && !s.encoder.to_lowercase().contains("libvpx") {
+            // SVC needs VP9 (libvpx); a build without it publishes H.264, at a low rate.
+            out.push((format!("screen case {i} skipped: no VP9 encoder in this build ({})", s.encoder), true));
+            continue;
+        }
         out.push((format!("screen case {i}: {}×{}, wanted {w}×{h}", s.width, s.height), (s.width, s.height) == (w, h)));
         let want = SCREEN_CASES[i].fps as f64;
         out.push((format!("screen case {i}: {:.1} fps, wanted about {want}", s.fps), s.fps >= want * 0.6 && s.fps <= want * 1.2));
