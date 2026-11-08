@@ -374,6 +374,10 @@ impl ScreenShare {
     pub fn ended(&self) -> bool {
         false
     }
+
+    pub fn track(&self) -> Option<RtcVideoTrack> {
+        None
+    }
 }
 
 impl Drop for ScreenShare {

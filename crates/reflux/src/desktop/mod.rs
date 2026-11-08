@@ -171,6 +171,8 @@ impl Default for Prefs {
 /// toasts and the spelling menu live here because shell handlers push them.
 #[derive(Clone, Debug, Default)]
 pub struct ShellView {
+    /// The window lost keyboard focus (pauses our own stream preview).
+    pub unfocused: bool,
     /// The gateway is reconnecting.
     pub offline: bool,
     pub update: Option<updater::Available>,

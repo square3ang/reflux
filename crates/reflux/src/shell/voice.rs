@@ -41,6 +41,11 @@ pub struct Voice {
     pub pings: Vec<u32>,
     /// The user whose screen share the viewer shows, and its frames.
     pub watching: Option<Snowflake>,
+    /// The viewer draws our own published share (Fluxer shows it by default); false while we
+    /// watch ourselves without a local track (a capture-device share).
+    pub self_stream: bool,
+    /// `SoftwareEncoderWarning`: the codec our share fell back to a software encoder for.
+    pub software_encoder: Option<&'static str>,
     /// The watched stream's viewer state (`selectVoiceMediaGraphStreamTileState` over the parts
     /// Reflux knows: frames, the streamer's voice state and time).
     pub watch_state: WatchState,
@@ -76,6 +81,8 @@ pub struct Voice {
     pub camera: bool,
     /// Our own camera frames (mirrored per `mirror_camera`), for the preview and our tile.
     pub self_view: Pixels,
+    /// Our own screen share's frames, for its call tile.
+    pub own_share: Pixels,
     /// The camera preview modal's capture runs.
     pub previewing: bool,
     /// Remote camera frames by user.
@@ -1110,7 +1117,7 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         WatchState::Idle => WatchState::Buffering,
         s => s,
     };
-    let watched = user != me;
+    let watched = user != me || st.voice.self_stream;
     let (vol, muted) = (st.voice.settings.stream_volumes.get(&user.0).copied().unwrap_or(100.0), st.voice.settings.stream_mutes.contains(&user.0));
     let mut header = row()
         .w_full()
@@ -1148,7 +1155,13 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         .child(viewer_button("stream-stop", &icons::X_BOLD, t("Stop watching"), false, p, move |s: &mut S| stop_watching(s, acc)));
     let last_frame = st.voice.stream.size() != (0, 0);
     let mut body = el().w_full().grow(1.0).min_h(0.0).fill(Color::BLACK);
-    let content = if !watched {
+    // `useOwnScreenSharePreviewState`: our own stream draws live; with "Pause my screen share
+    // preview in the background" on, an unfocused window freezes it under the paused card.
+    let paused = st.voice.self_stream && st.desktop.unfocused && crate::look::with(|l| l.pause_preview_unfocused);
+    let content = if !watched || paused {
+        if paused && last_frame {
+            body = body.child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
+        }
         // An own stream's tile (`isOwnScreenShare && isOwnStreamPreviewPaused`).
         self_preview(p)
     } else {
@@ -1440,8 +1453,8 @@ fn ended_overlay<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
 }
 
 /// `PREVIEW_PAUSED_TO_SAVE_RESOURCES_DESCRIPTOR` + `YOUR_STREAM_IS_STILL_LIVE_DESCRIPTOR` on our
-/// own stream: Reflux doesn't render a local copy, so the preview is paused while the published
-/// stream stays live for everyone else.
+/// own stream while it is paused (an unfocused window with "pause in the background" on, or a
+/// capture-device share, which has no local track to draw).
 fn self_preview(_p: &Palette) -> El {
     el()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

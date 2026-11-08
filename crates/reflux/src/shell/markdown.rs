@@ -57,9 +57,10 @@ impl<'a> Md<'a> {
         let key = format!("{}-t{n}", self.key);
         let mut t = t.key(key.clone());
         if let Some((msg, map)) = self.copy {
-            if crate::look::with(|l| l.text_selection) {
-                t = t.selectable(true).selection_color(self.p.text_selection);
-            }
+            // `.message` / `.messageContent` set `user-select: text`, so message text selects
+            // whatever `enableTextSelection` says; that setting only covers the app chrome.
+            // shortcut: Reflux's chrome text isn't selectable, so the setting changes nothing yet.
+            t = t.selectable(true).selection_color(self.p.text_selection);
             map.borrow_mut().insert(key.clone(), (msg, subs));
         }
         (t, key)

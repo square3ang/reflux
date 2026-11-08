@@ -99,6 +99,28 @@ pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
         // build-environment bar.
         out.push(Bar { pinned: true, ..Bar::new(-1000.0, true, bar("nagbar-update", p.brand_primary, format!("{message} ({})", u.version), actions, Some(Box::new(dismiss)))) });
     }
+    // `SoftwareEncoderNagbar` (`NagbarToneKind.ENCODER`, priority -2).
+    if let Some(codec) = st.voice.software_encoder {
+        let dismiss = move |s: &mut S| acc(s).voice.software_encoder = None;
+        let forever = move |s: &mut S| {
+            let sh = acc(s);
+            sh.voice.software_encoder = None;
+            let mut p = sh.prefs.clone();
+            p.dismissed_nagbars.push("software-encoder".into());
+            sh.intents.push(Intent::Prefs(Box::new(p)));
+        };
+        let msg = tf(
+            "Screen share is using software encoding ({codec}). Quality may be reduced and CPU usage increased. Your GPU may not support hardware encoding for this codec.",
+            &[("codec", codec)],
+        );
+        out.push(Bar::new(-2.0, true, bar(
+            "nagbar-software-encoder",
+            rgb(0xb4, 0x53, 0x09),
+            msg,
+            vec![button("nagbar-encoder-dismiss", t("Dismiss"), p, dismiss), button("nagbar-encoder-forever", t("Don't show again"), p, forever)],
+            Some(Box::new(dismiss)),
+        )));
+    }
     if v.streamer && !st.prefs.streamer.nagbar_dismissed {
         let off = prefs(acc, |p| {
             (p.streamer.manual, p.streamer.auto, p.streamer.nagbar_dismissed) = (false, false, false);

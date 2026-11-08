@@ -1163,6 +1163,10 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             crate::shell::call::open_screen_picker(st);
             st.popups.open = Some("share-res".into());
         }
+        "software-encoder" => {
+            st.voice.screen = true;
+            st.voice.software_encoder = Some("H264");
+        }
         "share-fps" => {
             crate::shell::call::open_screen_picker(st);
             st.popups.open = Some("share-fps".into());

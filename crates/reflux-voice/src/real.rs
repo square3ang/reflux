@@ -307,22 +307,24 @@ impl Call {
         };
         let (width, height) = quality.fit(width, height);
         let source = NativeVideoSource::new(VideoResolution { width, height }, true);
-        let sid = match self.publish_screen(&source, quality, width, height).await {
-            Ok(sid) => sid,
+        let (sid, track) = match self.publish_screen(&source, quality, width, height).await {
+            Ok(t) => t,
             Err(e) => {
                 stop.store(true, Ordering::Relaxed);
                 return Err(e);
             }
         };
         *slot.lock().unwrap() = Some(source);
-        Ok(ScreenShare { sid, stop, ended })
+        Ok(ScreenShare { sid, stop, ended, track })
     }
 
     /// Publishes a prepared screen source; [`start_screen`] and the live test share this so both
     /// apply the same resolution, frame rate, bitrate and degradation settings.
-    async fn publish_screen(&self, source: &NativeVideoSource, quality: ScreenQuality, width: u32, height: u32) -> Result<TrackSid, Error> {
+    async fn publish_screen(&self, source: &NativeVideoSource, quality: ScreenQuality, width: u32, height: u32) -> Result<(TrackSid, RtcVideoTrack), Error> {
         let track = LocalVideoTrack::create_video_track("screen_share", RtcVideoSource::Native(source.clone()));
-        self.publish(LocalTrack::Video(track), quality.publish_options(width, height), (width, height)).await
+        let rtc = track.rtc_track();
+        let sid = self.publish(LocalTrack::Video(track), quality.publish_options(width, height), (width, height)).await?;
+        Ok((sid, rtc))
     }
 
     pub async fn stop_screen(&self, share: ScreenShare) -> Result<(), Error> {
@@ -373,7 +375,7 @@ impl Call {
     pub async fn publish_test_screen(&self, quality: ScreenQuality, width: u32, height: u32) -> Result<Camera, Error> {
         let (width, height) = quality.fit(width, height);
         let source = NativeVideoSource::new(VideoResolution { width, height }, true);
-        let sid = self.publish_screen(&source, quality, width, height).await?;
+        let (sid, _) = self.publish_screen(&source, quality, width, height).await?;
         Ok(Camera { sid, source, buffer: Mutex::new(I420Buffer::new(width, height)) })
     }
 
@@ -645,11 +647,18 @@ pub struct ScreenShare {
     stop: Arc<AtomicBool>,
     /// The capture ended on its own (the source went away), not through [`Call::stop_screen`].
     ended: Arc<AtomicBool>,
+    /// The published track, for drawing our own stream ([`render_video`] reads local tracks too).
+    track: RtcVideoTrack,
 }
 
 impl ScreenShare {
     pub fn ended(&self) -> bool {
         self.ended.load(Ordering::Relaxed)
+    }
+
+    /// Our own published stream, for the self preview.
+    pub fn track(&self) -> Option<RtcVideoTrack> {
+        Some(self.track.clone())
     }
 }
 

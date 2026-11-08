@@ -28,6 +28,7 @@ enum Step {
     ReactAdd,
     ReactRemove,
     Reply,
+    Embed,
     Typing,
     MarkUnread,
     Ack,
@@ -207,7 +208,7 @@ impl Run {
                 _ => Done,
             };
         }
-        const ORDER: [Step; 18] = [
+        const ORDER: [Step; 19] = [
             Preflight,
             Open,
             Send,
@@ -215,6 +216,7 @@ impl Run {
             ReactAdd,
             ReactRemove,
             Reply,
+            Embed,
             Typing,
             MarkUnread,
             Ack,
@@ -322,6 +324,22 @@ impl Run {
                 // Optimistic at once; a refusal would undo it. The gateway's echo keeps it.
                 let mine = self.first(s)?.reactions.iter().any(|r| r.emoji.name == "👍" && r.me && r.count > 0);
                 (since > Duration::from_secs(2) && mine == add).then_some(true)
+            }
+            // The unfurl worker's MESSAGE_UPDATE adds the embed to the open channel.
+            Step::Embed => {
+                // A fresh URL each run, so the server unfurls it instead of reusing its cache.
+                let what = format!("link https://github.com/rust-lang/rust?reflux={}", self.tag);
+                let what = what.as_str();
+                if first {
+                    self.send(s, what, None, vec![]);
+                    return None;
+                }
+                if self.echo(s, &self.marker(what))?.embeds.is_empty() || since < Duration::from_secs(3) {
+                    return None;
+                }
+                // The embed grows the last row: a list at the bottom keeps it in view.
+                say(format!("embed: at_bottom {} rows_below {}", s.app.shell.at_bottom, s.app.shell.rows_below));
+                Some(s.app.shell.at_bottom)
             }
             Step::Reply => {
                 if first {
@@ -460,7 +478,7 @@ impl Run {
                         for line in l.lines() {
                             say(format!("server: {line}"));
                         }
-                        Some(l.lines().count() == 4)
+                        Some(l.lines().count() == 5)
                     }
                     Err(e) => {
                         say(format!("GET messages: {e}"));

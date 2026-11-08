@@ -252,6 +252,7 @@ fn tiles(people: &[(Snowflake, &VoiceState)]) -> Vec<Tile> {
 fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
     let v = &st.voice;
     match (t.screen, t.user == me) {
+        (true, true) if v.screen && v.own_share.size().0 > 0 => Some(&v.own_share),
         (true, _) => (v.watching == Some(t.user)).then_some(&v.stream),
         // `showMyOwnCamera`: ours is only hidden from our own view, the track stays published.
         (false, true) => (v.camera && st.call.show_own_camera).then_some(&v.self_view),

@@ -47,6 +47,8 @@ pub struct VoiceRt {
     screen_sources_loading: bool,
     screen_sources_at: Option<std::time::Instant>,
     watch: Option<tokio::task::AbortHandle>,
+    /// Draws our own share into `Voice::own_share` for its call tile.
+    own_render: Option<tokio::task::AbortHandle>,
     pub(super) devices_loading: bool,
     /// The published camera track, and the slot the capture pushes frames into.
     pub(super) camera: Option<Arc<Camera>>,
@@ -578,6 +580,9 @@ fn drop_call(s: &mut State) {
     let rt = &mut s.app.voice;
     rt.generation += 1;
     rt.share = None;
+    if let Some(r) = rt.own_render.take() {
+        r.abort();
+    }
     rt.device_share = None;
     rt.device_capture = None;
     rt.restart_screen = false;
@@ -1214,6 +1219,56 @@ pub(super) fn apply_encoder(settings: &Settings) {
     }
 }
 
+/// `CODEC_DISPLAY_LABEL`-style name of what a share publishes in.
+fn codec_label(q: &reflux_voice::ScreenQuality) -> &'static str {
+    use reflux_voice::{Svc, VideoCodec};
+    match q.codec.unwrap_or(if q.svc != Svc::Auto { VideoCodec::VP9 } else { VideoCodec::H264 }) {
+        VideoCodec::VP8 => "VP8",
+        VideoCodec::H264 => "H264",
+        VideoCodec::VP9 => "VP9",
+        VideoCodec::AV1 => "AV1",
+        VideoCodec::H265 => "H265",
+    }
+}
+
+/// `VideoAccelerationClassification.isSoftwareVideoImplementation`.
+pub(crate) fn software_implementation(name: &str) -> bool {
+    const PREFIXES: [&str; 11] = ["libaom", "libvpx", "openh264", "ffmpeg", "dav1d", "libdav1d", "libgav1", "svt", "rav1e", "x264", "x265"];
+    let lower = name.to_lowercase();
+    PREFIXES.iter().any(|p| lower.starts_with(p)) || lower.contains("software")
+}
+
+/// `verifyScreenShareEncoderStart` + `shouldTriggerSoftwareEncoderWarning`: once the share has
+/// encoded frames, a software encoder raises `SoftwareEncoderNagbar` unless software was asked
+/// for (the Software encoder path, or SVC, which shares in VP9 on the software encoder).
+// shortcut: Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+// exposes no such probe, so Automatic warns like Prefer hardware.
+fn verify_encoder(s: &mut State, codec: &'static str) {
+    let set = &s.app.shell.voice.settings;
+    if set.encoder == "software" || set.screen_svc != "auto" || s.app.shell.prefs.dismissed_nagbars.iter().any(|k| k == "software-encoder") {
+        return;
+    }
+    let Some(call) = s.app.voice.call.clone() else { return };
+    let generation = s.app.voice.generation;
+    spawn(async move {
+        for _ in 0..15 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let stats = call.published().await;
+            let Some(p) = stats.iter().find(|p| p.source == "Screenshare" && p.frames_encoded > 0) else { continue };
+            if software_implementation(&p.encoder) {
+                let implementation = p.encoder.clone();
+                update(move |s| {
+                    if s.app.voice.generation == generation && s.app.voice.share.is_some() {
+                        eprintln!("reflux: screen share is using a software encoder ({implementation})");
+                        s.app.shell.voice.software_encoder = Some(codec);
+                    }
+                });
+            }
+            return;
+        }
+    });
+}
+
 /// Whether a settings change affects what a live screen share publishes.
 fn screen_settings_changed(a: &Settings, b: &Settings) -> bool {
     a.streaming_mode != b.streaming_mode
@@ -1230,8 +1285,13 @@ fn screen_settings_changed(a: &Settings, b: &Settings) -> bool {
 }
 
 fn toggle_screen(s: &mut State) {
+    // `SoftwareEncoderWarning.reset()` on every start and stop.
+    s.app.shell.voice.software_encoder = None;
     let Some(call) = s.app.voice.call.clone() else { return };
     if let Some(share) = s.app.voice.share.take() {
+        if let Some(r) = s.app.voice.own_render.take() {
+            r.abort();
+        }
         s.app.shell.voice.screen = false;
         send_state(s);
         crate::desktop::play(s, crate::desktop::Sound::ScreenShareStop);
@@ -1289,6 +1349,7 @@ fn toggle_screen(s: &mut State) {
     let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
     let quality = s.app.shell.voice.settings.screen_quality(&s.app.shell.limits, higher);
     let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::audio_share::available());
+    let codec = codec_label(&quality);
     // `Devices` in the picker: a camera / capture device published as the screen share.
     if let Some(device) = s.app.shell.voice.screen_device.clone() {
         let (w, h) = quality.fit(3840, 2160);
@@ -1400,6 +1461,13 @@ fn toggle_screen(s: &mut State) {
         update(move |s| match r {
             Ok(share) if s.app.voice.generation == generation && s.app.shell.voice.screen => {
                 s.app.voice.share = Some(share);
+                verify_encoder(s, codec);
+                render_own_share(s);
+                // A restarted share is a new track: the self view follows it.
+                let me = s.app.store.my_id();
+                if s.app.shell.voice.watching == Some(me) {
+                    watch(s, Some(me));
+                }
                 if let Some((a, capture)) = audio {
                     s.app.voice.stream_audio = Some((a, capture));
                 }
@@ -1432,8 +1500,12 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
         mesh.set_watching(user.map(|u| u.0));
     }
+    s.app.shell.voice.self_stream = false;
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
-    let Some(track) = call.screen_track(user.0) else {
+    // Our own stream: Fluxer's tile draws the local track, so the viewer shows it as-is.
+    let own = (user == s.app.store.my_id()).then(|| s.app.voice.share.as_ref().and_then(|sh| sh.track())).flatten();
+    s.app.shell.voice.self_stream = own.is_some();
+    let Some(track) = own.or_else(|| call.screen_track(user.0)) else {
         // Publication missing / attaching: `TrackSubscribed` starts the render once the share
         // arrives, and `watch_step` fails the attempt after 15 s without a frame. In a P2P call
         // the track also arrives later (`Event::Remote` watches again).
@@ -1448,6 +1520,18 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
         }));
         s.app.voice.watch = Some(task.abort_handle());
     }
+}
+
+/// Our own screen share tile draws the local track, never a "Watch stream" prompt
+/// (`isRemoteVisibleScreenShare` is false for `isOwnScreenShare`).
+fn render_own_share(s: &mut State) {
+    if let Some(r) = s.app.voice.own_render.take() {
+        r.abort();
+    }
+    let (Some(track), Some(b)) = (s.app.voice.share.as_ref().and_then(|sh| sh.track()), super::BRIDGE.get()) else { return };
+    let pixels = s.app.shell.voice.own_share.clone();
+    let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| pixels.set(w, h, rgba)));
+    s.app.voice.own_render = Some(task.abort_handle());
 }
 
 // ---- Camera ----------------------------------------------------------------------------------
