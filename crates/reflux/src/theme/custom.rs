@@ -207,7 +207,7 @@ pub fn fonts(css: &str) -> [Option<String>; 2] {
 pub fn families(css: &str) -> (String, String) {
     let [sans, mono] = fonts(css);
     let with = |o: Option<String>, base: &str| o.map_or(base.to_string(), |o| format!("{o}, {base}"));
-    (with(sans, super::sans_family()), with(mono, super::FAMILIES.1))
+    (with(sans, &super::sans_family()), with(mono, super::FAMILIES.1))
 }
 
 fn strip_comments(css: &str) -> String {
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn overrides_and_saturation_apply() {
-        assert_eq!(families(":root { --font-sans: Inter; --font-mono: 'Fira Code' }"), ("Inter, Fluxer Sans".into(), "'Fira Code', Fluxer Mono".into()));
+        assert_eq!(families(":root { --font-sans: Inter; --font-mono: 'Fira Code' }"), (format!("Inter, {}", crate::theme::sans_family()), "'Fira Code', Fluxer Mono".into()));
         assert_eq!(overrides(":root { --font-sans: Inter }").1, 0, "fonts aren't ignored");
         let p = effective("dark", true, 1.0, ":root { --text-link: #ff0000 }");
         assert!(close(p.text_link, crate::ui::rgb(255, 0, 0)));

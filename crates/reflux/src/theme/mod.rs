@@ -46,6 +46,13 @@ pub const FONTS: &[&[u8]] = &[
     include_bytes!("../../../../assets/fonts/FluxerSans-Italic.ttf"),
     include_bytes!("../../../../assets/fonts/FluxerMono-Regular.ttf"),
     include_bytes!("../../../../assets/fonts/FluxerMono-Bold.ttf"),
+    // Fluxer Sans SC's symbols (blocks, box drawing, arrows, shapes, full-width punctuation),
+    // without its ideographs: in Fluxer's chain they come before any system font, so `█` is
+    // SC's full-width square. `scripts/fonts-extract.py`.
+    include_bytes!("../../../../assets/fonts/FluxerSansSC-Symbols-Regular.ttf"),
+    include_bytes!("../../../../assets/fonts/FluxerSansSC-Symbols-Medium.ttf"),
+    include_bytes!("../../../../assets/fonts/FluxerSansSC-Symbols-SemiBold.ttf"),
+    include_bytes!("../../../../assets/fonts/FluxerSansSC-Symbols-Bold.ttf"),
 ];
 pub const FAMILIES: (&str, &str) = ("Fluxer Sans", "Fluxer Mono");
 
@@ -76,15 +83,47 @@ pub fn app_fonts() -> &'static [&'static [u8]] {
     *ALL
 }
 
-/// The sans slot's base: `--font-sans` for `:root:lang(ko)` puts Fluxer Sans KR right after
-/// Fluxer Sans. Other locales list it after Fluxer Sans SC/TC/JP, which aren't shipped, so
-/// there Hangul takes the system Korean fallback first.
-/// shortcut: only the KR script face ships; SC/TC/JP/Arabic/Hebrew/Devanagari/Thai fall back to system fonts.
-pub fn sans_family() -> &'static str {
-    if crate::i18n::locale().starts_with("ko") && !KR.is_empty() { "Fluxer Sans, Fluxer Sans KR" } else { FAMILIES.0 }
+/// The sans slot's base, after `--font-sans` (`font-fallback.css`): Fluxer Sans, the locale's
+/// Fluxer CJK face first, the others, then `--font-fallback-sans`'s Noto Sans CJK. Only KR and
+/// SC's symbols ship, so the system Noto Sans CJK stands in for Fluxer Sans SC/TC/JP, in the
+/// locale's order (so `ja` Han stays Japanese).
+/// shortcut: Fluxer Sans SC/TC/JP/Arabic/Hebrew/Devanagari/Thai don't ship; system fonts stand in.
+pub fn sans_family() -> String {
+    let loc = crate::i18n::locale();
+    let first = match loc {
+        l if l.starts_with("ko") => "KR",
+        l if l.starts_with("ja") => "JP",
+        "zh-TW" | "zh-HK" => "TC",
+        _ => "SC",
+    };
+    let mut out = String::from(FAMILIES.0);
+    if first == "KR" && !KR.is_empty() {
+        out.push_str(", Fluxer Sans KR");
+    }
+    out.push_str(", Fluxer Sans SC");
+    for r in std::iter::once(first).chain(["SC", "TC", "JP", "KR"].into_iter().filter(|r| *r != first)) {
+        out.push_str(&format!(", Noto Sans CJK {r}"));
+    }
+    // Elsewhere after Noto Sans CJK, so its Hanja don't take Chinese or Japanese Han.
+    if first != "KR" && !KR.is_empty() {
+        out.push_str(", Fluxer Sans KR");
+    }
+    out
 }
 
 /// A Fluxer Sans style at a CSS pixel size and weight.
 pub const fn font(size: f32, weight: f32) -> TextStyle {
     TextStyle::new(size, weight)
+}
+
+#[cfg(test)]
+mod font_tests {
+    /// `█` is Fluxer Sans SC's full-width square, as in Fluxer, not DejaVu Sans' narrower one.
+    #[test]
+    fn block_is_full_width() {
+        let fam = super::sans_family();
+        let mut ts = rune::text::TextSystem::new(super::app_fonts(), (&fam, super::FAMILIES.1));
+        let (w, _) = ts.measure("\u{2588}", super::font(16.0, 500.0), 1.0);
+        assert!((w - 16.0).abs() < 0.5, "{w}");
+    }
 }
