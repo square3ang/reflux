@@ -410,9 +410,11 @@ pub(crate) fn frame<S: 'static>(label: &str, title: &str, head: Vec<El>, nav: El
                 .child(col().w_full().grow(1.0).min_h(0.0).mr(-8.0).child(scroller(crate::ui::smooth_wheel::<S>(viewport, "settings-nav"), false, p))),
         )
         .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(over(c.border, c.surface)));
+    // `.layerFullscreen` pads both edges (`--fullscreen-pad-y`), so the card stops that far
+    // above the window bottom too; `h_full` inside the padded row overflowed it.
     let card = row()
         .w(m.card_w)
-        .h_full()
+        .h((h - 2.0 * m.pad[0]).max(0.0))
         .radius(radius)
         .fill(p.background_secondary)
         .border(1.0, over(p.background_header_secondary, p.background_secondary))
@@ -755,7 +757,7 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary));
     let header = row()
         .w_full()
-        .h(61.0)
+        .h(60.0)
         .px(16.0)
         .pb(1.0)
         .center_y()
