@@ -338,7 +338,15 @@ impl Engine {
     }
 
     pub fn set_processing(&self, p: Processing) {
-        *self.processing.lock().unwrap() = p;
+        let old = std::mem::replace(&mut *self.processing.lock().unwrap(), p);
+        let flags = |p: &Processing| (p.echo_cancellation, p.auto_gain_control, p.noise == crate::Noise::Standard);
+        // A new APM starts its echo canceller and gain control over: the echo canceller cuts the
+        // mic by up to ~28 dB for its first seconds of far-end speech, so rebuilding it on every
+        // mute or volume change made the voice others hear dip and recover. Keep it unless what
+        // it does changes.
+        if flags(&old) == flags(&p) && self.apm.lock().unwrap().is_some() == (p.echo_cancellation || p.auto_gain_control || p.noise == crate::Noise::Standard) {
+            return;
+        }
         let standard = p.noise == crate::Noise::Standard;
         let any = p.echo_cancellation || p.auto_gain_control || standard;
         // High-pass rides along with any processing; studio (all off) gets none.
