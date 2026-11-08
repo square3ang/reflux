@@ -380,18 +380,24 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
         outer = outer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).border(3.5, p.status_online));
     }
     let can_watch = t.screen && preview.is_some();
-    let focus = (st.voice.focus != Some(t.user)).then_some(t.user);
+    // `handleTileClick`: clicking the pinned tile unpins it (back to the grid); any other tile
+    // pins it, and an unwatched stream also starts watching (`handleWatch`).
+    let was_focused = st.call.pinned(st.voice.focus) == Some(t.user);
     let user = t.user;
     outer
         .on_press(move |s: &mut S| {
             let sh = acc(s);
+            if was_focused {
+                sh.voice.focus = None;
+                sh.call.pin(None);
+                return;
+            }
+            sh.voice.focus = Some(user);
+            sh.call.pin(Some(user));
             if can_watch {
                 sh.voice.watching = Some(user);
                 sh.intents.push(Intent::Watch(Some(user)));
-                return;
             }
-            sh.voice.focus = focus;
-            sh.call.pin(focus);
         })
         .on_secondary_press(move |s: &mut S, at, _| {
             let sh = acc(s);
@@ -1422,8 +1428,9 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
                     .label(name)
                     .on_press(move |s: &mut S| {
                         let sh = acc(s);
-                        sh.voice.focus = Some(user);
-                        sh.call.pin(Some(user));
+                        let next = (sh.call.pinned(sh.voice.focus) != Some(user)).then_some(user);
+                        sh.voice.focus = next;
+                        sh.call.pin(next);
                     });
                 list = list.child(face);
             }
