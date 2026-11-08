@@ -1,3 +1,6 @@
 /target
 /.cuda
 __pycache__/
+
+# Script faces built by scripts/fonts-extract.py (~100 MB), shipped in a fonts folder.
+/assets/fonts/FluxerSans[A-Z]*-*.ttf

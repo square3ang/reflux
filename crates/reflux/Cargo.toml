@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 rune = { workspace = true, features = ["native-file-dialog", "svg"] }
 rune-kit.workspace = true
+memmap2 = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
