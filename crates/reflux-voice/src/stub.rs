@@ -334,6 +334,10 @@ impl Call {
         false
     }
 
+    pub fn has_stream_audio(&self, _user: u64) -> bool {
+        false
+    }
+
     pub fn sync_streams(&self, _watching: Option<u64>) {}
 
     pub fn screen_track(&self, _user: u64) -> Option<RtcVideoTrack> {

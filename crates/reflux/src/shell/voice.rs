@@ -59,6 +59,10 @@ pub struct Voice {
     pub watch_frame_at: Option<Instant>,
     /// Estimated frame rate of the watched stream (`StreamInfoPill` fps).
     pub watch_fps: f32,
+    /// The watched stream carries audio (`hasAudio`: a `ScreenshareAudio` track).
+    pub watch_audio: bool,
+    /// `MediaVerticalVolumeControl`'s popout: hovering the button, hovering the popout, dragging.
+    pub volume_pop: [bool; 3],
     fps_frames: u64,
     fps_at: Option<Instant>,
     /// `applyStreamWatchFocus`: the call view keeps this stream focused (pin).
@@ -215,7 +219,9 @@ impl Voice {
         }
     }
 
-    /// `WatchStreamOverlay` retry: another 15 s attempt on the same stream.
+    /// `WatchStreamOverlay` retry: another 15 s attempt on the same stream. Fluxer's failure
+    /// overlay has no retry button, so only the tests drive it now.
+    #[cfg(test)]
     pub fn retry_watch(&mut self) {
         if self.watching.is_none() {
             return;
@@ -1290,7 +1296,9 @@ fn panel_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, lay
 }
 
 const SPECTATORS_BTN: &str = "stream-spectators-btn";
-const STREAM_MENU: &str = "stream-settings";
+const STREAM_VOLUME: &str = "stream-volume";
+/// `VoiceVolumeUtils`' `VOICE_VOLUME_MAX_PERCENT`: user, stream and device volumes go to 200 %.
+pub const VOICE_VOLUME_MAX_PERCENT: f32 = 200.0;
 
 /// The screen share being watched, in place of the chat column (`WatchStreamOverlay`,
 /// `StreamFocusHeaderInfo`, `FocusedStreamVolumeControl`): streamer and stream info, the
@@ -1369,23 +1377,28 @@ pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
     if watched && !spectators_for(store, guild, user).is_empty() {
         header = header.child(spectators_button(store, st, guild, user, p, acc));
     }
+    // `FocusedStreamVolumeControl`: only for a stream with audio; a click mutes, hovering opens
+    // the vertical slider.
+    if st.voice.watch_audio && user != store.my_id() {
+        let glyph = if muted || vol == 0.0 { &icons::SPEAKER_SLASH_FILL } else if vol > 100.0 { &icons::SPEAKER_HIGH_FILL } else { &icons::SPEAKER_LOW_FILL };
+        header = header.child(
+            viewer_button(STREAM_VOLUME, glyph, if muted { t("Unmute") } else { t("Mute") }, false, p, move |s: &mut S| {
+                let sh = acc(s);
+                if !sh.voice.settings.stream_mutes.remove(&user.0) {
+                    sh.voice.settings.stream_mutes.insert(user.0);
+                }
+                sh.intents.push(Intent::Voice(Op::Settings));
+            })
+            .on_hover_change(move |s: &mut S, on, _| acc(s).voice.volume_pop[0] = on),
+        );
+    }
     header
-        .child(viewer_button("stream-volume", if muted { &icons::SPEAKER_SLASH_FILL } else if vol > 100.0 { &icons::SPEAKER_HIGH_FILL } else { &icons::SPEAKER_LOW_FILL }, if muted { t("Unmute stream") } else { t("Mute stream") }, muted, p, move |s: &mut S| {
-            let sh = acc(s);
-            if !sh.voice.settings.stream_mutes.remove(&user.0) {
-                sh.voice.settings.stream_mutes.insert(user.0);
-            }
-            sh.intents.push(Intent::Voice(Op::Settings));
-        }))
         .child(viewer_button("stream-pin", if st.voice.stream_pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }, if st.voice.stream_pinned { t("Unpin stream") } else { t("Pin stream") }, st.voice.stream_pinned, p, move |s: &mut S| acc(s).voice.toggle_watch_pin()))
         .child(viewer_button("stream-fullscreen", if st.voice.stream_fullscreen { &icons::CORNERS_IN_FILL } else { &icons::CORNERS_OUT_FILL }, if st.voice.stream_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, st.voice.stream_fullscreen, p, move |s: &mut S| {
             acc(s).voice.stream_fullscreen ^= true;
         }))
         .child(viewer_button("stream-popout", &icons::ARROW_SQUARE_OUT_FILL, t("Pop out stream"), false, p, move |s: &mut S| {
             acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
-        }))
-        .child(viewer_button("stream-settings", &icons::DOTS_THREE_BOLD, t("Stream settings"), false, p, move |s: &mut S| {
-            acc(s).popups.toggle(STREAM_MENU);
         }))
         .child(viewer_button("stream-stop", &icons::X_BOLD, t("Stop watching"), false, p, move |s: &mut S| stop_watching(s, acc)))
 }
@@ -1406,7 +1419,9 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         if st.popups.is_open(SPECTATORS_BTN) {
             layer.push(crate::ui::overlay::anchor(spectators_card(store, st, guild, user, p, acc), SPECTATORS_BTN, Placement::BottomEnd, 8.0));
         }
-        stream_menu(st, p, acc).el(&st.popups, super::pops(acc), p, layer);
+        if st.voice.watch_audio && st.voice.volume_pop.iter().any(|b| *b) {
+            layer.push(volume_popout(st, user, p, acc));
+        }
     }
     if st.voice.share_ended {
         let close = move |s: &mut S| acc(s).voice.share_ended = false;
@@ -1554,10 +1569,11 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
         .box_shadow(crate::ui::overlay::popout_shadow(p, 0.24, 0.14))
         .modal(true, move |s: &mut S| acc(s).popups.close())
         .child(
-            text(tf("Spectators - {count}", &[("count", &watchers.len().to_string())]))
+            // `.header`: uppercase, letter-spacing .02em.
+            text(tf("Spectators - {count}", &[("count", &watchers.len().to_string())]).to_uppercase())
                 .padding(12.0)
                 .pb(8.0)
-                .font(font(12.0, 600.0).lh(14.4))
+                .font(font(12.0, 600.0).lh(14.4).tracking(0.24))
                 .color(p.text_primary_muted),
         );
     let mut list = col().w_full().padding(4.0).gap(2.0).role("group").label(t("Spectators"));
@@ -1565,10 +1581,11 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
         let key = format!("spectator-{}-{}", w.user, w.connection);
         let anchor = SPECTATORS_BTN.to_string();
         let note = store.notes.get(&w.user).cloned().unwrap_or_default();
-        let row = row()
+        let (muted, deaf) = store.voice_states.get(&(guild, w.user)).map_or((false, false), |v| (v.self_mute || v.mute, v.self_deaf || v.deaf));
+        let row = super::call::ParticipantMenu::participant_menu(row(), w.user, guild, acc)
             .key(key)
             .w_full()
-            .h(32.0)
+            .py(6.0)
             .px(8.0)
             .gap(8.0)
             .center_y()
@@ -1581,7 +1598,8 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
                 let sh = acc(s);
                 sh.open_profile(w.user, guild, note.clone(), anchor.clone(), Placement::LeftStart);
             })
-            .child(super::avatar(store, st, w.user, 24.0, None, p.background_primary, p))
+            // `AvatarWithPresence` with the connection's mute and deafen.
+            .child(voice_avatar(store, st, w.user, 24.0, false, muted, deaf, p.background_primary, p))
             .child(text(store.display_name(guild, w.user)).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).truncate().grow(1.0).shrink())
             .child(icon(if w.mobile { &icons::DEVICE_MOBILE } else { &icons::DESKTOP }, 14.0).color(p.text_primary_muted));
         list = list.child(row);
@@ -1685,59 +1703,68 @@ fn self_preview(_p: &Palette) -> El {
         .label(t("Your stream is still live"))
 }
 
-/// `FocusedStreamVolumeControl` + the viewer's actions: stream volume and mute, pin, fullscreen,
-/// pop-out, picture-in-picture, retry and stop.
-fn stream_menu<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Menu<S> {
-    let Some(user) = st.voice.watching else { return Menu::new(STREAM_MENU) };
+/// `MediaVerticalVolumeControl`'s popout: a vertical 0–200 % slider (shown at 0 while muted)
+/// next to the volume button, open while either is hovered or the slider is dragged.
+// shortcut: it opens below the button (Reflux's stream controls sit in the header, Fluxer's in
+// the bottom corner), and closes as the pointer leaves rather than 200 ms later (no timers); the
+// 8px gap is part of the popout so crossing it keeps it open.
+fn volume_popout<S: 'static>(st: &ShellState, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let set = &st.voice.settings;
-    let vol = set.stream_volumes.get(&user.0).copied().unwrap_or(100.0);
-    let muted = set.stream_mutes.contains(&user.0);
-    let pinned = st.voice.stream_pinned;
-    let full = st.voice.stream_fullscreen;
-    let failed = matches!(st.voice.watch_state, WatchState::Failed(_));
-    let tweak = move |s: &mut S, f: &dyn Fn(&mut Settings)| {
-        let sh = acc(s);
-        f(&mut sh.voice.settings);
-        sh.intents.push(Intent::Voice(Op::Settings));
-    };
-    let mut m = Menu::new(STREAM_MENU)
-        .min_w(240.0)
-        .group(t("Stream info"))
-        .item(MenuItem::new("stream-info", stream_info(&st.voice.stream, st.voice.watch_fps).unwrap_or_else(|| t("Waiting for video").to_string())).icon(&icons::MONITOR_PLAY_FILL).disabled(true))
-        .separator()
-        .entry(crate::ui::menu_slider("stream-volume".into(), t("Stream volume"), vol, 0.0, 200.0, format!("{vol:.0}%"), p, move |s: &mut S, x| {
-            tweak(s, &|st| {
-                st.stream_volumes.insert(user.0, x);
-            })
-        }))
-        .item(MenuItem::new("stream-mute", t("Mute stream")).checkbox(muted).keep_open().on_select(move |s: &mut S| {
-            tweak(s, &|st| {
-                if !st.stream_mutes.remove(&user.0) {
-                    st.stream_mutes.insert(user.0);
-                }
-            })
-        }))
-        .separator()
-        .item(MenuItem::new("stream-pin", if pinned { t("Unpin stream") } else { t("Pin stream") }).icon(if pinned { &icons::PUSH_PIN_FILL } else { &icons::PUSH_PIN }).checkbox(pinned).on_select(move |s: &mut S| acc(s).voice.toggle_watch_pin()))
-        .item(MenuItem::new("stream-fullscreen", if full { t("Exit fullscreen") } else { t("Enter fullscreen") }).icon(if full { &icons::CORNERS_IN_FILL } else { &icons::CORNERS_OUT_FILL }).on_select(move |s: &mut S| {
-            acc(s).voice.stream_fullscreen ^= true;
-        }))
-        .item(MenuItem::new("stream-popout", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(move |s: &mut S| {
-            acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: false }))
-        }))
-        .item(MenuItem::new("stream-pip", t("Picture-in-picture")).icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(move |s: &mut S| {
-            acc(s).intents.push(Intent::Voice(Op::PopOut { user: Some(user), screen: true, pip: true }))
-        }));
-    if failed {
-        m = m.item(MenuItem::new("stream-retry", t("Try again")).icon(&icons::ARROW_CLOCKWISE_BOLD).on_select(move |s: &mut S| {
+    let value = if set.stream_mutes.contains(&user.0) { 0.0 } else { set.stream_volumes.get(&user.0).copied().unwrap_or(100.0) };
+    let (h, thumb, track) = (80.0, 12.0, 4.0);
+    let frac = (value / VOICE_VOLUME_MAX_PERCENT).clamp(0.0, 1.0);
+    let rail = col()
+        .w(track)
+        .h_full()
+        .radius(track / 2.0)
+        .fill(mix(p.interactive_muted, p.background_tertiary, 82.0))
+        .child(el().grow(1.0 - frac))
+        .child(el().w_full().grow(frac).radius(track / 2.0).fill(p.brand_primary));
+    let knob = col()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .items_center()
+        .inert()
+        .child(el().grow(1.0 - frac))
+        .child(el().size(thumb, thumb).radius(thumb / 2.0).fill(Color::WHITE).border(2.0, p.brand_primary))
+        .child(el().grow(frac));
+    let slider = row()
+        .key("stream-volume-slider")
+        .w(20.0)
+        .h(h)
+        .py(thumb / 2.0)
+        .justify_center()
+        .child(rail)
+        .child(knob)
+        .role("slider")
+        .label(t("Volume"))
+        .range_value(value as f64, 0.0, VOICE_VOLUME_MAX_PERCENT as f64)
+        .range_step(1.0)
+        .cursor(rune::Cursor::Pointer)
+        .on_drag(move |s: &mut S, d, _| {
             let sh = acc(s);
-            sh.voice.retry_watch();
-            sh.intents.push(Intent::Watch(Some(user)));
-        }));
-    }
-    m.separator().item(MenuItem::new("stream-stop", t("Stop watching")).icon(&icons::X_BOLD).danger().on_select(move |s: &mut S| stop_watching(s, acc)))
+            sh.voice.volume_pop[2] = d.phase != rune::Phase::Up;
+            let t = (1.0 - (d.y - thumb / 2.0) / (d.h - thumb).max(1.0)).clamp(0.0, 1.0);
+            sh.voice.settings.stream_volumes.insert(user.0, (t * VOICE_VOLUME_MAX_PERCENT).round());
+            sh.voice.settings.stream_mutes.remove(&user.0);
+            sh.intents.push(Intent::Voice(Op::Settings));
+        })
+        .on_step(move |s: &mut S, delta, _| {
+            let sh = acc(s);
+            sh.voice.settings.stream_volumes.insert(user.0, (value + delta as f32).clamp(0.0, VOICE_VOLUME_MAX_PERCENT));
+            sh.intents.push(Intent::Voice(Op::Settings));
+        });
+    let card = col()
+        .py(8.0)
+        .items_center()
+        .radius(8.0)
+        .fill(p.form_surface_background)
+        .border(1.0, p.background_modifier_accent)
+        .box_shadow(crate::ui::overlay::popout_shadow(p, 0.24, 0.14))
+        .role("group")
+        .child(slider);
+    let pop = col().w(32.0).pt(8.0).items_center().child(card).on_hover_change(move |s: &mut S, on, _| acc(s).voice.volume_pop[1] = on);
+    crate::ui::overlay::anchor(pop, STREAM_VOLUME, Placement::Bottom, 0.0)
 }
-
 
 #[cfg(test)]
 mod tests {

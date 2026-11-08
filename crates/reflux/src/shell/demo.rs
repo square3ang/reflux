@@ -1250,6 +1250,8 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.watching = Some(Snowflake(1004));
             fake_frames(&st.voice.stream, 160);
             st.voice.settings.stream_volumes.insert(1004, 60.0);
+            st.voice.watch_audio = true;
+            st.call.menu_screen = true;
             st.popups.open_at(super::call::TILE_MENU, [700.0, 200.0]);
             st.target = Some(super::Target::User { user: Snowflake(1004), guild: Some(Snowflake(HQ)), dm: None });
         }
@@ -1259,6 +1261,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.limits.screen_share_bitrate = 16_000_000;
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
             st.voice.screen = true;
+            st.call.menu_screen = true;
             st.popups.open_at(super::call::TILE_MENU, [700.0, 300.0]);
             st.popups.sub = Some("stream-quality".into());
             st.target = Some(super::Target::User { user: Snowflake(ME), guild: Some(Snowflake(HQ)), dm: None });
@@ -1268,6 +1271,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.limits.screen_share_bitrate = 16_000_000;
             apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": ME.to_string(), "channel_id": "2301", "connection_id": "demo", "self_stream": true, "self_mute": true}));
             st.voice.screen = true;
+            st.call.menu_screen = true;
             st.popups.open_at(super::call::TILE_MENU, [700.0, 300.0]);
             st.popups.sub = Some("stream-quality/stream-quality-res".into());
             st.target = Some(super::Target::User { user: Snowflake(ME), guild: Some(Snowflake(HQ)), dm: None });

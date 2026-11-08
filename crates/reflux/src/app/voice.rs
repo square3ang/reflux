@@ -1783,6 +1783,10 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
             watch(s, Some(u));
         }
     }
+    let audio = s.app.shell.voice.watching.is_some_and(|u| s.app.voice.call.as_ref().is_some_and(|c| c.has_stream_audio(u.0)));
+    if s.app.shell.voice.watch_audio != audio {
+        s.app.shell.voice.watch_audio = audio;
+    }
     let now = super::now_ms();
     // `useStreamPreview`: the tile under the pointer has its share subscribed for a picture only;
     // leaving drops the subscription and its frames.

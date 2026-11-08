@@ -120,6 +120,8 @@ pub struct CallUi {
     pub fullscreen_from_compact: bool,
     /// `VoiceCallLayout.focusMembersRowVisible`: focus layout's row of the other participants.
     pub focus_members_row: bool,
+    /// The open tile menu is a stream tile's.
+    pub menu_screen: bool,
 }
 
 impl Default for CallUi {
@@ -143,6 +145,7 @@ impl Default for CallUi {
             app_fullscreen: false,
             fullscreen_from_compact: false,
             focus_members_row: true,
+            menu_screen: false,
         }
     }
 }
@@ -426,21 +429,26 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
                 sh.intents.push(Intent::Watch(Some(user)));
             }
         })
-        .participant_menu(user, guild, acc)
+        .participant_menu_for(user, guild, t.screen, acc)
 }
 
 /// `VoiceParticipantContextMenu` on right-click: the tile menu ([`tile_menu`]) for whoever a
 /// call tile, avatar or participant row stands for.
-pub trait ParticipantMenu {
-    fn participant_menu<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, acc: ShellAccess<S>) -> El;
+pub trait ParticipantMenu: Sized {
+    fn participant_menu<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, acc: ShellAccess<S>) -> El {
+        self.participant_menu_for(user, guild, false, acc)
+    }
+    /// `screen`: the menu of the user's stream tile (`source.kind === 'screen-share'`).
+    fn participant_menu_for<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, screen: bool, acc: ShellAccess<S>) -> El;
 }
 
 impl ParticipantMenu for El {
-    fn participant_menu<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, acc: ShellAccess<S>) -> El {
+    fn participant_menu_for<S: 'static>(self, user: Snowflake, guild: Option<Snowflake>, screen: bool, acc: ShellAccess<S>) -> El {
         self.on_secondary_press(move |s: &mut S, at, _| {
             let sh = acc(s);
             sh.popups.open_at(TILE_MENU, [at.x, at.y]);
             sh.target = Some(super::Target::User { user, guild, dm: None });
+            sh.call.menu_screen = screen;
         })
     }
 }
@@ -2671,9 +2679,9 @@ fn trimmer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, close:
     )
 }
 
-/// A labelled slider row in a menu (`MenuSliderType`), 0..200 %.
+/// A labelled slider row in a menu (`MenuSliderType`), 0..`VOICE_VOLUME_MAX_PERCENT`.
 fn menu_slider<S: 'static>(key: String, label: &str, value: f32, p: &Palette, on: impl Fn(&mut S, f32) + 'static) -> crate::ui::MenuEntry<S> {
-    crate::ui::menu_slider(key, label, value, 0.0, 200.0, format!("{value:.0}%"), p, on)
+    crate::ui::menu_slider(key, label, value, 0.0, super::voice::VOICE_VOLUME_MAX_PERCENT, format!("{value:.0}%"), p, on)
 }
 
 // ---- Popouts and menus ---------------------------------------------------------------------------
@@ -2745,86 +2753,167 @@ pub fn details<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
     layer.push(anchor(surface, DETAILS, Placement::Top, 8.0));
 }
 
-/// `VoiceParticipantMenuItems` for a tile.
+/// `VoiceParticipantContextMenu` (`useVoiceParticipantMenuData`) for a tile, avatar or row:
+/// its groups for another user or ourselves, or a stream tile's menu.
 pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     if !st.popups.is_open(TILE_MENU) {
         return;
     }
     let Some(super::Target::User { user, guild, .. }) = st.target else { return };
-    let me = store.my_id();
+    let groups = if st.call.menu_screen { stream_tile_groups(store, st, user, p, acc) } else { participant_groups(store, st, user, guild, p, acc) };
     let mut m = Menu::new(TILE_MENU);
-    let focused = st.call.layout == LayoutMode::Focus && st.voice.focus == Some(user);
-    m = m.item(MenuItem::new("pin", if focused { t("Unpin") } else { t("Pin") }).icon(if focused { &icons::PUSH_PIN_SIMPLE_SLASH_FILL } else { &icons::PUSH_PIN_SIMPLE_FILL }).on_select(move |s: &mut S| {
-        let sh = acc(s);
-        sh.voice.focus = (!focused).then_some(user);
-        sh.call.pin((!focused).then_some(user));
-    }));
-    let streaming = store.voice_states.get(&(guild, user)).is_some_and(|v| v.self_stream);
-    if streaming && user == me {
-        for e in active_share_entries(st, p, acc) {
+    for g in groups.into_iter().filter(|g| !g.is_empty()) {
+        m = m.separator();
+        for e in g {
             m = m.entry(e);
         }
     }
+    m.el(&st.popups, pops(acc), p, layer);
+}
+
+/// `buildVoiceParticipantStreamMenu`, or `ActiveScreenShareMenu` with
+/// `VoiceParticipantOwnStreamMenuTail` for our own stream.
+// shortcut: no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
+fn stream_tile_groups<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> Vec<Vec<MenuEntry<S>>> {
+    let popout = || MenuEntry::Item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })));
+    if user == store.my_id() {
+        if !st.voice.screen {
+            return Vec::new();
+        }
+        let paused = crate::look::with(|l| l.pause_preview_unfocused);
+        let more = vec![
+            MenuEntry::Item(MenuItem::new("show-own-screen", t("Show my screen share")).checkbox(st.call.show_own_screen).keep_open().on_select(move |s: &mut S| acc(s).call.show_own_screen ^= true)),
+            MenuEntry::Item(MenuItem::new("pause-preview", crate::i18n::tf("Pause preview when {productName} isn't focused", &[("productName", "Fluxer")])).checkbox(paused).keep_open().on_select(move |s: &mut S| {
+                let sh = acc(s);
+                let mut prefs = sh.prefs.clone();
+                prefs.look.pause_preview_unfocused = !paused;
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            })),
+        ];
+        return vec![active_share_entries(st, p, acc), vec![popout()], vec![MenuEntry::Submenu("stream-more".into(), t("More options").into(), more)]];
+    }
     let watching = st.voice.watching == Some(user);
-    // `buildStreamStateAction`: Watch stream, or Stop watching once watched.
-    if streaming && user != me && watching {
-        m = m.item(MenuItem::new("stop-watching", t("Stop watching")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| super::voice::stop_watching(s, acc)));
-    } else if streaming && user != me {
-        m = m.item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
+    let state = if watching {
+        MenuEntry::Item(MenuItem::new("stop-watching", t("Stop watching")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| super::voice::stop_watching(s, acc)))
+    } else {
+        MenuEntry::Item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.watching = Some(user);
             sh.intents.push(Intent::Watch(Some(user)));
-        }));
-    }
-    // `VoicePopoutHost`: the participant's camera or stream in its own window.
-    if streaming && watching {
-        m = m
-            .item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })))
-            .item(MenuItem::new("pip-stream", "Picture in picture").icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: true })));
-    }
-    if st.voice.videos.contains_key(&user) || (user == me && st.voice.camera) {
-        m = m.item(MenuItem::new("popout-camera", t("Pop out camera")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: false, pip: false })));
-    }
-    m = m.item(MenuItem::new("popout-call", "Pop out call").icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: None, screen: false, pip: false })));
-    let set = &st.voice.settings;
-    // Settings changes save and reach the mixer through `Op::Settings`.
-    let tweak = move |s: &mut S, f: &dyn Fn(&mut super::voice::Settings)| {
-        let sh = acc(s);
-        f(&mut sh.voice.settings);
-        sh.intents.push(Intent::Voice(Op::Settings));
+        }))
     };
-    if streaming && watching && user != me {
-        let vol = set.stream_volumes.get(&user.0).copied().unwrap_or(100.0);
-        let muted = set.stream_mutes.contains(&user.0);
-        m = m
-            .separator()
-            .entry(menu_slider(format!("stream-vol-{user}"), t("Stream volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.stream_volumes.insert(user.0, x); })))
-            .item(MenuItem::new("stream-mute", t("Mute stream")).checkbox(muted).on_select(move |s: &mut S| {
+    let mut groups = vec![vec![state]];
+    // `buildStreamAudioControls`: only for a watched stream with audio.
+    if watching && st.voice.watch_audio {
+        let set = &st.voice.settings;
+        let (vol, muted) = (set.stream_volumes.get(&user.0).copied().unwrap_or(100.0), set.stream_mutes.contains(&user.0));
+        let tweak = move |s: &mut S, f: &dyn Fn(&mut super::voice::Settings)| {
+            let sh = acc(s);
+            f(&mut sh.voice.settings);
+            sh.intents.push(Intent::Voice(Op::Settings));
+        };
+        groups.push(vec![
+            MenuEntry::Item(MenuItem::new("stream-mute", t("Mute")).checkbox(muted).on_select(move |s: &mut S| {
                 tweak(s, &|st| {
                     if !st.stream_mutes.remove(&user.0) {
                         st.stream_mutes.insert(user.0);
                     }
                 })
-            }));
+            })),
+            menu_slider(format!("stream-vol-{user}"), t("Stream volume"), vol, p, move |s: &mut S, x| tweak(s, &|st| { st.stream_volumes.insert(user.0, x); })),
+        ]);
     }
-    if user != me {
-        for e in participant_items(st, user, p, acc) {
-            m = m.entry(e);
-        }
-        if let Some((None, ch)) = st.voice.channel
-            && let Some(call) = store.calls.get(&ch)
-            && !store.voice_states.contains_key(&(None, user))
-        {
-            let ringing = call.ringing.contains(&user);
-            m = m.item(MenuItem::new("ring", if ringing { t("Stop ringing") } else { t("Ring") }).icon(&icons::PHONE_FILL).on_select(op(acc, Op::Ring(ch, user, !ringing))));
-        }
+    if watching {
+        groups.push(vec![popout()]);
     }
+    groups
+}
+
+/// `useVoiceParticipantMenuData`'s groups for a participant: profile actions, volume, playback
+/// and relationship, community, moderation, display, guild voice moderation and the ID.
+// shortcut: no "Pop out user", "Disable video locally" or "Change friend nickname" (no
+// backing feature in Reflux); device-scoped (multi-connection) items are not split out.
+fn participant_groups<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild: Option<Snowflake>, p: &Palette, acc: ShellAccess<S>) -> Vec<Vec<MenuEntry<S>>> {
+    let me = store.my_id();
+    let is_me = user == me;
+    let bot = store.users.get(&user).is_some_and(|u| u.bot);
+    let item = |i: MenuItem<S>| MenuEntry::Item(i);
+    let profile = move |focus_note: bool| {
+        move |s: &mut S| {
+            let sh = acc(s);
+            sh.popups.close();
+            sh.account.profile_modal = Some((user, guild, "overview"));
+            sh.fetch_profile(user, guild);
+            sh.note.focused = focus_note;
+        }
+    };
+    let mut primary = vec![item(MenuItem::new("profile", t("View profile")).icon(&icons::USER_FILL).on_select(profile(false)))];
+    let dm = store.private_channels().into_iter().find(|c| c.kind == ChannelType::DM && c.recipients.iter().any(|r| r.id == user)).map(|c| c.id);
+    if !is_me {
+        primary.push(item(MenuItem::new("message", t("Message")).icon(&icons::CHAT_CIRCLE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::OpenDm(user)))));
+        if !bot && dm.is_none_or(|c| !store.calls.contains_key(&c)) {
+            primary.push(item(MenuItem::new("start-call", t("Start voice call")).icon(&icons::PHONE_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::DmCall(user, false)))));
+        }
+        primary.push(item(MenuItem::new("note", t("Add note")).icon(&icons::NOTE_PENCIL_FILL).on_select(profile(true))));
+    }
+    let focused = st.call.layout == LayoutMode::Focus && st.voice.focus == Some(user);
+    let focus = item(MenuItem::new("focus", if focused { t("Unfocus") } else { t("Focus this person") }).icon(if focused { &icons::PUSH_PIN_SIMPLE_SLASH_FILL } else { &icons::PUSH_PIN_SIMPLE_FILL }).on_select(move |s: &mut S| {
+        let sh = acc(s);
+        sh.voice.focus = (!focused).then_some(user);
+        sh.call.pin((!focused).then_some(user));
+    }));
+    let has_video = st.voice.videos.contains_key(&user) || (is_me && st.voice.camera);
+    let mut display = Vec::new();
+    if has_video {
+        display.push(item(MenuItem::new("popout-camera", t("Pop out video")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: false, pip: false }))));
+    }
+    display.push(item(MenuItem::new("show-non-video", t("Show non-video participants")).checkbox(st.call.show_non_video).keep_open().on_select(move |s: &mut S| acc(s).call.show_non_video ^= true)));
+    let (voice_mod, moves, disconnect) = guild.map_or((Vec::new(), None, None), |g| crate::social::moderation::voice_parts(store, g, user, acc));
+    let copy = store.settings.developer_mode.then(|| item(super::menus::copy_id(t("Copy user ID"), user))).into_iter().collect::<Vec<_>>();
+    if is_me {
+        let v = &st.voice;
+        let mut media = vec![
+            item(MenuItem::new("self-mute", t("Mute")).checkbox(v.self_mute).on_select(move |s: &mut S| acc(s).toggle_mute())),
+            item(MenuItem::new("self-deafen", t("Deafen")).checkbox(v.self_deaf).on_select(move |s: &mut S| acc(s).toggle_deaf())),
+            focus,
+        ];
+        if !v.camera {
+            media.push(item(MenuItem::new("preview-camera", t("Preview camera")).icon(&icons::EYE_FILL).on_select(move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.modal = Some(Modal::CameraPreview);
+                sh.intents.push(Intent::Voice(Op::LoadCameras));
+                sh.intents.push(Intent::Voice(Op::Preview(true)));
+            })));
+        }
+        return vec![primary, media, display, voice_mod, copy];
+    }
+    // `participant_items`: user volume, then local mute and the entrance sound.
+    let mut parts = participant_items(st, user, p, acc).into_iter().filter(|e| !matches!(e, MenuEntry::Separator));
+    let volume: Vec<MenuEntry<S>> = parts.next().into_iter().collect();
+    let mut playback: Vec<MenuEntry<S>> = parts.collect();
+    playback.push(focus);
+    playback.extend(super::menus::relationship_items(store, user, acc).into_iter().map(item));
+    let report = crate::social::Modal::Report { target: "user", guild, channel: None, id: user };
+    playback.push(item(MenuItem::new("report", t("Report")).icon(&icons::FLAG_FILL).danger().on_select(move |s: &mut S| crate::social::open_report(acc(s), report.clone()))));
+    if let Some((None, ch)) = st.voice.channel
+        && let Some(call) = store.calls.get(&ch)
+        && !store.voice_states.contains_key(&(None, user))
+    {
+        let ringing = call.ringing.contains(&user);
+        playback.push(item(MenuItem::new("ring", if ringing { t("Stop ringing") } else { t("Ring") }).icon(&icons::PHONE_FILL).on_select(op(acc, Op::Ring(ch, user, !ringing)))));
+    }
+    let mut community: Vec<MenuEntry<S>> = super::menus::invite_entry(store, st, user, acc).filter(|_| !bot).into_iter().collect();
+    if let Some(c) = dm {
+        community.push(crate::social::mute_entry(store, st, None, Some(c), "conversation", acc));
+    }
+    let mut manage: Vec<MenuEntry<S>> = guild.and_then(|g| crate::social::moderation::roles_entry(store, g, user, acc)).into_iter().collect();
+    manage.extend(moves);
+    let mut moderation = voice_mod;
+    moderation.extend(disconnect);
     if let Some(g) = guild {
-        for e in crate::social::moderation::voice_items(store, g, user, acc) {
-            m = m.entry(e);
-        }
+        moderation.extend(crate::social::moderation::punish_items(store, st, g, user, acc).into_iter().map(item));
     }
-    m.el(&st.popups, pops(acc), p, layer);
+    vec![primary, volume, playback, community, manage, display, moderation, copy]
 }
 
 /// `StreamSettingsMenuContent`'s compactLive variant ("Stream quality"): frame rate and
