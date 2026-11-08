@@ -356,6 +356,8 @@ impl Call {
     /// still screen shows at once instead of staying black until it changes.
     pub fn sync_streams(&self, watching: Option<u64>) {
         let Link::Room(room) = &self.link else { return };
+        // `set_subscribed` spawns the SFU update on the ambient runtime; this runs on the UI thread.
+        let _rt = self.rt.enter();
         for p in room.remote_participants().values() {
             let want = watching.is_some() && user_of(&p.identity().0) == watching;
             for t in p.track_publications().values() {
