@@ -154,7 +154,7 @@ fn control_bar(bar: Bar, _p: &Palette) -> El {
             .cursor(rune::Cursor::Pointer)
             .role("button")
             .label(label)
-            .on_press(move |_: &mut Popout| crate::app::update(move |s| act(s)))
+            .on_press(move |_: &mut Popout| crate::app::update(act))
             .child(rune::icon(icon, 22.0).color(fg))
     };
     row()
