@@ -118,6 +118,8 @@ pub struct CallUi {
     pub fullscreen_from_compact: bool,
     /// `VoiceCallLayout.focusMembersRowVisible`: focus layout's row of the other participants.
     pub focus_members_row: bool,
+    /// `IncomingCallUI`'s drag past its 6pt threshold: the pointer's travel so far.
+    pub incoming_drag: Option<[f32; 2]>,
 }
 
 impl Default for CallUi {
@@ -140,6 +142,7 @@ impl Default for CallUi {
             app_fullscreen: false,
             fullscreen_from_compact: false,
             focus_members_row: true,
+            incoming_drag: None,
         }
     }
 }
@@ -1899,14 +1902,28 @@ fn camera_after_join(sh: &mut ShellState, video: bool) {
     }
 }
 
-/// `IncomingCallUI`: the first call ringing us that we haven't answered or dismissed.
-/// The developer tools' `MockIncomingCall` comes first; its buttons only dismiss it.
+/// `INCOMING_CALL_OVERLAY_WIDTH` / `_HEIGHT`.
+const INCOMING_W: f32 = 320.0;
+const INCOMING_H: f32 = 400.0;
+
+/// `IncomingCallManager`'s card position: where it was dragged to (else the window's centre),
+/// plus the drag in progress, kept inside the window.
+fn incoming_pos(st: &ShellState) -> (f32, f32) {
+    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let (x, y) = st.prefs.incoming_call_pos.unwrap_or(((w / 2.0 - INCOMING_W / 2.0).max(0.0), (h / 2.0 - INCOMING_H / 2.0).max(0.0)));
+    let [dx, dy] = st.call.incoming_drag.unwrap_or_default();
+    ((x + dx).clamp(0.0, (w - INCOMING_W).max(0.0)), (y + dy).clamp(0.0, (h - INCOMING_H).max(0.0)))
+}
+
+/// `IncomingCallUI`: the first call ringing us that we haven't answered or ignored, in a card
+/// dragged by its top strip. The developer tools' `MockIncomingCall` comes first; its buttons
+/// only dismiss it.
 pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let me = store.my_id();
     let mock = super::devtools::mock_call(store, st);
     let mocked = mock.is_some();
-    let (caller, name, channel) = match mock {
-        Some((caller, name)) => (caller, name, Snowflake(0)),
+    let (caller, name, channel, group) = match mock {
+        Some((caller, name)) => (caller, name, Snowflake(0), None),
         None => {
             let call = store
                 .calls
@@ -1914,19 +1931,25 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                 .filter(|c| c.ringing.contains(&me) && !st.voice.dismissed_calls.contains(&c.channel_id) && st.voice.channel != Some((None, c.channel_id)))
                 .min_by_key(|c| c.channel_id)?;
             let ch = store.channels.get(&call.channel_id);
-            let caller = call.voice_states.first().and_then(|v| v.user_id).or_else(|| ch.and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me)))?;
-            let name = match ch {
-                Some(c) if c.kind == ChannelType::GROUP_DM => super::chat::channel_title(store, c),
-                _ => store.display_name(None, caller),
-            };
-            (caller, name, call.channel_id)
+            // `resolveInitiatorUserId`: a DM's other recipient, else whoever else is being rung.
+            let other = ch.filter(|c| c.kind == ChannelType::DM).and_then(|c| c.recipients.iter().map(|u| u.id).find(|u| *u != me));
+            let caller = other.or_else(|| call.ringing.iter().copied().find(|u| *u != me)).or_else(|| call.ringing.first().copied())?;
+            match ch {
+                Some(c) if c.kind == ChannelType::GROUP_DM => (caller, super::chat::channel_title(store, c), call.channel_id, Some(c)),
+                _ => (caller, store.display_name(None, caller), call.channel_id, None),
+            }
         }
     };
     let end_mock = move |s: &mut S| acc(s).devtools.mock_call = None;
     let decline: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::DeclineCall(channel))) };
     let accept: Box<dyn Fn(&mut S)> = if mocked { Box::new(end_mock) } else { Box::new(op(acc, Op::AcceptCall(channel))) };
+    let ignore: std::rc::Rc<dyn Fn(&mut S)> = if mocked { std::rc::Rc::new(end_mock) } else { std::rc::Rc::new(ignore_call(acc, channel, me)) };
     let secondary = rgba(235, 235, 245, 0.55);
-    let circle = |i: &'static rune::Icon, bg: Color, hover: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
+    let shadow = |y: f32, blur: f32, color: Color| Shadow { x: 0.0, y, blur, spread: 0.0, color, inset: false };
+    // `.circleButton`: 64px, its colour's glow; hover is the lighter colour.
+    // shortcut: Rune has no brightness filter or pressed offset, so hover only swaps the colour
+    // and a press doesn't move the button 1px down.
+    let circle = |glyph: El, bg: Color, hover: Color, glow: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
         col()
             .gap(10.0)
             .items_center()
@@ -1937,66 +1960,124 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                     .radius(32.0)
                     .fill(bg)
                     .hover(hover)
+                    .box_shadow(shadow(6.0, 16.0, glow))
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
                     .label(label.to_string())
-                    .child(icon(i, 28.0).color(Color::WHITE))
+                    .child(glyph)
                     .on_press(move |s: &mut S| on(s)),
             )
             .child(text(label.to_string()).font(font(13.0, 500.0).lh(16.0)).color(rgba(235, 235, 245, 0.7)))
     };
-    let card = col()
-        .w(320.0)
+    let face = match group {
+        Some(c) => super::group_avatar(store, st, c, 80.0, rgb(0x2c, 0x2c, 0x2e), p),
+        None => avatar(store, st, caller, 80.0, None, rgb(0x2c, 0x2c, 0x2e), p),
+    };
+    // `.avatar`: a 96px shell with a 2.2s ring pulse spreading 10px.
+    // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread.
+    let face = el()
+        .size(96.0, 96.0)
+        .child(el().pin(Some(-5.0), Some(-5.0), Some(-5.0), Some(-5.0)).radius(999.0).fill(rgba(255, 255, 255, 0.18)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 0.5)))
+        .child(row().w_full().h_full().center().radius(999.0).fill(rgba(255, 255, 255, 0.04)).box_shadow(shadow(12.0, 28.0, rgba(0, 0, 0, 0.45))).clip_rounded(48.0).child(face));
+    let stack = col()
+        .w_full()
         .pt(26.0)
         .px(24.0)
         .pb(22.0)
-        .gap(16.0)
         .items_center()
-        .radius(28.0)
-        .linear_gradient(std::f32::consts::PI, [(0.0, rgb(0x2c, 0x2c, 0x2e)), (1.0, rgb(0x1c, 0x1c, 0x1e))])
-        .border(1.0, rgba(255, 255, 255, 0.08))
-        .box_shadow(rune::Shadow { x: 0.0, y: 24.0, blur: 60.0, spread: 0.0, color: rgba(0, 0, 0, 0.55), inset: false })
-        .role("dialog")
-        .label(t("Incoming call"))
         .child(
             row()
                 .gap(6.0)
                 .center_y()
+                .mb(18.0)
                 .child(icon(&icons::PHONE_INCOMING_FILL, 14.0).color(secondary))
                 .child(text(t("Incoming call")).font(font(13.0, 500.0).lh(16.0)).color(secondary)),
         )
-        .child(avatar(store, st, caller, 96.0, None, rgb(0x2c, 0x2c, 0x2e), p))
+        .child(face.mb(16.0))
         .child(
             col()
                 .w_full()
-                .gap(4.0)
                 .items_center()
-                .child(text(name).font(font(22.0, 600.0).lh(26.4)).color(Color::WHITE).truncate())
-                .child(text(t("Voice call")).font(font(14.0, 400.0).lh(18.0)).color(secondary)),
+                .mb(28.0)
+                .child(text(name).font(font(22.0, 600.0).lh(26.4).tracking(-0.22)).color(Color::WHITE).truncate())
+                .child(text(t("Voice call")).font(font(14.0, 400.0).lh(18.0)).color(secondary).mt(4.0)),
         )
         .child(
             row()
                 .gap(56.0)
-                .pt(8.0)
-                .child(circle(&icons::PHONE_X_FILL, rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), t("Decline"), decline))
-                .child(circle(&icons::PHONE_FILL, rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), t("Accept"), accept)),
+                .mb(14.0)
+                // `.circleButtonIconRotated`: the phone turned 135°.
+                .child(circle(icon(&icons::PHONE_FILL, 28.0).color(Color::WHITE).rotate(std::f32::consts::FRAC_PI_4 * 3.0), rgb(0xff, 0x3b, 0x30), rgb(0xff, 0x45, 0x3a), rgba(255, 59, 48, 0.45), t("Reject"), decline))
+                .child(circle(icon(&icons::PHONE_FILL, 28.0).color(Color::WHITE), rgb(0x34, 0xc7, 0x59), rgb(0x30, 0xd1, 0x58), rgba(52, 199, 89, 0.45), t("Accept"), accept)),
         )
-        .child(
-            text(t("Ignore"))
-                .font(font(13.0, 500.0).lh(16.0))
-                .color(rgba(235, 235, 245, 0.5))
+        .child({
+            let ignore = ignore.clone();
+            // `.ignoreLink`: 14/500, white on a faint pill while hovered.
+            row()
+                .mt(6.0)
+                .px(14.0)
+                .py(8.0)
+                .radius(999.0)
+                .hover(rgba(255, 255, 255, 0.06))
+                .hover_group()
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .on_press(move |s: &mut S| {
-                    let st = acc(s);
-                    if mocked {
-                        st.devtools.mock_call = None;
-                    } else {
-                        st.voice.dismissed_calls.insert(channel);
-                    }
-                }),
-        );
-    Some(el().pin(Some(0.0), Some(24.0), Some(0.0), None).child(row().w_full().justify_center().child(card)))
+                .label(t("Ignore"))
+                .child(text(t("Ignore")).font(font(14.0, 500.0).lh(18.0)).color(rgba(235, 235, 245, 0.5)).group_color(Color::WHITE))
+                .on_press(move |s: &mut S| ignore(s))
+        });
+    // `.dragHandle`: an 18px strip with a 36x5 pill 4px above its bottom; the card moves once
+    // the pointer has gone 6pt, and lands (saved) where it's let go.
+    let handle = row()
+        .pin(Some(0.0), Some(0.0), Some(0.0), None)
+        .h(18.0)
+        .pb(4.0)
+        .justify_center()
+        .items_end()
+        .cursor(if st.call.incoming_drag.is_some() { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
+        .child(el().size(36.0, 5.0).radius(999.0).fill(rgba(235, 235, 245, 0.28)))
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Up {
+                if sh.call.incoming_drag.is_some() && !d.cancelled() {
+                    sh.prefs.incoming_call_pos = Some(incoming_pos(sh));
+                    let prefs = sh.prefs.clone();
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                }
+                sh.call.incoming_drag = None;
+            } else if sh.call.incoming_drag.is_some() || d.dx * d.dx + d.dy * d.dy > 36.0 {
+                sh.call.incoming_drag = Some([d.dx, d.dy]);
+            }
+        });
+    let card = col()
+        .w(INCOMING_W)
+        .radius(28.0)
+        .linear_gradient(std::f32::consts::PI, [(0.0, rgb(0x2c, 0x2c, 0x2e)), (1.0, rgb(0x1c, 0x1c, 0x1e))])
+        .border(1.0, rgba(255, 255, 255, 0.08))
+        .box_shadow(shadow(24.0, 60.0, rgba(0, 0, 0, 0.55)))
+        .box_shadow(shadow(4.0, 12.0, rgba(0, 0, 0, 0.35)))
+        .box_shadow(Shadow { inset: true, ..shadow(1.0, 0.0, rgba(255, 255, 255, 0.06)) })
+        .clip_rounded(28.0)
+        // `CARD_MOTION`: fades in from .94 scale, 8px lower.
+        .transition(rune::Transition::opacity().combined(rune::Transition::scale(0.94)).combined(rune::Transition::offset(0.0, 8.0)))
+        .key(format!("incoming-call-{channel}"))
+        .role("dialog")
+        .label(t("Incoming call"))
+        // `.card`'s highlight: radial-gradient(140% 100% at 50% 0%, white 6%, transparent 60%).
+        // shortcut: no backdrop blur behind the card.
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).inert().radial_gradient([0.5, 0.0], [INCOMING_W * 1.4, INCOMING_H], [(0.0, rgba(255, 255, 255, 0.06)), (0.6, rgba(255, 255, 255, 0.0))]))
+        .child(stack)
+        .child(handle)
+        // Escape is Ignore while focus is in the card.
+        .on_key(move |s: &mut S, k: &rune::KeyEvent, _| {
+            if k.key != rune::Key::Escape {
+                return false;
+            }
+            ignore(s);
+            true
+        });
+    let (x, y) = incoming_pos(st);
+    Some(el().pin(Some(x), Some(y), None, None).child(card))
 }
 
 // ---- Dialogs -----------------------------------------------------------------------------------
