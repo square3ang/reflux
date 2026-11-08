@@ -1094,7 +1094,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
-        | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch") {
+        | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" | "call-connecting" | "call-reconnecting" | "no-video" | "call-speaking") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -1185,6 +1185,17 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         "fullscreen" => {
             st.call.app_fullscreen = true;
             (st.guild, st.channel) = (Some(Snowflake(HQ)), Some(Snowflake(2301)));
+        }
+        "call-connecting" => st.voice.connected = false,
+        "call-reconnecting" => st.voice.reconnecting = true,
+        "call-speaking" => {
+            st.voice.speaking.insert(Snowflake(1001));
+        }
+        // `showNonVideoParticipants` off with no camera on: the wrapped avatars.
+        "no-video" => {
+            st.voice.videos.clear();
+            st.call.show_non_video = false;
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": false}));
         }
         "hud-hidden" => st.call.hud_until = Some(std::time::Instant::now() - std::time::Duration::from_millis(1)),
         "audio-only" => {

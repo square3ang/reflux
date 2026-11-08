@@ -122,6 +122,14 @@ pub struct CallUi {
     pub incoming_drag: Option<[f32; 2]>,
     /// The PiP overlay's drag in progress: the pointer's travel so far.
     pub pip_drag: Option<[f32; 2]>,
+    /// `VoiceCallLayout.focusMembersRowHeight`: the row's dragged height, `None` = automatic.
+    // shortcut: kept for the session; Fluxer persists it. Persist with the other layout prefs.
+    pub members_row_h: Option<f32>,
+    /// `FocusMembersRowDivider` is being dragged.
+    pub members_dragging: bool,
+    /// `trackActivityStateRef`: when each speaker last spoke and the order they were promoted in.
+    pub activity: std::collections::HashMap<Snowflake, (Instant, u64)>,
+    pub next_order: u64,
 }
 
 impl Default for CallUi {
@@ -146,6 +154,10 @@ impl Default for CallUi {
             focus_members_row: true,
             incoming_drag: None,
             pip_drag: None,
+            members_row_h: None,
+            members_dragging: false,
+            activity: Default::default(),
+            next_order: 0,
         }
     }
 }
@@ -182,11 +194,6 @@ pub fn unread_messages(store: &Store, channel: Snowflake) -> u32 {
     // more than the window clamps at 200 (the badge shows 9+ anyway).
     let ack = store.read_states.get(&channel).and_then(|r| r.last_message_id);
     store.messages(channel).iter().filter(|m| ack.is_none_or(|a| m.id > a)).count() as u32
-}
-
-/// `heightToggleUnreadBadge`: 1..9, then `9+`.
-pub fn unread_badge(n: u32) -> String {
-    if n > 9 { "9+".into() } else { n.to_string() }
 }
 
 /// `VoiceParticipantSortUtils`: speaking participants first when the setting is on, user ID
@@ -251,16 +258,43 @@ struct Tile {
     screen: bool,
 }
 
-/// Participants of a channel's call, ordered by user ID (`VoiceParticipantSortUtils`' fallback),
-/// each followed by their screen share when they stream.
+/// Participants of a channel's call, ordered by user ID (`VoiceParticipantSortUtils`' fallback).
 fn participants(store: &Store, guild: Option<Snowflake>, channel: Snowflake) -> Vec<(Snowflake, &VoiceState)> {
     let mut v: Vec<_> = store.voice_states.iter().filter(|((g, _), v)| *g == guild && v.channel_id == Some(channel)).map(|((_, u), v)| (*u, v)).collect();
     v.sort_by_key(|(u, _)| *u);
     v
 }
 
+/// `gridTracks`' base order: every screen share, then every camera.
 fn tiles(people: &[(Snowflake, &VoiceState)]) -> Vec<Tile> {
-    people.iter().flat_map(|(u, v)| std::iter::once(Tile { user: *u, screen: false }).chain(v.self_stream.then_some(Tile { user: *u, screen: true }))).collect()
+    let shares = people.iter().filter(|(_, v)| v.self_stream).map(|(u, _)| Tile { user: *u, screen: true });
+    shares.chain(people.iter().map(|(u, _)| Tile { user: *u, screen: false })).collect()
+}
+
+/// `VOICE_GRID_SPEAKER_PRIORITY_HOLD_MS`: how long a speaker keeps their promoted place.
+const SPEAKER_HOLD: Duration = Duration::from_millis(4500);
+
+/// `useVoiceCallTracksAndLayout`'s `gridTracks`: the shares, then the cameras, which
+/// `showNonVideoParticipants` off narrows to cameras that are on. With Prioritize speakers on,
+/// streaming ranks 3, speaking 2 and recently spoke 1, each rank in promotion order.
+fn call_tiles(st: &ShellState, me: Snowflake, people: &[(Snowflake, &VoiceState)]) -> Vec<Tile> {
+    let camera_on = |u: Snowflake| if u == me { st.voice.camera } else { st.voice.videos.contains_key(&u) };
+    let mut all: Vec<Tile> = tiles(people).into_iter().filter(|t| t.screen || st.call.show_non_video || camera_on(t.user)).collect();
+    if st.call.prioritize_speakers {
+        all.sort_by_key(|t| {
+            let streaming = t.screen || people.iter().any(|(u, v)| *u == t.user && v.self_stream);
+            let held = st.call.activity.get(&t.user).map(|a| a.1);
+            let rank = if streaming {
+                3
+            } else if st.voice.speaking.contains(&t.user) {
+                2
+            } else {
+                held.is_some() as u8
+            };
+            (std::cmp::Reverse(rank), if rank > 0 { held.unwrap_or(u64::MAX) } else { u64::MAX })
+        });
+    }
+    all
 }
 
 /// The video a tile shows, if any.
@@ -275,11 +309,8 @@ fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
     }
 }
 
-/// `useStreamPreview`: the Active Now preview frame for a participant's stream, if one is loaded.
+/// `useStreamPreview`: the uploaded preview frame for a participant's stream, if one is loaded.
 fn stream_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake) -> Option<Pixels> {
-    // shortcut: previews reuse Active Now's cached stream thumbnail; a call without one shows
-    // the Watch stream placeholder until watched. Subscribe a preview track when LiveKit exposes
-    // a cheap subscription for it.
     let channel = st.voice.channel?.1;
     let conn = store.voice_states.get(&(guild, user))?.connection_id.clone()?;
     let key = format!("{}:{channel}:{conn}", guild.map_or("dm".to_string(), |g| g.to_string()));
@@ -291,145 +322,323 @@ fn stream_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, user
     }
 }
 
-/// `VoiceParticipantTile`.
+/// `VoiceParticipantTile`'s `presentation`: a grid tile, the focused tile, or one in the focus
+/// layout's members row.
+#[derive(Clone, Copy, PartialEq)]
+enum Pres {
+    Grid,
+    FocusMain,
+    FocusSecondary,
+}
+
+/// `useVoiceCallHudVisibility`: the call chrome is up (no idle timeout, or not yet spent).
+fn hud_visible(st: &ShellState) -> bool {
+    st.call.hud_until.is_none_or(|t| t > Instant::now())
+}
+
+/// `VoiceParticipantTile` as a grid tile.
 #[allow(clippy::too_many_arguments)]
-fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t: Tile, vs: &VoiceState, big: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t: Tile, vs: &VoiceState, _big: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    tile_in(store, st, guild, t, vs, Pres::Grid, true, p, acc)
+}
+
+/// `VoiceParticipantTile`: the video, the stream's still or watch prompt, or the avatar on its
+/// colour, with the tile's overlays and its name pill. `hud` is the call chrome's visibility,
+/// which the name and control pills fade with.
+#[allow(clippy::too_many_arguments)]
+fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t: Tile, vs: &VoiceState, pres: Pres, hud: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    use super::voice::WatchState;
     let me = store.my_id();
-    let speaking = !t.screen && st.voice.speaking.contains(&t.user);
+    let v = &st.voice;
+    let key = format!("tile-{}-{}", t.user, t.screen as u8);
+    // The tile's last laid-out size stands in for its `@container` queries.
+    let [w, h] = rune::memo::layout_size(&key).unwrap_or([300.0, 170.0]);
+    let speaking = !t.screen && v.speaking.contains(&t.user);
     let name = store.display_name(guild, t.user);
-    // `screensharePreviewBackground`: a sharing tile we aren't watching previews its stream, from
-    // Active Now's still or the live frames a hovered tile subscribes (dimmed, under the overlay).
-    let live = (t.screen && video(st, me, t).is_none() && st.voice.watching != Some(t.user)).then(|| st.voice.live_previews.get(&t.user).cloned()).flatten();
-    let preview = (t.screen && video(st, me, t).is_none()).then(|| stream_preview(store, st, guild, t.user)).flatten();
-    let preview = live.or(preview);
-    let mut body = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).clip_rounded(dim::RADIUS_LG);
-    match (video(st, me, t), &preview) {
-        (Some(px), _) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
-        (None, Some(px)) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit).opacity(0.4),
-        _ if t.screen => {
-            // `watchStreamOverlay`: the stream isn't subscribed until asked for.
-            let u = t.user;
-            let watch = row()
-                .h(32.0)
-                .px(12.0)
-                .gap(6.0)
-                .center_y()
-                .radius(8.0)
-                .fill(rgb(0, 0, 0))
-                .border(1.0, hud_border())
+    let full = || el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0));
+    let r = if pres == Pres::FocusMain { 0.0 } else { dim::RADIUS_LG };
+    let fit = rune::SurfaceFit::Fit;
+    let mut body = full().radius(r).clip_rounded(r);
+    let mut overlays: Vec<El> = Vec::new();
+    let watched = t.screen && t.user != me && v.watching == Some(t.user);
+    // `useOwnScreenSharePreviewState`: our share freezes while the window is in the background.
+    let own_paused = t.screen && t.user == me && st.desktop.unfocused && crate::look::with(|l| l.pause_preview_unfocused);
+    let shown = video(st, me, t).filter(|px| px.size() != (0, 0));
+    let mut has_video = false;
+    let mut live_info = None;
+    if watched {
+        // `ScreenShareBufferingFrame` (corner over the dimmed last frame, else full), the failed
+        // frame, or `streamEndedOverlay`.
+        let state = if v.watch_state == WatchState::Idle { WatchState::Buffering } else { v.watch_state };
+        let last = v.stream.size() != (0, 0);
+        body = body.fill(surface_0());
+        if last {
+            body = body.pixels_fit(&v.stream, fit);
+        }
+        match state {
+            WatchState::Failed(code) => overlays.push(super::voice::failure_frame(code, p).key("failed")),
+            WatchState::Ended => overlays.push(super::voice::ended_overlay(h, p, acc).key("ended")),
+            WatchState::Buffering if last => {
+                overlays.push(full().fill(rgba(0, 0, 0, 0.5)).key("dimmed"));
+                overlays.push(super::voice::buffering_frame(true, w).key("buffering"));
+            }
+            WatchState::Buffering => overlays.push(super::voice::buffering_frame(false, w).key("buffering")),
+            _ => {
+                has_video = last;
+                live_info = super::voice::stream_info(&v.stream, v.watch_fps);
+            }
+        }
+    } else if let Some(px) = shown {
+        has_video = true;
+        body = body.fill(surface_0()).pixels_fit(px, fit);
+        if own_paused {
+            overlays.push(super::voice::self_preview(h, p).key("paused"));
+        }
+    } else if t.screen && t.user != me {
+        // `screensharePreviewBackground` (the uploaded still at brightness .4), else
+        // `streamPreviewUnavailableSurface` (surface-4 80% over surface-0), under the prompt.
+        match stream_preview(store, st, guild, t.user) {
+            Some(px) => body = body.fill(surface_0()).pixels_fit(&px, fit).child(full().fill(rgba(0, 0, 0, 0.6))),
+            None => body = body.fill(rgb(0x24, 0x24, 0x27)),
+        }
+        overlays.push(watch_overlay(t.user, w, p, acc).key("watch"));
+    } else if t.screen {
+        body = body.fill(surface_0());
+    } else {
+        // `lkParticipantPlaceholder` on `getPlaceholderAvatarColor` dimmed by 12%, and
+        // `.tileAvatarRing`'s size from the tile's size; speaking rings it 3px.
+        let size = (w.min(h) * 0.32).clamp(80.0, 192.0).min(w - 24.0).min(h - 24.0).max(44.0);
+        let mut face = el().size(size, size).radius(999.0).child(avatar(store, st, t.user, size, None, surface_3(), p));
+        if speaking {
+            face = face.child(el().pin(Some(-3.0), Some(-3.0), Some(-3.0), Some(-3.0)).radius(999.0).border(3.0, p.status_online));
+        }
+        body = body.fill(placeholder_color(store, t.user)).child(row().w_full().h_full().center().child(face));
+    }
+    // `isOwnCameraHidden`: `FeedHiddenOverlay` over our own camera.
+    if t.user == me && !t.screen && v.camera && !st.call.show_own_camera {
+        overlays.push(feed_hidden(p, acc).key("feed-hidden"));
+    }
+    let n280 = w <= 280.0;
+    let inset = if n280 { 5.0 } else { 6.0 };
+    // `streamInfoHud`: the tile's LIVE badge, after its resolution while watched.
+    let ended = watched && matches!(v.watch_state, WatchState::Ended | WatchState::Failed(_));
+    if t.screen && pres == Pres::Grid && !ended && !own_paused {
+        let mut hud_row = row().gap(4.0).h(20.0).center_y();
+        if let Some(info) = live_info.filter(|_| watched) {
+            hud_row = hud_row.child(tile_badge(text(info), Color::BLACK).opacity(if hud { 1.0 } else { 0.0 }));
+        }
+        hud_row = hud_row.child(tile_badge(text("LIVE"), rgb(220, 38, 38)).role("img").label(crate::i18n::t("Screen sharing")));
+        overlays.push(el().pin(None, Some(6.0), Some(6.0), None).child(hud_row).inert().key("stream-info"));
+    }
+    // `focusOverlay`: a members-row tile of the focused participant.
+    if pres == Pres::FocusSecondary && st.call.pinned(v.focus) == Some(t.user) {
+        overlays.push(full().radius(r).fill(rgba(0, 0, 0, 0.46)).child(el().pin(None, Some(8.0), Some(8.0), None).child(icon(&icons::EYE_FILL, 24.0).color(Color::WHITE))).inert().key("focused"));
+    }
+    // `tileControlPill` with the spectator count (persistent while anyone watches).
+    let watchers = if t.screen && pres == Pres::Grid { super::voice::spectators_for(store, guild, t.user).len() } else { 0 };
+    if watchers > 0 {
+        let ph = if n280 { 22.0 } else { 24.0 };
+        let slot = row().h_full().min_w(ph).px(6.0).gap(3.0).center().child(icon(&icons::EYE_FILL, 14.0).color(Color::WHITE)).child(text(watchers.to_string()).font(font(10.0, 600.0).lh(12.0)).color(Color::WHITE));
+        let pill = row()
+            .pin(Some(inset), Some(inset), None, None)
+            .h(ph)
+            .radius(if n280 { 7.0 } else { 8.0 })
+            .clip_rounded(if n280 { 7.0 } else { 8.0 })
+            .fill(Color::BLACK)
+            .border(1.0, hud_border())
+            .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.24), inset: false })
+            .role("img")
+            .label(crate::i18n::tf("{length, plural, one {# watching} other {# watching}}", &[("length", &watchers.to_string())]))
+            .child(slot);
+        overlays.push(pill.key("viewers"));
+    }
+    // `lkParticipantMetadata`: the ⋯ menu, mute / deafen and device icons, the name and the
+    // connection ID, narrowing with the tile.
+    let item_font: f32 = if n280 { 11.0 } else { 12.0 };
+    let mut pill = row()
+        .px(if n280 { 5.0 } else { 6.0 })
+        .py(if n280 { 2.0 } else { 3.0 })
+        .center_y()
+        .radius(if n280 { 8.0 } else { 9.0 })
+        .fill(Color::BLACK)
+        .border(1.0, hud_border())
+        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.18), inset: false })
+        .max_w((w - 12.0).max(0.0))
+        .min_w(0.0);
+    if pres == Pres::Grid && t.user != me && w > 220.0 {
+        let user = t.user;
+        let bk = format!("tile-menu-{}-{}", t.user, t.screen as u8);
+        let anchor = bk.clone();
+        let size = if n280 { 18.0 } else { 20.0 };
+        pill = pill.child(
+            row()
+                .key(bk)
+                .size(size, size)
+                .ml(-3.0)
+                .mr(if n280 { 2.0 } else { 3.0 })
+                .my(-2.0)
+                .center()
+                .radius(7.0)
                 .hover(rgb(0x11, 0x11, 0x11))
+                .hover_group()
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
-                .label(crate::i18n::t("Watch stream"))
-                .child(icon(&icons::MONITOR_PLAY_FILL, 16.0).color(Color::WHITE))
-                .child(text(crate::i18n::t("Watch stream")).font(font(13.0, 600.0).lh(15.6)).color(Color::WHITE))
+                .label(crate::i18n::tf("Participant options for {participantDisplayName}", &[("participantDisplayName", &name)]))
+                .child(icon(&icons::DOTS_THREE_BOLD, 15.0).color(rgba(255, 255, 255, 0.78)).group_color(Color::WHITE))
                 .on_press(move |s: &mut S| {
+                    // `handleMenuButtonKeyDown`: the menu opens from the button's centre.
+                    let at = rune::memo::window_layout(&anchor).map_or([0.0, 0.0], |[x, y, w, h]| [x + w / 2.0, y + h / 2.0]);
                     let sh = acc(s);
-                    sh.voice.watching = Some(u);
-                    sh.intents.push(Intent::Watch(Some(u)));
-                });
-            body = body.fill(rgba(0, 0, 0, 0.78)).child(row().w_full().h_full().center().child(watch));
-        }
-        _ => {
-            // `lkParticipantPlaceholder` on `getPlaceholderAvatarColor` dimmed by 12%, and
-            // `.tileAvatarRing`'s size from the tile's (last laid out) size.
-            let _ = big;
-            let [w, h] = rune::memo::layout_size(&format!("tile-{}-0", t.user)).unwrap_or([300.0, 170.0]);
-            let size = (w.min(h) * 0.32).clamp(80.0, 192.0).min(w - 24.0).min(h - 24.0).max(44.0);
-            let mut face = el().size(size, size).radius(999.0).child(avatar(store, st, t.user, size, None, surface_3(), p));
-            if speaking {
-                face = face.child(el().pin(Some(-3.0), Some(-3.0), Some(-3.0), Some(-3.0)).radius(999.0).border(3.0, p.status_online));
-            }
-            body = body.fill(placeholder_color(store, t.user)).child(row().w_full().h_full().center().child(face));
-        }
+                    sh.popups.open_at(TILE_MENU, at);
+                    sh.target = Some(super::Target::User { user, guild, dm: None });
+                }),
+        );
     }
-    // `lkParticipantMetadata`: the name pill with the mute / deafen icons.
-    let glyph = |i: &'static rune::Icon, c: Color| icon(i, 14.0).color(c);
-    let mut pill = row()
-        .px(6.0)
-        .py(3.0)
-        .gap(3.0)
-        .center_y()
-        .radius(9.0)
-        .fill(rgb(0, 0, 0))
-        .border(1.0, hud_border())
-        .max_w(260.0)
-        .min_w(0.0);
-    if !t.screen {
-        if vs.mute || vs.self_mute {
-            pill = pill.child(glyph(&icons::MICROPHONE_SLASH_FILL, if vs.mute { danger() } else { rgba(255, 255, 255, 0.72) }).key("mute"));
-        }
-        if vs.deaf || vs.self_deaf {
-            pill = pill.child(glyph(&icons::SPEAKER_SLASH_FILL, if vs.deaf { danger() } else { rgba(255, 255, 255, 0.72) }).key("deaf"));
-        }
-        if st.voice.local_mutes.contains(&t.user) {
-            pill = pill.child(glyph(&icons::SPEAKER_X_FILL, danger()).key("local-mute"));
-        }
-    } else {
-        pill = pill.child(glyph(&icons::MONITOR_PLAY_FILL, Color::WHITE));
+    let mut icons_row = row().gap(if w <= 220.0 { 4.0 } else { 6.0 }).center_y();
+    // `muteStatusClassName`: red for a moderator mute or no Speak permission, muted otherwise.
+    // shortcut: only our own Speak permission is known here; others show red for a server mute only.
+    let no_speak = t.user == me && !super::voice::can(store, v, Permissions::SPEAK);
+    if vs.mute || vs.self_mute || no_speak {
+        icons_row = icons_row.child(icon(&icons::MICROPHONE_SLASH_FILL, 14.0).color(if vs.mute || no_speak { p.status_danger } else { p.text_primary_muted }).key("mute"));
     }
-    let label = if t.screen { crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name.to_string())]) } else { name.clone() };
-    pill = pill.child(text(label).key("name").font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().shrink().ml(3.0));
+    if vs.deaf || vs.self_deaf {
+        icons_row = icons_row.child(icon(&icons::SPEAKER_SLASH_FILL, 14.0).color(if vs.deaf { p.status_danger } else { p.text_primary_muted }).key("deaf"));
+    }
+    icons_row = icons_row.child(icon(if vs.is_mobile { &icons::DEVICE_MOBILE } else { &icons::DESKTOP }, 14.0).color(Color::WHITE).key("device"));
+    pill = pill.child(icons_row);
+    let mut label = row().gap(3.0).center_y().min_w(0.0).shrink().max_w((34.0 * item_font * 0.55).min(w - 16.0).max(0.0));
+    if w > 170.0 {
+        let nf = if w <= 240.0 { 11.0 } else { 12.0 };
+        label = label.child(text(name.clone()).key("name").font(font(nf, 500.0).lh(nf * 1.2)).color(Color::WHITE).truncate().shrink().ml(3.0));
+    }
     if st.voice.settings.show_connection_ids
+        && w > 320.0
         && let Some(c) = &vs.connection_id
     {
-        pill = pill.child(text(format!(" · {c}")).key("conn").font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72)).truncate().shrink());
+        label = label.child(text(format!("({c})")).key("conn").font(font(11.0, 400.0).lh(13.2)).color(rgba(255, 255, 255, 0.72)).truncate().shrink());
     }
-    if st.call.layout == LayoutMode::Focus && st.voice.focus == Some(t.user) {
-        // `pinnedParticipant`: the pin glyph marks the focused tile.
-        pill = pill.child(glyph(&icons::PUSH_PIN_FILL, rgba(255, 255, 255, 0.9)).key("pin"));
+    pill = pill.child(label);
+    let mut meta = el().pin(Some(inset), None, None, Some(inset)).child(pill).key("meta");
+    // `.lkParticipantMetadata` fades with the HUD; focus tiles' pills never take the pointer.
+    if !hud {
+        meta = meta.opacity(0.0).inert();
+    } else if pres != Pres::Grid {
+        meta = meta.inert();
     }
-    let key = format!("tile-{}-{}", t.user, t.screen as u8);
+    let radius = match pres {
+        Pres::FocusMain => 0.0,
+        Pres::FocusSecondary => 8.0,
+        Pres::Grid => 12.0,
+    };
     let mut outer = el()
-        .key(key.clone())
+        .key(key)
         .w_full()
         .h_full()
-        .radius(12.0)
-        .fill(surface_2())
+        .radius(radius)
+        .clip_rounded(radius)
+        .fill(if pres == Pres::FocusMain { Color::TRANSPARENT } else if t.screen { surface_0() } else { surface_2() })
         .child(body)
-        .child(el().pin(Some(6.0), None, None, Some(6.0)).child(pill))
+        .children(overlays)
+        .child(meta)
         .role("group")
         .label(name.clone())
         .cursor(rune::Cursor::Pointer);
-    if speaking {
-        // `[data-speaking='true']::after`: a 3.5px status-online border inside the tile.
-        outer = outer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).border(3.5, p.status_online));
-    }
-    let can_watch = t.screen && preview.is_some();
-    // `useStreamPreview`: hovering the tile subscribes its stream for the picture (`previewEnabled`).
-    if t.screen && t.user != me {
-        let u = t.user;
-        outer = outer
-            .hover_delays(std::time::Duration::from_millis(180), std::time::Duration::from_millis(120))
-            .on_hover_change(move |s: &mut S, inside, _| {
-                let sh = acc(s);
-                if inside {
-                    sh.voice.preview_user = Some(u);
-                } else if sh.voice.preview_user == Some(u) {
-                    sh.voice.preview_user = None;
-                }
-            });
+    // `[data-speaking='true']::after`: 3.5px inside a tile showing camera video, never on the
+    // pinned tile; an avatar tile has only its ring.
+    if speaking && has_video && pres != Pres::FocusMain {
+        outer = outer.child(full().radius(dim::RADIUS_LG).border(3.5, p.status_online).inert());
     }
     // `handleTileClick`: clicking the pinned tile unpins it (back to the grid); any other tile
-    // pins it, and an unwatched stream also starts watching (`handleWatch`).
-    let was_focused = st.call.pinned(st.voice.focus) == Some(t.user);
+    // pins it.
+    let was_focused = st.call.pinned(v.focus) == Some(t.user);
     let user = t.user;
     outer
         .on_press(move |s: &mut S| {
             let sh = acc(s);
-            if was_focused {
-                sh.voice.focus = None;
-                sh.call.pin(None);
-                return;
-            }
-            sh.voice.focus = Some(user);
-            sh.call.pin(Some(user));
-            if can_watch {
-                sh.voice.watching = Some(user);
-                sh.intents.push(Intent::Watch(Some(user)));
-            }
+            let next = (!was_focused).then_some(user);
+            sh.voice.focus = next;
+            sh.call.pin(next);
         })
         .participant_menu(user, guild, acc)
+}
+
+/// `.pillOnTile` / `.liveBadgeOnVoiceTile`: a 20px HUD badge (10/600 white).
+fn tile_badge(label: El, fill: Color) -> El {
+    row()
+        .h(20.0)
+        .px(6.0)
+        .center_y()
+        .radius(7.0)
+        .fill(fill)
+        .border(1.0, hud_border())
+        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.24), inset: false })
+        .child(label.font(font(10.0, 600.0).lh(12.0)).color(Color::WHITE))
+}
+
+/// `WatchStreamOverlay`: the primary Watch stream button on `--voice-overlay-strong`; narrow tiles
+/// shrink it, then drop its label.
+fn watch_overlay<S: 'static>(user: Snowflake, w: f32, p: &Palette, acc: ShellAccess<S>) -> El {
+    // shortcut: no "Add stream" button; reflux watches one stream at a time. Add it with
+    // multi-stream watching.
+    let small = w <= 230.0;
+    let mut button = row()
+        .h(if small { 30.0 } else { 32.0 })
+        .gap(6.0)
+        .center()
+        .radius(8.0)
+        .fill(p.button_primary_fill)
+        .hover(p.button_primary_active_fill)
+        .shadow(1.0, 2.0, rgba(0, 0, 0, 0.1))
+        .cursor(rune::Cursor::Pointer)
+        .role("button")
+        .label(t("Watch stream"))
+        .child(icon(&icons::MONITOR_PLAY_FILL, 18.0).color(p.button_primary_text));
+    if w <= 190.0 {
+        button = button.w(32.0);
+    } else {
+        let f = if small { 12.0 } else { 13.0 };
+        button = button.px(if small { 10.0 } else { 12.0 }).child(text(t("Watch stream")).font(font(f, 600.0).lh(f * 1.2)).color(p.button_primary_text).truncate());
+    }
+    el()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .fill(rgba(0, 0, 0, 0.78))
+        .center()
+        .child(button.key("watch-stream").on_press(move |s: &mut S| {
+            // `handleWatch`: watch and pin the share.
+            let sh = acc(s);
+            sh.voice.watching = Some(user);
+            sh.intents.push(Intent::Watch(Some(user)));
+            sh.voice.focus = Some(user);
+            sh.call.pin(Some(user));
+        }))
+}
+
+/// `FeedHiddenOverlay`: "Camera hidden" and a secondary "Show camera" button.
+fn feed_hidden<S: 'static>(p: &Palette, acc: ShellAccess<S>) -> El {
+    col()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .center()
+        .gap(12.0)
+        .fill(p.background_tertiary)
+        .child(text(t("Camera hidden")).font(font(14.0, 500.0).lh(18.0)).color(p.text_secondary).align(rune::Align::Center).px(16.0))
+        .child(
+            row()
+                .key("show-camera")
+                .px(16.0)
+                .py(8.0)
+                .gap(8.0)
+                .center()
+                .radius(8.0)
+                .fill(p.form_surface_background)
+                .border(1.0, p.background_modifier_accent)
+                .hover(crate::ui::mix(p.form_surface_background, p.text_primary, 94.0))
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Show camera"))
+                .child(icon(&icons::MONITOR_PLAY_FILL, 18.0).color(p.button_secondary_text))
+                .child(text(t("Show camera")).font(font(14.0, 600.0).lh(18.0)).color(p.button_secondary_text))
+                .on_press(move |s: &mut S| acc(s).call.show_own_camera = true),
+        )
 }
 
 /// `VoiceParticipantContextMenu` on right-click: the tile menu ([`tile_menu`]) for whoever a
@@ -475,75 +684,151 @@ fn slot(content: El, key: &'static str) -> El {
     row().key(key).w_full().grow(1.0).min_w(0.0).min_h(0.0).center().child(el().size(tw, tw * 9.0 / 16.0).child(content))
 }
 
-/// The tile area: a near-square grid, or one focused/pinned tile over a strip of the rest.
-/// Tiles without video show the avatar on its colour, as Fluxer's full call view does.
-fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, p: &Palette, acc: ShellAccess<S>) -> El {
-    let me = store.my_id();
-    let people = visible_people(people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
-    let people = order_participants(&people, &st.voice.speaking, st.call.prioritize_speakers);
-    let all = tiles(&people);
-    let state = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
-    let make = |t: Tile, big: bool| state(t.user).map(|vs| tile(store, st, guild, t, vs, big, p, acc)).unwrap_or_else(el);
-    let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
-    let [gw, gh] = rune::memo::layout_size(grid_key).unwrap_or([960.0, 540.0]);
+/// `--voice-focus-control-clearance`: the focus layout keeps this much clear for the control bar.
+const FOCUS_CLEARANCE: f32 = 72.0;
+
+/// The focus layout's tiles, the members row and its toggle (`VoiceCallLayoutContent`).
+struct FocusInfo {
+    /// The members row shows (`focusLayoutContentFullscreenMembersVisible`).
+    members_row: bool,
+    /// The focused tile is a screen share (`isFocusedOnScreenShare`).
+    screen: Option<Snowflake>,
+}
+
+/// The grid's area. The full view's comes from the view's size (between the chrome, less the
+/// 48px and 1rem paddings), so it is known while the focus layout shows instead of the grid.
+fn grid_area(compact: bool) -> [f32; 2] {
+    if compact {
+        return rune::memo::layout_size("call-grid-compact").unwrap_or([960.0, 540.0]);
+    }
+    let chrome = dim::LAYOUT_HEADER_HEIGHT + rune::memo::layout_size("call-footer").map_or(78.0, |[_, h]| h) + 96.0 + 32.0;
+    rune::memo::layout_size("call-view").map_or([960.0, 540.0], |[w, h]| [w, (h - chrome).max(0.0)])
+}
+
+/// Whether the call view shows the focus layout and what it focuses, as `layout` decides.
+fn focus_of(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)], compact: bool) -> (Vec<Tile>, Option<Tile>) {
+    let all = call_tiles(st, store.my_id(), people);
+    let [gw, gh] = grid_area(compact);
     let packed = pack_grid(all.len(), gw, gh, compact);
     let focused = st.call.pinned(st.voice.focus).and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
     // `gridOverflow`: a grid that can't fit every tile at its minimum size shows focus instead.
     let focused = focused.or_else(|| (packed.visible < all.len()).then(|| all.first().copied()).flatten());
+    (all, focused)
+}
+
+/// The view-level facts the call view's chrome needs about its layout.
+fn focus_info(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)]) -> Option<FocusInfo> {
+    let (all, f) = focus_of(store, st, people, false);
+    let f = f?;
+    Some(FocusInfo { members_row: st.call.focus_members_row && all.len() > 1, screen: f.screen.then_some(f.user) })
+}
+
+/// The tile area: the packed grid, or one focused/pinned tile with a row of the rest.
+/// Tiles without video show the avatar on its colour, as Fluxer's full call view does.
+fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], compact: bool, p: &Palette, acc: ShellAccess<S>) -> El {
+    let (all, focused) = focus_of(store, st, people, compact);
+    let state = |u: Snowflake| people.iter().find(|(x, _)| *x == u).map(|(_, v)| *v);
+    let hud = compact || hud_visible(st);
+    let make = |t: Tile, pres: Pres| state(t.user).map(|vs| tile_in(store, st, guild, t, vs, pres, hud, p, acc)).unwrap_or_else(el);
+    let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
     if let Some(f) = focused {
-        let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
-        // `.focusLayoutMembersRow`'s height (`--voice-focus-members-row-height: 7.25rem`).
-        const ROW_H: f32 = 116.0;
-        let mut c = col().w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, true), if compact { "call-focus-compact" } else { "call-focus" }));
-        // `showMembersRow` needs `fillsCallArea` (focus and not compact): the compact view shows
-        // just the focused tile.
-        if !rest.is_empty() && !compact && st.call.focus_members_row {
-            // `.focusLayoutMembersRow`: 7.25rem high, 0.375rem padding, scrolls sideways when it
-            // overflows; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`), so the
-            // inner row is at least the viewport's last width.
-            let tile_h = ROW_H - 12.0;
-            let inner_w = rune::memo::layout_size("call-strip").map_or(0.0, |[w, _]| w);
-            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.iter().copied().map(|t| el().key(format!("s-{}-{}", t.user, t.screen as u8)).w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
-            c = c.child(row().key("call-strip").w_full().h(ROW_H).scroll_x().child(inner));
+        if compact {
+            // The compact view shows just the focused tile.
+            return col().w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
         }
-        // `focusMembersToggle`: the users pill under the focused tile that hides and shows the
-        // row (in fullscreen, hiding it leaves just the video).
-        if !rest.is_empty() && !compact {
-            let shown = st.call.focus_members_row;
-            let label = if shown { t("Hide members") } else { t("Show members") }.to_string();
-            let mut toggle = row()
-                .key("focus-members-toggle")
-                // The control bar sits below the call area, so clearing it needs no offset here.
-                .pin(None, None, None, Some(if shown { ROW_H + 8.0 } else { 0.0 }))
-                .h(32.0)
-                .px(12.0)
-                .gap(6.0)
-                .center_y()
-                .radius(999.0)
-                .fill(Color::BLACK)
-                .border(1.0, hud_border())
-                .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.24), inset: false })
-                .hover(rgb(17, 17, 17))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(label)
-                .child(icon(&icons::USERS_THREE_BOLD, 16.0).color(Color::WHITE))
-                .child(icon(if shown { &icons::CARET_DOWN_BOLD } else { &icons::CARET_UP_BOLD }, 16.0).color(Color::WHITE))
-                .on_press(move |s: &mut S| acc(s).call.focus_members_row = !shown);
-            // Part of the chrome (`--voice-hud-opacity`): it fades with the control bar.
-            if st.call.hud_until.is_some_and(|t| t <= Instant::now()) {
-                toggle = toggle.opacity(0.0).inert();
-            }
-            c = c.child(toggle);
-        }
-        return c;
+        return focus_layout(f, &all, st, &make, acc);
     }
-    // `VoiceGridLayout`: the packed columns, each tile the computed 16:9 size, rows centred.
+    // `VoiceGridLayout` in `.gridLayoutWrapper` (1rem above and below): the packed columns, each
+    // tile the computed 16:9 size, rows centred.
+    let [gw, gh] = grid_area(compact);
+    let packed = pack_grid(all.len(), gw, gh, compact);
     let mut grid = col().key(grid_key).w_full().h_full().min_w(0.0).min_h(0.0).gap(packed.gap).center();
     for chunk in all.chunks(packed.columns.max(1)) {
-        grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().key(format!("g-{}-{}", t.user, t.screen as u8)).size(packed.tile[0], packed.tile[1]).child(make(*t, false)))));
+        grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().key(format!("g-{}-{}", t.user, t.screen as u8)).size(packed.tile[0], packed.tile[1]).child(make(*t, Pres::Grid)))));
     }
-    grid
+    if compact { grid } else { col().w_full().h_full().min_w(0.0).min_h(0.0).py(16.0).child(grid) }
+}
+
+/// `focusLayoutContentFullscreen`: the focused tile as large a 16:9 box as fits above what the
+/// members row reserves, the row 72px up from the bottom (resizable by its divider), and the
+/// Show / Hide members toggle; the header and control bar float over it.
+fn focus_layout<S: 'static>(f: Tile, all: &[Tile], st: &ShellState, make: &dyn Fn(Tile, Pres) -> El, acc: ShellAccess<S>) -> El {
+    let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
+    let [aw, ah] = rune::memo::layout_size("call-focus").unwrap_or([960.0, 600.0]);
+    let show_row = !rest.is_empty() && st.call.focus_members_row;
+    // `--voice-focus-members-row-height`: the dragged height, else clamp(86px, 13cqh, 112px),
+    // kept within 64px..40cqh.
+    let max_h = (ah * 0.4).floor().max(64.0);
+    let row_h = st.call.members_row_h.unwrap_or((ah * 0.13).clamp(86.0, 112.0)).min(max_h).max(64.0);
+    let reserved = if show_row { FOCUS_CLEARANCE + row_h + 8.0 } else { 0.0 };
+    let tw = aw.min((ah - reserved).max(0.0) * 16.0 / 9.0);
+    let main = el().size(tw, tw * 9.0 / 16.0).fill(surface_0()).child(make(f, Pres::FocusMain));
+    let mut c = el().key("call-focus").w_full().h_full().child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(reserved)).center().child(main).key("main"));
+    if show_row {
+        // `.focusLayoutMembersRow`: 6px clamp(12px, 2vw, 24px) padding, scrolling sideways with no
+        // scrollbar; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`).
+        let vw = rune::memo::layout_size(super::BODY_KEY).map_or(1280.0, |[w, _]| w);
+        let pad = (vw * 0.02).clamp(12.0, 24.0);
+        let tile_h = row_h - 12.0;
+        let inner_w = rune::memo::layout_size("call-strip").map_or(0.0, |[w, _]| w) - pad * 2.0;
+        let inner = row().min_w(inner_w.max(0.0)).h_full().gap(8.0).center_y().justify_center().children(rest.iter().copied().map(|t| el().key(format!("s-{}-{}", t.user, t.screen as u8)).w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, Pres::FocusSecondary))));
+        c = c.child(row().key("call-strip").pin(Some(0.0), None, Some(0.0), Some(FOCUS_CLEARANCE)).h(row_h).py(6.0).px(pad).scroll_x().child(inner));
+        // `FocusMembersRowDivider`: a 16px row-resize strip on the row's top edge; its 2px line
+        // shows at .5 on hover and .8 while dragging. Dragging up grows the row (64px..40%).
+        let dragging = st.call.members_dragging;
+        let line = el().pin(Some(pad), Some(7.0), Some(pad), None).h(2.0).radius(1.0).fill(Color::WHITE);
+        let line = if dragging { line.opacity(0.8) } else { line.group_opacity(0.0, 0.5) };
+        c = c.child(
+            el()
+                .key("members-divider")
+                .pin(Some(0.0), None, Some(0.0), Some(FOCUS_CLEARANCE + row_h - 4.0))
+                .h(16.0)
+                .cursor(rune::Cursor::ResizeRow)
+                .role("separator")
+                .label(t("Resize members row"))
+                .hover_group()
+                .child(line)
+                .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+                    let sh = acc(s);
+                    if d.phase == rune::Phase::Down {
+                        d.data = row_h;
+                    }
+                    sh.call.members_dragging = d.phase != rune::Phase::Up;
+                    sh.call.members_row_h = Some((d.data - d.dy).round().min(max_h).max(64.0));
+                }),
+        );
+    }
+    // `focusMembersToggle`: centred, 8px above the clearance or above the row.
+    if !rest.is_empty() {
+        let shown = st.call.focus_members_row;
+        let label = if shown { t("Hide members") } else { t("Show members") }.to_string();
+        let [w, _] = rune::memo::layout_size("focus-members-toggle").unwrap_or([66.0, 32.0]);
+        let bottom = if show_row { FOCUS_CLEARANCE + row_h + 8.0 } else { FOCUS_CLEARANCE + 8.0 };
+        let mut toggle = row()
+            .key("focus-members-toggle")
+            .pin(Some(((aw - w) / 2.0).max(0.0)), None, None, Some(bottom))
+            .h(32.0)
+            .px(12.0)
+            .gap(6.0)
+            .center_y()
+            .radius(999.0)
+            .fill(Color::BLACK)
+            .border(1.0, hud_border())
+            .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 6.0, spread: 0.0, color: rgba(0, 0, 0, 0.24), inset: false })
+            .hover(rgb(17, 17, 17))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(label)
+            .child(icon(&icons::USERS_BOLD, 16.0).color(Color::WHITE))
+            .child(icon(if shown { &icons::CARET_DOWN_BOLD } else { &icons::CARET_UP_BOLD }, 16.0).color(Color::WHITE))
+            .on_press(move |s: &mut S| acc(s).call.focus_members_row = !shown);
+        // Part of the chrome (`--voice-hud-opacity`): it fades with the control bar.
+        if !hud_visible(st) {
+            toggle = toggle.opacity(0.0).inert();
+        }
+        c = c.child(toggle);
+    }
+    c
 }
 
 /// `resolveVoiceGridPackedLayoutMetrics`'s result.
@@ -714,101 +999,127 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
     bar
 }
 
-/// `ChannelHeaderIcon`: a 32px header button.
-fn header_button<S: 'static>(i: &'static rune::Icon, label: &str, p: &Palette, _acc: ShellAccess<S>, on: impl Fn(&mut S) + 'static) -> El {
-    let _ = p;
+/// `.voiceHeaderIconButton` / `.voiceHeaderBackButton`: 34px, radius 13, black with a faint
+/// border and a 20px icon at .84; hover (or selected) is #111 with a brighter border and white.
+fn header_button<S: 'static>(i: &'static rune::Icon, label: &str, selected: bool, on: impl Fn(&mut S) + 'static) -> El {
+    let (bg, border, fg) = if selected { (rgb(0x11, 0x11, 0x11), rgba(255, 255, 255, 0.14), Color::WHITE) } else { (Color::BLACK, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.84)) };
     row()
-        .size(32.0, 32.0)
+        .size(34.0, 34.0)
         .center()
-        .radius(8.0)
-        .hover(rgba(255, 255, 255, 0.12))
+        .radius(13.0)
+        .fill(bg)
+        .border(1.0, border)
+        .hover(rgb(0x11, 0x11, 0x11))
+        .hover_group()
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(label.to_string())
-        .child(icon(i, 20.0).color(rgba(255, 255, 255, 0.9)))
+        .child(el().pin(Some(-1.0), Some(-1.0), Some(-1.0), Some(-1.0)).radius(13.0).border(1.0, rgba(255, 255, 255, 0.14)).group_opacity(0.0, 1.0))
+        .child(icon(i, 20.0).color(fg).group_color(Color::WHITE))
         .on_press(move |s: &mut S| on(s))
 }
 
-/// `CompactCallHeightToggleButton`'s chat pill: opens the full call view (chat hidden) and
-/// carries the unread badge. The full call view uses the same pill to go back to the list.
-pub fn chat_pill<S: 'static>(store: &Store, _st: &ShellState, channel: Snowflake, in_call: bool, p: &Palette, acc: ShellAccess<S>) -> El {
-    let unread = unread_messages(store, channel);
-    let label = if in_call {
-        if unread > 0 {
-            crate::i18n::tf("Show chat with {count, plural, one {# unread message} other {# unread messages}}", &[("count", &unread.to_string())])
-        } else {
-            t("Show chat").to_string()
-        }
-    } else {
-        t("Expand call view").to_string()
-    };
-    let mut pill = row()
-        .key("voice-chat-toggle")
-        .h(32.0)
-        .px(10.0)
-        .gap(6.0)
-        .center_y()
-        .radius(8.0)
-        .hover(rgba(255, 255, 255, 0.12))
+/// `.fullscreenButtonWrap button`: 42px, radius 14, black, a 20.8px white icon; hover #111.
+fn corner_button<S: 'static>(i: &'static rune::Icon, label: &str, on: impl Fn(&mut S) + 'static) -> El {
+    row()
+        .size(42.0, 42.0)
+        .center()
+        .radius(14.0)
+        .fill(Color::BLACK)
+        .border(1.0, rgba(255, 255, 255, 0.12))
+        .shadow(3.0, 10.0, rgba(0, 0, 0, 0.26))
+        .hover(rgb(0x11, 0x11, 0x11))
+        .hover_group()
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .label(label)
-        .child(icon(&icons::CHAT_CIRCLE_TEXT_FILL, 18.0).color(rgba(255, 255, 255, 0.9)));
-    if unread > 0 {
-        pill = pill.child(
-            row()
-                .min_w(16.0)
-                .h(16.0)
-                .px(3.0)
-                .center()
-                .radius(8.0)
-                .fill(danger())
-                .child(text(unread_badge(unread)).font(font(10.0, 700.0).lh(12.0)).color(Color::WHITE)),
-        );
-    }
-    let _ = p;
-    pill.on_press(move |s: &mut S| {
-        let sh = acc(s);
-        sh.voice.call_view = !in_call;
-    })
+        .label(label.to_string())
+        .child(el().pin(Some(-1.0), Some(-1.0), Some(-1.0), Some(-1.0)).radius(14.0).border(1.0, rgba(255, 255, 255, 0.2)).group_opacity(0.0, 1.0))
+        .child(icon(i, 20.8).color(Color::WHITE))
+        .on_press(move |s: &mut S| on(s))
 }
 
-/// `VoiceParticipantSpeakingAvatarStack`: up to five avatars, the rest behind a `+N` popout.
-fn participant_stack<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], p: &Palette, acc: ShellAccess<S>) -> El {
-    let mut stack = row().gap(2.0).center_y().role("group").label(t("Voice participants"));
-    for (u, _) in people.iter().take(5) {
-        let user = *u;
-        let speaking = st.voice.speaking.contains(u);
-        let mut face = el().size(24.0, 24.0).radius(12.0).clip_rounded(12.0).child(avatar(store, st, user, 24.0, None, surface_3(), p));
-        if speaking {
-            face = face.border(2.0, p.status_online);
+/// `.connectionStatusContainer`: Connecting / Reconnecting in the warning colour on black, with
+/// its dot pulsing (only while it shows).
+fn connection_pill(st: &ShellState, p: &Palette) -> Option<El> {
+    let label = if st.voice.reconnecting {
+        t("Reconnecting...")
+    } else if !st.voice.connected {
+        t("Connecting...")
+    } else {
+        return None;
+    };
+    let c = p.status_warning;
+    Some(
+        row()
+            .px(12.0)
+            .py(4.0)
+            .gap(8.0)
+            .center_y()
+            .radius(999.0)
+            .fill(Color::BLACK)
+            .border(1.0, crate::ui::mix(c, Color::TRANSPARENT, 18.0))
+            .role("status")
+            .child(el().size(8.0, 8.0).radius(999.0).fill(c).looping(rune::LoopSpec::opacity(2.0, 0.0, 0.5, 1.0)))
+            .child(text(label).font(font(12.0, 600.0).lh(16.0)).color(c)),
+    )
+}
+
+/// `StreamFocusHeaderInfo`: the streamer's 20px avatar, "{name}'s screen", the stream's
+/// resolution pill (at .92, no LIVE) once known, and up to five spectators.
+fn stream_focus_info<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+    let name = store.display_name(guild, user);
+    let mut streamer = row()
+        .h_full()
+        .gap(6.0)
+        .center_y()
+        .min_w(0.0)
+        .shrink()
+        .child(avatar(store, st, user, 20.0, None, Color::BLACK, p))
+        .child(text(crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name)])).font(font(14.0, 500.0).lh(20.0)).color(Color::WHITE).truncate().shrink());
+    if st.voice.watching == Some(user)
+        && let Some(info) = super::voice::stream_info(&st.voice.stream, st.voice.watch_fps)
+    {
+        // `StreamInfoPill`'s default tone, `.streamFocusTrackInfo { transform: scale(0.92) }`.
+        let k = 0.92;
+        streamer = streamer.child(row().px(8.0 * k).py(2.0 * k).radius(999.0).fill(rgb(0x2a, 0x2a, 0x2d)).child(text(info).font(font(11.0 * k, 500.0).lh(13.2 * k)).color(p.text_secondary)).key("track-info"));
+    }
+    let mut info = row().h(32.0).gap(8.0).center_y().min_w(0.0).shrink().child(streamer);
+    let watchers = super::voice::spectators_for(store, guild, user);
+    if !watchers.is_empty() {
+        // `AvatarStack` (20px, at most 5) opening `StreamSpectatorsPopout`.
+        let mut stack = row().h(32.0).center_y().cursor(rune::Cursor::Pointer).role("button").label(crate::i18n::tf("Spectators - {count}", &[("count", &watchers.len().to_string())]));
+        for (i, w) in watchers.iter().take(5).enumerate() {
+            let face = row().padding(2.0).radius(12.0).fill(Color::BLACK).child(avatar(store, st, w.user, 20.0, None, Color::BLACK, p));
+            stack = stack.child(if i == 0 { face } else { face.ml(-6.0) }.key(format!("w-{}-{}", w.user, w.connection)));
         }
-        stack = stack.child(face.key(format!("p-{user}")).cursor(rune::Cursor::Pointer).role("button").label(store.display_name(guild, user)).on_press(move |s: &mut S| {
-            let sh = acc(s);
-            sh.voice.focus = Some(user);
-            sh.call.pin(Some(user));
-        }).participant_menu(user, guild, acc));
+        if st.voice.watching == Some(user) {
+            stack = stack.key(super::voice::SPECTATORS_BTN).on_press(move |s: &mut S| acc(s).popups.toggle(super::voice::SPECTATORS_BTN));
+        }
+        info = info.child(stack);
     }
-    if people.len() > 5 {
-        let extra = people.len() - 5;
-        stack = stack.child(
-            row()
-                .key("more")
-                .min_w(24.0)
-                .h(24.0)
-                .px(5.0)
-                .center()
-                .radius(12.0)
-                .fill(rgba(255, 255, 255, 0.12))
-                .hover(rgba(255, 255, 255, 0.2))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(crate::i18n::tf("Show all {count} participants", &[("count", &people.len().to_string())]))
-                .child(text(format!("+{extra}")).font(font(11.0, 700.0).lh(14.0)).color(Color::WHITE))
-                .on_press(move |s: &mut S| acc(s).popups.toggle(PARTICIPANTS)),
-        );
+    info
+}
+
+/// `audioAvatarFallback` + `VoiceParticipantWrappedAvatarList`: with no tile to show, the
+/// participants' avatars wrap in the middle (72px, smaller as more join), 12px apart.
+fn avatar_fallback<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, people: &[(Snowflake, &VoiceState)], p: &Palette, acc: ShellAccess<S>) -> El {
+    let size = match people.len() {
+        n if n >= 12 => 50.0,
+        n if n >= 8 => 56.0,
+        n if n >= 5 => 64.0,
+        _ => 72.0,
+    };
+    let vw = rune::memo::layout_size(super::BODY_KEY).map_or(1280.0, |[w, _]| w);
+    let mut list = row().w_full().max_w(896.0).flex_wrap().justify_center().items_center().gaps(12.0, 0.0);
+    for (u, vs) in people {
+        let user = *u;
+        let face = super::voice::voice_avatar(store, st, user, size, st.voice.speaking.contains(&user), vs.self_mute, vs.self_deaf, p.background_tertiary, p)
+            .role("img")
+            .label(store.display_name(guild, user))
+            .participant_menu(user, guild, acc);
+        list = list.child(row().w(size + 12.0).h(size).center().child(face).key(format!("a-{user}")));
     }
-    stack
+    row().key("audio-avatars").w_full().h_full().center().px((vw * 0.06).clamp(16.0, 64.0)).child(list)
 }
 
 /// `VoiceRegionTeleportOverlay`: while a call moves to another region.
@@ -834,91 +1145,107 @@ pub fn teleport_overlay(p: &Palette) -> El {
         )
 }
 
-/// `VoiceCallView` for the connected channel, in place of the chat column.
+/// `VoiceCallView` for the connected channel, in place of the chat column: the tile area on
+/// black, the header and control bar over gradients at its edges (floating over the tiles in the
+/// focus layout), and the pop-out / fullscreen corner.
 pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Option<El> {
     let (guild, channel) = st.voice.channel?;
     let people = participants(store, guild, channel);
     let name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
-    let hud_visible = st.call.hud_until.is_none_or(|t| t > Instant::now());
-    let mut header = row()
-        .w_full()
-        .h(dim::LAYOUT_HEADER_HEIGHT)
-        .px(dim::SPACING_4)
-        .gap(dim::SPACING_2)
-        .center_y()
-        .child(header_button(&icons::LIST_BOLD, t("Back to voice channel"), p, acc, move |s: &mut S| acc(s).voice.call_view = false))
-        .child(icon(&icons::SPEAKER_HIGH_FILL, 20.0).color(rgba(255, 255, 255, 0.72)))
-        .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(Color::WHITE).truncate().shrink());
-    if st.voice.encrypted {
-        header = header.child(e2ee_badge().key("e2ee"));
+    let hud = hud_visible(st);
+    let focus = focus_info(store, st, &people);
+    let header_h = dim::LAYOUT_HEADER_HEIGHT;
+    let footer_h = rune::memo::layout_size("call-footer").map_or(78.0, |[_, h]| h);
+    let vw = rune::memo::layout_size(super::BODY_KEY).map_or(1280.0, |[w, _]| w);
+    // `--voice-header-gradient` / `--voice-footer-gradient`, running 2.5rem past the chrome.
+    let stops = [(0.0, rgba(0, 0, 0, 0.84)), (0.38, rgba(0, 0, 0, 0.58)), (0.7, rgba(0, 0, 0, 0.24)), (1.0, rgba(0, 0, 0, 0.0))];
+    let mut left = row().grow(1.0).min_w(0.0).center_y();
+    // `.backButtonDesktop` hides from 768px up.
+    if vw < 768.0 {
+        left = left.child(header_button(&icons::LIST_BOLD, t("Back to voice channel"), false, move |s: &mut S| acc(s).voice.call_view = false).mr(dim::SPACING_2).key("back"));
     }
-    let mut right = row().gap(4.0).center_y();
-    // `StreamFocusHeaderInfo`: the focused tile is the watched stream.
-    if st.voice.watching.is_some() && st.call.pinned(st.voice.focus) == st.voice.watching {
-        right = right.child(super::voice::stream_controls(store, st, p, acc).key("stream-controls"));
+    left = left.child(icon(&icons::SPEAKER_HIGH_FILL, 24.0).color(Color::WHITE)).child(text(name).font(font(16.0, 500.0).lh(24.0)).color(Color::WHITE).truncate().shrink().ml(dim::SPACING_3));
+    let mut right = row().gap(dim::SPACING_2).center_y().min_w(0.0).shrink();
+    if let Some(user) = focus.as_ref().and_then(|f| f.screen) {
+        // `.voiceCallHeaderSupplement`: at most min(50%, 26rem) of the header.
+        let half = rune::memo::layout_size("call-view").map_or(640.0, |[w, _]| w / 2.0);
+        right = right.child(stream_focus_info(store, st, guild, user, p, acc).max_w(half.min(416.0)).key("stream-focus"));
     }
-    if !people.is_empty() {
-        right = right.child(participant_stack(store, st, guild, &people, p, acc).key("stack"));
+    // shortcut: reflux keeps favorites for community channels only, so a DM call has no star.
+    if let Some(g) = guild.filter(|_| crate::look::with(|l| l.show_favorites)) {
+        let fav = crate::nav::favorites::is_favorite(st, channel);
+        right = right.child(header_button(if fav { &icons::STAR_FILL } else { &icons::STAR_BOLD }, if fav { t("Remove from favorites") } else { t("Add to favorites") }, fav, move |s: &mut S| crate::nav::favorites::toggle(acc(s), g, channel)).key("favorite"));
     }
-    right = right
+    if let Some(pill) = connection_pill(st, p) {
+        right = right.child(pill.key("connection"));
+    }
+    right = right.child(header_button(&icons::CHART_BAR_FILL, t("Connection stats"), st.popups.is_open(DETAILS), move |s: &mut S| acc(s).popups.toggle(DETAILS)).key(DETAILS));
+    let inbox_open = st.social.inbox_open;
+    right = right.child(header_button(&crate::social::INBOX_ICON, t("Inbox"), inbox_open, move |s: &mut S| crate::social::toggle_inbox(acc(s))).key(crate::social::INBOX));
+    let header = el()
+        .key("call-header")
+        .pin(Some(0.0), Some(0.0), Some(0.0), None)
+        .h(header_h)
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(-40.0)).linear_gradient(std::f32::consts::PI, stops).inert())
+        .child(row().w_full().h_full().px(dim::SPACING_4).gap(dim::SPACING_4).center_y().child(left).child(right.key("right")));
+    let footer = el()
+        .key("call-footer")
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .child(el().pin(Some(0.0), Some(-40.0), Some(0.0), Some(0.0)).linear_gradient(0.0, stops).inert())
+        .child(row().w_full().px(24.0).pt(8.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc)));
+    // `VoiceCallCornerControls`: the focused stream's volume, pop out and fullscreen.
+    let mut corner = row().pin(None, None, Some((vw * 0.02).clamp(16.0, 32.0)), Some(12.0)).gap(dim::SPACING_2).center_y();
+    if let Some(user) = focus.as_ref().and_then(|f| f.screen).filter(|u| st.voice.watching == Some(*u)) {
+        // shortcut: `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
+        let muted = st.voice.settings.stream_mutes.contains(&user.0);
+        corner = corner.child(
+            corner_button(if muted { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if muted { t("Unmute stream") } else { t("Mute stream") }, move |s: &mut S| {
+                let sh = acc(s);
+                if !sh.voice.settings.stream_mutes.remove(&user.0) {
+                    sh.voice.settings.stream_mutes.insert(user.0);
+                }
+                sh.intents.push(Intent::Voice(Op::Settings));
+            })
+            .key("stream-volume"),
+        );
+    }
+    corner = corner
+        .child(corner_button(&icons::ARROW_SQUARE_OUT_BOLD, t("Pop out call"), op(acc, Op::PopOut { user: None, screen: false, pip: false })).key("popout"))
         .child(
-            row()
-                .key(PARTICIPANTS)
-                .h(32.0)
-                .px(6.0)
-                .gap(4.0)
-                .center_y()
-                .radius(8.0)
-                .hover(rgba(255, 255, 255, 0.12))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(t("Voice participants"))
-                .child(icon(&icons::USERS_FILL, 18.0).color(rgba(255, 255, 255, 0.9)))
-                .child(text(people.len().to_string()).font(font(12.0, 600.0).lh(16.0)).color(rgba(255, 255, 255, 0.9)))
-                .on_press(move |s: &mut S| acc(s).popups.toggle(PARTICIPANTS)),
-        )
-        .child(
-            row()
-                .key(DETAILS)
-                .size(32.0, 32.0)
-                .center()
-                .radius(8.0)
-                .hover(rgba(255, 255, 255, 0.12))
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .label(t("Connection stats"))
-                .child(icon(&icons::CHART_BAR_FILL, 20.0).color(if st.popups.is_open(DETAILS) { success() } else { rgba(255, 255, 255, 0.9) }))
-                .on_press(move |s: &mut S| acc(s).popups.toggle(DETAILS)),
-        )
-        .child(header_button(if st.call.app_fullscreen { &icons::CORNERS_IN_BOLD } else { &icons::CORNERS_OUT_BOLD }, if st.call.app_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, p, acc, move |s: &mut S| {
-            let sh = acc(s);
-            if sh.call.app_fullscreen { exit_fullscreen(sh) } else { sh.call.app_fullscreen = true }
-        }).key("fullscreen"))
-        .child(chat_pill(store, st, channel, true, p, acc));
-    header = header.child(el().key("spacer").grow(1.0)).child(right.key("right"));
-    let body = if st.voice.connected {
-        layout(store, st, guild, &people, false, p, acc)
-    } else {
-        row().key("connecting").w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
-    };
-    let mut body = body;
+            corner_button(if st.call.app_fullscreen { &icons::CORNERS_IN_BOLD } else { &icons::CORNERS_OUT_BOLD }, if st.call.app_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, move |s: &mut S| {
+                let sh = acc(s);
+                if sh.call.app_fullscreen { exit_fullscreen(sh) } else { sh.call.app_fullscreen = true }
+            })
+            .key("fullscreen"),
+        );
+    let me = store.my_id();
+    let has_tiles = call_tiles(st, me, &people).iter().any(|t| t.screen) || st.call.show_non_video || people.iter().any(|(u, _)| if *u == me { st.voice.camera } else { st.voice.videos.contains_key(u) });
+    let mut body = if has_tiles { layout(store, st, guild, &people, false, p, acc) } else { avatar_fallback(store, st, guild, &people, p, acc) };
     if let Some(until) = st.call.teleport_until
         && until > Instant::now()
     {
         // shortcut: no region-teleport event from the engine; the overlay runs for a few seconds
         // after the region PATCH. Replace with the reconnect event when reflux-voice exposes it.
-        body = el().key("teleport").w_full().grow(1.0).min_h(0.0).child(body).child(teleport_overlay(p));
+        body = el().key("teleport").w_full().h_full().child(body).child(teleport_overlay(p));
     }
-    let mut root = col()
+    // `.mainContent`: between the chrome with 48px kept clear above and below in the grid; the
+    // focus layout fills the view (below the header while its members row shows).
+    let main = match &focus {
+        Some(f) => el().pin(Some(0.0), Some(if f.members_row { header_h } else { 0.0 }), Some(0.0), Some(0.0)),
+        None => el().pin(Some(0.0), Some(header_h), Some(0.0), Some(footer_h)).py(48.0),
+    };
+    // `--voice-hud-opacity`: idle chrome fades out over the tiles.
+    let chrome = |e: El| if hud { e } else { e.opacity(0.0).inert() };
+    let root = el()
+        .key("call-view")
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .fill(surface_1());
-    // `--voice-hud-opacity`: idle chrome fades out but keeps its space, so the tiles don't move.
-    let chrome = |e: El| if hud_visible { e } else { e.opacity(0.0).inert() };
-    root = root.child(chrome(header));
-    root = root.child(col().w_full().grow(1.0).min_h(0.0).child(body));
-    root = root.child(chrome(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc))));
+        .fill(Color::BLACK)
+        .child(main.key("main").clip_rounded(0.0).child(body))
+        .child(chrome(header))
+        .child(chrome(footer))
+        .child(chrome(corner.key("corner")));
     // `useVoiceCallHudVisibility`: any pointer move shows the chrome for the idle timeout;
     // leaving the call hides it. Moves only re-arm it once it is half spent (no rebuild per move).
     Some(
@@ -1432,6 +1759,25 @@ pub fn poll(st: &mut ShellState) {
         st.call.fullscreen_from_compact = false;
         st.call.hide_camera_confirm = None;
         st.call.stats = None;
+    }
+    // `gridTracks`' speaker promotion: who spoke within `SPEAKER_HOLD`, in first-spoke order.
+    // shortcut: a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
+    let now = Instant::now();
+    let call = &mut st.call;
+    if call.prioritize_speakers && st.voice.connected {
+        for u in &st.voice.speaking {
+            let order = &mut call.next_order;
+            call.activity.entry(*u).and_modify(|a| a.0 = now).or_insert_with(|| {
+                *order += 1;
+                (now, *order - 1)
+            });
+        }
+        call.activity.retain(|_, a| now.duration_since(a.0) <= SPEAKER_HOLD);
+    } else {
+        call.activity.clear();
+    }
+    if call.activity.is_empty() {
+        call.next_order = 0;
     }
     let meter = st.popups.is_open(MENU_INPUT) && st.voice.channel.is_some();
     if meter != st.call.meter_on {
@@ -3074,7 +3420,24 @@ mod tests {
         let people = vec![(Snowflake(1), &a), (Snowflake(2), &b)];
         let t = tiles(&people);
         assert_eq!(t.len(), 3);
-        assert!(t[1].screen && t[1].user == Snowflake(1));
+        assert!(t[0].screen && t[0].user == Snowflake(1), "shares come before cameras");
+    }
+
+    #[test]
+    fn prioritized_tiles_rank_streaming_then_speaking_then_held() {
+        let (a, b, c, d) = (vs(1, false), vs(2, true), vs(3, false), vs(4, false));
+        let people = vec![(Snowflake(1), &a), (Snowflake(2), &b), (Snowflake(3), &c), (Snowflake(4), &d)];
+        let mut st = ShellState::default();
+        st.call.prioritize_speakers = true;
+        st.voice.speaking.insert(Snowflake(4));
+        st.call.activity.insert(Snowflake(3), (Instant::now(), 0));
+        st.call.activity.insert(Snowflake(4), (Instant::now(), 1));
+        let order: Vec<_> = call_tiles(&st, Snowflake(9), &people).iter().map(|t| (t.user.0, t.screen)).collect();
+        assert_eq!(order, [(2, true), (2, false), (4, false), (3, false), (1, false)]);
+        st.call.show_non_video = false;
+        st.voice.videos.insert(Snowflake(1), Pixels::default());
+        let order: Vec<_> = call_tiles(&st, Snowflake(9), &people).iter().map(|t| (t.user.0, t.screen)).collect();
+        assert_eq!(order, [(2, true), (1, false)], "only shares and cameras that are on");
     }
 
     #[test]
@@ -3100,11 +3463,6 @@ mod tests {
         assert_eq!(compact_height(10.0), COMPACT_HEIGHT_MIN);
         assert_eq!(compact_height(2000.0), COMPACT_HEIGHT_MAX);
         assert_eq!(compact_height(400.0), 400.0);
-        assert_eq!(unread_badge(0), "0");
-        assert_eq!(unread_badge(3), "3");
-        assert_eq!(unread_badge(9), "9");
-        assert_eq!(unread_badge(10), "9+");
-        assert_eq!(unread_badge(120), "9+");
     }
 
     #[test]

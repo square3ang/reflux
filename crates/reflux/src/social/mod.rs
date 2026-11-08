@@ -34,7 +34,7 @@ pub use channel::{bell_button, blocked_bar, blocked_runs, mass_mention, mute_ent
 pub use discovery::{discovery_page, gift_code, invite_code, open as open_discovery, open_invite, preview_nagbar};
 pub use dm::{group_items, open_create_dm};
 pub use saved_media::{open_add as open_add_meme, open_edit as open_edit_meme};
-pub use inbox::{inbox_button, message_items};
+pub use inbox::{INBOX, INBOX_ICON, inbox_button, message_items, toggle as toggle_inbox};
 pub use moderation::{member_items, open_report};
 pub use tabs::{channel_tab, guild_tab, load_channel_tab, load_guild_tab, pause_invites};
 

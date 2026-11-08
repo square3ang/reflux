@@ -47,9 +47,6 @@ pub struct VoiceRt {
     screen_sources_loading: bool,
     screen_sources_at: Option<std::time::Instant>,
     watch: Option<tokio::task::AbortHandle>,
-    /// The hovered stream's render, and whose preview is subscribed now.
-    preview: Option<tokio::task::AbortHandle>,
-    preview_on: Option<Snowflake>,
     /// Draws our own share into `Voice::own_share` for its call tile.
     own_render: Option<tokio::task::AbortHandle>,
     pub(super) devices_loading: bool,
@@ -675,7 +672,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                     if s.app.voice.generation == generation
                         && let Some(call) = &s.app.voice.call
                     {
-                        call.sync_streams(s.app.shell.voice.watching.map(|u| u.0), s.app.shell.voice.preview_user.map(|u| u.0));
+                        call.sync_streams(s.app.shell.voice.watching.map(|u| u.0), None);
                     }
                 });
             }
@@ -702,14 +699,10 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                                 render_camera(s, user, t.rtc_track());
                             }
                         }),
-                        // The watched stream's publication arrived after the click: start rendering;
-                        // a hovered tile's share starts its preview the same way.
-                        (RemoteTrack::Video(t), Some(user), TrackSource::Screenshare) => update(move |s| {
+                        // The watched stream's publication arrived after the click: start rendering.
+                        (RemoteTrack::Video(_), Some(user), TrackSource::Screenshare) => update(move |s| {
                             if s.app.voice.generation != generation {
                                 return;
-                            }
-                            if s.app.shell.voice.preview_user == Some(user) {
-                                start_preview(s, user, t.rtc_track());
                             }
                             if s.app.shell.voice.watching == Some(user) {
                                 watch(s, Some(user));
@@ -1149,22 +1142,6 @@ pub(super) fn load_rollout(s: &mut State) {
     }
 }
 
-/// Draws a hovered stream into `voice.live_previews[user]` (`useStreamPreview`): a picture only,
-/// its audio isn't subscribed.
-#[cfg(feature = "voice-webrtc")]
-fn start_preview(s: &mut State, user: Snowflake, track: reflux_voice::livekit::webrtc::prelude::RtcVideoTrack) {
-    let pixels = s.app.shell.voice.live_previews.entry(user).or_default().clone();
-    if pixels.size() != (0, 0) {
-        return;
-    }
-    if let Some(b) = super::BRIDGE.get() {
-        let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| pixels.set(w, h, rgba)));
-        if let Some(old) = s.app.voice.preview.replace(task.abort_handle()) {
-            old.abort();
-        }
-    }
-}
-
 /// Draws a remote camera into `voice.videos[user]`.
 #[cfg(feature = "voice-webrtc")]
 fn render_camera(s: &mut State, user: Snowflake, track: reflux_voice::livekit::webrtc::prelude::RtcVideoTrack) {
@@ -1572,7 +1549,7 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     // and only its audio plays: the mixer also drops a share's audio that arrives before an
     // unsubscribe lands (auto-subscribe on join).
     if let Some(call) = &s.app.voice.call {
-        call.sync_streams(user.map(|u| u.0), s.app.shell.voice.preview_user.map(|u| u.0));
+        call.sync_streams(user.map(|u| u.0), None);
         if let Some(m) = call.mixer() {
             m.lock().unwrap().watching = user.map(|u| u.0);
         }
@@ -1774,34 +1751,6 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
         }
     }
     let now = super::now_ms();
-    // `useStreamPreview`: the tile under the pointer has its share subscribed for a picture only;
-    // leaving drops the subscription and its frames.
-    let me = s.app.store.my_id();
-    let want = s.app.shell.voice.preview_user.filter(|u| *u != me);
-    if want != s.app.voice.preview_on {
-        s.app.voice.preview_on = want;
-        let call = s.app.voice.call.clone();
-        if let Some(call) = &call {
-            let watching = s.app.shell.voice.watching;
-            call.sync_streams(watching.map(|u| u.0), want.map(|u| u.0));
-            if let Some(mesh) = call.mesh() {
-                mesh.set_watching(watching.or(want).map(|u| u.0));
-            }
-        }
-        match want {
-            None => {
-                if let Some(t) = s.app.voice.preview.take() {
-                    t.abort();
-                }
-                s.app.shell.voice.live_previews.clear();
-            }
-            Some(u) => {
-                if let Some(track) = call.as_ref().and_then(|c| c.screen_track(u.0)) {
-                    start_preview(s, u, track);
-                }
-            }
-        }
-    }
     let v = &s.app.shell.voice;
     let in_call = s.app.voice.call.is_some() && !(v.self_mute || v.self_deaf);
     let vad_mode = (in_call && !v.settings.ptt() && v.settings.processing != "studio")
