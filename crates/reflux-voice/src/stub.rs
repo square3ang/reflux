@@ -323,6 +323,12 @@ impl Call {
         Ok(())
     }
 
+    pub fn has_stream(&self, _user: u64) -> bool {
+        false
+    }
+
+    pub fn sync_streams(&self, _watching: Option<u64>) {}
+
     pub fn screen_track(&self, _user: u64) -> Option<RtcVideoTrack> {
         None
     }

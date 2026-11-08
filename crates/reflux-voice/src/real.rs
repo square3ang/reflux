@@ -342,6 +342,30 @@ impl Call {
         self.video_track(user, TrackSource::Screenshare)
     }
 
+    /// Whether `user` publishes a screen share (subscribed or not; P2P: one that reaches us).
+    pub fn has_stream(&self, user: u64) -> bool {
+        let room = match &self.link {
+            Link::Room(r) => r,
+            Link::Mesh(m) => return m.remote_video(user, mesh_src(TrackSource::Screenshare)).is_some(),
+        };
+        room.remote_participants().values().filter(|p| user_of(&p.identity().0) == Some(user)).any(|p| p.track_publications().values().any(|t| t.source() == TrackSource::Screenshare))
+    }
+
+    /// `ScreenShareSubscriptionPolicy`: a screen share and its audio are subscribed only while
+    /// watched. Subscribing on watch also makes the SFU ask the sharer for a keyframe, so a
+    /// still screen shows at once instead of staying black until it changes.
+    pub fn sync_streams(&self, watching: Option<u64>) {
+        let Link::Room(room) = &self.link else { return };
+        for p in room.remote_participants().values() {
+            let want = watching.is_some() && user_of(&p.identity().0) == watching;
+            for t in p.track_publications().values() {
+                if matches!(t.source(), TrackSource::Screenshare | TrackSource::ScreenshareAudio) && t.is_desired() != want {
+                    t.set_subscribed(want);
+                }
+            }
+        }
+    }
+
     /// The first subscribed video track of `user` from `source` (camera or screen share).
     pub fn video_track(&self, user: u64, source: TrackSource) -> Option<RtcVideoTrack> {
         let room = match &self.link {

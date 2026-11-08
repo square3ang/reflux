@@ -843,17 +843,11 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .min_w(0.0)
         .h_full()
         .fill(surface_1());
-    if hud_visible {
-        root = root.child(header);
-    }
+    // `--voice-hud-opacity`: idle chrome fades out but keeps its space, so the tiles don't move.
+    let chrome = |e: El| if hud_visible { e } else { e.opacity(0.0).inert() };
+    root = root.child(chrome(header));
     root = root.child(col().w_full().grow(1.0).min_h(0.0).child(body));
-    if hud_visible {
-        root = root.child(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc)));
-    } else {
-        root = root.child(row().w_full().py(8.0).justify_center().child(header_button(&icons::CORNERS_OUT_BOLD, t("View call controls"), p, acc, move |s: &mut S| {
-            acc(s).call.hud_until = Some(Instant::now() + Duration::from_secs(8));
-        })));
-    }
+    root = root.child(chrome(row().w_full().pb(16.0).pt(8.0).justify_center().child(control_bar(store, st, p, acc))));
     // `useVoiceCallHudVisibility`: any pointer move shows the chrome for the idle timeout;
     // leaving the call hides it. Moves only re-arm it once it is half spent (no rebuild per move).
     Some(

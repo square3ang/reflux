@@ -155,11 +155,10 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/audio/pulse.rs:59` the picker persists this label, not the immutable pulse name; a renamed sink reads as unplugged and falls back to the server default. Upgrade when the device lists carry (id, label) pairs.
 - `crates/reflux-voice/src/lib.rs:18` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
 - `crates/reflux-voice/src/lib.rs:26` Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
-- `crates/reflux/src/app/voice.rs:1086` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1256` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1525` the SFU auto-subscribes, so unwatched stream audio is received and dropped in the
-- `crates/reflux/src/app/voice.rs:1698` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1707` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1098` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1268` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1713` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1722` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:168` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:19` a custom emoji pill shows `:name:`, not the emoji image.
 - `crates/reflux/src/compose.rs:146` Rune exposes the caret's rect, not the selection's, so the bar centres over the
@@ -195,8 +194,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/call.rs:271` previews reuse Active Now's cached stream thumbnail; a call without one shows
 - `crates/reflux/src/shell/call.rs:420` other users' accent colours only arrive with their profile, which the tile
 - `crates/reflux/src/shell/call.rs:837` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:2256` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:2538` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:2250` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:2532` the shell has no WebRTC stats handle; values stay dashes until the engine
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.

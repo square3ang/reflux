@@ -669,6 +669,18 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
         let weak = Arc::downgrade(&call);
         spawn(ping_loop(weak, generation));
         while let Some(ev) = events.recv().await {
+            // A share published or auto-subscribed while not watched: unsubscribe it.
+            if let RoomEvent::TrackPublished { publication, .. } | RoomEvent::TrackSubscribed { publication, .. } = &ev
+                && matches!(publication.source(), TrackSource::Screenshare | TrackSource::ScreenshareAudio)
+            {
+                update(move |s| {
+                    if s.app.voice.generation == generation
+                        && let Some(call) = &s.app.voice.call
+                    {
+                        call.sync_streams(s.app.shell.voice.watching.map(|u| u.0));
+                    }
+                });
+            }
             match ev {
                 RoomEvent::ActiveSpeakersChanged { speakers } => {
                     let ids = speakers.iter().filter_map(|p| reflux_voice::user_of(&p.identity().0)).map(Snowflake).collect();
@@ -1521,11 +1533,14 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
         mesh.set_watching(user.map(|u| u.0));
     }
-    // Only the watched stream's audio plays.
-    // shortcut: the SFU auto-subscribes, so unwatched stream audio is received and dropped in the
-    // mixer instead of unsubscribed like `ScreenShareSubscriptionPolicy`.
-    if let Some(m) = s.app.voice.call.as_ref().and_then(|c| c.mixer()) {
-        m.lock().unwrap().watching = user.map(|u| u.0);
+    // Only the watched stream is subscribed (its arrival watches again via `TrackSubscribed`),
+    // and only its audio plays: the mixer also drops a share's audio that arrives before an
+    // unsubscribe lands (auto-subscribe on join).
+    if let Some(call) = &s.app.voice.call {
+        call.sync_streams(user.map(|u| u.0));
+        if let Some(m) = call.mixer() {
+            m.lock().unwrap().watching = user.map(|u| u.0);
+        }
     }
     s.app.shell.voice.self_stream = false;
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
@@ -1717,7 +1732,7 @@ pub(super) fn tick(s: &mut State, tx: &mut rune::Tx) {
     if let Some(u) = s.app.shell.voice.watch_on_join {
         if s.app.shell.voice.channel.is_none() {
             s.app.shell.voice.watch_on_join = None;
-        } else if s.app.voice.call.as_ref().is_some_and(|c| c.screen_track(u.0).is_some()) {
+        } else if s.app.voice.call.as_ref().is_some_and(|c| c.has_stream(u.0)) {
             s.app.shell.voice.watch_on_join = None;
             s.app.shell.voice.watching = Some(u);
             watch(s, Some(u));
