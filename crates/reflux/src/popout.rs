@@ -65,7 +65,9 @@ pub fn register(app: &mut rune::App<State>) {
         let spec = AppSpec { fonts: crate::theme::FONTS, families: crate::theme::FAMILIES, min_size: Some((160.0, 90.0)), ..AppSpec::new("Fluxer", (960.0, 540.0), Popout::default, view) };
         let options = WindowOptions { visible: false, min_size: Some((160.0, 90.0)), ..Default::default() };
         // Closing it from the title bar frees its slot.
-        let papp = rune::App::new(spec).on_close(|p: &mut Popout, _| free(p.slot));
+        // `windowless`: no window until opened (Wayland can't hide one, so a hidden pooled window
+        // was a blank taskbar entry that also broke the launcher's click-to-minimize).
+        let papp = rune::App::new(spec).windowless().on_close(|p: &mut Popout, _| free(p.slot));
         let (handle, win) = app.window(WindowSpec::from_app(format!("voice-popout-{i}"), papp).options(options));
         SLOTS.with(|s| s.borrow_mut().push(Slot { app: handle, win, key: None, shown: Vec::new(), opened: 0 }));
     }

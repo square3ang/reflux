@@ -33,7 +33,8 @@ const SIZE: (f32, f32) = (1100.0, 760.0);
 pub fn register(app: &mut rune::App<State>) {
     let spec = AppSpec { fonts: crate::theme::FONTS, families: crate::theme::FAMILIES, min_size: Some((420.0, 300.0)), ..AppSpec::new("Quick CSS", SIZE, Editor::default, view) };
     let options = WindowOptions { visible: false, ..Default::default() };
-    let handles = app.window(WindowSpec::new("quick-css", spec).options(options));
+    // `windowless`: created when opened, not hidden at start (a blank taskbar entry on Wayland).
+    let handles = app.window(WindowSpec::from_app("quick-css", rune::App::new(spec).windowless()).options(options));
     WINDOW.with(|w| *w.borrow_mut() = Some(handles));
 }
 
