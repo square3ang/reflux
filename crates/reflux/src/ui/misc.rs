@@ -81,13 +81,19 @@ pub fn scroller(viewport: El, regular: bool, p: &Palette) -> El {
     )
 }
 
+/// Points Rune scrolls per wheel line (`wheel_delta`'s `LineDelta`).
+const RUNE_LINE: f32 = 40.0;
+/// Points Chromium scrolls per wheel detent: 120 on Wayland, X11 and Windows since
+/// `ozone/wayland: Fix high resolution scroll handling` (M140; Fluxer's Electron 44 is M146).
+const WHEEL_STEP: f32 = 120.0;
+
 thread_local! {
     /// Each [`smooth_wheel`] viewport's last scroll position and where its glide is heading.
     static WHEEL: std::cell::RefCell<std::collections::HashMap<String, (rune::ScrollPos, Option<f32>)>> = Default::default();
 }
 
 /// Chromium's smooth wheel scrolling on a vertical scroll viewport: a notched wheel's line
-/// steps glide instead of jumping, each adding to where the glide was heading. Trackpads and
+/// steps go Chromium's [`WHEEL_STEP`] and glide instead of jumping, each adding to where the glide was heading. Trackpads and
 /// free-spinning wheels (`precise`) and modified wheels scroll as before. `key` names a marker
 /// (`{key}-wheel`, absolute and empty) the glide finds the viewport by, so it must be unique
 /// among what's on screen; the viewport's own key is left alone.
@@ -114,7 +120,7 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
                 let (pos, aim) = w.get_mut(&k2)?;
                 let at = pos.offset[1];
                 let base = aim.filter(|a| (a - at).abs() > 1.0).unwrap_or(at);
-                let to = (base - e.dy).clamp(0.0, pos.max[1].max(0.0));
+                let to = (base - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0));
                 *aim = Some(to);
                 Some((pos.offset[0], to))
             }) else {
