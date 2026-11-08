@@ -31,6 +31,14 @@ pub use select::Select;
 
 /// Whether `k` is a plain Enter: the web activates focused buttons and pickers with it, where
 /// Rune's AppKit rule gives Return to the default button.
+/// `rune_kit::root` with the web's motion model. Rune springs every layout change and fades in
+/// every new element by default; Fluxer's CSS moves nothing unless a rule says so. So the base
+/// and each overlay land their inner changes at once (`instant_changes`): a modal or popout keeps
+/// its own entrance/exit fade, and hover colours keep their transitions.
+pub fn root(base: rune::El, layer: Vec<rune::El>) -> rune::El {
+    rune_kit::root(base.instant_changes(), layer.into_iter().map(rune::El::instant_changes))
+}
+
 pub fn enters(k: &rune::KeyEvent) -> bool {
     k.key == rune::Key::Enter && !k.mods.cmd && !k.mods.ctrl && !k.mods.alt && !k.mods.logo
 }

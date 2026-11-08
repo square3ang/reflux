@@ -209,6 +209,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/threads.rs:687` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
 - `crates/reflux/src/shell/voice.rs:1376` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
+- `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:216` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.

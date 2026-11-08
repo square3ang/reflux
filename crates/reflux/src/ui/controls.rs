@@ -47,21 +47,29 @@ impl<S: 'static> Switch<S> {
         } else {
             (rgb(107, 114, 128), rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.1))
         };
-        let thumb = el()
-            .absolute(if on { 22.0 } else { 2.0 }, 2.0)
-            .size(20.0, 20.0)
-            .radius(10.0)
-            .fill(if on { p.brand_primary_fill } else { Color::WHITE })
-            .box_shadow(sh(0.0, -1.0, 2.0, 0.0, rgba(0, 0, 0, 0.08), true))
-            .box_shadow(sh(0.0, 1.0, 0.0, 0.0, rgba(0, 0, 0, 0.15), false))
-            .box_shadow(sh(0.0, 2.0, 4.0, -1.0, rgba(0, 0, 0, 0.2), false));
+        // The thumb slides 20px over 0.2s in Fluxer. Changes land at once under `ui::root`, but
+        // colours still transition, so a thumb at each end cross-fades instead of sliding.
+        // shortcut: a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
+        let thumb = |x: f32, shown: bool, fill: Color| {
+            let a = if shown { 1.0 } else { 0.0 };
+            let fade = |c: Color| Color { a: c.a * a, ..c };
+            el()
+                .absolute(x, 2.0)
+                .size(20.0, 20.0)
+                .radius(10.0)
+                .fill(fade(fill))
+                .box_shadow(sh(0.0, -1.0, 2.0, 0.0, fade(rgba(0, 0, 0, 0.08)), true))
+                .box_shadow(sh(0.0, 1.0, 0.0, 0.0, fade(rgba(0, 0, 0, 0.15)), false))
+                .box_shadow(sh(0.0, 2.0, 4.0, -1.0, fade(rgba(0, 0, 0, 0.2)), false))
+        };
         let mut sw = el()
             .size(44.0, 24.0)
             .radius(12.0)
             .fill(track)
             .box_shadow(sh(0.0, 2.0, 4.0, 0.0, inset, true))
             .box_shadow(sh(0.0, 1.0, 0.0, 0.0, hi, false))
-            .child(thumb)
+            .child(thumb(2.0, !on, Color::WHITE))
+            .child(thumb(22.0, on, p.brand_primary_fill))
             .role("switch")
             .checked(on)
             .focusable(!self.disabled);

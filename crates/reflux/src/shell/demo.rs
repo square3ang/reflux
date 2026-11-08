@@ -347,9 +347,8 @@ impl Demo {
                 e.focused = true;
                 e.set_caret(e.text.len());
                 shell.form.text.insert("quick-css".into(), e);
-            } else if let Some(id) = a.strip_prefix("--popup=") {
-                // Opens a popout menu by its ID (snapshots of row menus).
-                shell.popups.toggle(id);
+            } else if a.starts_with("--popup=") {
+                // Applied after the scenes below, so the control exists first.
             } else if let Some(q) = a.strip_prefix("--settings-search=")
                 && let Some(u) = shell.settings.as_mut()
             {
@@ -460,6 +459,10 @@ impl Demo {
         }
         if let Some(sc) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--desktop=")) {
             crate::desktop::demo(&mut shell, &mut store, sc);
+        }
+        // `--popup=<id>`: opens a popout menu by its ID (snapshots of open selects/menus).
+        if let Some(id) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--popup=")) {
+            shell.popups.toggle(id);
         }
         Demo { store, shell }
     }

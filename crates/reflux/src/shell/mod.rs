@@ -755,7 +755,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     {
         let mut layer = Vec::new();
         voice::layer(store, st, p, acc, &mut layer);
-        return rune_kit::root(v, layer);
+        return crate::ui::root(v, layer);
     }
     // `useVoiceCallAppFullscreen`: the call fills the app window.
     // shortcut: Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
@@ -769,7 +769,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         call::details(store, st, p, acc, &mut layer);
         call::menus(store, st, p, acc, &mut layer);
         call::tile_menu(store, st, p, acc, &mut layer);
-        return rune_kit::root(main, layer);
+        return crate::ui::root(main, layer);
     }
     let divider = over(p.user_area_divider_color, p.background_secondary);
     // Personal notes: a channel whose ID is the user's own, which READY may leave out.
@@ -874,7 +874,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         }
         false
     });
-    rune_kit::root(body, layer)
+    crate::ui::root(body, layer)
 }
 
 // ---- Shared bits -------------------------------------------------------------------------------

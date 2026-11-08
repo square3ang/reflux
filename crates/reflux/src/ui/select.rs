@@ -148,7 +148,9 @@ impl<'a, S: 'static> Select<'a, S> {
                 .focus_group()
                 .role("listbox")
                 .label(self.label.unwrap_or(self.placeholder))
-                .modal(true, move |s: &mut S| access(s).close());
+                .modal(true, move |s: &mut S| access(s).close())
+                // react-select's menu has no enter/exit animation.
+                .transition(rune::Transition::none());
             layer.push(anchor(popup, self.id, Placement::BottomStart, 4.0));
         }
 

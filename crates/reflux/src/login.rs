@@ -234,7 +234,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .linear_gradient(145.0 * PI / 180.0, [(0.0, rgb(5, 4, 13)), (0.46, rgb(8, 6, 22)), (1.0, rgb(13, 10, 28))])
         .children(stars(size))
         .child(crate::ui::scroller(page, false, p));
-    rune_kit::root(root, layer)
+    crate::ui::root(root, layer)
 }
 
 fn card(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
