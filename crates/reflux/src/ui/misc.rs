@@ -147,6 +147,15 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
         })
 }
 
+/// Whether the [`smooth_wheel`] viewport `key`'s wheel glide is still on its way.
+pub fn gliding(key: &str) -> bool {
+    WHEEL.with_borrow(|w| {
+        w.get(&format!("{key}-wheel")).is_some_and(|(pos, aim)| {
+            aim.is_some_and(|(_, to, t)| t.elapsed() < std::time::Duration::from_millis(500) && (pos.offset[1] - to).abs() > 1.0)
+        })
+    })
+}
+
 /// [`smooth_wheel`] chained after `.scroll(…)`.
 pub trait SmoothWheel {
     fn smooth_wheel<S: 'static>(self, key: impl AsRef<str>) -> El;

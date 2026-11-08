@@ -172,6 +172,8 @@ pub struct App {
     /// The font families last handed to Rune (theme `--font-sans` / `--font-mono`).
     fonts: Option<(String, String)>,
     cache: cache::Cache,
+    /// Older pages that arrived while the message list's wheel glide ran (see [`fetch_older`]).
+    held_older: Vec<(Snowflake, Vec<reflux_model::Message>)>,
 }
 
 /// What views (the shell) ask for; `act` runs it.
@@ -864,7 +866,7 @@ fn fetch_messages(s: &State, channel: Snowflake) {
 fn fetch_older(s: &State, channel: Snowflake) {
     let Some(w) = s.app.store.messages.get(&channel) else { return };
     let (Some(oldest), Some(inst)) = (w.messages.first().map(|m| m.id), s.app.instance.clone()) else { return };
-    if !w.has_more_before {
+    if !w.has_more_before || s.app.held_older.iter().any(|(c, _)| *c == channel) {
         return;
     }
     let generation = s.app.generation;
@@ -875,6 +877,10 @@ fn fetch_older(s: &State, channel: Snowflake) {
             Err(e) => Err(e),
         };
         update(move |s| match r {
+            // shortcut: Rune shifts the offset by what lands above the view but not a running
+            // glide's target, so a page added mid-glide sends the glide that far up through it
+            // (and into the next page). The page waits for the glide to stop (`poll`).
+            Ok(page) if s.app.generation == generation && older_held() => s.app.held_older.push((channel, page)),
             Ok(page) if s.app.generation == generation => s.app.store.prepend_messages(channel, page, PAGE as usize),
             Ok(_) => {}
             Err(e) => eprintln!("reflux: older messages of {channel}: {e}"),
@@ -882,9 +888,23 @@ fn fetch_older(s: &State, channel: Snowflake) {
     });
 }
 
+/// Whether a message list's wheel glide runs, which holds older pages back.
+fn older_held() -> bool {
+    crate::ui::misc::gliding("msgs-scroll") || crate::ui::misc::gliding("pane-msgs-scroll")
+}
+
 /// Runs what the shell queued since the last frame; true when anything ran.
 pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.now_ms = now_ms();
+    let held = !s.app.held_older.is_empty();
+    let landed = held && !older_held();
+    if landed {
+        for (channel, page) in std::mem::take(&mut s.app.held_older) {
+            s.app.store.prepend_messages(channel, page, PAGE as usize);
+        }
+    } else if held {
+        tx.wake_after(Duration::from_millis(50));
+    }
     // `--font-sans` / `--font-mono` overrides in the theme CSS.
     let fam = theme::custom::families(&s.app.saved.desktop.look.theme_css());
     if s.app.fonts.as_ref() != Some(&fam) {
@@ -981,7 +1001,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     cache::tick(s);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
-    actions::tick(s) || ran || shell || threads_changed || resized
+    actions::tick(s) || ran || shell || threads_changed || resized || landed
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.
