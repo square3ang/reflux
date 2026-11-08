@@ -219,11 +219,12 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/call.rs:2445` Rune has no brightness filter or pressed offset, so hover only swaps the colour
 - `crates/reflux/src/shell/call.rs:2472` Rune loops opacity only, so the ring fades in and out at half its spread.
 - `crates/reflux/src/shell/call.rs:2562` no backdrop blur behind the card.
-- `crates/reflux/src/shell/call.rs:2604` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
-- `crates/reflux/src/shell/call.rs:3131` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:3414` the shell has no WebRTC stats handle; values stay dashes until the engine
-- `crates/reflux/src/shell/call.rs:3441` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
-- `crates/reflux/src/shell/call.rs:3499` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
+- `crates/reflux/src/shell/call.rs:2614` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
+- `crates/reflux/src/shell/call.rs:2682` Rune has no diagonal resize cursor, so it shows the row one.
+- `crates/reflux/src/shell/call.rs:3167` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:3450` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:3477` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
+- `crates/reflux/src/shell/call.rs:3535` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.

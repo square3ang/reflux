@@ -120,6 +120,8 @@ pub struct Prefs {
     pub incoming_call_pos: Option<(f32, f32)>,
     /// The screen share PiP's corner: bit 1 right, bit 2 bottom (`None` = bottom-right).
     pub pip_corner: Option<u8>,
+    /// The PiP overlay's width in points (240 .. 70% of the window); `None` = 320.
+    pub pip_width: Option<f32>,
 }
 
 impl Default for Prefs {
@@ -169,6 +171,7 @@ impl Default for Prefs {
             skip_hide_own_camera_confirm: false,
             incoming_call_pos: None,
             pip_corner: None,
+            pip_width: None,
         }
     }
 }

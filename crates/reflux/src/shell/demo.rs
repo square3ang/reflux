@@ -1108,8 +1108,11 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.voice.share_ended = true;
         }
         // The PiP overlay: the stream keeps playing while another channel is open.
-        if scene == "watch-pip" {
+        if scene == "watch-pip" || scene == "watch-pip-wide" {
             (st.guild, st.channel, st.voice.call_view) = (Some(Snowflake(HQ)), Some(Snowflake(GENERAL)), false);
+            if scene == "watch-pip-wide" {
+                st.prefs.pip_width = Some(480.0);
+            }
         }
         if matches!(scene, "watch-spectators" | "watch-profile") {
             let key = format!("{}:2301:c1004", HQ);

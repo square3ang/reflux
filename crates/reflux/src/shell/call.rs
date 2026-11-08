@@ -2578,23 +2578,33 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
 const PIP_MENU: &str = "pip-overlay-menu";
 /// `PiPOverlay`'s default width (16:9) and `EDGE_PADDING`.
 const PIP_W: f32 = 320.0;
-const PIP_H: f32 = PIP_W * 9.0 / 16.0;
+/// `PIP_RESIZE_MIN` and the 70% cap Fluxer's overlay resizes between.
+const PIP_MIN_W: f32 = 240.0;
+const PIP_MAX_FRAC: f32 = 0.7;
 const PIP_PAD: f32 = 20.0;
+
+/// The PiP's width and 16:9 height: the saved width, inside 240 .. 70% of the window.
+fn pip_size(st: &ShellState) -> (f32, f32) {
+    let [w, _] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let width = st.prefs.pip_width.unwrap_or(PIP_W).clamp(PIP_MIN_W, (w * PIP_MAX_FRAC).max(PIP_MIN_W));
+    (width, width * 9.0 / 16.0)
+}
 
 /// The PiP's top-left in the window: its saved corner (`Corner`, bottom-right by default), plus
 /// the drag in progress, kept inside the window.
 fn pip_pos(st: &ShellState) -> (f32, f32) {
     let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let (pw, ph) = pip_size(st);
     let corner = st.prefs.pip_corner.unwrap_or(3);
-    let x = if corner & 1 == 1 { w - PIP_W - PIP_PAD } else { PIP_PAD };
-    let y = if corner & 2 == 2 { h - PIP_H - PIP_PAD } else { PIP_PAD };
+    let x = if corner & 1 == 1 { w - pw - PIP_PAD } else { PIP_PAD };
+    let y = if corner & 2 == 2 { h - ph - PIP_PAD } else { PIP_PAD };
     let [dx, dy] = st.call.pip_drag.unwrap_or_default();
-    ((x + dx).clamp(0.0, (w - PIP_W).max(0.0)), (y + dy).clamp(0.0, (h - PIP_H).max(0.0)))
+    ((x + dx).clamp(0.0, (w - pw).max(0.0)), (y + dy).clamp(0.0, (h - ph).max(0.0)))
 }
 
 /// The corner nearest to where the PiP was let go: bit 1 right, bit 2 bottom.
-fn pip_corner(x: f32, y: f32, w: f32, h: f32) -> u8 {
-    u8::from(x + PIP_W / 2.0 > w / 2.0) | (u8::from(y + PIP_H / 2.0 > h / 2.0) << 1)
+fn pip_corner(x: f32, y: f32, w: f32, h: f32, pw: f32, ph: f32) -> u8 {
+    u8::from(x + pw / 2.0 > w / 2.0) | (u8::from(y + ph / 2.0 > h / 2.0) << 1)
 }
 
 /// `PiPOverlay` (`ScreenSharePiPStateMachine`): the watched stream, small in a corner, while
@@ -2655,9 +2665,10 @@ pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
     let dragging = st.call.pip_drag.is_some();
     let hud = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(header).child(footer);
     let hud = if dragging { hud } else { hud.group_opacity(0.0, 1.0) };
+    let (pw, ph) = pip_size(st);
     let card = el()
         .key("pip-overlay")
-        .size(PIP_W, PIP_H)
+        .size(pw, ph)
         .radius(12.0)
         .clip_rounded(12.0)
         .fill(surface_2())
@@ -2667,6 +2678,30 @@ pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         .hover_group()
         .child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit))
         .child(hud)
+        // `PiPOverlay`'s bottom-right resize grip: 240px up to 70% of the window, 16:9.
+        // shortcut: Rune has no diagonal resize cursor, so it shows the row one.
+        .child(
+            el()
+                .key("pip-resize")
+                .pin(None, None, Some(0.0), Some(0.0))
+                .size(18.0, 18.0)
+                .cursor(rune::Cursor::ResizeRow)
+                .role("separator")
+                .label(t("Resize stream"))
+                .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+                    let sh = acc(s);
+                    if d.phase == rune::Phase::Down {
+                        d.data = pip_size(sh).0;
+                    }
+                    let [w, _] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+                    let width = (d.data + d.dx).clamp(PIP_MIN_W, (w * PIP_MAX_FRAC).max(PIP_MIN_W));
+                    sh.prefs.pip_width = Some(width);
+                    if d.phase == rune::Phase::Up {
+                        let prefs = sh.prefs.clone();
+                        sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                    }
+                }),
+        )
         .on_double_press(back)
         .on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PIP_MENU, [at.x, at.y]))
         .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
@@ -2675,7 +2710,8 @@ pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
                 if sh.call.pip_drag.is_some() && !d.cancelled() {
                     let (x, y) = pip_pos(sh);
                     let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
-                    sh.prefs.pip_corner = Some(pip_corner(x, y, w, h));
+                    let (pw, ph) = pip_size(sh);
+                    sh.prefs.pip_corner = Some(pip_corner(x, y, w, h, pw, ph));
                     let prefs = sh.prefs.clone();
                     sh.intents.push(Intent::Prefs(Box::new(prefs)));
                 }
@@ -3633,6 +3669,19 @@ fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> (
 mod tests {
     use super::*;
 
+    /// `PiPOverlay` resizes between 240px and 70% of the window, keeping 16:9.
+    #[test]
+    fn the_pip_resizes_between_its_bounds() {
+        let mut st = ShellState::default();
+        st.prefs.pip_width = Some(100.0);
+        assert_eq!(pip_size(&st), (240.0, 135.0));
+        st.prefs.pip_width = Some(5000.0);
+        let (w, h) = pip_size(&st);
+        assert!((w - 896.0).abs() < 0.01 && (h - 504.0).abs() < 0.01, "{w}x{h}");
+        st.prefs.pip_width = None;
+        assert_eq!(pip_size(&st).0, 320.0);
+    }
+
     fn vs(user: u64, stream: bool) -> VoiceState {
         VoiceState { user_id: Some(Snowflake(user)), channel_id: Some(Snowflake(9)), self_stream: stream, ..Default::default() }
     }
@@ -3665,10 +3714,11 @@ mod tests {
 
     #[test]
     fn pip_snaps_to_the_nearest_corner() {
-        assert_eq!(pip_corner(10.0, 10.0, 1280.0, 800.0), 0);
-        assert_eq!(pip_corner(900.0, 10.0, 1280.0, 800.0), 1);
-        assert_eq!(pip_corner(10.0, 600.0, 1280.0, 800.0), 2);
-        assert_eq!(pip_corner(900.0, 600.0, 1280.0, 800.0), 3);
+        let (pw, ph) = (320.0, 180.0);
+        assert_eq!(pip_corner(10.0, 10.0, 1280.0, 800.0, pw, ph), 0);
+        assert_eq!(pip_corner(900.0, 10.0, 1280.0, 800.0, pw, ph), 1);
+        assert_eq!(pip_corner(10.0, 600.0, 1280.0, 800.0, pw, ph), 2);
+        assert_eq!(pip_corner(900.0, 600.0, 1280.0, 800.0, pw, ph), 3);
     }
 
     #[test]
