@@ -288,11 +288,9 @@ pub struct ShellState {
     pub birthday: birthday::Gate,
     /// Context menu, "more" menu and emoji picker (one at a time), and tooltips.
     pub popups: Popups,
-    /// The message under the pointer (shows its action bar).
+    /// The message under the pointer; read [`ShellState::hovered_msg`].
     pub hover_msg: Option<Snowflake>,
-    /// The message whose action bar the pointer is on: the bar sits above the message's rect,
-    /// so being on it isn't being on the message (`hover_msg` would drop and the bar vanish
-    /// under the pointer). Fluxer keeps the row hovered through DOM ancestry instead.
+    /// The message whose action bar the pointer is on.
     pub bar_msg: Option<Snowflake>,
     /// The channel row under the pointer (its `hoverAffordance` icons show).
     pub hover_channel: Option<Snowflake>,
@@ -544,6 +542,14 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 }
 
 impl ShellState {
+    /// The message hovered as Fluxer's `:hover` has it: the action bar sits above its message's
+    /// rect, over the row before, so while the pointer is on it, its message is the hovered one.
+    // shortcut: Rune hovers an element by its own rect, not its children's (DOM keeps the row
+    // hovered through the bar), and by every rect under the pointer, not the topmost.
+    pub fn hovered_msg(&self) -> Option<Snowflake> {
+        self.bar_msg.or(self.hover_msg)
+    }
+
     /// `getDefaultAvatarURL`: picked by user ID % 6, from the neutral set on branded self-hosted instances.
     pub fn default_avatar(&self, user: Snowflake) -> Option<&Image> {
         self.default_avatars.get((user.0 % 6) as usize + if self.neutral_avatars { 6 } else { 0 })

@@ -475,7 +475,7 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
     // `render_spoilers` 2 ("in channels I moderate") shows them where I can manage messages.
     let unspoil = store.settings.render_spoilers == 2 && store.permissions(m.channel_id).contains(reflux_model::Permissions::MANAGE_MESSAGES);
     let items: Rc<Vec<Item>> = Rc::new(media.iter().map(|a| item(a)).collect());
-    let hovered = st.hover_msg == Some(m.id);
+    let hovered = st.hovered_msg() == Some(m.id);
     let deletable = can_delete_attachment(store, m.author.id, m.channel_id);
     let mut out = Vec::new();
     let mosaic_w = MOSAIC_W.min(MAX_W.get());

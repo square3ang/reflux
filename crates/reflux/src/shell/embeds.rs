@@ -96,7 +96,7 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, msg: &Message, key: String, 
         menu: Some((msg.id, attachments::MenuMedia::embed(&m.url, m.proxy_url.as_deref(), video, animated(m)))),
     };
     let (it, at) = (item(m, video), (msg.channel_id, msg.id));
-    let hovered = st.hover_msg == Some(msg.id);
+    let hovered = st.hovered_msg() == Some(msg.id);
     attachments::media_tile(store, st, t, hovered, false, p, acc, Rc::new(move |s: &mut S| super::lightbox::open(acc(s), vec![it.clone()], 0, Some(at))))
 }
 
@@ -132,7 +132,7 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
                 let v = blocked(&e.video, level);
                 let (w, h) = v.map_or(dims(t), dims);
                 let size = super::chat::fit(w, h, (EMBED_W, EMBED_H));
-                let auto = (store.settings.gif_auto_play && !crate::look::reduced_motion()) || st.hover_msg == Some(m.id);
+                let auto = (store.settings.gif_auto_play && !crate::look::reduced_motion()) || st.hovered_msg() == Some(m.id);
                 let playing = v.filter(|_| auto).and_then(|v| super::gifv::want(st, &key, v.proxy_url.as_deref().unwrap_or(&v.url), size));
                 let gif = EmbedMedia { content_type: Some("image/gif".into()), ..t.clone() };
                 let still = tile(store, st, m, key, &gif, size, false, p, acc);

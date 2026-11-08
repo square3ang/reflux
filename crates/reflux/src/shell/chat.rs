@@ -494,7 +494,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                             let st = acc(s);
                             if inside {
                                 st.hover_msg = Some(id);
-                            } else if st.hover_msg == Some(id) && st.bar_msg != Some(id) {
+                            } else if st.hover_msg == Some(id) {
                                 st.hover_msg = None;
                             }
                         })
@@ -522,16 +522,16 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                         });
                     }
                     let editing = st.editing.as_ref().is_some_and(|e| e.0 == id);
-                    if !editing && (st.hover_msg == Some(id) || st.bar_msg == Some(id) || active == Some(id)) {
+                    if !editing && (st.hovered_msg() == Some(id) || active == Some(id)) {
                         let perms = Perms { thread_from: perms.thread_from.filter(|_| store.thread(id).is_none()), ..perms };
-                        body = body.child(action_bar(m, c, perms, st, p, acc, layer)).on_hover_change(move |s: &mut S, inside, _| {
+                        body = body.child(action_bar(m, c, perms, st, p, acc, layer).on_hover_change(move |s: &mut S, inside, _| {
                             let st = acc(s);
                             if inside {
                                 st.bar_msg = Some(id);
                             } else if st.bar_msg == Some(id) {
                                 st.bar_msg = None;
                             }
-                        });
+                        }));
                     }
                 } else if st.failed.contains_key(&m.id) {
                     let id = m.id;
@@ -543,7 +543,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                             st.hover_msg = None;
                         }
                     });
-                    if st.hover_msg == Some(id) {
+                    if st.hovered_msg() == Some(id) {
                         body = body.child(super::queue::bar(m, st, p, acc, layer));
                     }
                 }
@@ -1090,7 +1090,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
     };
     let gutter = if head {
         col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).key("gutter-avatar").child(
-            super::avatar_anim(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, st.hover_msg == Some(m.id), p)
+            super::avatar_anim(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, st.hovered_msg() == Some(m.id), p)
                 .key(format!("avatar-{mid}"))
                 .cursor(rune::Cursor::Pointer)
                 .on_press(open.clone())
@@ -1336,7 +1336,7 @@ pub(super) fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Messag
     if !m.stickers.is_empty() {
         // `.stickersContainer`: wrapping, 8 apart, 4 down; each 160×160 (`.stickerWrapper`), contained.
         // `animate_stickers`: 0 always, 1 on hover, 2 never.
-        let hovered = st.hover_msg == Some(m.id);
+        let hovered = st.hovered_msg() == Some(m.id);
         // Reduced motion turns "always" into "on interaction".
         let mode = match store.settings.animate_stickers {
             0 if crate::look::reduced_motion() => 1,

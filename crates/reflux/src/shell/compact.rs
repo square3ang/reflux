@@ -48,7 +48,7 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
     let mut prefix = row().items_center().shrink().min_w(0.0);
     if crate::look::with(|l| l.compact_avatars) && !unknown {
         prefix = prefix.child(
-            super::avatar_anim(store, st, author, dim::MESSAGE_AVATAR_SIZE_COMPACT, None, p.background_secondary_lighter, st.hover_msg == Some(mid), p)
+            super::avatar_anim(store, st, author, dim::MESSAGE_AVATAR_SIZE_COMPACT, None, p.background_secondary_lighter, st.hovered_msg() == Some(mid), p)
                 .key(format!("avatar-{mid}"))
                 .mr(dim::MESSAGE_COMPACT_GAP)
                 .cursor(rune::Cursor::Pointer)

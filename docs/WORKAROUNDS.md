@@ -212,7 +212,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/markdown.rs:62` Reflux's chrome text isn't selectable, so the setting changes nothing yet.
 - `crates/reflux/src/shell/markdown.rs:94` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:393` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:786` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/mod.rs:547` Rune hovers an element by its own rect, not its children's (DOM keeps the row
+- `crates/reflux/src/shell/mod.rs:792` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:74` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
@@ -232,7 +233,7 @@ crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sa
 - `crates/reflux/src/ui/menu.rs:219` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
-- `crates/reflux/src/ui/misc.rs:157` a virtual list keeps what's on screen when rows above it are measured
+- `crates/reflux/src/ui/misc.rs:160` a virtual list keeps what's on screen when rows above it are measured
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 

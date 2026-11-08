@@ -180,7 +180,7 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
         .on_wheel(move |_: &mut S, e: rune::WheelEvent, tx: &mut rune::Tx| {
             let m = e.mods;
             if debug_wheel() {
-                eprintln!("wheel {k2}: dy {} precise {} phase {:?}", e.dy, e.precise, e.phase);
+                eprintln!("wheel {k2}: dy {} dx {} precise {} phase {:?} mods {:?}", e.dy, e.dx, e.precise, e.phase, m);
             }
             if e.precise || e.dx != 0.0 || e.dy == 0.0 || m.cmd || m.ctrl || m.alt || m.shift {
                 return false;
