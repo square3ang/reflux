@@ -2162,7 +2162,13 @@ fn compact_call<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowfl
     let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
     let pad_bottom = edge.max(footer.min(height * 0.34));
     let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
-    let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
+    // `.layoutHostFullHeightGrid`: the grid's host keeps the header's chrome clear too
+    // (`--compact-call-header-reserve`, the floating header + 72), and adds no side padding
+    // of its own — the grid carries it.
+    let safe_top = edge.max((dim::LAYOUT_HEADER_HEIGHT + 72.0).min(height * 0.3));
+    let grid = has_media && !people.is_empty();
+    let (px, pt, pb) = if grid { (0.0, safe_top, pad_bottom) } else { (edge, pad_top, pad_bottom) };
+    let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(px).pt(pt).pb(pb);
     if people.is_empty() {
         content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
     } else if !has_media && let Some(fallback) = avatar_fallback {

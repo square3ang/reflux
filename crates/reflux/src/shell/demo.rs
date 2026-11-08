@@ -786,6 +786,13 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.voice.channel = Some((Some(g), Snowflake(2301)));
             st.voice.connected = true;
         }
+        // The call strip with the member list closed, as Fluxer's reference capture has it.
+        "voice-chat-joined-nomembers" => {
+            st.select_guild(Some(g), Some(Snowflake(2301)));
+            st.voice.channel = Some((Some(g), Snowflake(2301)));
+            st.voice.connected = true;
+            st.member_list = false;
+        }
         // `UpdaterIcon` in the channel header: an installable desktop update.
         "header-update" => {
             st.desktop.update = Some(crate::desktop::updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(Default::default()), stage: crate::desktop::updater::Stage::Available });
@@ -1095,6 +1102,12 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": u.to_string(), "channel_id": "2301", "connection_id": conn, "viewer_stream_keys": [key]}));
             }
         }
+    }
+    // A fifth participant, as Fluxer's compact-strip reference has five.
+    if scene == "call-five" {
+        apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1002", "channel_id": "2301", "connection_id": "c1002"}));
+        // Fluxer's capture had the call resized to 297px tall.
+        st.prefs.compact_call_heights.insert(Snowflake(2301), 297.0);
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "tile-preview" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "bar-tip" | "panel-share-menu" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
