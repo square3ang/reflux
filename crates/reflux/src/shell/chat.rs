@@ -562,14 +562,16 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 }
             }
             menu.el(&st.popups, pops(acc), p, layer);
-        } else if open == format!("emoji-{}", m.id) {
+        } else if open == format!("emoji-{}", m.id) || open == format!("emoji-row-{}", m.id) {
             let close = move |s: &mut S| {
                 let st = acc(s);
                 st.popups.close();
                 st.active_msg = None;
             };
             let picker = super::expr::react_picker(store, st, c.id, m.id, p, acc).modal(true, close);
-            layer.push(anchor(picker, &format!("react-{}", m.id), Placement::LeftStart, 8.0));
+            // The toolbar's button opens it to the left; the reactions row's (`position="right-start"`) to the right.
+            let at = if open.starts_with("emoji-row-") { (format!("react-row-{}", m.id), Placement::RightStart) } else { (format!("react-{}", m.id), Placement::LeftStart) };
+            layer.push(anchor(picker, &at.0, at.1, 8.0));
         }
     }
     let more = store.messages.get(&c.id).is_some_and(|w| w.has_more_before);
@@ -1330,7 +1332,8 @@ pub(super) fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Messag
         c = c.children(super::embeds::embeds(store, st, m, p, acc));
     }
     if !m.reactions.is_empty() && store.settings.render_reactions {
-        c = c.child(reactions(st, m, p, acc));
+        let react = store.permissions(m.channel_id).contains(Permissions::ADD_REACTIONS);
+        c = c.child(reactions(st, m, react, p, acc));
     }
     Some(c)
 }
@@ -1348,14 +1351,22 @@ pub fn media_size(w: u32, h: u32) -> (f32, f32) {
 }
 
 /// `.reactionsGrid`.
-fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAccess<S>) -> El {
+fn reactions<S: 'static>(st: &ShellState, m: &Message, react: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut grid = row().flex_wrap().gaps(4.0, 0.0).pt(4.0).center_y();
+    let light = crate::ui::is_light(p);
+    // `:where(html.window-focused, …) .reactionButton:hover`: no hover look while unfocused.
+    let hoverable = !st.desktop.unfocused;
     for r in &m.reactions {
-        let (bg, border, fg) = if r.me {
-            (p.brand_tint, p.brand_tint_border, p.text_on_brand_tint)
-        } else {
-            (p.background_secondary, Color::TRANSPARENT, p.text_tertiary)
+        // `.reactionButton` (`.reactionMe`, `.theme-light`) at rest and hovered: background, border.
+        let ((bg, border), (hbg, hborder)) = match (r.me, light) {
+            (true, _) => ((p.brand_tint, p.brand_tint_border), (p.brand_tint_hover, if light { p.brand_primary_foreground } else { p.brand_tint_border })),
+            (false, false) => ((p.background_secondary, Color::TRANSPARENT), (p.background_modifier_hover, p.background_modifier_accent)),
+            (false, true) => (
+                (mix(p.brand_primary_light, p.background_secondary, 6.0), mix(p.brand_primary_light, p.background_secondary, 10.0)),
+                (mix(p.brand_primary_light, p.background_secondary, 8.0), mix(p.brand_primary, p.background_secondary, 12.0)),
+            ),
         };
+        let fg = if r.me { p.text_on_brand_tint } else { p.text_tertiary };
         // `.emoji`: a 20px image (custom, or unicode from the spritesheet), else its text.
         let load = match r.emoji.id {
             Some(id) => st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())),
@@ -1368,21 +1379,53 @@ fn reactions<S: 'static>(st: &ShellState, m: &Message, p: &Palette, acc: ShellAc
         };
         let (m2, e) = (m.clone(), r.emoji.clone());
         let tip = super::expr::reactor_tip_key(&r.emoji);
-        let pill = row()
-                .key(format!("pill-{}-{tip}", m.id))
-                .py(3.0)
-                .px(7.0)
-                .center_y()
-                .radius(8.0)
-                .fill(bg)
-                .border(1.0, over(border, bg))
-                .hover(if r.me { mix(p.brand_tint_hover, Color::TRANSPARENT, 50.0) } else { p.background_modifier_hover })
-                .cursor(rune::Cursor::Pointer)
-                .role("button")
-                .child(row().min_w(20.0).h(24.0).center().child(glyph))
-                .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0))
-                .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone()));
+        // The hovered look replaces the resting one (`transition: 0.1s`), so it's a second
+        // layer faded in over the first, as `ui::Button`'s hover border.
+        let layer = |bg: Color, border: Color| el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(8.0).fill(bg).border(1.0, over(border, bg)).inert();
+        let mut pill = row()
+            .key(format!("pill-{}-{tip}", m.id))
+            .py(3.0)
+            .px(7.0)
+            .center_y()
+            .radius(8.0)
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .child(layer(bg, border).key("rest"));
+        if hoverable {
+            pill = pill.hover_group().child(layer(hbg, hborder).group_opacity(0.0, 1.0).key("hover"));
+        }
+        let pill = pill
+            .child(row().min_w(20.0).h(24.0).center().child(glyph))
+            .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(fg).min_w(12.0).ml(6.0))
+            .on_press(move |s: &mut S| toggle_reaction(acc(s), &m2, e.clone()));
         grid = grid.child(super::expr::pill_hover(pill, m.channel_id, m.id, tip, acc));
+    }
+    // `.reactionPickerButton`: Add reaction after the pills, its picker to the right.
+    if react {
+        let (id, ch) = (m.id, m.channel_id);
+        let open = st.popups.is_open(&format!("emoji-row-{id}"));
+        let b = row()
+            .key(format!("react-row-{id}"))
+            .py(4.0)
+            .px(6.0)
+            .radius(8.0)
+            .fill(if open { p.background_modifier_hover } else { Color::TRANSPARENT })
+            .hover(if hoverable { p.background_modifier_hover } else { Color::TRANSPARENT })
+            .hover_group()
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(t("Add reaction"))
+            .child(icon(&icons::SMILEY_FILL, 20.0).color(if open { p.text_primary } else { p.text_tertiary }).group_color(p.text_primary))
+            .on_press(move |s: &mut S| {
+                let st = acc(s);
+                if st.popups.is_open(&format!("emoji-row-{id}")) {
+                    st.popups.close();
+                } else {
+                    super::expr::open_react(st, ch, id);
+                    st.popups.open = Some(format!("emoji-row-{id}"));
+                }
+            });
+        grid = grid.child(b);
     }
     grid
 }

@@ -248,7 +248,7 @@ impl Demo {
                     {"id": "2102", "last_message_id": new.to_string()}, {"id": "2204", "last_message_id": new.to_string()},
                     {"id": "2401", "last_message_id": new.to_string()},
                 ],
-                "user_settings": {"status": "online", "guild_folders": [
+                "user_settings": {"status": "online", "render_reactions": true, "guild_folders": [
                     {"id": -1, "guild_ids": ["2000", "3000", "4000"]},
                     {"id": 7, "name": "Friends", "color": 0x2ECC71, "guild_ids": ["5000", "6000"]},
                     {"id": -1, "guild_ids": ["7000"]},
