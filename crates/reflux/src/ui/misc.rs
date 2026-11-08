@@ -81,6 +81,50 @@ pub fn scroller(viewport: El, regular: bool, p: &Palette) -> El {
     )
 }
 
+thread_local! {
+    /// Each [`smooth_wheel`] viewport's last scroll position and where its glide is heading.
+    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, (rune::ScrollPos, Option<f32>)>> = Default::default();
+}
+
+/// Chromium's smooth wheel scrolling on the vertical viewport keyed `key` (the key is set here):
+/// a notched wheel's line steps glide instead of jumping, each adding to where the glide was
+/// heading. Trackpads and free-spinning wheels (`precise`) and modified wheels scroll as before.
+pub fn smooth_wheel<S: 'static>(viewport: El, key: &str) -> El {
+    smooth_wheel_with::<S>(viewport, key, |_| {})
+}
+
+/// [`smooth_wheel`] for a viewport that also follows its offset with `f` (`on_scroll_offset`).
+pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::ScrollPos) + 'static) -> El {
+    let (k1, k2) = (key.to_owned(), key.to_owned());
+    viewport
+        .key(key)
+        .on_scroll_offset(move |pos| {
+            WHEEL.with_borrow_mut(|m| {
+                let e = m.entry(k1.clone()).or_insert((pos, None));
+                e.0 = pos;
+            });
+            f(pos);
+        })
+        .on_wheel(move |_: &mut S, e: rune::WheelEvent, tx: &mut rune::Tx| {
+            let m = e.mods;
+            if e.precise || e.dx != 0.0 || e.dy == 0.0 || m.cmd || m.ctrl || m.alt || m.shift {
+                return false;
+            }
+            let Some(to) = WHEEL.with_borrow_mut(|w| {
+                let (pos, aim) = w.get_mut(&k2)?;
+                let at = pos.offset[1];
+                let base = aim.filter(|a| (a - at).abs() > 1.0).unwrap_or(at);
+                let to = (base - e.dy).clamp(0.0, pos.max[1].max(0.0));
+                *aim = Some(to);
+                Some((pos.offset[0], to))
+            }) else {
+                return false;
+            };
+            tx.scroll_to_with(k2.clone(), to.0, to.1, rune::Spring::new(0.15, 0.0));
+            true
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

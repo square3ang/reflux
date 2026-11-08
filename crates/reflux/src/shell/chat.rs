@@ -632,6 +632,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     // and centring miss rows in an overflowing `justify_end` viewport (seen live: a jump showed
     // an empty list).
     let viewport = if list_fits && !newer { viewport.justify_end() } else { viewport };
+    let viewport = crate::ui::smooth_wheel::<S>(viewport, &format!("{pre}msgs-scroll"));
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
     if newer || rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, pre, p, acc));

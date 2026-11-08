@@ -66,7 +66,7 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         .h_full()
         .min_h(0.0)
         .fill(p.background_secondary_lighter)
-        .child(scroller(viewport, false, p))
+        .child(scroller(crate::ui::smooth_wheel::<S>(viewport, "member-list-scroll"), false, p))
 }
 
 /// The 100-row windows a lazy request asks for: `[0, 99]` always, plus those the visible rows

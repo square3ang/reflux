@@ -48,7 +48,7 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         list = list.child(rail_action(&icons::QUESTION_BOLD, t("Help center"), "rail-help", p, move |_: &mut S| crate::settings::open_url(&url)));
     }
     let viewport = col().w(dim::LAYOUT_GUILD_LIST_WIDTH).h_full().fill(p.background_secondary).scroll(ScrollSpec { stick_bottom: false }).key("guild-rail-list");
-    scroller(viewport.child(list), false, p).key("guild-rail")
+    scroller(crate::ui::smooth_wheel::<S>(viewport.child(list), "guild-rail-list"), false, p).key("guild-rail")
 }
 
 /// Makes a rail row draggable (`UseGuildListItemDragAndDrop`): the pointer maps onto the rail's

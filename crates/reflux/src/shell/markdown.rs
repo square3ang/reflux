@@ -67,7 +67,7 @@ impl<'a> Md<'a> {
     }
 }
 
-/// Stands in for an inline emoji in the text: no-break spaces sized (see [`placeholder_spans`])
+/// Stands in for an inline emoji in the text: no-break spaces sized (see [`sized_placeholder`])
 /// so they're as wide as the 1.5em image (`--emoji-size-emoji`) and make their line as tall as
 /// the image makes it in Fluxer; the image is drawn over them.
 const PLACEHOLDER: &str = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
@@ -87,17 +87,12 @@ fn nbsp_em() -> f32 {
     })
 }
 
-/// `span` (over a [`PLACEHOLDER`] in `size`/`lh` text) split so the placeholder is 1.5em wide
-/// and its line `max(lh, 1.5em)` tall, as a 1.5em image with `vertical-align: -0.4em` makes it.
+/// `span` (over a [`PLACEHOLDER`] in `size`/`lh` text) split so the placeholder is `width` wide
+/// and its line `max(lh, height)` tall, as a 1.5em (inline) or 48px (jumbo) image with `vertical-align: -0.4em` makes it.
 /// A span's line height scales with its size, so the first spaces take the size that gives that
 /// line height, one more makes up the width, and the rest are too small to count.
 // shortcut: a scaled span keeps its half-leading even, so the line's baseline lands where that
 // gives (17.6 → 18 in message text, but 24.2 → 26.6 in an h1); the image follows the baseline.
-fn placeholder_spans(span: &Span, size: f32, lh: f32) -> [Span; 3] {
-    sized_placeholder(span, size, lh, 1.5 * size, 1.5 * size)
-}
-
-/// [`placeholder_spans`] for a `width` × `height` box: `span` covers no-break spaces only.
 pub(crate) fn sized_placeholder(span: &Span, size: f32, lh: f32, width: f32, height: f32) -> [Span; 3] {
     let em = nbsp_em().max(0.01);
     let tall = size * lh.max(height) / lh;
@@ -108,13 +103,13 @@ pub(crate) fn sized_placeholder(span: &Span, size: f32, lh: f32, width: f32, hei
     [part(at(0), at(n), tall), part(at(n), at(n + 1), rest.min(tall)), part(at(n + 1), span.end, 0.01)]
 }
 
-/// The baseline of a line holding an emoji in `size`/`lh` text, from the line's top.
-fn baseline(size: f32, lh: f32) -> f32 {
+/// The baseline of a line holding a `side` emoji in `size`/`lh` text, from the line's top.
+fn baseline(size: f32, lh: f32, side: f32) -> f32 {
     thread_local!(static TS: RefCell<Option<TextSystem>> = const { RefCell::new(None) });
     TS.with_borrow_mut(|ts| {
         let ts = ts.get_or_insert_with(|| TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
         let text = format!("x{PLACEHOLDER}");
-        let spans = placeholder_spans(&Span::new(1, text.len()), size, lh);
+        let spans = sized_placeholder(&Span::new(1, text.len()), size, lh, side, side);
         let l = ts.layout_rich(&text, &spans, font(size, 400.0).lh(lh), 1.0, None);
         l.lines().next().map_or(lh * 0.75, |line| line.metrics().baseline)
     })
@@ -123,8 +118,7 @@ fn baseline(size: f32, lh: f32) -> f32 {
 /// Where an inline emoji image goes in its text box: centred on its placeholder's box `ph`
 /// (`[x, y, w, h]`, its line's top to bottom) and, as `vertical-align: -0.4em` puts it, its
 /// bottom 0.4em under the line's `baseline`. Returns `[x, y, side]`.
-fn emoji_rect(text: [f32; 4], ph: [f32; 4], size: f32, baseline: f32) -> [f32; 3] {
-    let side = 1.5 * size;
+fn emoji_rect(text: [f32; 4], ph: [f32; 4], size: f32, side: f32, baseline: f32) -> [f32; 3] {
     [ph[0] - text[0] + (ph[2] - side) / 2.0, ph[1] - text[1] + baseline + 0.4 * size - side, side]
 }
 
@@ -192,6 +186,8 @@ struct Run {
     emoji: Vec<InlineEmoji>,
     /// One-line previews draw emoji as text.
     plain_emoji: bool,
+    /// `.emoji.jumboable`: every emoji is this wide and tall (`--emoji-size-jumbo-emoji`), not 1.5em.
+    jumbo: Option<f32>,
     /// Link byte ranges and their URLs.
     links: Vec<(Range<usize>, String)>,
     /// The "(edited)" label's bytes (`user-select: none`: copies as nothing).
@@ -251,7 +247,7 @@ impl Run {
         // Each placeholder's span becomes three; later spans shift by two per earlier emoji.
         for (k, e) in self.emoji.iter().enumerate() {
             let i = e.span + 2 * k;
-            let parts = placeholder_spans(&self.spans[i], size, lh);
+            let parts = sized_placeholder(&self.spans[i], size, lh, self.jumbo.unwrap_or(1.5 * size), self.jumbo.unwrap_or(1.5 * size));
             self.spans.splice(i..=i, parts);
         }
         let mut t = rich(self.text, self.spans).font(font(size, weight).lh(lh)).color(color).w_full();
@@ -277,9 +273,16 @@ impl Run {
         // Placeholders are found where the runtime laid them out last frame (so a new or
         // re-wrapped text shows its emoji a frame late).
         let at = rune::memo::layout(&key);
-        let base = baseline(size, lh);
+        let side = self.jumbo.unwrap_or(1.5 * size);
+        let base = baseline(size, lh, side);
         let imgs = self.emoji.iter().enumerate().filter_map(|(i, e)| {
-            let [x, y, side] = emoji_rect(at?, rune::memo::layout(&hl(i))?, size, base);
+            let ph = rune::memo::layout(&hl(i))?;
+            let [x, mut y, side] = emoji_rect(at?, ph, size, side, base);
+            // A 48px image with `vertical-align: -0.4em` is what sets its line's height, so its
+            // top is the line's; a scaled span's baseline lands lower than the CSS strut's.
+            if self.jumbo.is_some() {
+                y = ph[1] - at?[1];
+            }
             let img = el().absolute(x, y).size(side, side).pixels_fit(e.px.as_ref()?, rune::SurfaceFit::Fit).key(format!("{}-img", hl(i)));
             Some(match &md.on_emoji {
                 Some(f) => f(img, &e.kind, format!("{}-img", hl(i))),
@@ -315,8 +318,8 @@ pub fn render_edited(content: &str, md: &Md, edited: Option<&str>) -> El {
     let nodes = reflux_markdown::parse(content, &Options { flags: presets::STANDARD, emoji: super::emoji::context(content) });
     match jumbo(&nodes, md) {
         Some(j) => match edited {
-            Some(label) => col().w_full().child(j).children(edited_run(Run::default(), label, md)),
-            None => j,
+            Some(label) => col().w_full().children(j).children(edited_run(Run::default(), label, md)),
+            None => j.unwrap_or_else(col),
         },
         None => blocks(&nodes, md, md.p.text_chat, edited),
     }
@@ -362,34 +365,26 @@ fn emoji_text(kind: &EmojiKind) -> String {
     }
 }
 
-/// `shouldRenderAsJumboEmojis` (only emoji, at most 30): a row of 48px
-/// (`--emoji-size-jumbo-emoji`) emoji.
-// shortcut: jumbo emoji can't be selected or copied (no text); "Copy text" has them.
-fn jumbo(nodes: &[Node], md: &Md) -> Option<El> {
-    let mut emoji = Vec::new();
+/// `shouldRenderAsJumboEmojis` (only emoji, at most 30): the paragraph with 48px
+/// (`--emoji-size-jumbo-emoji`, 3em of the body text) emoji, selectable and copied like inline ones.
+fn jumbo(nodes: &[Node], md: &Md) -> Option<Option<El>> {
+    let mut count = 0;
     for n in nodes {
         match n {
-            Node::Emoji { kind } => emoji.push(kind),
+            Node::Emoji { .. } => count += 1,
             Node::Text { content } if content.trim().is_empty() => {}
             _ => return None,
         }
     }
-    if emoji.is_empty() || emoji.len() > 30 {
+    if count == 0 || count > 30 {
         return None;
     }
-    let one = |(i, k): (usize, &&EmojiKind)| {
-        let e = match emoji_image(k, md) {
-            Load::Ready(px) => el().size(48.0, 48.0).pixels_fit(&px, rune::SurfaceFit::Fit),
-            Load::Pending => el().size(48.0, 48.0),
-            Load::Failed => text(emoji_text(k)).font(font(48.0, 400.0).lh(48.0)),
-        };
-        let key = format!("{}-j{i}", md.key);
-        match &md.on_emoji {
-            Some(f) => f(e.key(key.clone()), k, key),
-            None => e,
-        }
-    };
-    Some(row().w_full().flex_wrap().gaps(4.0, 4.0).children(emoji.iter().enumerate().map(one)))
+    let (size, lh) = body_size();
+    let mut run = Run { jumbo: Some(3.0 * size), ..Run::default() };
+    for n in nodes {
+        inline(n, Style::default(), &mut run, md);
+    }
+    Some(run.el(size, lh, 400.0, md.p.text_chat, md))
 }
 
 /// A one-line inline rendering (reply previews): block syntax flattened.
@@ -627,7 +622,13 @@ fn inline(node: &Node, st: Style, run: &mut Run, md: &Md) {
         // Copied as `renderEmojiToPlaintext` writes them; drawn as text when there's no image.
         Node::Emoji { kind } if run.plain_emoji => run.push(&emoji_text(kind), st, md),
         Node::Emoji { kind } => match emoji_image(kind, md) {
-            Load::Failed => run.push(&emoji_text(kind), st, md),
+            Load::Failed => {
+                run.push(&emoji_text(kind), st, md);
+                // `.emoji.jumboable:not(img)`: font-size `--emoji-size-jumbo-emoji`.
+                if let (Some(side), Some(sp)) = (run.jumbo, run.spans.last_mut()) {
+                    sp.size = Some(side);
+                }
+            }
             Load::Pending => run.push_emoji(None, kind, st, md),
             Load::Ready(px) => run.push_emoji(Some(px), kind, st, md),
         },
@@ -655,7 +656,7 @@ mod tests {
         for (size, lh) in [(16.0, 22.0), (22.0, 26.0), (13.0, 18.0)] {
             let plain = ts.layout_rich("ab", &[], font(size, 400.0).lh(lh), 1.0, None).full_width();
             let text = format!("a{PLACEHOLDER}b");
-            let spans = placeholder_spans(&Span::new(1, 1 + PLACEHOLDER.len()), size, lh);
+            let spans = sized_placeholder(&Span::new(1, 1 + PLACEHOLDER.len()), size, lh, 1.5 * size, 1.5 * size);
             let l = ts.layout_rich(&text, &spans, font(size, 400.0).lh(lh), 1.0, None);
             let w = l.full_width() - plain;
             assert!((w - 1.5 * size).abs() < 0.05, "{size}: placeholder {w} wide");
@@ -664,18 +665,18 @@ mod tests {
         }
         // In message text Fluxer's baseline sits 1.1em (17.6) under the top of the line the
         // image fills; ours is within a point of it.
-        assert!((baseline(16.0, 22.0) - 17.6).abs() <= 1.0, "baseline {}", baseline(16.0, 22.0));
+        assert!((baseline(16.0, 22.0, 24.0) - 17.6).abs() <= 1.0, "baseline {}", baseline(16.0, 22.0, 24.0));
     }
 
     #[test]
     fn emoji_images_centre_on_their_placeholder_and_sit_on_the_baseline() {
         // Text box at (100, 200); placeholder on its second 24px line at x 40..64.
-        let [x, y, side] = emoji_rect([100.0, 200.0, 600.0, 48.0], [140.0, 224.0, 24.0, 24.0], 16.0, 18.0);
+        let [x, y, side] = emoji_rect([100.0, 200.0, 600.0, 48.0], [140.0, 224.0, 24.0, 24.0], 16.0, 24.0, 18.0);
         assert_eq!((x, side), (40.0, 24.0));
         // Bottom 0.4em (6.4) under the baseline 18 down the line.
         assert!((y + side - (24.0 + 18.0 + 6.4)).abs() < 1e-4, "{y}");
         // A placeholder a little wider than the image (bold) centres it.
-        assert_eq!(emoji_rect([0.0; 4], [10.0, 0.0, 26.0, 24.0], 16.0, 18.0)[0], 11.0);
+        assert_eq!(emoji_rect([0.0; 4], [10.0, 0.0, 26.0, 24.0], 16.0, 24.0, 18.0)[0], 11.0);
     }
 
     #[test]

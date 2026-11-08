@@ -17,14 +17,14 @@ fn header_bar(p: &Palette) -> El {
     el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(p.user_area_divider_color, p.background_secondary))
 }
 
-fn list_following(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("channel-list-banner").on_scroll_offset(f);
-    scroller(viewport.child(content.focus_group().role("list")), false, p)
+fn list_following<S: 'static>(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
+    scroller(crate::ui::smooth_wheel_with::<S>(viewport.child(content.focus_group().role("list")), "channel-list-banner", f), false, p)
 }
 
-fn list(content: El, key: &str, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key(key);
-    scroller(viewport.child(content.focus_group().role("list")), false, p)
+fn list<S: 'static>(content: El, key: &str, p: &Palette) -> El {
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
+    scroller(crate::ui::smooth_wheel::<S>(viewport.child(content.focus_group().role("list")), key), false, p)
 }
 
 pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -124,8 +124,8 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         .clip_rounded(0.0)
         .child(header)
         .child(match &banner {
-            Some((_, l, _)) => list_following(groups, l.follow(), p),
-            None => list(groups, "channel-list", p),
+            Some((_, l, _)) => list_following::<S>(groups, l.follow(), p),
+            None => list::<S>(groups, "channel-list", p),
         })
 }
 
@@ -450,7 +450,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .min_h(0.0)
         .fill(p.background_secondary)
         .child(header)
-        .child(list(rows, "dm-list", p))
+        .child(list::<S>(rows, "dm-list", p))
 }
 
 /// `ClickableItem`: the Friends and Personal Notes rows, a 32px icon disc and a label.
