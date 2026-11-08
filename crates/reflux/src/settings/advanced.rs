@@ -494,7 +494,9 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
         return col().w_full().children(toolbar).child(col().key("none").w_full().py(32.0).items_center().child(text(t("No advanced settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary)));
     }
     let mut out = col().w_full().children(toolbar);
-    let mut first = true;
+    // Fluxer's Advanced leads with Privacy: the screen-share preview and link toggles inline.
+    out = out.child(section(t("Privacy"), privacy(store, st, p, acc), true, p));
+    let mut first = false;
     let mut rows = rows;
     for (key, label) in [("new", "New settings")].iter().chain(CATEGORIES) {
         let (items, rest): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(c, _)| c == key);
@@ -510,6 +512,74 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
         first = false;
     }
     out
+}
+
+/// Advanced → Privacy (`AdvancedSettingsTab`): a preview subheading, then the toggles Fluxer
+/// shows inline instead of behind the screen-share modal.
+fn privacy<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
+    let toggle = |id: &'static str, label: &str, desc: Option<&str>, get: fn(&Prefs) -> bool, put: fn(&mut Prefs, bool)| -> El {
+        let sw = look_switch(st, p, acc, None, false, get, put);
+        row_with(id, label, desc, sw, p)
+    };
+    let heading = col()
+        .w_full()
+        .py(16.0)
+        .gap(4.0)
+        .child(text(t("Screen share preview behaviour")).font(font(14.0, 600.0).lh(18.9)).color(p.text_primary))
+        .child(text(t("Preview, popout, and stream thumbnail behaviour")).font(font(13.0, 400.0).lh(18.2)).color(p.text_secondary).wrap());
+    // "Upload attachments before sending" has no pre-upload in reflux (docs/WORKAROUNDS.md).
+    let preupload = row_with(
+        "advanced-preupload",
+        "Upload attachments before sending",
+        Some("Start uploading attachments as soon as they are added to the message input"),
+        Switch::<S>::new(false).disabled(true).el(p),
+        p,
+    );
+    col()
+        .w_full()
+        .child(heading)
+        .child(toggle("advanced-pause-preview", "Pause my screen share preview in the background", None, |p| p.look.pause_preview_unfocused, |p, v| p.look.pause_preview_unfocused = v))
+        .child(toggle("advanced-disable-pip", "Disable picture-in-picture popout for screen shares", None, |p| p.look.disable_screen_pip, |p, v| p.look.disable_screen_pip = v))
+        .child(toggle("advanced-hide-thumbnail", "Hide my stream preview thumbnail", None, |p| p.look.hide_stream_preview, |p, v| p.look.hide_stream_preview = v))
+        .child(toggle(
+            "chat-settings-strip-tracking",
+            "Strip tracking parameters from URLs",
+            Some("Automatically remove tracking parameters from URLs in messages you send"),
+            |p| p.look.strip_tracking,
+            |p, v| p.look.strip_tracking = v,
+        ))
+        .child(row_with("advanced-trust-links", "Trust all external links", Some("Skip the external link warning for all domains"), trust_all(store, p, acc), p))
+        .child(preupload)
+}
+
+/// `chat-settings-trust-domains`: the server's `trusted_domains` hold `*` when all are trusted.
+fn trust_all<S: 'static>(store: &Store, p: &Palette, acc: ShellAccess<S>) -> El {
+    let on = store.settings.trusted_domains.iter().any(|d| d == "*");
+    Switch::new(on)
+        .on_toggle(move |s: &mut S| {
+            let sh = acc(s);
+            if on {
+                sh.media_ui.trusted.clear();
+                sh.intents.push(Intent::PatchSettings(json!({ "trusted_domains": [] })));
+            } else {
+                sh.confirm_trust_all = true;
+            }
+        })
+        .el(p)
+}
+
+/// One Advanced row: label (14/600), optional description (13/400), the control, a divider.
+fn row_with(id: &'static str, label: &str, desc: Option<&str>, control: El, p: &Palette) -> El {
+    let mut main = col().grow(1.0).shrink().min_w(0.0).gap(4.0).child(text(t(label).to_string()).font(font(14.0, 600.0).lh(18.9)).color(p.text_primary));
+    if let Some(d) = desc {
+        main = main.child(text(t(d).to_string()).font(font(13.0, 400.0).lh(18.2)).color(p.text_secondary).wrap());
+    }
+    col()
+        .key(id)
+        .w_full()
+        .py(16.0)
+        .child(row().w_full().gap(12.0).center_y().child(main).child(control))
+        .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.border_color))
 }
 
 /// A boolean voice setting row in the encoder modal.

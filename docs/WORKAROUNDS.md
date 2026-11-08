@@ -192,7 +192,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:230` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
-- `crates/reflux/src/settings/advanced.rs:551` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
+- `crates/reflux/src/settings/advanced.rs:621` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:747` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
