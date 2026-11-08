@@ -109,8 +109,12 @@ pub struct Store {
     pub guild_settings: HashMap<Option<Snowflake>, UserGuildSettings>,
     pub notes: HashMap<Snowflake, String>,
     pub pinned_dms: Vec<Snowflake>,
-    /// Keyed by (guild, user); DM calls use `None`.
+    /// Keyed by (guild, user); DM calls use `None`. A user in voice from several clients shows
+    /// their latest connection's state.
     pub voice_states: HashMap<(Option<Snowflake>, Snowflake), VoiceState>,
+    /// Every connection's state by connection ID (`connectionVoiceStates`), so one client
+    /// leaving leaves the user's others in voice.
+    pub voice_connections: HashMap<String, VoiceState>,
     /// Active DM / group DM calls by channel (CALL_CREATE / CALL_UPDATE).
     pub calls: HashMap<Snowflake, reflux_model::Call>,
     pub messages: HashMap<Snowflake, MessageWindow>,
@@ -408,6 +412,7 @@ impl Store {
             E::CallDelete(d) => {
                 self.calls.remove(&d.channel_id);
                 self.voice_states.retain(|(g, _), v| g.is_some() || v.channel_id != Some(d.channel_id));
+                self.voice_connections.retain(|_, v| v.guild_id.is_some() || v.channel_id != Some(d.channel_id));
             }
             _ => {}
         }
@@ -842,10 +847,22 @@ impl Store {
             self.upsert_member(g, m);
         }
         let key = (v.guild_id, user);
-        if v.channel_id.is_none() {
-            self.voice_states.remove(&key);
-        } else {
-            self.voice_states.insert(key, v.clone());
+        let v = VoiceState { user_id: Some(user), ..v.clone() };
+        match (&v.connection_id, v.channel_id) {
+            (Some(c), Some(_)) => drop(self.voice_connections.insert(c.clone(), v.clone())),
+            (Some(c), None) => drop(self.voice_connections.remove(c)),
+            // A leave without a connection: all of the user's there.
+            (None, None) => self.voice_connections.retain(|_, o| (o.guild_id, o.user_id) != (v.guild_id, Some(user))),
+            (None, Some(_)) => {}
+        }
+        if v.channel_id.is_some() {
+            self.voice_states.insert(key, v);
+            return;
+        }
+        let other = self.voice_connections.values().find(|o| (o.guild_id, o.user_id) == (v.guild_id, Some(user))).cloned();
+        match other {
+            Some(o) => drop(self.voice_states.insert(key, o)),
+            None => drop(self.voice_states.remove(&key)),
         }
     }
 
@@ -876,6 +893,7 @@ impl Store {
         });
         r.presences.iter().for_each(|p| self.presence(p));
         self.voice_states.retain(|(g, _), _| *g != Some(r.id));
+        self.voice_connections.retain(|_, v| v.guild_id != Some(r.id));
         r.voice_states.iter().for_each(|v| self.voice_state(&VoiceState { guild_id: Some(r.id), ..v.clone() }));
         // Replace the guild's channels. Guild Ready lists only the threads the user joined, so
         // keep threads loaded another way (archived lists, the forum browser) and only drop the
@@ -913,6 +931,7 @@ impl Store {
         let gone: Vec<_> = self.channels.values().filter(|c| c.guild_id == Some(id)).map(|c| c.id).collect();
         gone.into_iter().for_each(|c| self.remove_channel(c));
         self.voice_states.retain(|(g, _), _| *g != Some(id));
+        self.voice_connections.retain(|_, v| v.guild_id != Some(id));
         self.member_lists.retain(|(g, _), _| *g != id);
     }
 
@@ -954,6 +973,7 @@ impl Store {
         // No roster or call may point at a channel that no longer exists.
         self.calls.remove(&id);
         self.voice_states.retain(|_, v| v.channel_id != Some(id));
+        self.voice_connections.retain(|_, v| v.channel_id != Some(id));
     }
 
     fn bump_last_message(&mut self, channel: Snowflake, id: Snowflake) {

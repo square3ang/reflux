@@ -379,6 +379,20 @@ fn deleting_an_original_marks_its_replies() {
 }
 
 #[test]
+fn a_user_in_voice_from_two_clients_stays_when_one_leaves() {
+    let mut s = store();
+    let vs = |conn: &str, ch: Option<&str>, mute: bool| json!({"guild_id":"100","channel_id":ch,"user_id":"7","connection_id":conn,"session_id":"s","member":null,"mute":false,"deaf":false,"self_mute":mute,"self_deaf":false,"self_video":false,"self_stream":false,"is_mobile":false,"suppress":false,"viewer_stream_keys":[],"e2ee_capable":true,"p2p":false,"version":1});
+    let key = (Some(Snowflake(100)), Snowflake(7));
+    apply(&mut s, "VOICE_STATE_UPDATE", vs("a", Some("102"), true));
+    apply(&mut s, "VOICE_STATE_UPDATE", vs("b", Some("102"), false));
+    apply(&mut s, "VOICE_STATE_UPDATE", vs("b", None, false));
+    let v = &s.voice_states[&key];
+    assert_eq!((v.connection_id.as_deref(), v.channel_id, v.self_mute), (Some("a"), Some(Snowflake(102)), true), "the other client is still in");
+    apply(&mut s, "VOICE_STATE_UPDATE", vs("a", None, false));
+    assert!(!s.voice_states.contains_key(&key));
+}
+
+#[test]
 fn calls_follow_create_update_delete() {
     let mut s = store();
     let vs = json!({"guild_id":null,"channel_id":"50","user_id":"7","connection_id":"c","session_id":"s","member":null,"mute":false,"deaf":false,"self_mute":false,"self_deaf":false,"self_video":false,"self_stream":false,"is_mobile":false,"suppress":false,"viewer_stream_keys":[],"e2ee_capable":true,"p2p":false,"version":1});
