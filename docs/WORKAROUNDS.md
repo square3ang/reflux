@@ -194,7 +194,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
 - `crates/reflux/src/settings/advanced.rs:551` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
-- `crates/reflux/src/settings/look_tabs.rs:709` sizes, spacing and other non-colour, non-font variables can't be overridden
+- `crates/reflux/src/settings/look_tabs.rs:747` sizes, spacing and other non-colour, non-font variables can't be overridden
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being

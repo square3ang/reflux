@@ -111,6 +111,43 @@ pub fn appearance<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
         .child(link)
         .child(text(".").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
 
+    // `MessagesPreview`: the same two demo messages Fluxer shows, clipped by the card, so the
+    // display mode can be judged before leaving settings.
+    let me = store.my_id();
+    let when = |clock: &str| text(clock.to_string()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted);
+    let preview_row = |clock: &str, lines: &[&str]| {
+        col()
+            .w_full()
+            .pt(16.0)
+            .child(
+                row()
+                    .gap(16.0)
+                    .items_start()
+                    .child(super::super::shell::avatar(store, st, me, 40.0, None, p.background_secondary_lighter, p))
+                    .child(
+                        col().grow(1.0).min_w(0.0).child(
+                            row()
+                                .gap(4.0)
+                                .center_y()
+                                .child(text(store.display_name(None, me)).font(font(16.0, 500.0).lh(22.0)).color(p.text_primary))
+                                .child(when(clock)),
+                        )
+                        // Fluxer's preview sets each demo line a message line apart (31px at 16px).
+                        .children(lines.iter().map(|l| text(l.to_string()).font(font(16.0, 400.0).lh(31.0)).color(p.text_primary))),
+                    ),
+            )
+    };
+    let preview = col()
+        .w_full()
+        .h(188.0)
+        .clip_rounded(8.0)
+        .border(1.0, p.background_modifier_accent)
+        .radius(8.0)
+        .px(20.0)
+        .child(preview_row("Today at 7:13", &[t("This is how messages appear"), t("With different display modes available"), t("Customize the spacing and size")]))
+        .child(preview_row("Today at 7:23", &[t("Waiting for you to...")]))
+        .key("preview");
+
     let look = &st.prefs.look;
     let compact = store.settings.message_display_compact;
     let font_size = number_select(st, p, acc, layer, "chat-font-size", &[12.0, 14.0, 15.0, 16.0, 18.0, 20.0, 24.0], look.font_size, |v| format!("{v}px"), |l, v| l.font_size = v);
@@ -159,6 +196,7 @@ pub fn appearance<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
     );
     col()
         .w_full()
+        .child(preview)
         .child(section(t("Theme"), theme, true, p))
         .child(desktop_tabs::scaling(st, p, acc))
         .child(section(t("Messages"), messages, false, p))
