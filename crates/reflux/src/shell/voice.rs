@@ -1352,7 +1352,7 @@ pub fn watch_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
 }
 
 /// Stops the viewer and its fullscreen, menus and pin.
-fn stop_watching<S: 'static>(s: &mut S, acc: ShellAccess<S>) {
+pub(crate) fn stop_watching<S: 'static>(s: &mut S, acc: ShellAccess<S>) {
     let sh = acc(s);
     sh.voice.end_watch();
     sh.voice.stream_fullscreen = false;

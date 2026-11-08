@@ -322,7 +322,7 @@ pub fn key_name(k: &KeyEvent) -> String {
 pub fn run(store: &Store, sh: &mut ShellState, a: Action) -> bool {
     // Escape leaves the full-window call before it marks the channel read.
     if a == MarkChannelRead && sh.call.app_fullscreen {
-        sh.call.app_fullscreen = false;
+        crate::shell::call::exit_fullscreen(sh);
         return true;
     }
     if let ZoomIn | ZoomOut | ZoomReset = a {

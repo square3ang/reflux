@@ -69,6 +69,9 @@ pub struct Mixer {
     pub entrance_volume: HashMap<u64, f32>,
     pub muted_users: HashSet<u64>,
     pub muted_streams: HashSet<u64>,
+    /// Whose screen share audio plays: only the watched stream's (`ScreenShareSubscriptionPolicy`
+    /// subscribes to a stream's audio only while watching it).
+    pub watching: Option<u64>,
     pub deaf: bool,
     pub output: f32,
 }
@@ -82,6 +85,7 @@ impl Default for Mixer {
             entrance_volume: HashMap::new(),
             muted_users: HashSet::new(),
             muted_streams: HashSet::new(),
+            watching: None,
             deaf: false,
             output: 1.0,
         }
@@ -112,7 +116,7 @@ impl Mixer {
         let g = match src.kind {
             Kind::Voice if self.muted_users.contains(&src.user) => 0.0,
             Kind::Voice => self.user_volume.get(&src.user).copied().unwrap_or(1.0),
-            Kind::Stream if self.muted_streams.contains(&src.user) => 0.0,
+            Kind::Stream if self.muted_streams.contains(&src.user) || self.watching != Some(src.user) => 0.0,
             Kind::Stream => self.stream_volume.get(&src.user).copied().unwrap_or(1.0),
             Kind::Entrance => self.entrance_volume.get(&src.user).copied().unwrap_or(1.0),
             Kind::Monitor => 1.0,
@@ -575,6 +579,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_watched_stream_plays() {
+        let mut m = Mixer::default();
+        m.push(src(Kind::Stream, 1), &[0.5; 2]);
+        m.push(src(Kind::Stream, 2), &[0.25; 2]);
+        let mut out = [0.0; 2];
+        m.mix(&mut out);
+        assert_eq!(out, [0.0; 2], "not watching anyone");
+        m.watching = Some(2);
+        m.push(src(Kind::Stream, 1), &[0.5; 2]);
+        m.push(src(Kind::Stream, 2), &[0.25; 2]);
+        m.mix(&mut out);
+        assert_eq!(out, [0.25; 2], "only user 2's stream");
+    }
+
+    #[test]
     fn monitor_keeps_its_delay_and_caps_drift() {
         let mut m = Mixer::default();
         m.push(src(Kind::Monitor, 0), &vec![0.0; MONITOR_DELAY]);
@@ -610,6 +629,7 @@ mod tests {
         let mut m = Mixer::default();
         m.muted_users.insert(1);
         m.stream_volume.insert(1, 0.5);
+        m.watching = Some(1);
         m.push(src(Kind::Voice, 1), &[0.5; 2]);
         m.push(src(Kind::Stream, 1), &[0.5; 2]);
         let mut out = [0.0; 2];

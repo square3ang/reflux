@@ -114,6 +114,8 @@ pub struct CallUi {
     pub hud_until: Option<Instant>,
     /// `useVoiceCallAppFullscreen`: the call fills the app window.
     pub app_fullscreen: bool,
+    /// Fullscreen was entered from the compact call view, so leaving it goes back there.
+    pub fullscreen_from_compact: bool,
 }
 
 impl Default for CallUi {
@@ -134,6 +136,7 @@ impl Default for CallUi {
             teleport_until: None,
             hud_until: None,
             app_fullscreen: false,
+            fullscreen_from_compact: false,
         }
     }
 }
@@ -424,8 +427,13 @@ fn placeholder_color(store: &Store, user: Snowflake) -> Color {
 }
 
 /// A 16:9 slot that fits inside its cell.
-fn slot(content: El) -> El {
-    row().grow(1.0).min_w(0.0).h_full().center().child(el().aspect_fit(16.0 / 9.0).max_w(9999.0).max_h(9999.0).child(content))
+/// `.focusLayoutMainWrapper`: the focused tile as the largest 16:9 box inside the area (last
+/// frame's size, keyed). `aspect_fit` only followed the width, so a wide window (fullscreen)
+/// made the tile taller than the area and pushed the header and strip out.
+fn slot(content: El, key: &'static str) -> El {
+    let [w, h] = rune::memo::layout_size(key).unwrap_or([0.0, 0.0]);
+    let tw = w.min(h * 16.0 / 9.0).max(0.0);
+    row().key(key).w_full().grow(1.0).min_w(0.0).min_h(0.0).center().child(el().size(tw, tw * 9.0 / 16.0).child(content))
 }
 
 /// The tile area: a near-square grid, or one focused/pinned tile over a strip of the rest.
@@ -445,8 +453,10 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let focused = focused.or_else(|| (packed.visible < all.len()).then(|| all.first().copied()).flatten());
     if let Some(f) = focused {
         let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
-        let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(row().w_full().grow(1.0).min_h(0.0).child(slot(make(f, true))));
-        if !rest.is_empty() {
+        let mut c = col().w_full().h_full().gap(8.0).padding(16.0).child(slot(make(f, true), if compact { "call-focus-compact" } else { "call-focus" }));
+        // `showMembersRow` needs `fillsCallArea` (focus and not compact): the compact view shows
+        // just the focused tile.
+        if !rest.is_empty() && !compact {
             // `.focusLayoutMembersRow`: 7.25rem high, 0.375rem padding, scrolls sideways when it
             // overflows; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`), so the
             // inner row is at least the viewport's last width.
@@ -625,7 +635,13 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
     );
     // `.buttonSeparator`: 1×22, 12% white, before Disconnect.
     bar = bar.child(el().size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)));
-    bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())))
+    bar = bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())));
+    // `canStopWatchingFocusedStream`: the focused tile is a stream we watch from elsewhere.
+    let me = store.my_id();
+    if v.watching.is_some_and(|w| w != me) && st.call.pinned(v.focus) == v.watching {
+        bar = bar.child(button(&icons::EYE_SLASH_FILL, t("Stop watching stream"), red.0, red.1, red.2, Box::new(move |s: &mut S| super::voice::stop_watching(s, acc))));
+    }
+    bar
 }
 
 /// `ChannelHeaderIcon`: a 32px header button.
@@ -805,7 +821,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         )
         .child(header_button(if st.call.app_fullscreen { &icons::CORNERS_IN_BOLD } else { &icons::CORNERS_OUT_BOLD }, if st.call.app_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, p, acc, move |s: &mut S| {
             let sh = acc(s);
-            sh.call.app_fullscreen = !sh.call.app_fullscreen;
+            if sh.call.app_fullscreen { exit_fullscreen(sh) } else { sh.call.app_fullscreen = true }
         }))
         .child(chat_pill(store, st, channel, true, p, acc));
     header = header.child(el().grow(1.0)).child(right);
@@ -1329,6 +1345,15 @@ fn participants_popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
     layer.push(anchor(surface, PARTICIPANTS, Placement::BottomStart, 8.0));
 }
 
+/// Leaves app fullscreen, back to the compact view when it was entered from there (the compact
+/// view's fullscreen is the same element going fullscreen in Fluxer).
+pub fn exit_fullscreen(sh: &mut ShellState) {
+    sh.call.app_fullscreen = false;
+    if std::mem::take(&mut sh.call.fullscreen_from_compact) {
+        sh.voice.call_view = false;
+    }
+}
+
 /// Keeps the menus' side effects in step each frame: the input menu runs the mic meter.
 pub fn poll(st: &mut ShellState) {
     let channel = st.voice.channel.map(|(_, c)| c);
@@ -1338,6 +1363,7 @@ pub fn poll(st: &mut ShellState) {
     }
     if channel.is_none() {
         st.call.app_fullscreen = false;
+        st.call.fullscreen_from_compact = false;
         st.call.hide_camera_confirm = None;
         st.call.stats = None;
     }
@@ -1399,7 +1425,8 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
     let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
     let all = tiles(&visible);
-    let has_media = all.iter().any(|t| t.screen && stream_preview(store, st, None, t.user).is_some() || video(st, me, *t).is_some());
+    // `hasRenderableCallMedia`: any screen share, or a camera that's on.
+    let has_media = all.iter().any(|t| t.screen || video(st, me, *t).is_some());
     let mut row_tiles = row().w_full().h(150.0).gap(8.0).justify_center().items_center();
     if !has_media {
         for (u, vs) in &visible {
@@ -1482,7 +1509,8 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
         let visible = visible_people(&people, me, st.call.show_non_video, &st.voice.videos, &st.voice.speaking);
         let visible = order_participants(&visible, &st.voice.speaking, st.call.prioritize_speakers);
         let tiles_all = tiles(&visible);
-        let has_media = tiles_all.iter().any(|t| t.screen && stream_preview(store, st, Some(guild), t.user).is_some() || video(st, me, *t).is_some());
+        // `hasRenderableCallMedia`: any screen share, or a camera that's on.
+        let has_media = tiles_all.iter().any(|t| t.screen || video(st, me, *t).is_some());
         // `CompactVoiceCallView.module.css`'s reserves: the edge padding, the control bar's
         // (56px buttons + padding) and what the content keeps clear of it.
         let edge = (height * 0.045).clamp(12.0, 24.0);
@@ -1560,6 +1588,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
             let sh = acc(s);
             sh.voice.call_view = true;
             sh.call.app_fullscreen = true;
+            sh.call.fullscreen_from_compact = true;
         });
         let controls = row().pin(Some(0.0), None, Some(0.0), Some(0.0)).pt((height * 0.04).clamp(16.0, 24.0)).px(16.0).pb(12.0).justify_center().child(control_bar(store, st, p, acc));
         let handle = el()
@@ -2534,7 +2563,11 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
             .item(MenuItem::new("change-stream", t("Change stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| open_screen_picker(acc(s))))
             .submenu("stream-quality", t("Stream quality"), stream_quality_entries(st, acc));
     }
-    if streaming && user != me {
+    let watching = st.voice.watching == Some(user);
+    // `buildStreamStateAction`: Watch stream, or Stop watching once watched.
+    if streaming && user != me && watching {
+        m = m.item(MenuItem::new("stop-watching", t("Stop watching")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| super::voice::stop_watching(s, acc)));
+    } else if streaming && user != me {
         m = m.item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.watching = Some(user);
@@ -2542,7 +2575,6 @@ pub fn tile_menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         }));
     }
     // `VoicePopoutHost`: the participant's camera or stream in its own window.
-    let watching = st.voice.watching == Some(user);
     if streaming && watching {
         m = m
             .item(MenuItem::new("popout-stream", t("Pop out stream")).icon(&icons::ARROW_SQUARE_OUT_FILL).on_select(op(acc, Op::PopOut { user: Some(user), screen: true, pip: false })))

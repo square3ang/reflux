@@ -1051,7 +1051,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
-        | "compact" | "compact-tall" | "compact-unread" | "compact-stream") {
+        | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -1126,7 +1126,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.call.region = Some("eu-central".into());
         }
         "hide-camera" => st.call.hide_camera_confirm = Some(false),
-        "compact" | "compact-tall" | "compact-unread" | "compact-stream" => {
+        "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" => {
             (st.guild, st.channel) = (Some(Snowflake(HQ)), Some(Snowflake(2301)));
             st.voice.call_view = false;
             st.voice.videos.clear();
@@ -1144,6 +1144,15 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));
                 let bytes = Some(std::sync::Arc::new(include_bytes!("../../../../assets/media/images/app-icon.png").to_vec()));
                 st.voice.previews.insert(format!("{HQ}:2301:c1004"), super::active_now::Preview { bytes, fetched_ms: 1, ..Default::default() });
+                st.prefs.compact_call_heights.insert(Snowflake(2301), 260.0);
+            }
+            // `-watch`: a stream with no preview thumbnail, being watched.
+            if scene == "compact-watch" {
+                apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1004", "channel_id": "2301", "connection_id": "c1004", "self_stream": true}));
+                fake_frames(&st.voice.stream, 200);
+                st.voice.watching = Some(Snowflake(1004));
+                st.voice.focus = Some(Snowflake(1004));
+                st.call.pin(Some(Snowflake(1004)));
                 st.prefs.compact_call_heights.insert(Snowflake(2301), 260.0);
             }
         }

@@ -48,6 +48,7 @@ pub mod audio {
         pub entrance_volume: HashMap<u64, f32>,
         pub muted_users: HashSet<u64>,
         pub muted_streams: HashSet<u64>,
+        pub watching: Option<u64>,
         pub deaf: bool,
         pub output: f32,
     }
@@ -60,6 +61,7 @@ pub mod audio {
                 entrance_volume: HashMap::new(),
                 muted_users: HashSet::new(),
                 muted_streams: HashSet::new(),
+                watching: None,
                 deaf: false,
                 output: 1.0,
             }

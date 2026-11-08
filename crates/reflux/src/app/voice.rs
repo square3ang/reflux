@@ -1521,6 +1521,12 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
         mesh.set_watching(user.map(|u| u.0));
     }
+    // Only the watched stream's audio plays.
+    // shortcut: the SFU auto-subscribes, so unwatched stream audio is received and dropped in the
+    // mixer instead of unsubscribed like `ScreenShareSubscriptionPolicy`.
+    if let Some(m) = s.app.voice.call.as_ref().and_then(|c| c.mixer()) {
+        m.lock().unwrap().watching = user.map(|u| u.0);
+    }
     s.app.shell.voice.self_stream = false;
     let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
     // Our own stream: Fluxer's tile draws the local track, so the viewer shows it as-is.
