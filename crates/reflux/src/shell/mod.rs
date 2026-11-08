@@ -821,9 +821,6 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         None => sidebar::home(store, st, p, acc),
     };
     let main = match (st.guild, channel) {
-        // A guild call shows the watched stream as its pinned tile (`handleWatch`), so the call view,
-        // members strip and other streams stay reachable; a DM call keeps the stream viewer.
-        _ if st.voice.watching.is_some() && st.voice.channel.is_some_and(|(g, _)| g.is_none()) => voice::viewer(store, st, p, acc).unwrap_or_else(el),
         (None, None) if st.social.discovery => crate::social::discovery_page(st, p, acc, &mut layer),
         // A DM call's "Hide chat" shows its call view while that DM is open.
         _ if st.voice.call_view && st.voice.channel.is_some_and(|(g, c)| g.is_some() || st.channel == Some(c)) => call::view(store, st, p, acc).unwrap_or_else(el),

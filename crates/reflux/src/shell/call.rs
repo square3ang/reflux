@@ -1179,7 +1179,7 @@ fn connection_pill(st: &ShellState, p: &Palette) -> Option<El> {
 
 /// `StreamFocusHeaderInfo`: the streamer's 20px avatar, "{name}'s screen", the stream's
 /// resolution pill (at .92, no LIVE) once known, and up to five spectators.
-fn stream_focus_info<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
+pub(super) fn stream_focus_info<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let name = store.display_name(guild, user);
     let mut streamer = row()
         .h_full()

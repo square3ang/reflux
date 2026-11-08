@@ -277,6 +277,12 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     }
     let mut right = row().gap(dim::CHANNEL_HEADER_ACTIONS_GAP).center_y();
     let cid = c.id;
+    // `CompactVoiceCallStreamHeaderInfo` / `StreamFocusHeaderInfo`: while a stream of this call
+    // is focused, the header carries it (DM avatars, "<name>'s screen", the info pill scaled to
+    // 0.92 without LIVE, and the spectators).
+    if let Some((g, u)) = header_stream(st, cid) {
+        right = right.child(super::call::stream_focus_info(store, st, g, u, p, acc).key("stream-focus"));
+    }
     let guild = c.guild_id.unwrap_or_default();
     let pins = action(&icons::PUSH_PIN_FILL, "Pinned Messages", st.popups.is_open(super::pins::POPOUT))
         .key(super::pins::POPOUT)
@@ -348,6 +354,14 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
 }
 
 // ---- Time ------------------------------------------------------------------------------------
+
+/// `CompactVoiceCallStreamHeaderInfo`: the stream this channel's call header carries, when the
+/// call is this channel and one of its shares is focused.
+pub fn header_stream(st: &ShellState, channel: Snowflake) -> Option<(Option<Snowflake>, Snowflake)> {
+    let (guild, ch) = st.voice.channel?;
+    (ch == channel).then_some(())?;
+    st.voice.watching.map(|u| (guild, u))
+}
 
 fn local(ms: u64) -> DateTime<Local> {
     Local.timestamp_millis_opt(ms as i64).single().unwrap_or_default()
@@ -2000,6 +2014,21 @@ fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palett
 mod tests {
     use super::*;
     use reflux_model::PartialUser;
+
+    /// `CompactVoiceCallStreamHeaderInfo` only rides on the call's own channel's header.
+    #[test]
+    fn the_header_stream_follows_the_call_being_viewed() {
+        let mut st = ShellState::default();
+        let (dm, other) = (Snowflake(8001), Snowflake(8002));
+        assert_eq!(header_stream(&st, dm), None, "no call");
+        st.voice.channel = Some((None, dm));
+        assert_eq!(header_stream(&st, dm), None, "nothing watched");
+        st.voice.watching = Some(Snowflake(1001));
+        assert_eq!(header_stream(&st, dm), Some((None, Snowflake(1001))));
+        assert_eq!(header_stream(&st, other), None, "a different channel's header");
+        st.voice.channel = Some((Some(Snowflake(2000)), dm));
+        assert_eq!(header_stream(&st, dm), Some((Some(Snowflake(2000)), Snowflake(1001))), "a community call");
+    }
 
     #[test]
     fn row_key_survives_the_echo_of_own_messages_only() {

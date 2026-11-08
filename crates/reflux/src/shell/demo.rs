@@ -786,6 +786,8 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
             st.voice.channel = Some((Some(g), Snowflake(2301)));
             st.voice.connected = true;
         }
+        // The general UI with the member list closed, to compare against Fluxer at the same width.
+        "chat-nomembers" => st.member_list = false,
         // The call strip with the member list closed, as Fluxer's reference capture has it.
         "voice-chat-joined-nomembers" => {
             st.select_guild(Some(g), Some(Snowflake(2301)));
@@ -1009,13 +1011,13 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             return;
         }
         // `dm-join`: a call we're not in; `dm-connecting`: joining it; `dm-ring`: our call ringing 1001.
-        "incoming" | "dm" | "p2p" | "p2p-join" | "p2p-failed" | "dm-join" | "dm-connecting" | "dm-ring" => {
+        "incoming" | "dm" | "p2p" | "p2p-join" | "p2p-failed" | "dm-join" | "dm-connecting" | "dm-ring" | "dm-watch" => {
             let p2p = scene.starts_with("p2p");
             let mut states = vec![json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001", "p2p": p2p})];
             if scene == "dm-ring" {
                 states = vec![json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true})];
             }
-            if scene == "dm" || scene == "p2p" || scene == "p2p-failed" {
+            if matches!(scene, "dm" | "p2p" | "p2p-failed" | "dm-watch") {
                 states.push(json!({"guild_id": null, "user_id": ME.to_string(), "channel_id": "8001", "connection_id": "demo", "self_mute": true, "p2p": p2p}));
             }
             for v in &states {
@@ -1028,10 +1030,21 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             };
             apply(store, "CALL_CREATE", json!({"channel_id": "8001", "message_id": "1", "region": null, "ringing": ringing, "voice_states": states, "recipients": ["1001", ME.to_string()]}));
             (st.guild, st.channel) = (None, Some(Snowflake(8001)));
-            if matches!(scene, "dm" | "p2p" | "p2p-failed" | "dm-connecting" | "dm-ring") {
+            if matches!(scene, "dm" | "p2p" | "p2p-failed" | "dm-connecting" | "dm-ring" | "dm-watch") {
                 st.voice.channel = Some((None, Snowflake(8001)));
                 (st.voice.connected, st.voice.self_mute, st.voice.encrypted) = (scene != "dm-connecting", true, !p2p);
                 st.voice.speaking.insert(Snowflake(1001));
+            }
+            if scene == "dm-watch" {
+                // `handleWatch` in a DM: the call keeps the chat, the share becomes the pinned
+                // tile and the header carries `StreamFocusHeaderInfo`.
+                apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": null, "user_id": "1001", "channel_id": "8001", "connection_id": "c1001", "self_stream": true}));
+                st.voice.watching = Some(Snowflake(1001));
+                st.voice.stream_pinned = true;
+                st.voice.focus = Some(Snowflake(1001));
+                st.call.pin(Some(Snowflake(1001)));
+                let px = st.voice.stream.clone();
+                fake_frames(&px, 120);
             }
             match scene {
                 "p2p-join" => {
