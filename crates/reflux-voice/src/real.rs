@@ -360,14 +360,21 @@ impl Call {
     /// `ScreenShareSubscriptionPolicy`: a screen share and its audio are subscribed only while
     /// watched. Subscribing on watch also makes the SFU ask the sharer for a keyframe, so a
     /// still screen shows at once instead of staying black until it changes.
-    pub fn sync_streams(&self, watching: Option<u64>) {
+    pub fn sync_streams(&self, watching: Option<u64>, previewing: Option<u64>) {
         let Link::Room(room) = &self.link else { return };
         // `set_subscribed` spawns the SFU update on the ambient runtime; this runs on the UI thread.
         let _rt = self.rt.enter();
         for p in room.remote_participants().values() {
-            let want = watching.is_some() && user_of(&p.identity().0) == watching;
+            let user = user_of(&p.identity().0);
+            // A watched stream plays; a hovered one is only a picture, so its audio stays off.
+            let (watch, preview) = (user.is_some_and(|u| Some(u) == watching), user.is_some_and(|u| Some(u) == previewing));
             for t in p.track_publications().values() {
-                if matches!(t.source(), TrackSource::Screenshare | TrackSource::ScreenshareAudio) && t.is_desired() != want {
+                let want = match t.source() {
+                    TrackSource::Screenshare => watch || preview,
+                    TrackSource::ScreenshareAudio => watch,
+                    _ => continue,
+                };
+                if t.is_desired() != want {
                     t.set_subscribed(want);
                 }
             }

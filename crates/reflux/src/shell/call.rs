@@ -291,11 +291,15 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
     let me = store.my_id();
     let speaking = !t.screen && st.voice.speaking.contains(&t.user);
     let name = store.display_name(guild, t.user);
+    // `screensharePreviewBackground`: a sharing tile we aren't watching previews its stream, from
+    // Active Now's still or the live frames a hovered tile subscribes (dimmed, under the overlay).
+    let live = (t.screen && video(st, me, t).is_none() && st.voice.watching != Some(t.user)).then(|| st.voice.live_previews.get(&t.user).cloned()).flatten();
     let preview = (t.screen && video(st, me, t).is_none()).then(|| stream_preview(store, st, guild, t.user)).flatten();
+    let preview = live.or(preview);
     let mut body = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).clip_rounded(dim::RADIUS_LG);
     match (video(st, me, t), &preview) {
         (Some(px), _) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
-        (None, Some(px)) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit),
+        (None, Some(px)) => body = body.fill(surface_0()).pixels_fit(px, rune::SurfaceFit::Fit).opacity(0.4),
         _ if t.screen => {
             // `watchStreamOverlay`: the stream isn't subscribed until asked for.
             let u = t.user;
@@ -386,6 +390,20 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
         outer = outer.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_LG).border(3.5, p.status_online));
     }
     let can_watch = t.screen && preview.is_some();
+    // `useStreamPreview`: hovering the tile subscribes its stream for the picture (`previewEnabled`).
+    if t.screen && t.user != me {
+        let u = t.user;
+        outer = outer
+            .hover_delays(std::time::Duration::from_millis(180), std::time::Duration::from_millis(120))
+            .on_hover_change(move |s: &mut S, inside, _| {
+                let sh = acc(s);
+                if inside {
+                    sh.voice.preview_user = Some(u);
+                } else if sh.voice.preview_user == Some(u) {
+                    sh.voice.preview_user = None;
+                }
+            });
+    }
     // `handleTileClick`: clicking the pinned tile unpins it (back to the grid); any other tile
     // pins it, and an unwatched stream also starts watching (`handleWatch`).
     let was_focused = st.call.pinned(st.voice.focus) == Some(t.user);

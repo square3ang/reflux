@@ -71,6 +71,10 @@ pub struct Voice {
     pub entrance_scope: Option<String>,
     /// Active Now stream previews by stream key.
     pub previews: HashMap<String, super::active_now::Preview>,
+    /// `useStreamPreview`: the sharing tile under the pointer, subscribed for a live picture.
+    pub preview_user: Option<Snowflake>,
+    /// Its latest frame (`lkParticipantTile`'s `screensharePreviewBackground`).
+    pub live_previews: HashMap<Snowflake, Pixels>,
     pub stream: Pixels,
     /// Microphone and speaker names (`None` until listed), and the chosen ones.
     pub devices: Option<(Vec<String>, Vec<String>)>,
