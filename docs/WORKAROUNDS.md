@@ -40,6 +40,7 @@ Rules:
 | Spinner dots only fade (no 0.8 scale) | Rune's looping motion is opacity, rotation or slide; the scale-capable `Sequence` runs once | `ui/misc.rs` | looping scale keyframes |
 | Scrollbars keep rune-kit's 2pt edge gap and 24pt minimum thumb (Fluxer's regular bar: 4 in, 40 minimum) | `ScrollBarStyle` has no gap / minimum knobs | `ui/misc.rs` | rune-kit exposes them |
 | The smooth wheel moves its glide's target by the content's growth while it glides up (a frame late, `retarget_wheels`), and older message pages that arrive mid-glide wait for it to stop (`app::fetch_older`) | a virtual list moves the offset by what's measured or added above the view, but not a running glide's target, so the glide flew on by that much (rows measured from the 48pt estimate, a whole page) | `ui/misc.rs`, `app.rs`, `main.rs` | Rune shifts `glide_to` with the anchor |
+| An older message page is added with `keep_on_screen` on the message that was first (`app::prepend_older`) | a virtual list holds the topmost row in view, which at the top of what's loaded is the head skeleton filler: the page went in under it, the filler stayed in view and loaded the next page, on to the channel's start | `app.rs` | Rune anchors on a row the app marks, or skips fillers |
 | Scaled markdown spans (headings) keep even half-leading, so their baseline differs a little from Fluxer's | Rune lays out a scaled span with its own line height | `shell/markdown.rs` | per-span baseline control |
 | Jumbo emoji can't be selected or copied in place ("Copy text" has them); one-line previews keep emoji as text | the emoji are image overlays, not text; truncated one-line text has no overlay slots | `shell/markdown.rs` | inline images in text runs |
 | Recovery kit "Print" opens the PDF in the system viewer | Rune can't print | `settings/recovery_kit.rs` | a print API |
@@ -158,6 +159,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/lib.rs:26` Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
 - `crates/reflux-voice/src/real.rs:205` no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
 - `crates/reflux/src/app.rs:880` Rune shifts the offset by what lands above the view but not a running
+- `crates/reflux/src/app.rs:893` Rune's virtual list holds the topmost row in view, which at the top of what's
 - `crates/reflux/src/app/voice.rs:1124` no ETag / 304 and no ×4 slower polling while the window is hidden.
 - `crates/reflux/src/app/voice.rs:1310` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
 - `crates/reflux/src/app/voice.rs:1758` only display/window shares report this; camera-device shares can't tell.

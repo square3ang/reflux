@@ -876,20 +876,32 @@ fn fetch_older(s: &State, channel: Snowflake) {
             Ok(()) => inst.rest.messages(channel, MessagePage::Before(oldest), PAGE).await,
             Err(e) => Err(e),
         };
-        update(move |s| match r {
+        update_tx(move |s, tx| match r {
             // shortcut: Rune shifts the offset by what lands above the view but not a running
             // glide's target, so a page added mid-glide sends the glide that far up through it
             // (and into the next page). The page waits for the glide to stop (`poll`).
             Ok(page) if s.app.generation == generation && older_held() => s.app.held_older.push((channel, page)),
-            Ok(page) if s.app.generation == generation => s.app.store.prepend_messages(channel, page, PAGE as usize),
+            Ok(page) if s.app.generation == generation => prepend_older(&mut s.app.store, tx, channel, page),
             Ok(_) => {}
             Err(e) => eprintln!("reflux: older messages of {channel}: {e}"),
         });
     });
 }
 
+/// Adds an older page above what's loaded, holding the message that was first where it shows.
+pub(crate) fn prepend_older(store: &mut Store, tx: &mut rune::Tx, channel: Snowflake, page: Vec<reflux_model::Message>) {
+    // shortcut: Rune's virtual list holds the topmost row in view, which at the top of what's
+    // loaded is the head filler: the page went in under it, the filler stayed in view and
+    // loaded the next page, on to the channel's start. Holding the first message lands the
+    // page above it, as Fluxer does.
+    if let Some(m) = store.messages.get(&channel).and_then(|w| w.messages.first()) {
+        tx.keep_on_screen(crate::shell::chat::row_key(m, store.my_id()));
+    }
+    store.prepend_messages(channel, page, PAGE as usize);
+}
+
 /// Whether a message list's wheel glide runs, which holds older pages back.
-fn older_held() -> bool {
+pub(crate) fn older_held() -> bool {
     crate::ui::misc::gliding("msgs-scroll") || crate::ui::misc::gliding("pane-msgs-scroll")
 }
 
@@ -900,7 +912,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let landed = held && !older_held();
     if landed {
         for (channel, page) in std::mem::take(&mut s.app.held_older) {
-            s.app.store.prepend_messages(channel, page, PAGE as usize);
+            prepend_older(&mut s.app.store, tx, channel, page);
         }
     } else if held {
         tx.wake_after(Duration::from_millis(50));

@@ -123,9 +123,10 @@ fn main() {
             }
             crash::guard(|| match &mut s.shell_demo {
                 Some(d) => {
+                    let older = d.serve_older(tx);
                     let resized = d.shell.desktop.width != s.desktop.size[0];
                     d.shell.desktop.width = s.desktop.size[0];
-                    shell::poll_shell(&d.store, &mut d.shell, tx) || resized
+                    shell::poll_shell(&d.store, &mut d.shell, tx) || resized || older
                 }
                 None => app::poll(s, tx),
             })

@@ -18,6 +18,8 @@ use crate::theme;
 pub struct Demo {
     pub store: Store,
     pub shell: ShellState,
+    /// `media-long`: older pages served for `LoadOlder`, 0.3 s after it, like a fetch.
+    older: Option<(Snowflake, std::time::Instant)>,
 }
 
 const ME: u64 = 1000;
@@ -122,6 +124,34 @@ fn message(ms: u64, n: u64, author: u64, content: &str, extra: Value) -> Value {
 }
 
 impl Demo {
+    /// `media-long`: answers `LoadOlder` 0.3 s later with 50 older messages (an image every
+    /// seventh), through the app's own `prepend_older`, until 500 are loaded.
+    pub fn serve_older(&mut self, tx: &mut rune::Tx) -> bool {
+        if self.older.is_none()
+            && let Some(i) = self.shell.intents.iter().position(|i| matches!(i, super::Intent::LoadOlder { .. }))
+            && let super::Intent::LoadOlder { channel } = self.shell.intents.remove(i)
+        {
+            self.older = Some((channel, std::time::Instant::now()));
+        }
+        let Some((channel, asked)) = self.older else { return false };
+        if asked.elapsed() < std::time::Duration::from_millis(300) || crate::app::older_held() {
+            tx.wake_after(std::time::Duration::from_millis(30));
+            return false;
+        }
+        self.older = None;
+        let oldest = self.store.messages(channel).first().map_or(at(0, 12, 0), |m| m.id.timestamp_ms());
+        let n = if self.store.messages(channel).len() >= 500 { 10 } else { 50 };
+        let page = (1..=n as u64)
+            .rev()
+            .filter_map(|k| {
+                let extra = if k % 7 == 0 { json!({"attachments": [{"id": (9900 + k).to_string(), "filename": "old.png", "content_type": "image/png", "size": 1, "width": 1200, "height": 800}]}) } else { json!({}) };
+                serde_json::from_value(message(oldest - k * 60_000, 0, [1001, 1002, 1003][(k % 3) as usize], &format!("older message {k}"), extra)).ok()
+            })
+            .collect();
+        crate::app::prepend_older(&mut self.store, tx, channel, page);
+        true
+    }
+
     pub fn new() -> Self {
         let now = at(0, 15, 30);
         let mut store = Store::default();
@@ -464,7 +494,7 @@ impl Demo {
         if let Some(id) = rune::extra_args().iter().find_map(|a| a.strip_prefix("--popup=")) {
             shell.popups.toggle(id);
         }
-        Demo { store, shell }
+        Demo { store, shell, older: None }
     }
 }
 
@@ -1726,6 +1756,11 @@ fn media_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             Ok(ev) => store.apply(&ev, st.now_ms),
             Err(e) => panic!("media scene: {e}"),
         }
+    }
+    if scene == "long"
+        && let Some(w) = store.messages.get_mut(&Snowflake(GENERAL))
+    {
+        w.has_more_before = true;
     }
     if scene == "viewer" || scene == "viewer-rotate" {
         let ms = store.messages(Snowflake(GENERAL));
