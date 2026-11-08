@@ -1030,7 +1030,10 @@ pub const FAILED_HEIGHT: f32 = 8.0 + 32.0 + 8.0 + 1.0;
 
 pub fn panel_height(v: &Voice) -> f32 {
     if v.channel.is_some() {
-        PANEL_HEIGHT
+        // `.connectionInfo` rows 8 apart: the connection ID (16) and the avatar stack (42).
+        let id = if v.settings.panel_connection_id { 8.0 + 16.0 } else { 0.0 };
+        let avatars = if v.connected && v.settings.panel_avatars { 8.0 + 42.0 } else { 0.0 };
+        PANEL_HEIGHT + id + avatars
     } else if v.failed.is_some() {
         FAILED_HEIGHT
     } else {
@@ -1040,17 +1043,28 @@ pub fn panel_height(v: &Voice) -> f32 {
 
 /// `.controlButton`: 32px, transparent, hover tint.
 fn control_button<S: 'static>(i: &'static Icon, label: &str, p: &Palette, on: impl Fn(&mut S) + 'static) -> El {
+    selectable_button(i, label, false, p, on)
+}
+
+/// `.controlButton` with `.selected`: the selected-surface fill and colour.
+fn selectable_button<S: 'static>(i: &'static Icon, label: &str, selected: bool, p: &Palette, on: impl Fn(&mut S) + 'static) -> El {
+    let (fill, fg, hover_fg, hover) = if selected {
+        (p.background_modifier_selected, p.surface_interactive_selected_color, p.surface_interactive_selected_color, mix(p.text_primary, Color::TRANSPARENT, 12.0))
+    } else {
+        (Color::TRANSPARENT, p.control_button_normal_text, p.control_button_hover_text, mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0))
+    };
     row()
         .size(32.0, 32.0)
         .center()
         .radius(dim::RADIUS_MD)
-        .hover(mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0))
+        .fill(fill)
+        .hover(hover)
         .hover_group()
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(label.to_string())
         .on_press(on)
-        .child(icon(i, 20.0).color(p.control_button_normal_text).group_color(p.control_button_hover_text))
+        .child(icon(i, 20.0).color(fg).group_color(hover_fg))
 }
 
 /// `.mediaButton`: half the row, 32 tall, a 1px hover-coloured border; green while active.
@@ -1077,6 +1091,10 @@ fn media_button<S: 'static>(i: &'static Icon, label: &str, active: bool, disable
     } else {
         let hover = if active { mix(p.status_online, Color::TRANSPARENT, 20.0) } else { mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0) };
         b = b.hover(hover).cursor(rune::Cursor::Pointer).on_press(on);
+        if !active {
+            // `:hover` border: a ring over the resting one, shown with the hover group.
+            b = b.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_MD).border(1.0, p.background_modifier_selected).group_opacity(0.0, 1.0));
+        }
     }
     b
 }
@@ -1100,9 +1118,9 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .child(control_button(&icons::X_BOLD, t("Dismiss"), p, move |s: &mut S| acc(s).voice.failed = None));
         return Some(shell.key("voice-failed").child(status_row).child(divider));
     };
+    // `MediaEngine.connecting` covers a reconnect too; there's no "Reconnecting..." label.
     let (label, color) = match (v.connected, v.reconnecting) {
-        (_, true) => (t("Reconnecting..."), p.status_idle),
-        (true, _) => (t("In voice chat"), p.status_online),
+        (true, false) => (t("In voice chat"), p.status_online),
         _ => (t("Connecting..."), p.status_idle),
     };
     let mut status_row = row().w_full().h(32.0).gap(8.0).center_y();
@@ -1110,36 +1128,43 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         status_row = status_row.child(signal_icon(v, p).key("signal"));
     }
     // The status opens `VoiceDetailsPopout`; the lock is `VoiceE2EEIndicator`.
-    let details = status(label, color).key(super::call::DETAILS).cursor(rune::Cursor::Pointer).role("button").on_press(move |s: &mut S| acc(s).popups.toggle(super::call::DETAILS));
+    let menu = move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(PANEL_MENU, [at.x, at.y]);
+    let details = status(label, color).key(super::call::DETAILS).cursor(rune::Cursor::Pointer).role("button").on_press(move |s: &mut S| acc(s).popups.toggle(super::call::DETAILS)).on_secondary_press(menu);
     status_row = status_row.child(details);
-    if v.encrypted {
-        status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted").key("lock"));
-    }
-    // `AudioProcessingButton`: opens `AudioProcessingModal`.
+    // `AudioProcessingButton`: opens `AudioProcessingModal`, selected while processing runs
+    // (`isAudioProcessingActive`).
+    let processing = v.settings.processing == "voice" || (v.settings.processing == "custom" && v.settings.noise_backend != "none");
     status_row = status_row
-        .child(control_button(&icons::WAVEFORM_BOLD, t("Audio processing"), p, move |s: &mut S| acc(s).voice.modal = Some(Modal::AudioProcessing)).key("audio"))
+        .child(selectable_button(&icons::WAVEFORM_FILL, t("Audio processing"), processing, p, move |s: &mut S| acc(s).voice.modal = Some(Modal::AudioProcessing)).key("audio"))
         .child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()).key("disconnect"));
     let channel_name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
-    let source = match guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()) {
-        Some(g) => format!("{channel_name} / {}", g.name),
-        None => channel_name,
+    let guild_name = guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()).map(|g| g.name.clone());
+    let span = |s: String| text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).truncate().shrink();
+    let label = match &guild_name {
+        Some(g) => format!("{channel_name} / {g}"),
+        None => channel_name.clone(),
     };
-    let source_row = row().w_full().h(16.0).center_y().child(
-        text(source)
-            .font(font(12.0, 400.0).lh(16.0))
-            .color(p.text_secondary)
-            .truncate()
-            .shrink()
-            .cursor(rune::Cursor::Pointer)
-            .role("link")
-            .on_press(move |s: &mut S| {
-                let sh = acc(s);
-                if let Some(g) = guild {
-                    sh.guild = Some(g);
-                }
-                sh.select_channel(channel);
-            }),
-    );
+    // `.channelSourceLink`: channel and community truncate apart, the " / " 2px out each side.
+    let mut link = row()
+        .min_w(0.0)
+        .shrink()
+        .center_y()
+        .cursor(rune::Cursor::Pointer)
+        .role("link")
+        .label(crate::i18n::tf("Jump to {channelSourceLabel}", &[("channelSourceLabel", &label)]))
+        .on_secondary_press(menu)
+        .on_press(move |s: &mut S| {
+            let sh = acc(s);
+            if let Some(g) = guild {
+                sh.guild = Some(g);
+            }
+            sh.select_channel(channel);
+        })
+        .child(span(channel_name));
+    if let Some(g) = guild_name {
+        link = link.child(text("/").font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).mx(2.0)).child(span(g));
+    }
+    let source_row = row().w_full().h(16.0).center_y().child(link);
     let can_stream = can(store, v, Permissions::STREAM);
     let screen_label = match (v.connected, can_stream, v.screen) {
         (false, _, _) => t("Waiting for connection..."),
@@ -1158,7 +1183,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     let media = row()
         .w_full()
         .gap(4.0)
-        .child(media_button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, !v.connected || !can_stream || !cam_ok, p, move |s: &mut S| {
+        .child(media_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, !v.connected || !can_stream || !cam_ok, p, move |s: &mut S| {
             acc(s).intents.push(Intent::Voice(Op::ToggleCamera))
         }))
         .child(media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, !v.connected || !can_stream, p, move |s: &mut S| {
@@ -1186,21 +1211,23 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         }
         users.sort_by_key(|x| x.0);
         if !users.is_empty() {
-            let mut stack = row().gap(0.0).center_y();
+            // `AvatarStack`: 2px top / right, 6px bottom, each face in a 2px background-tertiary ring.
+            let mut stack = row().gap(0.0).center_y().pt(2.0).pr(2.0).pb(6.0);
             for &(u, muted, deaf) in users.iter().take(4) {
                 // `VoiceParticipantAvatarList`'s context menu.
-                let face = voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p).key(format!("u-{u}"));
+                let face = voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p)
+                    .child(el().pin(Some(-2.0), Some(-2.0), Some(-2.0), Some(-2.0)).radius(999.0).border(2.0, p.background_tertiary))
+                    .key(format!("u-{u}"));
                 stack = stack.child(super::call::ParticipantMenu::participant_menu(face, u, guild, acc));
             }
             if users.len() > 4 {
                 stack = stack.child(
-                    row().key("more").size(32.0, 32.0).center().radius(999.0).fill(p.background_tertiary).child(text(format!("+{}", users.len() - 4)).font(font(10.0, 600.0).lh(12.0)).color(p.text_secondary)),
+                    row().key("more").size(32.0, 32.0).center().radius(999.0).fill(p.background_tertiary).border(2.0, p.background_tertiary).cursor(rune::Cursor::Pointer).child(text(format!("+{}", users.len() - 4)).font(font(10.0, 600.0).lh(12.0)).color(p.text_secondary)),
                 );
             }
             info = info.child(stack.key("avatars"));
         }
     }
-    let shell = shell.on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PANEL_MENU, [at.x, at.y]));
     Some(shell.key("voice-panel").child(status_row).child(info).child(media).child(divider))
 }
 
