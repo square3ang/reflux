@@ -120,6 +120,8 @@ pub struct CallUi {
     pub focus_members_row: bool,
     /// `IncomingCallUI`'s drag past its 6pt threshold: the pointer's travel so far.
     pub incoming_drag: Option<[f32; 2]>,
+    /// The PiP overlay's drag in progress: the pointer's travel so far.
+    pub pip_drag: Option<[f32; 2]>,
 }
 
 impl Default for CallUi {
@@ -143,6 +145,7 @@ impl Default for CallUi {
             fullscreen_from_compact: false,
             focus_members_row: true,
             incoming_drag: None,
+            pip_drag: None,
         }
     }
 }
@@ -2080,6 +2083,123 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
     Some(el().pin(Some(x), Some(y), None, None).child(card))
 }
 
+const PIP_MENU: &str = "pip-overlay-menu";
+/// `PiPOverlay`'s default width (16:9) and `EDGE_PADDING`.
+const PIP_W: f32 = 320.0;
+const PIP_H: f32 = PIP_W * 9.0 / 16.0;
+const PIP_PAD: f32 = 20.0;
+
+/// The PiP's top-left in the window: its saved corner (`Corner`, bottom-right by default), plus
+/// the drag in progress, kept inside the window.
+fn pip_pos(st: &ShellState) -> (f32, f32) {
+    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+    let corner = st.prefs.pip_corner.unwrap_or(3);
+    let x = if corner & 1 == 1 { w - PIP_W - PIP_PAD } else { PIP_PAD };
+    let y = if corner & 2 == 2 { h - PIP_H - PIP_PAD } else { PIP_PAD };
+    let [dx, dy] = st.call.pip_drag.unwrap_or_default();
+    ((x + dx).clamp(0.0, (w - PIP_W).max(0.0)), (y + dy).clamp(0.0, (h - PIP_H).max(0.0)))
+}
+
+/// The corner nearest to where the PiP was let go: bit 1 right, bit 2 bottom.
+fn pip_corner(x: f32, y: f32, w: f32, h: f32) -> u8 {
+    u8::from(x + PIP_W / 2.0 > w / 2.0) | (u8::from(y + PIP_H / 2.0 > h / 2.0) << 1)
+}
+
+/// `PiPOverlay` (`ScreenSharePiPStateMachine`): the watched stream, small in a corner, while
+/// the call's own view isn't on screen. Hovering shows "Back to call" with the channel's name
+/// and the streamer with their viewer count; a double-click goes back to the call, right-click
+/// offers to disable these popouts, and a drag moves it to another corner.
+// shortcut: no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
+// snaps to the nearest corner. A DM call's watched stream always fills the main column, so this
+// shows for community calls only.
+pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
+    let (Some((Some(guild), ch)), Some(user)) = (st.voice.channel, st.voice.watching) else { return };
+    if !st.voice.connected || st.channel == Some(ch) || st.voice.call_view || st.voice.stream_fullscreen || crate::look::with(|l| l.disable_screen_pip) {
+        return;
+    }
+    let channel = store.channels.get(&ch).map(|c| c.name.clone().unwrap_or_default()).unwrap_or_default();
+    let viewers = super::voice::spectators_for(store, Some(guild), user).len();
+    let back = move |s: &mut S| acc(s).select_guild(Some(guild), Some(ch));
+    let header = row()
+        .pin(Some(0.0), Some(0.0), Some(0.0), None)
+        .h(48.0)
+        .px(20.0)
+        .py(8.0)
+        .items_start()
+        .linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.78)), (1.0, rgba(0, 0, 0, 0.0))])
+        .child(
+            row()
+                .gap(6.0)
+                .center_y()
+                .min_w(0.0)
+                .cursor(rune::Cursor::Pointer)
+                .role("button")
+                .label(t("Back to call"))
+                .on_press(back)
+                .child(icon(&icons::ARROW_LEFT_BOLD, 14.0).color(Color::WHITE))
+                .child(text(channel).font(font(13.0, 600.0).lh(15.6)).color(Color::WHITE).truncate().shrink()),
+        );
+    let mut right = row().gap(6.0).center_y();
+    if viewers > 0 {
+        right = right.child(
+            row()
+                .gap(3.0)
+                .center_y()
+                .child(icon(&icons::EYE_FILL, 14.0).color(rgba(255, 255, 255, 0.72)))
+                .child(text(viewers.to_string()).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72))),
+        );
+    }
+    let footer = row()
+        .pin(Some(0.0), None, Some(0.0), Some(0.0))
+        .h(48.0)
+        .px(20.0)
+        .py(8.0)
+        .items_end()
+        .gap(8.0)
+        .linear_gradient(0.0, [(0.0, rgba(0, 0, 0, 0.78)), (1.0, rgba(0, 0, 0, 0.0))])
+        .child(text(store.display_name(Some(guild), user)).font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().grow(1.0).min_w(0.0))
+        .child(right);
+    // `.hoverOverlay`: header and footer fade in while the pointer is on the PiP (or dragging it).
+    let dragging = st.call.pip_drag.is_some();
+    let hud = el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).child(header).child(footer);
+    let hud = if dragging { hud } else { hud.group_opacity(0.0, 1.0) };
+    let card = el()
+        .key("pip-overlay")
+        .size(PIP_W, PIP_H)
+        .radius(12.0)
+        .clip_rounded(12.0)
+        .fill(surface_2())
+        .box_shadow(Shadow { x: 0.0, y: 8.0, blur: 32.0, spread: 0.0, color: rgba(0, 0, 0, 0.4), inset: false })
+        .box_shadow(Shadow { x: 0.0, y: 2.0, blur: 8.0, spread: 0.0, color: rgba(0, 0, 0, 0.2), inset: false })
+        .cursor(if dragging { rune::Cursor::Grabbing } else { rune::Cursor::Grab })
+        .hover_group()
+        .child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit))
+        .child(hud)
+        .on_double_press(back)
+        .on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PIP_MENU, [at.x, at.y]))
+        .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+            let sh = acc(s);
+            if d.phase == rune::Phase::Up {
+                if sh.call.pip_drag.is_some() && !d.cancelled() {
+                    let (x, y) = pip_pos(sh);
+                    let [w, h] = rune::memo::layout_size(super::BODY_KEY).unwrap_or([1280.0, 800.0]);
+                    sh.prefs.pip_corner = Some(pip_corner(x, y, w, h));
+                    let prefs = sh.prefs.clone();
+                    sh.intents.push(Intent::Prefs(Box::new(prefs)));
+                }
+                sh.call.pip_drag = None;
+            } else if sh.call.pip_drag.is_some() || d.dx * d.dx + d.dy * d.dy > 16.0 {
+                sh.call.pip_drag = Some([d.dx, d.dy]);
+            }
+        });
+    let (x, y) = pip_pos(st);
+    layer.push(el().pin(Some(x), Some(y), None, None).child(card));
+    // `PiPOverlayContextMenu`.
+    Menu::new(PIP_MENU)
+        .item(MenuItem::new("pip-disable", t("Disable screen share picture-in-picture popouts")).icon(&icons::PICTURE_IN_PICTURE_FILL).on_select(move |s: &mut S| acc(s).voice.modal = Some(Modal::DisableScreenPip)))
+        .el(&st.popups, pops(acc), p, layer);
+}
+
 // ---- Dialogs -----------------------------------------------------------------------------------
 
 fn body_text(s: &str, p: &Palette) -> El {
@@ -2187,6 +2307,25 @@ pub fn modals<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     };
     let ok = |label: &str| Button::new(label.to_string()).key("voice-modal-ok").on_press(close).el(p);
     let modal = match m {
+        // `DisableScreenSharePiPConfirmModal`.
+        Modal::DisableScreenPip => {
+            let path = format!("{} > {}", t("User Settings"), t("Voice & video"));
+            let confirm = move |s: &mut S| {
+                let sh = acc(s);
+                sh.voice.modal = None;
+                let mut prefs = sh.prefs.clone();
+                prefs.look.disable_screen_pip = true;
+                sh.intents.push(Intent::Prefs(Box::new(prefs)));
+            };
+            crate::ui::Modal::new(t("Disable screen share picture-in-picture popouts?"), close)
+                .body(body_text(&crate::i18n::tf("This will close the current popout and stop screen share picture-in-picture popouts from opening automatically. You can turn them back on in {audioVideoSettingsPath}.", &[("audioVideoSettingsPath", &path)]), p))
+                .footer(
+                    row()
+                        .gap(8.0)
+                        .child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("pip-disable-cancel").on_press(close).el(p))
+                        .child(Button::new(t("Disable popouts")).key("pip-disable-confirm").on_press(confirm).el(p)),
+                )
+        }
         Modal::ChannelFull => crate::ui::Modal::new("Channel full", close)
             .body(body_text("This voice channel has reached its user limit. Try again later.", p))
             .footer(ok(t("Okay"))),
@@ -2936,6 +3075,14 @@ mod tests {
         let t = tiles(&people);
         assert_eq!(t.len(), 3);
         assert!(t[1].screen && t[1].user == Snowflake(1));
+    }
+
+    #[test]
+    fn pip_snaps_to_the_nearest_corner() {
+        assert_eq!(pip_corner(10.0, 10.0, 1280.0, 800.0), 0);
+        assert_eq!(pip_corner(900.0, 10.0, 1280.0, 800.0), 1);
+        assert_eq!(pip_corner(10.0, 600.0, 1280.0, 800.0), 2);
+        assert_eq!(pip_corner(900.0, 600.0, 1280.0, 800.0), 3);
     }
 
     #[test]

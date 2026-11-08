@@ -894,6 +894,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     voice::layer(store, st, p, acc, &mut layer);
     layer.extend(voice_message::modal(st, p, acc));
     voice_message::volume_layer(st, p, acc, &mut layer);
+    call::pip(store, st, p, acc, &mut layer);
     layer.extend(call::incoming(store, st, p, acc));
     birthday::view(store, st, p, acc, &mut layer);
     layer.extend(badges::list_modal(st, p, acc));
