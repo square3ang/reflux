@@ -390,6 +390,9 @@ fn participant<S: 'static>(store: &Store, st: &ShellState, c: &Channel, r: Row, 
             stream_card(store, st, gid, cid, u, &r.key, p, acc);
         }
     }
+    // shortcut: Fluxer drags a participant onto another voice channel (MOVE_MEMBERS); Rune
+    // exposes no element rects or window pointer position while a drag runs and its drops are
+    // file-only, so "Move to…" in the row's menu does it. Upgrade when Rune has internal drops.
     super::call::ParticipantMenu::participant_menu(item, u, gid, acc)
 }
 
