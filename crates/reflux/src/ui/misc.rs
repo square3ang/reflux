@@ -125,9 +125,12 @@ thread_local! {
 /// The wheel glide's spring.
 const GLIDE: rune::Spring = rune::Spring::new(0.15, 0.0);
 
-/// Whether `aim` still runs with the viewport at `at`.
+/// Whether `aim` still runs with the viewport at `at`. Rune lands a glide exactly on its target;
+/// until then its spring still pulls, however close (an older page added in that tail was
+/// pulled back out of view, which loaded the next one).
+#[allow(clippy::float_cmp)]
 fn on_its_way(aim: Option<Glide>, at: f32) -> bool {
-    aim.is_some_and(|(_, to, t)| t.elapsed() < std::time::Duration::from_millis(500) && (at - to).abs() > 1.0)
+    aim.is_some_and(|(_, to, t)| t.elapsed() < std::time::Duration::from_millis(500) && at != to)
 }
 
 /// Chromium's smooth wheel scrolling on a vertical scroll viewport: a notched wheel's line
