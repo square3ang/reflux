@@ -253,7 +253,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/voice_list.rs:526` the shell doesn't know this client's connection ID, our latest voice state's stands in; upgrade when `ShellState` mirrors it.
 crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sans` and `system-ui` are left to Rune's own fallbacks.
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
-- `crates/reflux/src/ui/controls.rs:309` it shows while the whole control is hovered (Rune's hover group), which also
+- `crates/reflux/src/ui/controls.rs:314` it shows while the whole control is hovered (Rune's hover group), which also
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
 - `crates/reflux/src/ui/menu.rs:227` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
