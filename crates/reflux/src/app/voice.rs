@@ -633,6 +633,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
     let endpoint = if endpoint.contains("://") { endpoint } else { format!("wss://{endpoint}") };
     let host = endpoint.split("://").nth(1).unwrap_or(&endpoint).split('/').next().unwrap_or_default().to_string();
     let speak = crate::shell::voice::can(&s.app.store, &s.app.shell.voice, Permissions::SPEAK);
+    let bitrate = crate::guild::channel::mic_bitrate(&s.app.store, v.channel_id);
     let key = v.e2ee_key.clone();
     spawn(async move {
         let (call, mut events) = match Call::connect(&endpoint, &token, true, key.as_deref()).await {
@@ -647,7 +648,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             }
         };
         let call = Arc::new(call);
-        if speak && let Err(e) = call.publish_mic(true).await {
+        if speak && let Err(e) = call.publish_mic(true, bitrate).await {
             eprintln!("reflux: publish mic: {e}");
         }
         let c = call.clone();
@@ -802,10 +803,11 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
         ice_servers: v.ice_servers.iter().map(|i| i.urls.clone()).collect(),
     };
     let speak = crate::shell::voice::can(&s.app.store, &s.app.shell.voice, Permissions::SPEAK);
+    let bitrate = crate::guild::channel::mic_bitrate(&s.app.store, v.channel_id);
     spawn(async move {
         let (call, mut events) = Call::connect_mesh(target);
         let call = Arc::new(call);
-        if speak && let Err(e) = call.publish_mic(true).await {
+        if speak && let Err(e) = call.publish_mic(true, bitrate).await {
             eprintln!("reflux: publish mic: {e}");
         }
         let c = call.clone();

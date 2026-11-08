@@ -53,6 +53,15 @@ pub(crate) fn max_bitrate(features: &[String]) -> u32 {
     })
 }
 
+/// `resolveMicrophoneChannelBitrate`: the mic's max bitrate in bits/s, the channel's own (64 kbps
+/// unset) between 8 kbps and what the community's features allow.
+pub(crate) fn mic_bitrate(store: &Store, channel: Snowflake) -> u64 {
+    let ch = store.channels.get(&channel);
+    let features = ch.and_then(|c| store.guilds.get(&c.guild_id?)?.info.as_ref()).map_or(&[][..], |i| &i.features[..]);
+    let bps = ch.and_then(|c| c.bitrate).filter(|&b| b > 0).map_or(BITRATE_DEFAULT * 1000, |b| b.clamp(BITRATE_MIN * 1000, max_bitrate(features) * 1000));
+    u64::from(bps)
+}
+
 /// `MAX_TOPIC_LENGTH`.
 const TOPIC_MAX: usize = 1024;
 

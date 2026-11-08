@@ -540,6 +540,8 @@ fn to_i16(s: f32) -> i16 {
 /// DeepFilterNet round trip, a busy APM) can't stall the device and drop audio.
 struct MicChain {
     blocks: std::sync::mpsc::SyncSender<Vec<f32>>,
+    /// Blocks dropped since the last report, and when that was.
+    dropped: std::cell::Cell<(u32, Option<std::time::Instant>)>,
 }
 
 /// How many capture blocks may wait for the worker (each is 20 ms: 80 ms of slack, then the
@@ -556,12 +558,23 @@ impl MicChain {
                 inner.feed(block);
             }
         });
-        Self { blocks: tx }
+        Self { blocks: tx, dropped: Default::default() }
     }
 
-    /// Hands one capture block over; never blocks (a full queue drops it).
+    /// Hands one capture block over; never blocks (a full queue drops it, which others hear as
+    /// a cut: reported at most once a second).
     fn feed(&self, mono: impl Iterator<Item = f32>) {
-        let _ = self.blocks.try_send(mono.collect());
+        if self.blocks.try_send(mono.collect()).is_ok() {
+            return;
+        }
+        let (n, at) = self.dropped.get();
+        let now = std::time::Instant::now();
+        if at.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1)) {
+            eprintln!("reflux-voice: the mic chain fell behind; dropped {} capture blocks", n + 1);
+            self.dropped.set((0, Some(now)));
+        } else {
+            self.dropped.set((n + 1, at));
+        }
     }
 }
 

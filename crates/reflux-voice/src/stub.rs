@@ -294,7 +294,7 @@ impl Call {
 
     pub fn set_mic_gate(&self, _open: bool) {}
 
-    pub async fn publish_mic(&self, _muted: bool) -> Result<(), Error> {
+    pub async fn publish_mic(&self, _muted: bool, _bitrate: u64) -> Result<(), Error> {
         Err(Error::Unavailable)
     }
 

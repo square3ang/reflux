@@ -193,15 +193,23 @@ impl Call {
         }
     }
 
-    /// Publishes the microphone (muted if `muted`). No-op without audio.
-    pub async fn publish_mic(&self, muted: bool) -> Result<(), Error> {
+    /// Publishes the microphone (muted if `muted`) at up to `bitrate` bits/s. No-op without audio.
+    pub async fn publish_mic(&self, muted: bool, bitrate: u64) -> Result<(), Error> {
         let Some(audio) = &self.audio else { return Ok(()) };
         if !audio.open_input(self.input.lock().unwrap().as_deref()) {
             eprintln!("reflux-voice: no microphone");
         }
         let track = LocalAudioTrack::create_audio_track("microphone", RtcAudioSource::Native(audio.source.clone()));
-        // `AudioPublishOptions`: `dtx: false, red: true` (the SDK drops RED under E2EE, as livekit-client does).
-        let opts = TrackPublishOptions { source: TrackSource::Microphone, dtx: false, red: true, ..Default::default() };
+        // `getMicrophonePublishOptions`: the channel's bitrate, `dtx: false, red: true` (the SDK
+        // drops RED under E2EE, as livekit-client does).
+        // shortcut: no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
+        let opts = TrackPublishOptions {
+            source: TrackSource::Microphone,
+            audio_encoding: Some(livekit::options::AudioEncoding { max_bitrate: bitrate }),
+            dtx: false,
+            red: true,
+            ..Default::default()
+        };
         self.publish(LocalTrack::Audio(track.clone()), opts, (0, 0)).await?;
         if muted {
             track.mute();

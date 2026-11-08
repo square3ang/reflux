@@ -6,7 +6,7 @@
 //! GUILD_ROLE_*, CHANNEL_*), so the store stays the source of truth.
 
 mod audit;
-mod channel;
+pub(crate) mod channel;
 pub use channel::poll as poll_overwrite_search;
 mod expr_upload;
 pub(crate) mod channel_opts;
