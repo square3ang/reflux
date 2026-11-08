@@ -63,18 +63,45 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             col().key("devices").w_full().gap(16.0).child(a).child(b)
         }
     };
-    let mut out = col().w_full().child(section(t("Devices"), devices, true, p));
+    // `VoiceVideoTab`: "Input and output" above the volumes, as Fluxer labels the device picks.
+    let mut out = col().w_full().child(section(t("Input and output"), devices, true, p));
 
-    // ---- Volume (applied by our own mic path and mixer, `reflux_voice::audio`)
-    let vol = |key: &'static str, name: &str, value: f32, input: bool| {
-        col().w_full().gap(8.0).child(label(name, p)).child(
-            Slider::new(key, value, 0.0, 200.0)
-                .step(1.0)
-                .on_change(move |s: &mut S, x| {
-                    set(acc, move |st: &mut Settings| if input { st.input_volume = x } else { st.output_volume = x })(s);
-                })
-                .el(p),
+    // ---- Volume (applied by our own mic path and mixer, `reflux_voice::audio`). Fluxer's
+    // sliders read 0–200% with ticks under the track and a reset back to 100%.
+    let ticks = || {
+        row().w_full().justify_between().mt(6.0).children(
+            ["0%", "50%", "100%", "150%", "200%"]
+                .iter()
+                .map(|l| text(*l).font(font(11.0, 500.0).lh(14.0)).color(p.text_primary_muted)),
         )
+    };
+    let vol = |key: &'static str, name: &str, value: f32, input: bool| {
+        let reset = Button::new(String::new())
+            .icon(&crate::icons::ARROW_COUNTER_CLOCKWISE)
+            .variant(ButtonVariant::Ghost)
+            .key(format!("{key}-reset"))
+            .on_press(set(acc, move |st: &mut Settings| if input { st.input_volume = 100.0 } else { st.output_volume = 100.0 }))
+            .el(p);
+        col()
+            .w_full()
+            .gap(8.0)
+            .child(
+                row()
+                    .w_full()
+                    .center_y()
+                    .child(row().grow(1.0).child(label(name, p)))
+                    .child(text(format!("{}%", value.round() as i64)).font(font(12.0, 500.0).lh(16.0)).color(p.text_primary_muted).mr(6.0))
+                    .child(reset),
+            )
+            .child(
+                Slider::new(key, value, 0.0, 200.0)
+                    .step(1.0)
+                    .on_change(move |s: &mut S, x| {
+                        set(acc, move |st: &mut Settings| if input { st.input_volume = x } else { st.output_volume = x })(s);
+                    })
+                    .el(p),
+            )
+            .child(ticks())
     };
     out = out.child(section(t("Volume"), col().w_full().gap(20.0).child(vol("voice-in-vol", t("Input volume"), set_.input_volume, true)).child(vol("voice-out-vol", t("Output volume"), set_.output_volume, false)), false, p));
 
