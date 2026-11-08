@@ -128,7 +128,7 @@ pub fn on_key(st: &mut ShellState, k: &KeyEvent) -> bool {
 
 /// A HUD button (`.controlButton`): 38×38, radius 12, white 20px icon.
 fn control<S: 'static>(glyph: &'static Icon, label: &str, enabled: bool, f: impl Fn(&mut S, &mut Tx) + 'static) -> El {
-    let b = row().size(38.0, 38.0).center().radius(12.0).role("button").label(label.to_owned()).child(icon(glyph, 20.0).color(Color::WHITE));
+    let b = row().size(38.0, 38.0).center().radius(12.0).role("button").label(label.to_owned()).key(label.to_owned()).child(icon(glyph, 20.0).color(Color::WHITE));
     if !enabled {
         return b.opacity(0.38).disabled(true);
     }
@@ -281,7 +281,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
     actions = actions.child(control(&icons::DOWNLOAD_SIMPLE_BOLD, t("Download"), !pr.is_empty(), move |_: &mut S, tx| super::attachments::save_as(acc, pr.clone(), nm.clone(), tx)));
     if zoomable {
         actions = actions
-            .child(gap(6.0))
+            .child(gap(6.0).key("gap-zoom"))
             .child(control(&icons::ARROW_COUNTER_CLOCKWISE_BOLD, t("Rotate counterclockwise"), true, move |s: &mut S, _| {
                 if let Some(v) = &mut acc(s).media_ui.viewer {
                     rotate(v, false)
@@ -311,30 +311,30 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             }));
     }
     if let Some((channel, message)) = v.message {
-        actions = actions.child(gap(16.0)).child(control(&icons::ARROW_BEND_UP_LEFT_BOLD, t("Reply"), true, move |s: &mut S, _| {
+        actions = actions.child(gap(16.0).key("gap-reply")).child(control(&icons::ARROW_BEND_UP_LEFT_BOLD, t("Reply"), true, move |s: &mut S, _| {
             let st = acc(s);
             close(st);
             st.reply = Some(ReplyTo { channel, message, mention: true });
             st.composer.focused = true;
         }));
     }
-    let mut info: Vec<String> = vec![name];
+    let mut info: Vec<(&str, String)> = vec![("name", name)];
     if it.w > 0 && it.h > 0 {
-        info.push(format!("{}×{}", it.w, it.h));
+        info.push(("dims", format!("{}×{}", it.w, it.h)));
     }
     if it.size > 0 {
-        info.push(super::upload::format_size(it.size));
+        info.push(("size", super::upload::format_size(it.size)));
     }
     if zoomable {
-        info.push(format!("{}%", (z * 100.0).round()));
+        info.push(("zoom", format!("{}%", (z * 100.0).round())));
     }
     let details = row()
         .pin(None, None, Some(16.0), Some(18.0))
         .max_w(760.0)
         .gap(18.0)
         .center_y()
-        .children(info.into_iter().enumerate().map(|(i, s)| {
-            let t = text(s).font(font(13.0, 400.0).lh(20.0)).color(Color::WHITE).truncate();
+        .children(info.into_iter().enumerate().map(|(i, (k, s))| {
+            let t = text(s).font(font(13.0, 400.0).lh(20.0)).color(Color::WHITE).truncate().key(k);
             if i == 0 { t.max_w(360.0).shrink() } else { t }
         }));
 

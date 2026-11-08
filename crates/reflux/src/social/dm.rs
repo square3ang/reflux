@@ -93,8 +93,9 @@ pub fn create_dm<S: 'static>(store: &Store, st: &ShellState, group: Option<Snowf
             .py(24.0)
             .w_full()
             .align(rune::Align::Center)
+            .key("empty")
     } else {
-        col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("dm-picker-list").child(col().w_full().gap(2.0).children(rows))
+        col().w_full().max_h(320.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("dm-picker-list").child(col().w_full().gap(2.0).children(rows)).key("list")
     };
     let mut items = vec![desc(t("Choose friends to message."), p), field(st, acc, "q", "", "", "Search friends", p), list];
     if let Some(c) = group {

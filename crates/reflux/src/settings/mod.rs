@@ -128,7 +128,7 @@ pub(crate) fn loaded<T: serde::de::DeserializeOwned>(st: &ShellState, key: &str,
     let note = |s: String| text(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap();
     match st.form.data.get(key) {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| note(format!("Couldn't read the list: {e}"))),
-        None => Err(note(st.form.error.clone().unwrap_or_else(|| t("Loading…").into()))),
+        None => Err(note(st.form.error.clone().unwrap_or_else(|| t("Loading…").into())).key("loading")),
     }
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn input<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'sta
     if secure {
         i = i.secure();
     }
-    i.el(p)
+    i.el(p).key(format!("in-{key}"))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -512,6 +512,7 @@ pub(crate) fn load_tab(sh: &mut ShellState, id: &str) {
         "privacy_safety" => sh.load("harvest", "/users/@me/harvest/latest"),
         "my_profile" => profile::load(sh),
         "applications" => dev::load(sh),
+        "voice_video" if sh.voice.entrance.is_none() => sh.intents.push(Intent::Voice(crate::shell::voice::Op::LoadEntrance)),
         "gift_inventory" => match crate::shell::devtools::gifts(sh) {
             Some(mock) => drop(sh.form.data.insert("gifts".into(), mock)),
             None => sh.load("gifts", "/users/@me/gifts"),
@@ -617,7 +618,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
     let mut nav = col().w_full().gap(3.0).focus_group().role("tablist");
     if shown.is_empty() {
         nav = nav.child(
-            text(t("No settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
+            text(t("No settings found")).key("none").font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary).align(rune::Align::Center).w_full().py(16.0).px(8.0),
         );
     }
     let privacy_review = privacy::review_pending(store, st);
@@ -627,7 +628,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
             continue;
         }
         let items = items.into_iter().map(|tab| {
-            let item = nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).on_press(select(acc, tab.id));
+            let item = nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).key(tab.id).on_press(select(acc, tab.id));
             // `attentionLabel` on the Privacy item while the setup is unreviewed.
             if tab.id == "privacy_safety" && privacy_review {
                 item.child(el().size(8.0, 8.0).radius(4.0).fill(p.status_danger).ml(6.0))
@@ -635,7 +636,7 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
                 item
             }
         });
-        nav = nav.child(nav_group(Some(cat.label()), items, p));
+        nav = nav.child(nav_group(Some(cat.label()), items, p).key(format!("cat-{}", cat.label())));
     }
     // What's new, Submit feedback and Donate open the official site's pages in the browser;
     // self-hosted instances have none (`Routes.patchNotes` / `feedback` / `donate`).
@@ -649,11 +650,11 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
             (&icons::HAND_HEART_FILL, "Donate", format!("{base}/donate")),
         ];
         for (i, label, url) in links {
-            nav = nav.child(nav_item(i, t(label), false, false, p, &c).label(format!("{} ({})", t(label), t("Opens in browser"))).on_press(move |_: &mut S| open_url(&url)));
+            nav = nav.child(nav_item(i, t(label), false, false, p, &c).key(label).label(format!("{} ({})", t(label), t("Opens in browser"))).on_press(move |_: &mut S| open_url(&url)));
         }
     }
     if q.is_empty() {
-        nav = nav.child(nav_item(&icons::SIGN_OUT_FILL, t("Sign out"), false, true, p, &c).on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
+        nav = nav.child(nav_item(&icons::SIGN_OUT_FILL, t("Sign out"), false, true, p, &c).key("sign-out").on_press(move |s: &mut S| set(acc, s, |u| u.confirm_logout = true)));
     }
     let footer = col()
         .w_full()
@@ -713,6 +714,8 @@ pub(crate) fn nav_item(i: &'static rune::Icon, label: &str, selected: bool, dang
         .radius(8.0)
         .cursor(rune::Cursor::Pointer)
         .role("tab").focusable(true).focus_ring(4.0, 0.0, p.focus_primary)
+        // `.sidebarItem` has `transition: none`.
+        .motion(rune::Spring::NONE)
         .checked(selected)
         .label(label.to_string())
         .hover_group()
@@ -760,9 +763,11 @@ fn content<S: 'static>(title: &str, body: El, p: &Palette, m: &Metrics, close: i
         .child(text(title.to_string()).font(font(18.0, 600.0).lh(24.0)).color(p.text_primary).truncate().grow(1.0).shrink().mr(16.0))
         .child(x)
         .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(over(c.border, bg)));
-    let inner = col().w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
+    // Keyed by tab so a new tab mounts fresh instead of morphing the old tab's elements.
+    let inner = col().key(format!("tab-{title}")).w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
     let viewport = col()
         .key("settings-content")
+        .instant_changes()
         .w_full()
         .grow(1.0)
         .min_h(0.0)

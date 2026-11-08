@@ -8,7 +8,7 @@ use rune::{El, Icon, col, el, icon, row, text};
 use serde_json::{Value, json};
 
 use super::modals::confirm;
-use super::settings::{card, color_dot, empty, save_bar, small, sorted_roles, title};
+use super::settings::{color_dot, empty, keyed_card, save_bar, small, sorted_roles, title};
 use super::{Confirm, Dialog, Form, Then, error, field, perms, textarea};
 use crate::icons;
 use crate::settings::tabs::{not_available, section};
@@ -269,7 +269,7 @@ fn overwrites<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Pal
     let mut list: Vec<&PermissionOverwrite> = ch.permission_overwrites.iter().collect();
     // Roles first in rank order, then members.
     list.sort_by_key(|o| (o.kind != OverwriteType::ROLE, roles.iter().position(|r| r.id == o.id).unwrap_or(usize::MAX)));
-    let rows: Vec<El> = list
+    let rows: Vec<(Option<String>, El)> = list
         .iter()
         .map(|o| {
             let t = o.id;
@@ -279,13 +279,13 @@ fn overwrites<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Pal
                 crate::shell::avatar(store, st, t, 24.0, None, p.background_secondary, p)
             };
             let sub = format!("{} allowed · {} denied", o.allow.bits().count_ones(), o.deny.bits().count_ones());
-            row()
+            (Some(format!("o-{t}")), row()
                 .w_full()
                 .gap(12.0)
                 .center_y()
                 .child(lead)
                 .child(col().grow(1.0).min_w(0.0).child(title(subject_name(store, g, t), p)).child(small(sub, p)))
-                .child(Button::new(crate::i18n::t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| edit_target(acc(s), id, Some(t))).el(p))
+                .child(Button::new(crate::i18n::t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| edit_target(acc(s), id, Some(t))).el(p)))
         })
         .collect();
     // Roles, and members the client knows or the search found, without an overwrite yet.
@@ -318,7 +318,7 @@ fn overwrites<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, p: &Pal
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    section(t("Permissions"), content.child(if rows.is_empty() { empty("No overwrites yet.", p) } else { card(rows, p) }), true, p)
+    section(t("Permissions"), content.child(if rows.is_empty() { empty("No overwrites yet.", p).key("empty") } else { keyed_card(rows, p).key("list") }), true, p)
 }
 
 /// The overwrites as comparable rows (`isSyncedWithParent` compares id, type, allow, deny).

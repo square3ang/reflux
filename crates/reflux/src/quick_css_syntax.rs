@@ -394,6 +394,7 @@ pub fn popup<S: 'static>(l: &List, which: usize, p: &Palette, edit: impl Fn(&mut
         let (edit, l) = (edit.clone(), l.clone());
         rows = rows.child(
             row()
+                .key(name.clone())
                 .w_full()
                 .px(3.0)
                 .py(1.0)

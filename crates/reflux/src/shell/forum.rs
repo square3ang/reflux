@@ -154,21 +154,21 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     }
     match &f.draft {
         Some(d) if d.forum == c.id => content = content.child(composer(store, st, c, d, p, acc, layer)),
-        _ => content = content.child(search_card(store, st, c, p, acc)).child(filter_row(st, c, p, acc, layer)),
+        _ => content = content.child(search_card(store, st, c, p, acc).key("search-card")).child(filter_row(st, c, p, acc, layer).key("filter-row")),
     }
     let (cur, old) = posts(store, st, c);
     let is_grid = grid(st, c);
     let searching = !f.query.text.trim().is_empty() || f.tag_filter.get(&c.id).is_some_and(|t| !t.is_empty());
     if !cur.is_empty() {
-        content = content.child(cards(store, st, c, &cur, is_grid, p, acc));
+        content = content.child(cards(store, st, c, &cur, is_grid, p, acc).key("posts"));
     }
     let kind = if server_search(st) { Tab::Search } else { Tab::Archived };
     let entry = st.threads.archived.get(&(c.id, kind));
     let a = entry.cloned().unwrap_or_default();
     if !old.is_empty() {
         content = content
-            .child(text(t("Older posts")).font(font(12.0, 600.0)).color(p.text_tertiary).pt(8.0))
-            .child(cards(store, st, c, &old, is_grid, p, acc));
+            .child(text(t("Older posts")).font(font(12.0, 600.0)).color(p.text_tertiary).pt(8.0).key("older-title"))
+            .child(cards(store, st, c, &old, is_grid, p, acc).key("older-posts"));
     }
     let notice = || col().w_full().padding(16.0).gap(8.0).items_center();
     let settled = !a.loading && !a.indexing;
@@ -176,13 +176,14 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         content = content.child(
             notice()
                 .role("status")
+                .key("indexing")
                 .child(spinner(p.text_primary_muted))
                 .child(text(t("Search is getting ready for this community. Trying again shortly...")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap()),
         );
     } else if a.loading {
-        content = content.child(notice().child(spinner(p.text_primary_muted)));
+        content = content.child(notice().key("loading").child(spinner(p.text_primary_muted)));
     } else if cur.is_empty() && old.is_empty() && entry.is_some() && !a.failed {
-        content = content.child(empty(searching, p));
+        content = content.child(empty(searching, p).key("empty"));
     }
     let fid = c.id;
     // Load more (or the first older page when 25+ posts are active), or retry a failed list.
@@ -216,14 +217,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
         content = content.child(
             notice()
                 .role("alert")
+                .key("failed")
                 .child(text(t("Couldn't load posts. Try again later.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted))
                 .child(more(t("Retry"), "forum-retry", true)),
         );
     } else if settled && entry.is_some() && a.has_more {
-        content = content.child(notice().child(more(t("Load older posts"), "forum-older", false)));
+        content = content.child(notice().key("older").child(more(t("Load older posts"), "forum-older", false)));
     } else if settled && entry.is_none() && kind == Tab::Archived && !st.threads.search_disabled {
         // The first older page waits for a press while 25+ posts are active (`needsFirstPage`).
-        content = content.child(notice().child(more(t("Load older posts"), "forum-older", true)));
+        content = content.child(notice().key("older").child(more(t("Load older posts"), "forum-older", true)));
     }
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("forum-posts").key("forum-posts").items_center().child(content);
     col().grow(1.0).min_w(0.0).h_full().min_h(0.0).fill(p.background_primary).key(format!("forum-{}", c.id)).child(scroller(viewport, true, p))
@@ -281,9 +283,9 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
     let mut entry = row().w_full().min_h(48.0).py(6.0).pl(12.0).pr(6.0).gap(8.0).center_y();
     // Without search on the instance only "New post" shows (`.entrySpacer`).
     entry = if st.threads.search_disabled {
-        entry.child(el().grow(1.0))
+        entry.child(el().grow(1.0).key("spacer"))
     } else {
-        entry.child(icon(&icons::MAGNIFYING_GLASS_BOLD, 18.0).color(p.text_tertiary)).child(row().grow(1.0).min_w(0.0).h(34.0).center_y().child(field))
+        entry.child(icon(&icons::MAGNIFYING_GLASS_BOLD, 18.0).color(p.text_tertiary).key("search-icon")).child(row().grow(1.0).min_w(0.0).h(34.0).center_y().key("query").child(field))
     };
     let searching = !q.text.trim().is_empty();
     if searching {
@@ -297,6 +299,7 @@ fn search_card<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
                 .label(t("Clear search"))
+                .key("clear")
                 .on_press(move |s: &mut S| acc(s).threads.forum.query = TextEdit::new(""))
                 .child(icon(&icons::X_BOLD, 16.0).color(p.text_tertiary).group_color(p.text_primary)),
         );
@@ -536,14 +539,14 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     let tags: Vec<&ForumTag> = post.applied_tags.iter().filter_map(|id| forum.available_tags.iter().find(|t| t.id == *id)).collect();
     let mut header = row().flex_wrap().gaps(6.0, 6.0).center_y();
     if pinned {
-        header = header.child(icon(&icons::PUSH_PIN_SIMPLE_FILL, 16.0).color(p.text_tertiary).label(t("Pinned")));
+        header = header.child(icon(&icons::PUSH_PIN_SIMPLE_FILL, 16.0).color(p.text_tertiary).label(t("Pinned")).key("pin"));
     }
     if is_new {
         // `.newBadge`.
-        header = header.child(row().px(6.0).radius(4.0).fill(p.status_danger).child(text(t("New").to_uppercase()).font(font(11.0, 700.0).lh(18.0)).color(p.text_on_dark)));
+        header = header.child(row().px(6.0).radius(4.0).fill(p.status_danger).key("new").child(text(t("New").to_uppercase()).font(font(11.0, 700.0).lh(18.0)).color(p.text_on_dark)));
     }
     for t in tags.iter().take(MAX_CARD_TAGS) {
-        header = header.child(tag_pill(st, t, None, false, p));
+        header = header.child(tag_pill(st, t, None, false, p).key(format!("tag-{}", t.id)));
     }
     if tags.len() > MAX_CARD_TAGS {
         header = header.child(
@@ -552,9 +555,9 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
     }
     let mut body = col().grow(1.0).min_w(0.0).gap(6.0);
     if pinned || is_new || !tags.is_empty() {
-        body = body.child(header);
+        body = body.child(header.key("header"));
     }
-    body = body.child(text(post.name.clone().unwrap_or_default()).font(font(16.0, 600.0).lh(20.0)).color(if unread { p.text_primary } else { p.text_secondary }).truncate());
+    body = body.child(text(post.name.clone().unwrap_or_default()).font(font(16.0, 600.0).lh(20.0)).color(if unread { p.text_primary } else { p.text_secondary }).truncate().key("title"));
     let preview = match first {
         Some(Some(m)) => Some((Some(store.display_name(forum.guild_id, m.author.id)), threads::notification_body(store, m))),
         Some(None) => Some((None, "Original message was deleted".to_string())),
@@ -570,20 +573,20 @@ fn card<S: 'static>(store: &Store, st: &ShellState, forum: &Channel, post: &Chan
             }
             None => (line, vec![]),
         };
-        body = body.child(col().w_full().max_h(40.0).clip_rounded(0.0).child(rich(line, spans).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap().w_full()));
+        body = body.child(col().w_full().max_h(40.0).clip_rounded(0.0).key("preview").child(rich(line, spans).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap().w_full()));
     }
     let small = font(13.0, 400.0).lh(16.0);
     let mut footer = row().flex_wrap().gaps(8.0, 8.0).center_y();
     if let (Some(r), Some(Some(m))) = (&forum.default_reaction_emoji, first) {
-        footer = footer.child(default_reaction(st, post, m, r, p, acc));
+        footer = footer.child(default_reaction(st, post, m, r, p, acc).key("reaction"));
     }
-    footer = footer.child(row().gap(4.0).center_y().child(icon(&icons::CHAT_CIRCLE_FILL, 14.0).color(p.text_primary_muted)).child(text(threads::message_count(post.message_count)).font(small).color(p.text_primary_muted)));
+    footer = footer.child(row().gap(4.0).center_y().key("count").child(icon(&icons::CHAT_CIRCLE_FILL, 14.0).color(p.text_primary_muted)).child(text(threads::message_count(post.message_count)).font(small).color(p.text_primary_muted)));
     if unread {
         let label = if post_unreads > 0 { crate::i18n::tp("{count, plural, one {# new message} other {# new messages}}", post_unreads as i64, &[]) } else { t("New messages").to_string() };
-        footer = footer.child(text(label).font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light));
+        footer = footer.child(text(label).font(font(13.0, 600.0).lh(16.0)).color(p.brand_primary_light).key("unread"));
     }
-    footer = footer.child(text(format_relative(rules::last_activity(post).timestamp_ms(), st.now_ms)).font(small).color(p.text_primary_muted));
-    body = body.child(footer);
+    footer = footer.child(text(format_relative(rules::last_activity(post).timestamp_ms(), st.now_ms)).font(small).color(p.text_primary_muted).key("time"));
+    body = body.child(footer.key("footer"));
     let media = first.flatten().and_then(first_media);
     let thumb = |w: f32, h: f32, r: f32| match &media {
         Some((u, _)) => super::picture(st.media.get(&crate::media::fit_url(u, w, st.media.scale())), w, h, r, p),
@@ -704,6 +707,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                 .gap(6.0)
                 .radius(6.0)
                 .border(1.0, p.background_modifier_accent)
+                .key("preview")
                 .child(text(t("Preview")).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted))
                 .child(inner),
         );
@@ -715,7 +719,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
             .placeholder(if c.kind == reflux_model::ChannelType::GUILD_MEDIA { t("Add a description (optional)") } else { t("Enter a message") }, p.text_tertiary_secondary)
             .caret(p.text_primary, p.text_selection)
             .on_edit(move |s: &mut S| -> &mut TextEdit { &mut draft(acc(s)).body });
-        card = card.child(col().w_full().min_h(48.0).child(body));
+        card = card.child(col().w_full().min_h(48.0).key("body").child(body));
     }
     if !st.threads.uploads.is_empty() {
         let mut files = row().flex_wrap().gaps(6.0, 6.0);
@@ -730,6 +734,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                     .center_y()
                     .radius(6.0)
                     .fill(p.background_secondary_alt)
+                    .key(format!("file-{uid}"))
                     .child(icon(&icons::FILE_TEXT_FILL, 16.0).color(p.text_tertiary))
                     .child(text(u.name.clone()).font(font(13.0, 500.0).lh(16.0)).color(p.text_primary).truncate().max_w(200.0))
                     .child(
@@ -737,10 +742,10 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
                     ),
             );
         }
-        card = card.child(files);
+        card = card.child(files.key("files"));
     }
     if let Some(e) = &d.error {
-        card = card.child(text(e.clone()).font(font(13.0, 400.0).lh(16.0)).color(p.status_danger));
+        card = card.child(text(e.clone()).font(font(13.0, 400.0).lh(16.0)).color(p.status_danger).key("error"));
     }
     // `.composerBar`.
     let mut start = row().flex_wrap().gaps(4.0, 4.0).center_y().min_w(0.0).grow(1.0).shrink();
@@ -763,7 +768,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
         tags = tags.child(Button::new(t("Add tags")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key(TAG_PICKER).on_press(move |s: &mut S| acc(s).popups.toggle(TAG_PICKER)).el(p));
         for t in d.tags.iter().filter_map(|id| c.available_tags.iter().find(|x| x.id == *id)) {
             let tid = t.id;
-            tags = tags.child(tag_pill(st, t, Some(true), false, p).on_press(move |s: &mut S| draft(acc(s)).tags.retain(|x| *x != tid)));
+            tags = tags.child(tag_pill(st, t, Some(true), false, p).key(format!("tag-{tid}")).on_press(move |s: &mut S| draft(acc(s)).tags.retain(|x| *x != tid)));
         }
         if require_tag(c) && d.tags.is_empty() {
             tags = tags.child(text(t("Required")).font(font(12.0, 400.0)).color(p.text_primary_muted));
@@ -785,6 +790,7 @@ fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, d: &Draft, 
             .w_full()
             .ml(-8.0)
             .mr(-4.0)
+            .key("bar")
             .pt(8.0)
             .gap(8.0)
             .center_y()

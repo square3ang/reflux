@@ -146,7 +146,7 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
                     tile(store, st, m, key, t, super::chat::fit(w, h, (EMBED_W, EMBED_H)), false, p, acc)
                 })
             };
-            out.extend(el);
+            out.extend(el.map(|e| e.key(format!("emb-{i}"))));
             continue;
         }
         // `collectGalleryImages`: images (else thumbnails) of every embed of this link.
@@ -160,7 +160,7 @@ pub fn embeds<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &Palet
             .filter(|x| seen.insert(x.content_hash.clone().unwrap_or_else(|| x.url.clone())))
             .take(MAX_GALLERY)
             .collect();
-        out.push(rich(store, st, m, i, e, &gallery, p, acc));
+        out.push(rich(store, st, m, i, e, &gallery, p, acc).key(format!("emb-{i}")));
     }
     out
 }

@@ -65,6 +65,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, link: Option<String>, p:
                     }
                 });
             row()
+                .key(format!("f-{u}"))
                 .w_full()
                 .py(6.0)
                 .gap(12.0)
@@ -78,9 +79,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, link: Option<String>, p:
         })
         .collect();
     let list = if rows.is_empty() {
-        text(t("No friends found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)
+        text(t("No friends found")).key("none").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)
     } else {
-        col().w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("invite-friends-list").child(col().w_full().children(rows))
+        col().key("list").w_full().max_h(240.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("invite-friends-list").child(col().w_full().children(rows))
     };
     Some(col().w_full().gap(8.0).child(super::field(st, acc, "friend-search", "", "", t("Search friends"), p)).child(list))
 }

@@ -29,7 +29,8 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
     let item_h = dim::MEMBER_LIST_ITEM_CONTENT_HEIGHT + 2.0 * dim::MEMBER_LIST_ITEM_PADDING_BLOCK;
     let items = rows.iter().enumerate().map(|(i, r)| match r {
         Some(MemberRow::Group(g)) => {
-            let label = format!("{} — {}", group_label(store, gid, g), g.count);
+            // `MemberListGroupHeader`: label, '—' and count as adjacent spans, no spaces.
+            let label = format!("{}—{}", group_label(store, gid, g), g.count);
             row()
                 .w_full()
                 .pt(12.0 + if i > 0 { dim::MEMBER_LIST_GROUP_SPACER_HEIGHT } else { 0.0 })
@@ -37,7 +38,7 @@ pub fn list<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette
                 .px(8.0)
                 .center_y()
                 .children(store.guilds.get(&gid).and_then(|gs| gs.roles.iter().find(|r| r.id.to_string() == g.id)).and_then(|r| super::role_icon::view(st, r, 16.0)).map(|i| i.mr(4.0)))
-                .child(text(label).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate())
+                .child(text(label).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate().key("label"))
                 .key(format!("group-{}", g.id))
         }
         Some(MemberRow::Member(u)) => col().w_full().pb(dim::MEMBER_LIST_ROW_GAP).child(member(store, st, gid, *u, owner == Some(*u), p, acc)).key(format!("member-row-{u}")),
@@ -87,6 +88,9 @@ pub(super) fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake,
         // `.crownIcon`: hsl(39, 57%, 64%).
         name = name.child(icon(&icons::CROWN_FILL, 14.0).color(rgb(220, 179, 113)).ml(4.0));
     }
+    if let Some(u) = store.users.get(&u).filter(|u| u.bot) {
+        name = name.child(super::client_system::user_tag(if u.system { t("System") } else { t("Bot") }, p).ml(4.0));
+    }
     let custom = store.presences.get(&u).and_then(|pr| pr.custom_status.as_ref()).and_then(|c| c.text.clone()).filter(|t| !t.is_empty());
     let mut info = col().grow(1.0).min_w(0.0).child(name);
     if let Some(t) = custom {
@@ -114,7 +118,8 @@ pub(super) fn member<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake,
         .on_secondary_press(move |s: &mut S, at, _| {
             acc(s).open_user_menu(Target::User { user: u, guild: Some(gid), dm: None }, [at.x, at.y], format!("member-{u}"), Placement::LeftStart)
         })
-        .child(avatar(store, st, u, 32.0, Some(status), p.background_secondary_lighter, p))
+        // `showOffline={isCurrentUser || isTyping}`: offline members get no status dot.
+        .child(avatar(store, st, u, 32.0, (status != Status::Offline || u == store.my_id()).then_some(status), p.background_secondary_lighter, p))
         .child(info);
     if status == Status::Offline {
         r = r.opacity(0.3);

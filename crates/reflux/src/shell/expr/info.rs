@@ -199,6 +199,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
                 .cursor(rune::Cursor::Pointer)
                 .role("button")
                 .label(crate::i18n::tf("Go to {communityName}", &[("communityName", &n)]))
+                .key("member")
                 .child(guild_icon(store, st, g, 40.0, p))
                 .child(text(n).font(font(14.0, 600.0).lh(17.5)).color(p.text_primary).truncate().shrink().min_w(0.0))
                 .on_press(move |s: &mut S| {
@@ -221,6 +222,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
                         .gap(10.0)
                         .center_y()
                         .radius(6.0)
+                        .key("source")
                         .child(super::guild_face(st, sg, &n, icon.as_deref(), 40.0, p))
                         .child(col().gap(2.0).shrink().min_w(0.0).child(text(n.clone()).font(font(14.0, 600.0).lh(17.5)).color(p.text_primary).truncate()).child(text(sub).font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted)));
                     if discoverable {
@@ -240,8 +242,8 @@ fn card<S: 'static>(store: &Store, st: &ShellState, i: &Info, p: &Palette, acc: 
                     }
                     r
                 }
-                Some(Fetched::Loading) => row().w_full().h(48.0),
-                _ => row().w_full().min_h(40.0).center_y().child(text(t("A community that is either invite-only or unavailable.")).font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted).wrap()),
+                Some(Fetched::Loading) => row().w_full().h(48.0).key("loading"),
+                _ => row().w_full().min_h(40.0).center_y().key("unavailable").child(text(t("A community that is either invite-only or unavailable.")).font(font(12.0, 400.0).lh(15.0)).color(p.text_primary_muted).wrap()),
             },
         };
         c = c.child(section(from, body));

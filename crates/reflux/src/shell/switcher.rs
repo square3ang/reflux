@@ -359,11 +359,12 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let mut list = col().w_full().padding(4.0);
     let header = mode_header(store, &sw.query.text, st.guild);
     if let Some(h) = &header {
-        list = list.child(text(h.clone()).font(font(11.0, 600.0).lh(16.0)).color(p.text_tertiary).py(4.0).px(8.0).mb(2.0));
+        list = list.child(text(h.clone()).font(font(11.0, 600.0).lh(16.0)).color(p.text_tertiary).py(4.0).px(8.0).mb(2.0).key("mode"));
     }
     if hits.is_empty() && header.is_none() {
         list = list.child(
             col()
+                .key("empty")
                 .w_full()
                 .h(312.0)
                 .center()
@@ -420,7 +421,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         }
         // `.sectionHeader`: 11/600 tertiary, padding 4 8, 2 below.
         if let Some(sec) = h.section.filter(|s| i == 0 || hits[i - 1].section != Some(s)) {
-            list = list.child(text(t(sec)).font(font(11.0, 600.0).lh(16.0)).color(p.text_tertiary).py(4.0).px(8.0).mb(2.0).mt(if i > 0 { 8.0 } else { 0.0 }));
+            list = list.child(text(t(sec)).font(font(11.0, 600.0).lh(16.0)).color(p.text_tertiary).py(4.0).px(8.0).mb(2.0).mt(if i > 0 { 8.0 } else { 0.0 }).key(format!("section-{sec}")));
         }
         list = list.child(r);
     }

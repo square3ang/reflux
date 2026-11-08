@@ -376,7 +376,7 @@ pub fn accounts_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
         let active = row()
             .gap(8.0)
             .children(crate::ui::mention_badge(mentions as u64, true, p))
-            .child(text(t("Active")).font(font(12.0, 600.0).lh(16.0)).color(p.status_online));
+            .child(text(t("Active")).font(font(12.0, 600.0).lh(16.0)).color(p.status_online).key("active"));
         list = list.child(entry(&c.display_name, format!("{} · {}", c.username, host(&c.instance)), face, active));
     }
     for (i, a) in st.account.accounts.iter().enumerate() {
@@ -394,9 +394,9 @@ pub fn accounts_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
         };
         let mut actions = row().gap(8.0);
         if let Some(b) = crate::ui::mention_badge(mentions as u64, true, p) {
-            actions = actions.child(b);
+            actions = actions.child(b.key("mention"));
         } else if unread {
-            actions = actions.child(row().size(16.0, 16.0).center().child(rune::el().size(8.0, 8.0).radius(4.0).fill(p.text_primary_muted)).label(t("Unread messages")));
+            actions = actions.child(row().key("unread").size(16.0, 16.0).center().child(rune::el().size(8.0, 8.0).radius(4.0).fill(p.text_primary_muted)).label(t("Unread messages")));
         }
         actions = actions
             .child(Button::new(t("Switch")).key(format!("switch-{i}")).on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::SwitchAccount(i)))).el(p))
@@ -407,7 +407,7 @@ pub fn accounts_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
                     .on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::RemoveAccount(i))))
                     .el(p),
             );
-        list = list.child(entry(&a.display_name, sub, letter(&a.display_name), actions));
+        list = list.child(entry(&a.display_name, sub, letter(&a.display_name), actions).key(format!("acct-{}", a.slot())));
     }
     if st.account.accounts.is_empty() {
         list = list.child(text(t("No other accounts on this device.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));

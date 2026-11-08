@@ -252,16 +252,16 @@ fn card(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
         .child(brand(p))
         .child(
             col().grow(1.0).padding(40.0).justify_center().child(match &s.login.step {
-                Step::Method => method_step(s, p),
-                Step::Credentials => credential_step(s, p),
-                Step::Instance => instance_step(s, p),
-                Step::Mfa(m) => mfa_step(s, m, p),
-                Step::IpAuth(ip) => ip_step(ip, p),
-                Step::Register => register_step(s, p, layer),
-                Step::Forgot { sent } => forgot_step(s, *sent, p),
-                Step::Passkey(k) => passkey_step(s, k, p),
-                Step::Handoff(h) => crate::handoff::view(h, p),
-                Step::Restricted(r) => crate::restrict::view(r, p),
+                Step::Method => method_step(s, p).key("method"),
+                Step::Credentials => credential_step(s, p).key("credentials"),
+                Step::Instance => instance_step(s, p).key("instance"),
+                Step::Mfa(m) => mfa_step(s, m, p).key("mfa"),
+                Step::IpAuth(ip) => ip_step(ip, p).key("ip"),
+                Step::Register => register_step(s, p, layer).key("register"),
+                Step::Forgot { sent } => forgot_step(s, *sent, p).key("forgot"),
+                Step::Passkey(k) => passkey_step(s, k, p).key("passkey"),
+                Step::Handoff(h) => crate::handoff::view(h, p).key("handoff"),
+                Step::Restricted(r) => crate::restrict::view(r, p).key("restricted"),
             }),
         )
 }
@@ -445,7 +445,7 @@ fn form_note(l: &crate::login::Login, p: &Palette) -> Option<El> {
         (None, true) => ("Verifying you're human…".to_owned(), p.text_tertiary),
         (None, false) => return None,
     };
-    Some(text(msg).w_full().font(font(14.0, 400.0).lh(20.0)).color(color).wrap())
+    Some(text(msg).key("note").w_full().font(font(14.0, 400.0).lh(20.0)).color(color).wrap())
 }
 
 /// The 1px rule and right-aligned Back / primary buttons of every step.
@@ -467,7 +467,7 @@ pub(crate) fn footer(p: &Palette, submitting: bool, back: fn(&mut State), primar
         );
     }
     // `.footer`: margin-top 2, padding-top 14, 1px top rule.
-    col().w_full().mt(2.0).gap(13.0).child(el().w_full().h(1.0).fill(footer_rule)).child(buttons)
+    col().key("footer").w_full().mt(2.0).gap(13.0).child(el().w_full().h(1.0).fill(footer_rule)).child(buttons)
 }
 
 fn to_method(s: &mut State) {
@@ -761,30 +761,32 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
     let heading = title(t("Create an account"), p).mb(24.0);
     let to_login: fn(&mut State) = |s| to(s, Step::Method);
     let body = if r.pending {
-        col().w_full().child(notice(t("Your account request is pending approval. You can sign in after an admin approves it."), p))
+        col().key("pending").w_full().child(notice(t("Your account request is pending approval. You can sign in after an admin approves it."), p))
     } else if su.closed {
-        col().w_full().child(notice(t("Registration is currently closed. Use a registration link from an admin to create an account."), p))
+        col().key("closed").w_full().child(notice(t("Registration is currently closed. Use a registration link from an admin to create an account."), p))
     } else {
         let username_error = l.errors.username.as_deref().or(username_problem(&r.username.text));
         let username = Input::new("register-username", &r.username, |s: &mut State| &mut s.login.register.username)
             .label(t("Username (optional)"))
             .placeholder(t("Leave blank for a random username"))
             .el(p);
-        let username = col().w_full().child(username).children(
+        let username = col().key("username").w_full().child(username).children(
             username_error.map(|e| text(e).mt(4.0).font(font(12.0, 400.0).lh(16.0)).color(mix(p.status_danger, p.text_primary, 78.0))),
         );
         let mut form = col()
+            .key("form")
             .w_full()
             .gap(20.0)
-            .children(l.errors.form.as_deref().map(|e| notice(e, p)))
-            .children(age_blocked(s).then(|| notice(t("You need to be a little older to have an account."), p)))
-            .child(Input::new("register-email", &l.email, |s: &mut State| &mut s.login.email).label(t("Email")).error(l.errors.email.as_deref()).el(p))
+            .children(l.errors.form.as_deref().map(|e| notice(e, p).key("form-error")))
+            .children(age_blocked(s).then(|| notice(t("You need to be a little older to have an account."), p).key("age")))
+            .child(Input::new("register-email", &l.email, |s: &mut State| &mut s.login.email).label(t("Email")).error(l.errors.email.as_deref()).el(p).key("email"))
             .child(
                 Input::new("register-global-name", &r.global_name, |s: &mut State| &mut s.login.register.global_name)
                     .label(t("Display name (optional)"))
                     .placeholder(t("What should people call you?"))
                     .error(l.errors.global_name.as_deref())
-                    .el(p),
+                    .el(p)
+                    .key("global-name"),
             )
             .child(username)
             .child(
@@ -792,21 +794,23 @@ fn register_step(s: &State, p: &Palette, layer: &mut Vec<El>) -> El {
                     .label(t("Password"))
                     .password(l.show_password, |s: &mut State| s.login.show_password = !s.login.show_password)
                     .error(l.errors.password.as_deref())
-                    .el(p),
+                    .el(p)
+                    .key("password"),
             )
             .child(
                 Input::new("register-confirm", &r.confirm, |s: &mut State| &mut s.login.register.confirm)
                     .label(t("Confirm password"))
                     .password(r.show_confirm, |s: &mut State| s.login.register.show_confirm = !s.login.register.show_confirm)
                     .error(l.errors.confirm.as_deref())
-                    .el(p),
+                    .el(p)
+                    .key("confirm"),
             );
         if su.collect_date_of_birth {
             let access = crate::ui::popup_access(|s: &mut State| &mut s.login.popups);
-            form = form.child(date_of_birth("register-dob", &r.dob, l.errors.date_of_birth.clone(), 430.0, &l.popups, access, |s: &mut State| &mut s.login.register.dob, p, layer));
+            form = form.child(date_of_birth("register-dob", &r.dob, l.errors.date_of_birth.clone(), 430.0, &l.popups, access, |s: &mut State| &mut s.login.register.dob, p, layer).key("dob"));
         }
-        let slow = l.slow.then(|| text("Verifying you're human…").w_full().font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary));
-        form.children(legal_notice(&su, p)).children(slow).child(
+        let slow = l.slow.then(|| text("Verifying you're human…").key("slow").w_full().font(font(14.0, 400.0).lh(20.0)).color(p.text_tertiary));
+        form.children(legal_notice(&su, p).map(|n| n.key("legal"))).children(slow).child(
             Button::new(t("Create account"))
                 .fit_container()
                 .submitting(l.submitting)

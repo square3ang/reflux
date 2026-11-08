@@ -106,7 +106,7 @@ impl<S: 'static> Menu<S> {
         if !popups.is_open(&self.id) {
             return;
         }
-        let m = surface(&self.id, self.entries, popups, access, p, None).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
+        let m = surface(&self.id, self.entries, popups, access, p, None).key(format!("{}-menu", self.id)).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
         let mut late = Vec::new();
         let m = match popups.at {
             Some(at) => anchor_at_point(&mut late, m, &self.id, at),

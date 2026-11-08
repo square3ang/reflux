@@ -468,7 +468,7 @@ pub fn sentence(st: &Sentence, n: &Names, size: f32, color: Color, p: &Palette, 
         .filter_map(|(k, _, id)| {
             let (t, s) = (at?, rune::memo::layout(k)?);
             let px = (n.emoji)(id)??;
-            Some(rune::el().absolute(s[0] - t[0], s[1] - t[1] + s[3] - 20.0).size(20.0, 20.0).pixels_fit(&px, rune::SurfaceFit::Fit))
+            Some(rune::el().key(format!("img-{k}")).absolute(s[0] - t[0], s[1] - t[1] + s[3] - 20.0).size(20.0, 20.0).pixels_fit(&px, rune::SurfaceFit::Fit))
         })
         .collect();
     rune::col().w_full().child(links(e.w_full())).children(imgs)

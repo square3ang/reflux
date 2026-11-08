@@ -94,6 +94,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         .gap(12.0)
         .child(
             row()
+                .key("head")
                 .w_full()
                 .gap(12.0)
                 .center_y()
@@ -104,6 +105,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
     if l.themes.is_empty() {
         return c.child(
             col()
+                .key("empty")
                 .w_full()
                 .gap(4.0)
                 .py(16.0)
@@ -132,6 +134,7 @@ pub fn your_themes<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         let (sub, _) = super::theme_folder::subtitle(th);
         c = c.child(
             row()
+                .key(format!("th-{}", th.id))
                 .w_full()
                 .px(12.0)
                 .py(10.0)
@@ -243,9 +246,9 @@ pub fn backup_rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
         Button::new(t("Reset data")).variant(ButtonVariant::Danger).size(ButtonSize::Small).key("theme-reset").on_press(move |s: &mut S| drop(acc(s).form.data.insert("theme-reset".into(), json!(true)))).el(p)
     };
     vec![
-        action_row("Export library", "Save all your themes and assets to one file.", export, p),
-        action_row("Import library", "Add themes and assets from a library file.", import, p),
-        action_row("Reset theme data", "Deletes the quick CSS of the desktop app theme, and every saved theme, asset and local file reference on this device.", reset, p),
+        action_row("Export library", "Save all your themes and assets to one file.", export, p).key("lib-export"),
+        action_row("Import library", "Add themes and assets from a library file.", import, p).key("lib-import"),
+        action_row("Reset theme data", "Deletes the quick CSS of the desktop app theme, and every saved theme, asset and local file reference on this device.", reset, p).key("lib-reset"),
     ]
 }
 

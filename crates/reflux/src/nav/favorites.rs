@@ -155,10 +155,11 @@ pub fn rail_button<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
                 .size(dim::GUILD_LIST_INDICATOR_TRACK_WIDTH, size)
                 .center()
                 .child(el().size(w, if selected { 40.0 } else { 20.0 }).corners([0.0, w / 2.0, w / 2.0, 0.0]).fill(p.text_primary))
-                .inert(),
+                .inert()
+                .key("pill"),
         );
     }
-    item.child(face)
+    item.child(face.key("icon"))
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label("Favorites")
@@ -260,11 +261,12 @@ pub fn sidebar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
                     .center_y()
                     .child(el().size(20.0, 20.0).radius(10.0).fill(p.background_modifier_accent).opacity(0.45))
                     .child(el().size(60.0 + ((i * 37) % 70) as f32, 10.0).radius(5.0).fill(p.background_modifier_accent).opacity(0.45))
-                    .inert(),
+                    .inert()
+                    .key(format!("sk-{i}")),
             );
         }
     }
-    list = list.child(el().h(10.0 + dim::LAYOUT_USER_AREA_HEIGHT + dim::FOOTER_BOX_INSET + 1.0 + dim::SPACING_2));
+    list = list.child(el().h(10.0 + dim::LAYOUT_USER_AREA_HEIGHT + dim::FOOTER_BOX_INSET + 1.0 + dim::SPACING_2).key("end"));
     // `FavoritesChannelListContextMenu` on the list's empty space.
     let list = list
         .focus_group()
@@ -339,7 +341,7 @@ fn fav_row<S: 'static>(store: &Store, st: &ShellState, c: &reflux_model::Channel
         });
     let mut container = row().w_full().pt(1.0).child(item);
     if unread && !selected {
-        container = container.child(el().absolute(4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted { 0.4 } else { 1.0 }));
+        container = container.child(el().absolute(4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted { 0.4 } else { 1.0 }).key("unread"));
     }
     let slot = drag::Slot::Channel(id);
     let container = container.children(drop_marks(st, &slot, p));
@@ -635,7 +637,8 @@ fn add_modal<S: 'static>(store: &Store, st: &ShellState, g: Option<Snowflake>, p
                             .font(font(12.0, 600.0).lh(16.0))
                             .color(p.text_primary_muted)
                             .pt(if n == 0 { 0.0 } else { 12.0 })
-                            .pb(4.0),
+                            .pb(4.0)
+                            .key(format!("cat-{}", grp.category.map_or(0, |c| c.id.0))),
                     );
                     last_cat = Some(cat.clone());
                 }
@@ -644,6 +647,7 @@ fn add_modal<S: 'static>(store: &Store, st: &ShellState, g: Option<Snowflake>, p
                 let id = c.id;
                 rows = rows.child(
                     row()
+                        .key(format!("ch-{id}"))
                         .w_full()
                         .py(6.0)
                         .px(8.0)

@@ -280,11 +280,12 @@ fn custom_row<S: 'static>(st: &ShellState, i: usize, c: &Custom, clash: Option<&
         );
     let mut r = col().w_full().gap(8.0).px(12.0).py(10.0).radius(8.0).border(1.0, p.background_modifier_accent).fill(p.background_secondary).opacity(if on { 1.0 } else { 0.62 }).child(main);
     if c.action.is_none() {
-        r = r.child(text(t("Choose an action.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted));
+        r = r.child(text(t("Choose an action.")).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).key("hint"));
     }
     if let Some(other) = clash {
         r = r.child(
             row()
+                .key("clash")
                 .gap(4.0)
                 .mt(4.0)
                 .center_y()
@@ -461,6 +462,7 @@ fn defaults<S: 'static>(_st: &ShellState, m: &AccountPrefs, id: &str, q: &str, p
         let key = format!("kb-default-{:?}", actions[0]);
         rows = rows.child(
             row()
+                .key(format!("row-{key}"))
                 .w_full()
                 .py(12.0)
                 .gap(12.0)

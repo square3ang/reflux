@@ -7,7 +7,7 @@ use reqwest::Method;
 use rune::{El, Tx, col, el, icon, row};
 use serde_json::{Value, json};
 
-use super::settings::{card, empty, small, title};
+use super::settings::{empty, keyed_card, small, title};
 use super::{Then, error, field};
 use crate::icons;
 use crate::media;
@@ -82,7 +82,7 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         });
     });
     let open = editing(st);
-    let rows: Vec<El> = list
+    let rows: Vec<(Option<String>, El)> = list
         .iter()
         .map(|x| {
             let id = x.id;
@@ -99,7 +99,7 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
                 let cancel = Button::<S>::new(t("Cancel")).size(ButtonSize::Small).variant(ButtonVariant::Secondary).el(p).on_press(move |s: &mut S| {
                     acc(s).form.data.remove("edit-sticker");
                 });
-                return row().w_full().gap(12.0).items_start().child(img).child(
+                return (Some(format!("s-{id}")), row().key("edit").w_full().gap(12.0).items_start().child(img).child(
                     col()
                         .grow(1.0)
                         .min_w(0.0)
@@ -108,10 +108,10 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
                         .child(field(st, acc, "sticker-desc", &x.description, t("Description"), "What it shows", p))
                         .child(field(st, acc, "sticker-tags", &x.tags.join(", "), t("Tags"), "Comma-separated", p))
                         .child(row().gap(8.0).justify_end().child(cancel).child(save)),
-                );
+                ));
             }
             let detail = [x.description.clone(), x.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ")].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
-            let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(title(x.name.clone(), p)).children((!detail.is_empty()).then(|| small(detail, p).truncate())));
+            let mut line = row().key("view").w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(title(x.name.clone(), p)).children((!detail.is_empty()).then(|| small(detail, p).truncate())));
             if mine {
                 line = line
                     .child(icon_button(&icons::PENCIL_SIMPLE_FILL, t("Edit sticker"), p, move |s: &mut S| {
@@ -123,7 +123,7 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
                     }))
                     .child(icon_button(&icons::X_BOLD, t("Delete sticker"), p, move |s: &mut S| acc(s).api(Method::DELETE, format!("/guilds/{g}/stickers/{id}"), None, Then::Nothing)));
             }
-            line
+            (Some(format!("s-{id}")), line)
         })
         .collect();
     let mut content = col()
@@ -140,11 +140,11 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: 
         content = content.child(e);
     }
     content = content.child(if rows.is_empty() {
-        empty(if q.trim().is_empty() { "No stickers yet." } else { "No stickers found matching your search." }, p)
+        empty(if q.trim().is_empty() { "No stickers yet." } else { "No stickers found matching your search." }, p).key("empty")
     } else {
-        card(rows, p)
+        keyed_card(rows, p).key("list")
     });
-    section(&format!("Stickers — {total}"), content, true, p)
+    section(&format!("Stickers — {total}"), content, true, p).key("sec-stickers")
 }
 
 #[cfg(test)]

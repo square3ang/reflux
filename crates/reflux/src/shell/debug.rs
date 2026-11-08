@@ -165,6 +165,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     if let Some((label, value)) = tabs.get(active).and_then(|tab| tab.2.clone()) {
         body = body.child(
             col()
+                .key("summary")
                 .w_full()
                 .padding(16.0)
                 .radius(8.0)
@@ -182,7 +183,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         .radius(6.0)
         .fill(p.background_secondary_alt)
         .child(rune::rich(code, spans).font(font(13.0, 400.0).lh(18.0).mono()).color(p.text_primary).wrap().selectable(true));
-    body = body.child(col().w_full().h(420.0).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("debug-body").key("debug-body").child(block), false, p)));
+    body = body.child(col().w_full().h(420.0).key("code").child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("debug-body").key("debug-body").child(block), false, p)));
     Some(Modal::new(title, move |s: &mut S| acc(s).debug = None).size(ModalSize::Large).body(body).el(p))
 }
 

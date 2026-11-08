@@ -150,20 +150,20 @@ pub fn card_body(store: &Store, st: &ShellState, c: Card, w: f32, extra: Vec<El>
     if let Some(pr) = c.pronouns {
         names = names.child(text(pr).font(font(14.0, 400.0).lh(18.0)).color(p.text_primary_muted).truncate());
     }
-    let mut content = col().w_full().gap(8.0).pt(8.0).px(16.0).child(names.children(inline.map(|r| r.mt(4.0))));
+    let mut content = col().w_full().gap(8.0).pt(8.0).px(16.0).child(names.children(inline.map(|r| r.mt(4.0).key("badges"))).key("names"));
     if c.custom_status.is_some() || c.status_emoji.is_some() {
         let mut r = row().w_full().gap(4.0).center_y().children(c.status_emoji);
         if let Some(s) = c.custom_status {
-            r = r.child(text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap().shrink());
+            r = r.child(text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap().shrink().key("text"));
         }
-        content = content.child(r);
+        content = content.child(r.key("status"));
     }
     if let Some(bio) = c.bio {
         let md = super::markdown::Md::new(store, &st.media, c.guild, p, format!("bio-{}", c.user));
-        content = content.child(col().w_full().gap(4.0).child(section_title(t("About me"), p)).child(super::markdown::inline_text(&bio, &md, font(14.0, 400.0).lh(18.0), p.text_chat)));
+        content = content.child(col().w_full().gap(4.0).child(section_title(t("About me"), p)).child(super::markdown::inline_text(&bio, &md, font(14.0, 400.0).lh(18.0), p.text_chat)).key("bio"));
     }
     if let Some(m) = c.local_time {
-        content = content.child(super::local_time::info(m, p));
+        content = content.child(super::local_time::info(m, p).key("time"));
     }
     col().w_full().child(head).child(content.children(extra))
 }
@@ -216,8 +216,9 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
                     .border(1.0, p.background_header_secondary)
                     .child(el().size(12.0, 12.0).radius(6.0).fill(dot))
                     .child(text(r.name.clone()).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary).truncate().max_w(200.0).mr(2.0))
+                    .key(format!("role-{}", r.id))
             }));
-            extra.push(col().w_full().gap(4.0).child(section_title(t("Roles"), p)).child(list));
+            extra.push(col().w_full().gap(4.0).child(section_title(t("Roles"), p)).child(list).key("roles"));
         }
     }
     if let Some(v) = fetched(st, user, guild).filter(|_| user != me) {
@@ -238,7 +239,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
             if friends > 0 {
                 r = r.child(link(format!("{friends} mutual friends"), "friends"));
             }
-            extra.push(r);
+            extra.push(r.key("mutual"));
         }
     }
     // `UserNoteEditor`: streamer mode hides notes.
@@ -257,7 +258,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild
                 st.note.focused = false;
                 st.intents.push(Intent::SetNote { user, note });
             });
-        extra.push(col().w_full().gap(4.0).child(section_title(t("Note"), p)).child(field));
+        extra.push(col().w_full().gap(4.0).child(section_title(t("Note"), p)).child(field).key("note"));
     }
     let footer = if user == me {
         Button::new(t("Edit profile")).size(ButtonSize::Small).fit_container().key("profile-edit").on_press(move |s: &mut S| {
@@ -329,7 +330,7 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
             .child(col().grow(1.0).min_w(0.0).child(text(name).font(font(15.0, 500.0).lh(20.0)).color(p.text_primary).truncate()).children(sub.map(|s| text(s).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).truncate())))
     };
     let body = match tab {
-        "guilds" if guilds.is_empty() => muted(t("No mutual communities found.").into()),
+        "guilds" if guilds.is_empty() => muted(t("No mutual communities found.").into()).key("guilds-empty"),
         "guilds" => col().w_full().children(guilds.iter().filter_map(|g| {
             let id: Snowflake = g["id"].as_str()?.parse().ok()?;
             let name = store.guilds.get(&id).and_then(|g| g.info.as_ref()).map(|i| i.name.clone()).unwrap_or_default();
@@ -339,31 +340,31 @@ pub fn modal<S: 'static>(store: &Store, st: &ShellState, user: Snowflake, guild:
                 let sh = acc(s);
                 sh.account.profile_modal = None;
                 sh.select_guild(Some(id), ch);
-            }))
-        })),
-        "friends" if friends.is_empty() => muted(t("No mutual friends found.").into()),
+            }).key(format!("g-{id}")))
+        })).key("guilds"),
+        "friends" if friends.is_empty() => muted(t("No mutual friends found.").into()).key("friends-empty"),
         "friends" => col().w_full().children(friends.iter().filter_map(|f| {
             let id: Snowflake = f["id"].as_str()?.parse().ok()?;
             let name = f["global_name"].as_str().or(f["username"].as_str()).unwrap_or_default().to_string();
-            Some(item(avatar(store, st, id, 40.0, Some(presence(store, id)), p.background_secondary, p), name, f["username"].as_str().map(str::to_string)))
-        })),
+            Some(item(avatar(store, st, id, 40.0, Some(presence(store, id)), p.background_secondary, p), name, f["username"].as_str().map(str::to_string)).key(format!("f-{id}")))
+        })).key("friends"),
         _ => {
             let mut c = col().w_full().gap(16.0);
-            c = c.child(col().gap(4.0).child(section_title(t("Member since"), p)).child(muted(super::chat::format_full_date(user.timestamp_ms()))));
+            c = c.child(col().gap(4.0).child(section_title(t("Member since"), p)).child(muted(super::chat::format_full_date(user.timestamp_ms()))).key("since"));
             let conns: Vec<String> = prof.and_then(|v| v["connected_accounts"].as_array()).map(|a| a.iter().filter_map(|c| c["name"].as_str().map(str::to_string)).collect()).unwrap_or_default();
             // `UserProfileConnections`: hidden in streamer mode.
             if !conns.is_empty() && !store.mask_names {
                 c = c.child(col().gap(6.0).child(section_title(t("Connections"), p)).children(conns.into_iter().map(|n| {
                     row().gap(8.0).center_y().child(rune::icon(&crate::icons::GLOBE_FILL, 16.0).color(p.text_secondary)).child(text(n).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))
-                })));
+                })).key("connections"));
             }
             if prof.is_some_and(|v| v["profile_limited"].as_bool() == Some(true)) {
-                c = c.child(muted(t("This person's privacy settings hide the rest of their profile.").into()));
+                c = c.child(muted(t("This person's privacy settings hide the rest of their profile.").into()).key("limited"));
             }
             if st.account.profiles.get(&(user, guild)).is_some_and(Result::is_err) || st.prefs.dev.force_profile_data_warning {
-                c = c.child(muted(t("Couldn't load this profile.").into()));
+                c = c.child(muted(t("Couldn't load this profile.").into()).key("error"));
             }
-            c
+            c.key("overview")
         }
     };
     let right = col().grow(1.0).min_w(0.0).h_full().padding(16.0).gap(16.0).child(tab_bar).child(el().w_full().h(1.0).fill(mix(p.background_modifier_accent, Color::TRANSPARENT, 100.0))).child(body);

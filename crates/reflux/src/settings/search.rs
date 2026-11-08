@@ -137,6 +137,7 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
     if hits.is_empty() {
         // `.emptyState`.
         return col()
+            .key("none")
             .w_full()
             .min_h(128.0)
             .py(16.0)
@@ -196,6 +197,7 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
             .child(text(tf("{matchCount, plural, one {# match} other {# matches}}", &[("matchCount", &h.items.len().to_string())])).font(font(12.0, 500.0).lh(16.0)).color(p.text_secondary));
         let chip = |label: &str| {
             row()
+                .key(label.to_string())
                 .px(8.0)
                 .py(4.0)
                 .radius(6.0)
@@ -205,7 +207,7 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
         };
         let mut chips = row().flex_wrap().gaps(6.0, 6.0).mt(12.0).children(h.items.iter().take(3).map(|l| chip(l)));
         if h.items.len() > 3 {
-            chips = chips.child(row().px(4.0).py(4.0).child(text(format!("+{}", h.items.len() - 3)).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary)));
+            chips = chips.child(row().key("more").px(4.0).py(4.0).child(text(format!("+{}", h.items.len() - 3)).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary)));
         }
         let head = col()
             .w_full()
@@ -232,7 +234,7 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
                     .child(icon(if expanded { &icons::CARET_DOWN_BOLD } else { &icons::CARET_RIGHT_BOLD }, 16.0).color(p.text_tertiary)),
             )
             .child(chips);
-        let mut section = col().w_full().child(head);
+        let mut section = col().key(format!("hit-{tab}")).w_full().child(head);
         if expanded {
             // `data-settings-section`: the query is marked inside the inline tab.
             crate::ui::mark::set(&ui.searched);

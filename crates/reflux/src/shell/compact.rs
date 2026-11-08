@@ -32,7 +32,7 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
     let body_x = pad + ts_w + dim::MESSAGE_COMPACT_GAP;
     if m.kind == reflux_model::MessageType::REPLY {
         // `.repliedMessageCompact`: the spine starts 4px in and runs to the body start.
-        root = root.child(reply_preview(store, st, m, md, p, acc, pad + 4.0, body_x));
+        root = root.child(reply_preview(store, st, m, md, p, acc, pad + 4.0, body_x).key("reply"));
     }
 
     let (author, guild, mid) = (m.author.id, store.channels.get(&m.channel_id).and_then(|c| c.guild_id), m.id);
@@ -64,18 +64,19 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
                 .shrink()
                 .cursor(rune::Cursor::Pointer)
                 .on_press(open)
-                .on_secondary_press(menu),
+                .on_secondary_press(menu)
+                .key("name"),
         )
-        .child(text(":").font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary))
-        .child(el().w(dim::MESSAGE_COMPACT_USERNAME_GAP));
+        .child(text(":").font(font(16.0, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary).key("colon"))
+        .child(el().w(dim::MESSAGE_COMPACT_USERNAME_GAP).key("gap"));
 
     let mut body = col().grow(1.0).min_w(0.0);
     if unknown {
         body = body.child(super::devtools::unknown_warning(p));
     } else if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
-        body = body.child(editor(edit, m, p, acc));
+        body = body.child(editor(edit, m, p, acc).key("editor"));
     } else if !m.content.is_empty() {
-        body = body.child(markdown::render(&m.content, md));
+        body = body.child(markdown::render(&m.content, md).key("content"));
     }
     if !unknown && m.edited_timestamp.is_some() && st.editing.as_ref().is_none_or(|e| e.0 != m.id) {
         body = body.child(text(crate::i18n::t("(edited)")).font(font(dim::MESSAGE_EDITED_LABEL_FONT_SIZE, 400.0).lh(16.0)).color(p.message_timestamp_color));
@@ -86,6 +87,7 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
     let stamp = text(ts).font(font(dim::MESSAGE_TIMESTAMP_COMPACT_FONT_SIZE, 400.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.message_timestamp_color).offset(0.0, 1.5).w(ts_w);
     root = root.child(
         row()
+            .key("line")
             .w_full()
             .items_start()
             .child(el().w(pad))
@@ -96,10 +98,10 @@ pub(super) fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, m
     );
     if let Some(a) = accessories(store, st, m, p, acc).filter(|_| !unknown) {
         // `.messageCompact > .container`: at the text start (timestamp + gap + indent).
-        root = root.child(row().w_full().child(el().w(body_x + dim::MESSAGE_COMPACT_TEXT_INDENT_FROM_USERNAME)).child(a.shrink().min_w(0.0)));
+        root = root.child(row().key("accessories").w_full().child(el().w(body_x + dim::MESSAGE_COMPACT_TEXT_INDENT_FROM_USERNAME)).child(a.shrink().min_w(0.0)));
     }
     if md.copy.is_some() {
-        root = root.children(super::threads::chip(store, st, m, p, acc).into_iter().map(|c| row().w_full().child(el().w(body_x + dim::MESSAGE_COMPACT_TEXT_INDENT_FROM_USERNAME)).child(c)));
+        root = root.children(super::threads::chip(store, st, m, p, acc).into_iter().map(|c| row().key("thread").w_full().child(el().w(body_x + dim::MESSAGE_COMPACT_TEXT_INDENT_FROM_USERNAME)).child(c)));
     }
     root
 }

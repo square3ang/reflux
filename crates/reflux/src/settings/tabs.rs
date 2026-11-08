@@ -12,7 +12,7 @@ use crate::theme::{Palette, font};
 pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &str, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     match tab {
         "my_profile" => super::profile::tab(store, st, ui, p, acc, layer),
-        "account_security" | "linked_accounts" if st.desktop.streamer && st.prefs.streamer.hide_personal => super::desktop_tabs::streamer_gate(p, acc),
+        "account_security" | "linked_accounts" if st.desktop.streamer && st.prefs.streamer.hide_personal => super::desktop_tabs::streamer_gate(p, acc).key("streamer-gate"),
         "account_security" => super::account::tab(store, st, ui, p, acc),
         "privacy_safety" => super::privacy::tab(store, st, p, acc, layer),
         "devices" => super::privacy::devices(st, p, acc),
@@ -44,7 +44,9 @@ pub fn body<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, tab: &s
 
 /// `SettingsSection`: title 18/600, content gap 20; later sections get a top border and 24 padding.
 pub(crate) fn section(title: &str, content: El, first: bool, p: &Palette) -> El {
+    // Keyed by title: tabs add sections conditionally, which would shift the ones after them.
     let mut s = col()
+        .key(format!("sec-{title}"))
         .w_full()
         .gap(16.0)
         .pb(24.0)

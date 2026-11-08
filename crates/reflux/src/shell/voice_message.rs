@@ -244,21 +244,21 @@ fn trim_wave<S: 'static>(vm: &super::voice::VoiceMessage, p: &Palette, acc: Shel
         let at = (i as f32 + 0.5) / N as f32 * total;
         if head.is_some_and(|h| at >= h) {
             head = None;
-            kids.push(el().w(2.0).h(56.0).fill(p.text_primary));
+            kids.push(el().w(2.0).h(56.0).fill(p.text_primary).key("head"));
         }
         if !a && at >= vm.start {
             a = true;
-            kids.push(handle());
+            kids.push(handle().key("start"));
         }
         if !b && at > vm.end {
             b = true;
-            kids.push(handle());
+            kids.push(handle().key("end"));
         }
         let on = at >= vm.start && at <= vm.end;
-        kids.push(el().grow(1.0).min_w(1.0).h((48.0 * v.clamp(0.0, 1.0)).max(2.0)).radius(1.0).fill(if on { p.brand_primary } else { p.text_tertiary }));
+        kids.push(el().key(format!("b{i}")).grow(1.0).min_w(1.0).h((48.0 * v.clamp(0.0, 1.0)).max(2.0)).radius(1.0).fill(if on { p.brand_primary } else { p.text_tertiary }));
     }
     if !b {
-        kids.push(handle());
+        kids.push(handle().key("end"));
     }
     row()
         .w_full()
@@ -300,6 +300,7 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
     if !reviewing {
         body = body.child(
             row()
+                .key("live")
                 .w_full()
                 .gap(12.0)
                 .center_y()
@@ -310,24 +311,25 @@ pub fn modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> O
                 .child(bars(&resample(&vm.bars, 24), 24, false, p)),
         );
         if vm.recording {
-            body = body.child(meta(t("Recording").into(), elapsed(vm.secs), p.status_danger));
+            body = body.child(meta(t("Recording").into(), elapsed(vm.secs), p.status_danger).key("recording"));
         }
     } else {
         let ch = vm.channel;
         let playing = vm.playhead().is_some();
         let (play, glyph) = if playing { (t("Pause"), &icons::PAUSE_FILL) } else { (t("Play"), &icons::PLAY_FILL) };
         body = body
-            .child(trim_wave(vm, p, acc))
-            .child(meta(t("Selection: {seconds}").replace("{seconds}", &format!("{:.2}s", vm.end - vm.start)), format!("{:.2}s → {:.2}s", vm.start, vm.end), p.text_secondary))
+            .child(trim_wave(vm, p, acc).key("wave"))
+            .child(meta(t("Selection: {seconds}").replace("{seconds}", &format!("{:.2}s", vm.end - vm.start)), format!("{:.2}s → {:.2}s", vm.start, vm.end), p.text_secondary).key("selection"))
             .child(
                 row()
+                    .key("review")
                     .gap(8.0)
                     .child(small(play, glyph, "vm-play").on_press(move |s: &mut S| op(s, Op::RecordPlay)).el(p))
                     .child(small(t("Re-record"), &icons::ARROW_COUNTER_CLOCKWISE_BOLD, "vm-again").on_press(move |s: &mut S| op(s, Op::RecordStart(ch))).el(p)),
             );
     }
     if let Some(e) = &vm.error {
-        body = body.child(text(e.clone()).font(font(13.0, 400.0).lh(18.0)).color(p.status_danger).wrap());
+        body = body.child(text(e.clone()).font(font(13.0, 400.0).lh(18.0)).color(p.status_danger).wrap().key("error"));
     }
     let mut footer = row().gap(8.0).child(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).key("vm-cancel").on_press(close).el(p));
     if vm.recording {

@@ -34,7 +34,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let pending = store.relationships.values().filter(|r| r.kind == RelationshipType::INCOMING_REQUEST).count();
     let mut body = col().w_full().grow(1.0).min_h(0.0).gap(12.0);
     if st.friends_tab != FriendsTab::Add {
-        body = body.child(row().w_full().px(16.0).pt(12.0).child(search(st, p, acc)));
+        body = body.child(row().w_full().px(16.0).pt(12.0).child(search(st, p, acc)).key("search"));
     }
     body = body.child(match st.friends_tab {
         FriendsTab::Add => add_friend(st, p, acc),
@@ -169,6 +169,7 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
         };
         // `EmptyStateView`: a 64px UsersThree (fill, tertiary), the 20/600 title, the subtitle.
         return col()
+            .key("friends-empty")
             .w_full()
             .grow(1.0)
             .center()
@@ -180,15 +181,15 @@ fn lists<S: 'static>(store: &Store, st: &ShellState, tab: FriendsTab, p: &Palett
     let mut c = col().w_full().padding(16.0);
     let n = sections.iter().filter(|s| !s.1.is_empty()).count();
     for (i, (title, rs)) in sections.into_iter().filter(|s| !s.1.is_empty()).enumerate() {
-        c = c.child(text(format!("{title} — {}", rs.len())).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted).mb(16.0));
+        c = c.child(text(format!("{title} — {}", rs.len())).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted).mb(16.0).key(format!("title-{title}")));
         let mut rows = col().w_full().mx(-16.0).mb(if i + 1 < n { 32.0 } else { 0.0 });
         for r in rs {
             rows = rows.child(friend_row(store, st, r, p, acc, layer));
         }
-        c = c.child(rows);
+        c = c.child(rows.key(format!("rows-{title}")));
     }
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("friends-list").key("friends-list").child(c);
-    scroller(viewport, false, p)
+    scroller(viewport, false, p).key("friends-lists")
 }
 
 /// `FriendListItem`: avatar, name (tag on hover), status line, and the round action buttons.

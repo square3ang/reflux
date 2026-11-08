@@ -165,7 +165,7 @@ fn user_avatar(st: &ShellState, u: &Value, size: f32, p: &Palette) -> El {
     let id: Snowflake = u["id"].as_str().and_then(|s| s.parse().ok()).unwrap_or_default();
     let px = match u["avatar"].as_str().map(|h| st.media.asset(|b, s| crate::media::avatar_url(b, id, h, size, s))) {
         Some(Load::Ready(px)) => Some(px),
-        _ => st.default_avatars.get((id.0 % 6) as usize).map(|i| i.pixels().clone()),
+        _ => st.default_avatar(id).map(|i| i.pixels().clone()),
     };
     Avatar::new(size).pixels(px.as_ref()).el(p)
 }
@@ -245,6 +245,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
             .cursor(rune::Cursor::Pointer)
             .role("tab")
             .label(e.name.clone())
+            .key(format!("filter-{key}"))
             .child(emoji(st, &r.emoji, 20.0))
             .child(text(r.count.to_string()).font(font(14.0, 600.0).lh(16.0)).color(if on { p.text_primary } else { p.text_primary_muted }))
             .on_press(move |s: &mut S| open(acc(s), c, mid, &e));
@@ -307,9 +308,9 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                 }
                 false
             });
-            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("reaction-list").key("reaction-list").child(l), false, p)
+            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("reaction-list").key("reaction-list").child(l), false, p).key("list")
         }
-        _ => col().w_full().h_full().center().child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        _ => col().w_full().h_full().center().key("loading").child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     let body = row()
         .w_full()

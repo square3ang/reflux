@@ -289,6 +289,7 @@ fn configure<S: 'static>(
             .label(e.name.clone())
             .on_toggle(move |s: &mut S| set_enabled(acc(s), mode, &id, !on, was_default))
             .el(p)
+            .key(e.id.clone())
     };
     let built_in = col().w_full().gap(12.0).children(all.iter().filter(|e| e.built_in).map(toggle));
     let mut custom = col().w_full().gap(12.0);
@@ -314,10 +315,11 @@ fn configure<S: 'static>(
             .label(tf("Remove {engineName}", &[("engineName", &e.name)]))
             .on_press(move |s: &mut S| acc(s).open_account_modal(AccountModal::ProviderRemove(mode, remove_id.clone())))
             .child(icon(&icons::TRASH_FILL, 16.0).color(p.text_primary_muted).group_color(p.status_danger));
-        custom = custom.child(row().w_full().gap(8.0).center_y().child(el_grow(toggle(e))).child(row().gap(4.0).center_y().child(edit).child(remove)));
+        custom = custom.child(row().key(e.id.clone()).w_full().gap(8.0).center_y().child(el_grow(toggle(e))).child(row().gap(4.0).center_y().child(edit).child(remove)));
     }
     custom = custom.child(
         row()
+            .key("add")
             .pt(if all.iter().any(|e| !e.built_in) { 12.0 } else { 0.0 })
             .child(
                 Button::new(t(config.add))
@@ -373,10 +375,11 @@ fn edit<S: 'static>(st: &ShellState, mode: Mode, id: Option<&str>, p: &Palette, 
         .child(super::input(st, acc, "m.provider_name", &name0, t("Name"), t(config.name_placeholder), false, p))
         .child(super::input(st, acc, "m.provider_url", &url0, t("URL pattern"), config.url_example, false, p));
     if let Some(e) = &st.form.error {
-        body = body.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+        body = body.child(text(e.clone()).key("error").font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
     }
     body = body.child(
         text(t(config.hint))
+            .key("hint")
             .font(font(14.0, 400.0).lh(20.0))
             .color(p.text_primary_muted)
             .wrap(),

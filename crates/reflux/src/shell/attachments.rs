@@ -502,11 +502,11 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
         0 => {}
         1 => {
             let (w, h) = (media[0].width.unwrap_or(1), media[0].height.unwrap_or(1));
-            out.push(tile(0, capped(super::chat::media_size(w, h))));
+            out.push(tile(0, capped(super::chat::media_size(w, h))).key("media"));
         }
         3 => {
             let side = col().gap(GAP).child(tile(1, tile_box(3, 1, mosaic_w))).child(tile(2, tile_box(3, 2, mosaic_w)));
-            out.push(row().gap(GAP).items_start().child(tile(0, tile_box(3, 0, mosaic_w))).child(side));
+            out.push(row().gap(GAP).items_start().key("media").child(tile(0, tile_box(3, 0, mosaic_w))).child(side));
         }
         n => {
             let mut grid = col().gap(GAP);
@@ -519,11 +519,17 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
                 }
                 grid = grid.child(r);
             }
-            out.push(grid);
+            out.push(grid.key("media"));
         }
     }
+    if !media.is_empty()
+        && let Some(f) = expiry_footnote(&media, st.now_ms, p)
+    {
+        out.push(f.key("media-expiry"));
+    }
     for a in m.attachments.iter().filter(|a| !shown(a)) {
-        out.push(if a.waveform.is_some() && a.url.is_some() {
+        let footnote = expiry_footnote(&[a], st.now_ms, p);
+        let card = if a.waveform.is_some() && a.url.is_some() {
             super::voice_message::player(st, a, p, acc)
         } else if a.content_type.starts_with("audio/") && a.url.is_some() {
             audio_player(st, &format!("audio-{}", a.id), a, p, acc)
@@ -531,9 +537,41 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             text_preview(st, a, p, acc)
         } else {
             file_card(a, p, acc)
-        });
+        };
+        out.push(match footnote {
+            Some(f) => col().items_start().child(card.key("card")).child(f.key("expiry")),
+            None => card,
+        }
+        .key(format!("att-{}", a.id)));
     }
     out
+}
+
+/// `ExpiryFootnote` under a mosaic (`AttachmentMosaic`: earliest, or "between" two dates) or a
+/// single attachment: 10.4px `text-tertiary`, 0.35rem above.
+// shortcut: plain text; Fluxer links it to the attachment-expiry help article.
+fn expiry_footnote(atts: &[&Attachment], now_ms: u64, p: &Palette) -> Option<El> {
+    if !crate::look::with(|l| l.media_expiry_indicator) {
+        return None;
+    }
+    let now = chrono::DateTime::from_timestamp_millis(now_ms as i64).unwrap_or_default();
+    let mut dates = Vec::new();
+    let mut expired = false;
+    for a in atts {
+        let Some(d) = a.expires_at.as_deref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|d| d.to_utc()).or(a.expired.then_some(now)) else { continue };
+        expired |= a.expired || d <= now;
+        dates.push(d);
+    }
+    let (first, last) = (dates.iter().min()?, dates.iter().max()?);
+    let fmt = |d: &chrono::DateTime<chrono::Utc>| crate::desktop::time::medium_date(d.with_timezone(&chrono::Local).date_naive(), crate::i18n::locale());
+    let (a, b) = (fmt(first), fmt(last));
+    let label = match (a != b, expired) {
+        (true, true) => tf("Expired between {earliest} and {latest}", &[("earliest", &a), ("latest", &b)]),
+        (true, false) => tf("Expires between {earliest} and {latest}", &[("earliest", &a), ("latest", &b)]),
+        (false, true) => tf("Expired on {earliest}", &[("earliest", &a)]),
+        (false, false) => tf("Expires on {earliest}", &[("earliest", &a)]),
+    };
+    Some(text(label).font(font(10.4, 400.0).lh(12.48)).color(p.text_tertiary).mt(5.6))
 }
 
 /// A picture (or a video's poster) at its drawn size, with the GIF, ALT, play, spoiler and
@@ -629,7 +667,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     if t.video {
         // `.playButton`: 56px black circle; pressing plays in place.
         let (key, url) = (t.key.clone(), t.url.to_owned());
-        tile = tile.child(fill().center().child(
+        tile = tile.child(fill().center().key("play").child(
             row()
                 .size(56.0, 56.0)
                 .center()
@@ -640,18 +678,19 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
         ));
     } else if t.animated && !auto && !hovered && crate::look::with(|l| l.media_gif_indicator) {
         // `GifIndicator` while the GIF waits for a hover.
-        tile = tile.child(row().absolute(8.0, 8.0).py(4.0).px(8.0).radius(4.0).fill(rgba(0, 0, 0, 0.6)).child(text("GIF").font(font(14.0, 600.0).lh(14.0)).color(p.text_on_dark)));
+        tile = tile.child(row().absolute(8.0, 8.0).py(4.0).px(8.0).radius(4.0).fill(rgba(0, 0, 0, 0.6)).key("gif").child(text("GIF").font(font(14.0, 600.0).lh(14.0)).color(p.text_on_dark)));
     }
     if let Some(alt) = t.alt.map(str::trim).filter(|a| !a.is_empty()) {
         // `AltTextBadge`: bottom-right, 8.8px caps on near-black.
         tile = tile.child(
             el().pin(None, None, Some(6.0), Some(6.0))
+                .key("alt")
                 .child(row().py(1.0).px(3.0).radius(3.0).fill(rgba(0, 0, 0, 0.95)).child(text("ALT").font(font(8.8, 600.0).lh(12.0)).color(Color::WHITE)))
                 .label(alt.to_owned()),
         );
     }
     if let Some(bar) = media_tools(st, &t, p, acc) {
-        tile = tile.hover_group().child(bar);
+        tile = tile.hover_group().child(bar.key("tools"));
     }
     // Right-click: the message menu plus the media items.
     if let Some((msg, media)) = t.menu {
@@ -843,6 +882,7 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
                 .center()
                 .gap(12.0)
                 .padding(16.0)
+                .key("failed")
                 .child(text(err).font(font(13.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.8)).wrap().align(rune::Align::Center))
                 .child(open_btn),
         );
@@ -871,7 +911,7 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
             acc(s).media_ui.playing = None;
             open(s)
         }));
-    frame.child(el().w_full().h_full().video(clip, rune::SurfaceFit::Fit)).child(bar)
+    frame.child(el().w_full().h_full().video(clip, rune::SurfaceFit::Fit).key("video")).child(bar)
 }
 
 // ---- Audio ---------------------------------------------------------------------------------------
@@ -1061,10 +1101,11 @@ fn text_preview<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: S
     let lines = if open { 100 } else { 6 };
     let (lh, pad) = (16.0, 10.0);
     let body = match st.media.text(&url) {
-        None => row().w_full().h(6.0 * lh).center().child(crate::ui::spinner(p.text_tertiary)),
+        None => row().w_full().h(6.0 * lh).center().key("loading").child(crate::ui::spinner(p.text_tertiary)),
         Some(Err(_)) => row()
             .w_full()
             .gap(8.0)
+            .key("failed")
             .child(icon(&icons::WARNING_CIRCLE_BOLD, 16.0).color(p.status_danger))
             .child(text("Failed to load preview").font(font(13.0, 400.0).lh(18.0)).color(p.status_danger)),
         Some(Ok(t)) => {
@@ -1072,7 +1113,7 @@ fn text_preview<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: S
             let shown = shown.trim_end_matches('\n').to_owned();
             let ext = a.filename.rsplit('.').next().unwrap_or_default();
             let spans = super::highlight::spans(ext, &shown, crate::ui::is_light(p));
-            rich(shown, spans).font(font(12.0, 400.0).mono().lh(lh)).color(p.text_code).selectable(true)
+            rich(shown, spans).font(font(12.0, 400.0).mono().lh(lh)).color(p.text_code).selectable(true).key("text")
         }
     };
     let surface = col().w_full().min_h(6.0 * lh + 2.0 * pad + 8.0).max_h(500.0).padding(pad).clip_rounded(0.0).child(body);

@@ -191,6 +191,7 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
                         .children(matches!(view, GifView::Trending).then(|| icon(&icons::TREND_UP_FILL, 18.0).color(Color::WHITE)))
                         .child(text(title.clone()).font(font(16.0, 700.0).lh(20.0)).color(Color::WHITE).truncate()),
                 )
+                .key(format!("page-{title}"))
                 .on_press(move |s: &mut S| {
                     let st = acc(s);
                     match &view {
@@ -235,6 +236,7 @@ fn tile<S: 'static>(st: &ShellState, t: &Tile, w: f32, p: &Palette, acc: ShellAc
                 .role("button")
                 .label(g["title"].as_str().filter(|t| !t.is_empty()).unwrap_or("GIF").to_string())
                 .hover_group()
+                .key(format!("gif-{}", g["url"].as_str().unwrap_or_default().replace('/', "_")))
                 .child(image(st, Some(&url).filter(|u| !u.is_empty()).map(String::as_str), w, h, p))
                 .on_press(move |s: &mut S| pick(acc(s), &g1));
             e = e.child(if fav { star } else { star.group_opacity(0.0, 1.0) });
@@ -277,11 +279,12 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         _ => "",
     };
     let bar = if title.is_empty() {
-        field
+        field.key("search")
     } else {
         row()
             .w_full()
             .h(36.0)
+            .key("titled")
             .gap(8.0)
             .center_y()
             .child(
@@ -303,11 +306,11 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
     let body = match tiles(st) {
         Ok(v) if v.is_empty() => {
             let line = if st.expr.gif == GifView::Favorites { t("No favorite GIFs yet") } else { "No GIFs match that search" };
-            col().w_full().h_full().child(super::empty_state(line, None, p))
+            col().w_full().h_full().key("empty").child(super::empty_state(line, None, p))
         }
-        Ok(v) => masonry::<S>(cols, w, v.iter().map(|t| tile(st, t, w, p, acc)).collect(), p),
-        Err("") => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
-        Err(msg) => col().w_full().h_full().child(super::empty_state(msg, None, p)),
+        Ok(v) => masonry::<S>(cols, w, v.iter().map(|t| tile(st, t, w, p, acc)).collect(), p).key("grid"),
+        Err("") => col().w_full().h_full().center().key("loading").child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        Err(msg) => col().w_full().h_full().key("failed").child(super::empty_state(msg, None, p)),
     };
     (bar, body)
 }

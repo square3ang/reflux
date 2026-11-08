@@ -165,9 +165,9 @@ fn other_accounts_section<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
             .el(p);
         let mut head = row().w_full().px(12.0).py(8.0).gap(8.0).center_y().child(letter).child(text(sub).font(font(13.0, 600.0)).color(p.text_primary).truncate().shrink());
         if let Some(b) = crate::ui::mention_badge(a.summary.mentions as u64, true, p) {
-            head = head.child(b);
+            head = head.child(b.key("badge"));
         }
-        let mut group = col().w_full().gap(2.0).child(head.child(rune::el().grow(1.0)).child(switch));
+        let mut group = col().w_full().gap(2.0).key(format!("acct-{}", a.slot)).child(head.child(rune::el().grow(1.0).key("gap")).child(switch));
         for c in &a.summary.channels {
             let (guild, channel_id) = (c.guild, c.channel);
             let open = move |s: &mut S| {
@@ -208,7 +208,7 @@ fn other_accounts_section<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
             group = group.child(line);
         }
         if !a.summary.recent_mentions.is_empty() {
-            group = group.child(row().w_full().px(12.0).pt(6.0).child(text(t("Recent mentions")).font(font(11.0, 600.0)).color(p.text_primary_muted)));
+            group = group.child(row().w_full().px(12.0).pt(6.0).child(text(t("Recent mentions")).font(font(11.0, 600.0)).color(p.text_primary_muted)).key("recent"));
             for m in &a.summary.recent_mentions {
                 let (guild, channel_id) = (m.guild, m.channel);
                 let open = move |s: &mut S| {
@@ -317,15 +317,15 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         tabs = tabs.child(row().w_full().pt(8.0).center().child(f));
     }
     let list = match tab {
-        0 => unread_list(store, st, p, acc),
-        1 => bookmark_list(store, st, p, acc),
-        _ => mention_list(store, st, p, acc),
+        0 => unread_list(store, st, p, acc).key("unread"),
+        1 => bookmark_list(store, st, p, acc).key("bookmarks"),
+        _ => mention_list(store, st, p, acc).key("mentions"),
     };
     let mut content = col().grow(1.0).min_w(0.0).h_full();
     if let Some(others) = other_accounts_section(st, p, acc) {
-        content = content.child(others);
+        content = content.child(others.key("others"));
     }
-    let content = content.child(col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("inbox-list").key("inbox-list").child(list.padding(12.0)), false, p)));
+    let content = content.child(col().w_full().grow(1.0).min_h(0.0).key("list").child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("inbox-list").key("inbox-list").child(list.padding(12.0)), false, p)));
     let surface = row()
         .pin(None, Some(56.0), Some(16.0), Some(8.0))
         .w(600.0)
@@ -570,7 +570,7 @@ fn section<S: 'static>(store: &Store, st: &ShellState, c: &Channel, msgs: Option
         None => row().w_full().h(64.0).center().child(spinner(p.text_primary_muted)),
         Some(ms) if ms.is_empty() => row().w_full().h(40.0).center().child(text(t("No unread messages")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
         Some(ms) => {
-            let mut b = col().w_full().children(ms.iter().map(|m| col().w_full().inert().child(crate::shell::preview(store, st, m, format!("inbox-u{}", m.id), p, acc))));
+            let mut b = col().w_full().children(ms.iter().map(|m| col().w_full().inert().key(format!("m-{}", m.id)).child(crate::shell::preview(store, st, m, format!("inbox-u{}", m.id), p, acc))));
             // `hasMoreUnreadThanShown`.
             if ms.len() >= PREVIEW_LIMIT && ms.last().map(|m| m.id) != last {
                 b = b.child(row().w_full().h(32.0).center().cursor(rune::Cursor::Pointer).role("button").key(format!("inbox-all-{id}")).child(text(t("View all unread")).font(font(14.0, 500.0)).color(p.text_link)).on_press(open));

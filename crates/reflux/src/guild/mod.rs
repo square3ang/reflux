@@ -40,7 +40,7 @@ pub use channel::first_tab as first_channel_tab;
 pub use settings::tab_ids;
 pub use menu::{HEADER_MENU, first_settings_tab, header_menu, invitable_channel, open_invite};
 pub use modals::{mute_config, parse_invite};
-pub(crate) use settings::{card, empty, loaded, save_bar, small, sorted_roles, title};
+pub(crate) use settings::{empty, keyed_card, loaded, save_bar, small, sorted_roles, title};
 
 /// The management dialog that's open (one at a time).
 #[derive(Clone, Debug, PartialEq)]
@@ -222,12 +222,12 @@ fn input<S: 'static>(st: &ShellState, acc: ShellAccess<S>, key: &'static str, in
     if !label.is_empty() {
         i = i.label(label);
     }
-    i.el(p)
+    i.el(p).key(format!("in-{key}"))
 }
 
 /// `form.error` in the danger colour, if any.
 fn error(st: &ShellState, p: &Palette) -> Option<El> {
-    st.form.error.as_ref().map(|e| text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(mix(p.status_danger, p.text_primary, 78.0)).wrap())
+    st.form.error.as_ref().map(|e| text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(mix(p.status_danger, p.text_primary, 78.0)).wrap().key("error"))
 }
 
 /// A press handler that asks for an image and keeps it in `form.data[key]` as a data URL.

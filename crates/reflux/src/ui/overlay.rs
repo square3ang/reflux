@@ -158,7 +158,7 @@ impl<'a> Tooltip<'a> {
     pub fn el<S: 'static>(self, trigger: El, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, layer: &mut Vec<El>) -> El {
         let id = self.id.to_string();
         if self.force || popups.tip.as_deref() == Some(self.id) {
-            layer.push(anchor(tooltip_surface(self.text, self.placement, self.kind, self.large, p), self.id, self.placement, 8.0));
+            layer.push(anchor(tooltip_surface(self.text, self.placement, self.kind, self.large, p).key(format!("{}-tip", self.id)), self.id, self.placement, 8.0));
         }
         row().key(self.id).child(trigger).on_hover_change(move |s: &mut S, inside, _| {
             let t = &mut access(s).tip;

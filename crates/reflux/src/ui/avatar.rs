@@ -112,8 +112,8 @@ impl<'a> Avatar<'a> {
                 el().size(dot, dot).radius(dot / 2.0).fill(Color::WHITE).looping(LoopSpec::opacity(1.0, 0.25 * i as f64, 0.0, 1.0))
             }));
             return root
-                .child(at(ext + 2.0 * r, 2.0 * r).radius(r).fill(surface))
-                .child(row().absolute(c - tw / 2.0, c - s / 2.0).size(tw, s).radius(s / 2.0).fill(colour).center().child(dots));
+                .child(at(ext + 2.0 * r, 2.0 * r).radius(r).fill(surface).key("typing-notch"))
+                .child(row().absolute(c - tw / 2.0, c - s / 2.0).size(tw, s).radius(s / 2.0).fill(colour).center().child(dots).key("typing"));
         }
 
         if self.mobile && status == Status::Online {
@@ -122,12 +122,12 @@ impl<'a> Avatar<'a> {
             let screen = el().absolute(0.14 * s, 0.06 * ph).size(0.72 * s, 0.525 * ph).radius(0.04 * s).fill(surface);
             let wheel = el().absolute(0.37 * s, 0.83 * ph - 0.13 * s).size(0.26 * s, 0.26 * s).radius(0.13 * s).fill(surface);
             return root
-                .child(at(s + 2.0 * border, ph + 2.0 * border).radius(rx + border).fill(surface))
-                .child(at(s, ph).radius(rx).fill(colour).child(screen).child(wheel));
+                .child(at(s + 2.0 * border, ph + 2.0 * border).radius(rx + border).fill(surface).key("mobile-notch"))
+                .child(at(s, ph).radius(rx).fill(colour).child(screen).child(wheel).key("mobile"));
         }
 
         let _ = colour;
-        root.child(at(2.0 * r, 2.0 * r).radius(r).fill(surface)).child(status_indicator(status, s, surface, p).absolute(c - s / 2.0, c - s / 2.0))
+        root.child(at(2.0 * r, 2.0 * r).radius(r).fill(surface).key("notch")).child(status_indicator(status, s, surface, p).absolute(c - s / 2.0, c - s / 2.0).key("status"))
     }
 }
 

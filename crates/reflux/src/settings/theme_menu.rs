@@ -238,6 +238,7 @@ fn details<S: 'static>(st: &ShellState, th: &LibraryTheme, p: &Palette, acc: She
         let id = th.id.clone();
         body = body.child(
             col()
+                .key("linked")
                 .w_full()
                 .gap(8.0)
                 .child(text(line).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap())
@@ -263,6 +264,7 @@ fn details<S: 'static>(st: &ShellState, th: &LibraryTheme, p: &Palette, acc: She
     for (key, label, value, ph) in fields {
         body = body.child(if ro {
             col()
+                .key(format!("ro-{key}"))
                 .w_full()
                 .gap(8.0)
                 .child(text(t(label).to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary))

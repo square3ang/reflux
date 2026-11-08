@@ -53,13 +53,13 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         // Fixed-width cards stay under the search panel when the column narrows.
         .clip_rounded(0.0)
         .children(match super::attachments::mature_gate(store, st, c, p, acc) {
-            Some(gate) => vec![gate],
+            Some(gate) => vec![gate.key("mature-gate")],
             None => {
                 // A voice channel's text chat sits under its compact call surface
                 // (`ChannelCompactCallSurface`).
                 let mut v: Vec<El> = super::call::guild_strip(store, st, c, p, acc).into_iter().collect();
-                v.push(messages(store, st, c, p, acc, layer, false));
-                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).or_else(|| super::barrier::follow(store, c, p, acc)).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main))] });
+                v.push(messages(store, st, c, p, acc, layer, false).key("messages"));
+                v.extend(if c.kind.is_thread() { super::threads::composer_area(store, st, c, false, p, acc) } else { vec![super::barrier::view(store, st, c, p, acc).or_else(|| super::barrier::follow(store, c, p, acc).map(|f| f.key("follow"))).unwrap_or_else(|| composer(store, st, c, p, acc, Slot::Main).key("composer-box"))] });
                 v
             }
         })
@@ -82,7 +82,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         })
         .on_drop_hover(move |s: &mut S, over, _| acc(s).drop_hover = over);
     if st.drop_hover {
-        chat = chat.child(drop_overlay(c, p));
+        chat = chat.child(drop_overlay(c, p).key("drop-overlay"));
     }
     chat = chat.children(super::compact::announcer(store, c));
     let mut content = row().w_full().grow(1.0).min_h(0.0).child(chat);
@@ -92,7 +92,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         content = content.child(panel);
     } else if show_members {
         content = content
-            .child(if c.kind.is_thread() { super::threads::members_column(store, st, c, p, acc) } else { members::list(store, st, c, p, acc) })
+            .child(if c.kind.is_thread() { super::threads::members_column(store, st, c, p, acc).key("thread-members-column") } else { members::list(store, st, c, p, acc) })
             .child(el().pin(None, Some(0.0), Some(dim::LAYOUT_MEMBER_LIST_WIDTH), Some(0.0)).w(1.0).fill(over(p.user_area_divider_color, p.background_secondary_lighter)));
     }
     if let Some(m) = st.confirm_delete.and_then(|id| find(store, c.id, id)) {
@@ -108,7 +108,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         .fill(p.background_secondary_lighter)
         .child(header(store, st, c, p, acc, layer))
         .children(super::call::dm_strip(store, st, c, p, acc, layer))
-        .child(content)
+        .child(content.key("content"))
 }
 
 /// `.dropTarget` overlay while files are dragged over the chat.
@@ -186,6 +186,16 @@ impl Perms {
     fn can_delete(&self, m: &Message) -> bool {
         (m.author.id == self.me || self.manage)
             && (is_user_message(m) || matches!(m.kind, MessageType::USER_JOIN | MessageType::CHANNEL_PINNED_MESSAGE))
+    }
+}
+
+/// A message row's key: the nonce while it has one, so the optimistic row and the server's echo
+/// (a new ID, same nonce) stay one element instead of fading out and in again.
+pub(crate) fn row_key(m: &Message, me: Snowflake) -> String {
+    // Own messages only: other clients and bots may reuse a fixed nonce.
+    match m.nonce.as_deref().filter(|n| !n.is_empty() && m.author.id == me) {
+        Some(n) => format!("msg-{n}"),
+        None => format!("msg-{}", m.id),
     }
 }
 
@@ -456,17 +466,17 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         let row_el = match *it {
             Item::Date(ms) => date_divider(ms, p).key(format!("{pre}date-{}", format_full_date(ms))),
             // "Hide messages from blocked users": no bar either.
-            Item::Msg { i, .. } if run_of(i).is_some() && crate::look::with(|l| l.hide_blocked) => el().key(format!("msg-{}", msgs[i].id)),
+            Item::Msg { i, .. } if run_of(i).is_some() && crate::look::with(|l| l.hide_blocked) => el().key(row_key(&msgs[i], store.my_id())),
             Item::Msg { i, .. } if run_of(i).is_some_and(|(s, _)| !st.social.show_blocked.contains(&msgs[s].id)) => {
                 let (s, n) = run_of(i).unwrap_or_default();
-                if s == i { crate::social::blocked_bar(msgs[s].id, n, false, p, acc).key(format!("msg-{}", msgs[i].id)) } else { el().key(format!("msg-{}", msgs[i].id)) }
+                if s == i { crate::social::blocked_bar(msgs[s].id, n, false, p, acc).key(row_key(&msgs[i], store.my_id())) } else { el().key(row_key(&msgs[i], store.my_id())) }
             }
             Item::Msg { i, head, space, unread } => {
                 let m = &msgs[i];
-                let shown_run = run_of(i).filter(|(s, _)| *s == i).map(|(s, n)| crate::social::blocked_bar(msgs[s].id, n, true, p, acc));
+                let shown_run = run_of(i).filter(|(s, _)| *s == i).map(|(s, n)| crate::social::blocked_bar(msgs[s].id, n, true, p, acc).key("blocked"));
                 let mut r = col().w_full().children(shown_run);
                 if unread {
-                    r = r.child(new_divider(p));
+                    r = r.child(new_divider(p).key("new"));
                 } else if space > 0.0 {
                     r = r.pt(space);
                 }
@@ -527,7 +537,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                         body = body.child(super::queue::bar(m, st, p, acc, layer));
                     }
                 }
-                r.child(body).key(format!("msg-{}", m.id))
+                r.child(body.key("body")).key(row_key(m, store.my_id()))
             }
         };
         // The channel's start: its welcome section above the first row.
@@ -535,7 +545,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     }
     // `ScrollFillerSkeleton` until the first page lands.
     if rows.is_empty() && !store.messages.contains_key(&c.id) {
-        rows.push(super::skeleton::messages(c.id, store.settings.message_display_compact, p));
+        rows.push(super::skeleton::messages(c.id, store.settings.message_display_compact, p).key("msgs-skeleton"));
     }
     if rows.is_empty() && welcome && store.messages.contains_key(&c.id) {
         rows.push(col().w_full().key("msgs-start").child(crate::social::welcome(store, st, c, p, acc)));
@@ -640,7 +650,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     }
     let typing: Vec<_> = super::devtools::typing(store, st, c.id).into_iter().filter(|u| !store.is_blocked(*u)).collect();
     if !typing.is_empty() {
-        area = area.child(typing_rail(store, st, c.guild_id, &typing, p));
+        area = area.child(typing_rail(store, st, c.guild_id, &typing, p).key("typing-rail"));
     }
     area
 }
@@ -1034,7 +1044,7 @@ fn message<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: bool, 
     let root = frame(store, st, m, col().w_full().pr(PAD + dim::MESSAGE_ACTION_BAR_OFFSET).py(dim::MESSAGE_SPACING_Y).hover_group(), p);
     let mut root = root;
     if head && m.kind == MessageType::REPLY {
-        root = root.child(reply_preview(store, st, m, md, p, acc, PAD + dim::MESSAGE_AVATAR_SIZE / 2.0, CONTENT_X));
+        root = root.child(reply_preview(store, st, m, md, p, acc, PAD + dim::MESSAGE_AVATAR_SIZE / 2.0, CONTENT_X).key("reply"));
     }
     message_rest(store, st, m, head, md, p, acc, root, ms)
 }
@@ -1046,12 +1056,12 @@ pub(super) fn frame(store: &Store, st: &ShellState, m: &Message, mut root: El, p
         // `.messageHighlight`: the jumped-to message.
         root = root
             .fill(p.message_reply_bg)
-            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(dim::MESSAGE_HIGHLIGHT_BAR_WIDTH).fill(p.brand_primary_light));
+            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(dim::MESSAGE_HIGHLIGHT_BAR_WIDTH).fill(p.brand_primary_light).key("highlight-bar"));
     } else if mentioned {
         root = root
             .fill(p.message_mention_bg)
             .hover(mix(p.message_mention_bg_hover, Color::TRANSPARENT, 40.0))
-            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(dim::MESSAGE_HIGHLIGHT_BAR_WIDTH).fill(p.message_mention_color));
+            .child(el().pin(Some(0.0), Some(0.0), None, Some(0.0)).w(dim::MESSAGE_HIGHLIGHT_BAR_WIDTH).fill(p.message_mention_color).key("mention-bar"));
     } else {
         root = root.hover(p.background_modifier_hover);
     }
@@ -1069,7 +1079,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
         acc(s).open_user_menu(Target::User { user: author, guild, dm: None }, [at.x, at.y], format!("avatar-{mid}"), Placement::RightStart)
     };
     let gutter = if head {
-        col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).child(
+        col().w(dim::MESSAGE_AVATAR_SIZE).pt(dim::MESSAGE_SPACING_Y + dim::MESSAGE_AVATAR_ALIGN_OFFSET).key("gutter-avatar").child(
             super::avatar_anim(store, st, m.author.id, dim::MESSAGE_AVATAR_SIZE, None, p.background_secondary_lighter, st.hover_msg == Some(m.id), p)
                 .key(format!("avatar-{mid}"))
                 .cursor(rune::Cursor::Pointer)
@@ -1077,7 +1087,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
                 .on_secondary_press(menu),
         )
     } else {
-        row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().child(
+        row().w(dim::MESSAGE_AVATAR_SIZE).h(dim::MESSAGE_LINE_HEIGHT).justify_end().key("gutter-time").child(
             text(format_time(ms))
                 .font(font(dim::MESSAGE_TIMESTAMP_COMPACT_FONT_SIZE, 500.0).lh(dim::MESSAGE_LINE_HEIGHT))
                 .color(p.message_timestamp_color)
@@ -1119,21 +1129,21 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
     }
     let unknown = super::devtools::unknown(store, st, m);
     if unknown {
-        content = content.child(super::devtools::unknown_warning(p));
+        content = content.child(super::devtools::unknown_warning(p).key("unknown"));
     } else if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
-        content = content.child(editor(edit, m, p, acc));
+        content = content.child(editor(edit, m, p, acc).key("editor"));
     } else if !m.content.is_empty() || m.edited_timestamp.is_some() {
-        content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))));
+        content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))).key("text"));
     }
     let acc_el = accessories(store, st, m, p, acc).filter(|_| !unknown);
     if let Some(a) = acc_el {
-        content = content.child(a);
+        content = content.child(a.key("accessories"));
     }
     // Previews (no copy map: pins, search, a thread's starter) have no chip, like `!isPreview`.
     if md.copy.is_some() {
         content = content.children(super::threads::chip(store, st, m, p, acc));
     }
-    root.child(row().w_full().items_start().child(el().w(PAD)).child(gutter).child(el().w(dim::MESSAGE_GUTTER)).child(content))
+    root.child(row().w_full().items_start().key("main").child(el().w(PAD)).child(gutter).child(el().w(dim::MESSAGE_GUTTER)).child(content))
 }
 
 /// `EditingMessageInput`: the message's text in a composer-like box, then "escape to cancel •
@@ -1260,12 +1270,13 @@ pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Mess
                 name.insert(0, '@');
             }
             line = line
-                .child(avatar(store, st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP))
+                .child(avatar(store, st, r.author.id, 16.0, None, p.background_secondary_lighter, p).mr(dim::MESSAGE_CONTAINER_GAP).key("ref-avatar"))
                 .child(
                     text(name)
                         .font(font(dim::MESSAGE_REPLY_FONT_SIZE, 500.0).lh(h))
                         .color(mix(author_color(store, r, p), Color::TRANSPARENT, 64.0))
-                        .mr(dim::MESSAGE_COMPACT_USERNAME_GAP - 2.0),
+                        .mr(dim::MESSAGE_COMPACT_USERNAME_GAP - 2.0)
+                        .key("ref-name"),
                 );
             let preview = if r.content.is_empty() {
                 text("Click to see attachment").font(font(14.0, 400.0).italic().lh(h)).color(p.text_primary_muted)
@@ -1274,7 +1285,7 @@ pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Mess
             };
             // Clicking the preview jumps to the replied message.
             let (ch, id) = (m.channel_id, r.id);
-            line = line.child(preview.shrink().min_w(0.0)).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::jump(acc(s), g, ch, id));
+            line = line.child(preview.shrink().min_w(0.0).key("ref-preview")).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::jump(acc(s), g, ch, id));
         }
         missing => {
             let failed = missing == Reference::NotLoaded;
@@ -1286,12 +1297,14 @@ pub(super) fn reply_preview<S: 'static>(store: &Store, st: &ShellState, m: &Mess
                         .radius(8.0)
                         .fill(p.background_primary)
                         .mr(dim::MESSAGE_CONTAINER_GAP)
-                        .child(icon(&icons::ARROW_BEND_UP_LEFT_BOLD, 10.0).color(p.text_primary)),
+                        .child(icon(&icons::ARROW_BEND_UP_LEFT_BOLD, 10.0).color(p.text_primary))
+                        .key("ref-icon"),
                 )
                 .child(
                     text(if failed { t("Original message failed to load") } else { t("Original message was deleted") })
                         .font(font(14.0, 400.0).italic().lh(h))
-                        .color(p.text_primary_muted),
+                        .color(p.text_primary_muted)
+                        .key("ref-missing"),
                 );
             // A reply not loaded can still be jumped to.
             if let Some(id) = m.message_reference.as_ref().and_then(|r| r.message_id).filter(|_| failed) {
@@ -1328,19 +1341,19 @@ pub(super) fn accessories<S: 'static>(store: &Store, st: &ShellState, m: &Messag
             let (key, s2) = (format!("sticker-{}-{}", m.id, s.id), s.clone());
             img.key(key.clone()).cursor(rune::Cursor::Pointer).on_press(move |st: &mut S| super::expr::open_sticker_info(acc(st), &s2, key.clone()))
         };
-        c = c.child(row().flex_wrap().gaps(8.0, 8.0).mt(4.0).children(m.stickers.iter().map(one)));
+        c = c.child(row().flex_wrap().gaps(8.0, 8.0).mt(4.0).key("stickers").children(m.stickers.iter().map(one)));
     }
     c = c.children(super::attachments::attachments(store, st, m, p, acc));
     // An optimistic message's upload progress.
     if let Some(&f) = st.progress.get(&m.id) {
-        c = c.child(row().w(432.0).h(4.0).radius(2.0).fill(p.background_modifier_accent).child(el().w(432.0 * f).h(4.0).radius(2.0).fill(p.brand_primary)));
+        c = c.child(row().w(432.0).h(4.0).radius(2.0).fill(p.background_modifier_accent).key("progress").child(el().w(432.0 * f).h(4.0).radius(2.0).fill(p.brand_primary)));
     }
     if !m.flags.contains(MessageFlags::SUPPRESS_EMBEDS) && store.settings.render_embeds {
         c = c.children(super::embeds::embeds(store, st, m, p, acc));
     }
     if !m.reactions.is_empty() && store.settings.render_reactions {
         let react = store.permissions(m.channel_id).contains(Permissions::ADD_REACTIONS);
-        c = c.child(reactions(st, m, react, p, acc));
+        c = c.child(reactions(st, m, react, p, acc).key("reactions"));
     }
     Some(c)
 }
@@ -1478,7 +1491,7 @@ fn typing_rail(store: &Store, st: &ShellState, guild: Option<Snowflake>, users: 
     let mut faces = row().center_y().ml(6.0);
     for (i, u) in users.iter().take(5).enumerate() {
         let face = row().padding(1.0).radius(7.0).fill(p.background_secondary_lighter).child(super::avatar(store, st, *u, 12.0, None, p.background_secondary_lighter, p));
-        faces = faces.child(if i == 0 { face } else { face.ml(-4.0) });
+        faces = faces.child(if i == 0 { face } else { face.ml(-4.0) }.key(format!("face-{u}")));
     }
     row()
         .pin(Some(PAD), None, Some(PAD), Some(0.0))
@@ -1717,15 +1730,15 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     if let Some(r) = st.reply.filter(|r| r.channel == cid && slot != Slot::Create)
         && let Some(target) = find(store, cid, r.message)
     {
-        boxed = boxed.child(reply_bar(store, target, r, p, acc));
+        boxed = boxed.child(reply_bar(store, target, r, p, acc).key("reply-bar"));
     }
     if let Some(tray) = super::upload::tray(st, slot == Slot::Pane, p, acc).filter(|_| slot != Slot::Create) {
-        boxed = boxed.child(tray);
+        boxed = boxed.child(tray.key("tray"));
     }
     if let Some(sticker) = super::expr::pending_sticker(store, st, cid, p, acc).filter(|_| slot == Slot::Main) {
-        boxed = boxed.child(sticker);
+        boxed = boxed.child(sticker.key("pending-sticker"));
     }
-    boxed = boxed.child(input_row);
+    boxed = boxed.child(input_row.key("input-row"));
     if !send_ok {
         boxed = boxed.opacity(0.6);
     }
@@ -1745,14 +1758,14 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     // The autocomplete list hangs above the box, as wide as it.
     if let Some((t, items)) = &ac {
         let list = autocomplete::view(store, st, t, items, p, acc, slot).pin(Some(0.0), None, Some(0.0), Some(8.0));
-        out = out.child(el().w_full().h(0.0).child(list));
+        out = out.child(el().w_full().h(0.0).key("autocomplete").child(list));
     }
     if let Some(ms) = mock_slow {
-        out = out.child(slowmode_label(ms, p));
+        out = out.child(slowmode_label(ms, p).key("slowmode"));
     } else if slow > 0 {
-        out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p));
+        out = out.child(slowmode_label(st.cooldowns.get(&cid).map_or(0, |t| t.saturating_sub(st.now_ms)), p).key("slowmode"));
     }
-    out.child(boxed)
+    out.child(boxed.key("box"))
 }
 
 /// The channel's slowmode in seconds, 0 if none or the user bypasses it.
@@ -1930,6 +1943,20 @@ fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palett
 mod tests {
     use super::*;
     use reflux_model::PartialUser;
+
+    #[test]
+    fn row_key_survives_the_echo_of_own_messages_only() {
+        let me = Snowflake(1);
+        let mut m = Message { id: Snowflake(99), nonce: Some("99".into()), ..Default::default() };
+        m.author.id = me;
+        let optimistic = row_key(&m, me);
+        m.id = Snowflake(500);
+        assert_eq!(row_key(&m, me), optimistic);
+        m.author.id = Snowflake(2);
+        assert_eq!(row_key(&m, me), "msg-500");
+        m.nonce = None;
+        assert_eq!(row_key(&m, me), "msg-500");
+    }
 
     #[test]
     fn typing_tiers_follow_fluxer() {

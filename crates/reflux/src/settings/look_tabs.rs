@@ -508,7 +508,7 @@ fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, a
         .child(text(label.to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0).min_w(0.0).truncate())
         .child(icon_btn(&crate::icons::PLAY_BOLD, t("Preview sound").into()).on_press(move |_: &mut S| crate::desktop::sound::play(snd, volume, custom2.as_deref())));
     if custom.is_some() {
-        r = r.child(icon_btn(&crate::icons::TRASH_BOLD, tf("Remove custom sound for {label}", &[("label", label)])).on_press(move |s: &mut S| {
+        r = r.child(icon_btn(&crate::icons::TRASH_BOLD, tf("Remove custom sound for {label}", &[("label", label)])).key("remove").on_press(move |s: &mut S| {
             if let Some(path) = crate::desktop::sound::custom_path(snd) {
                 let _ = std::fs::remove_file(path);
             }
@@ -517,7 +517,7 @@ fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, a
             })
         }));
     }
-    r = r.child(icon_btn(&crate::icons::UPLOAD_SIMPLE_BOLD, tf("Upload custom sound for {label}", &[("label", label)])).on_press_tx(move |_: &mut S, tx: &mut Tx| {
+    r = r.child(icon_btn(&crate::icons::UPLOAD_SIMPLE_BOLD, tf("Upload custom sound for {label}", &[("label", label)])).key("upload").on_press_tx(move |_: &mut S, tx: &mut Tx| {
         let options = rune::FileDialogOptions { title: t("Custom sounds").into(), ..Default::default() }.filter(t("Audio"), &["mp3", "ogg", "wav", "flac"]);
         tx.open_file(options, move |s: &mut S, r, _| {
             let Ok(Some(src)) = r else { return };
@@ -531,7 +531,7 @@ fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, a
     }));
     r.child(Switch::new(on).disabled(all_off).on_toggle(move |s: &mut S| update(s, acc, |l| {
         l.sounds_off.insert(id.to_string(), on);
-    })).el(p))
+    })).el(p).key("switch"))
 }
 
 /// Copies a picked audio file under the config dir (`CustomSoundDB`), checking its size.
@@ -661,6 +661,7 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
         let n = overrides.len() as i64;
         out = out.child(
             row()
+                .key("changed")
                 .gap(12.0)
                 .center_y()
                 .child(text(tp("{count, plural, one {# changed} other {# changed}}", n, &[])).font(font(13.0, 500.0).lh(18.0)).color(p.text_secondary))
@@ -683,12 +684,12 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
     let fonts: Vec<&'static str> = custom::FONTS.into_iter().filter(|n| search.is_empty() || n.contains(&search)).collect();
     if !fonts.is_empty() {
         let expanded = !search.is_empty() || open == "Typography";
-        out = out.child(group_head("Typography", fonts.len(), expanded, p, acc));
+        out = out.child(group_head("Typography", fonts.len(), expanded, p, acc).key("g-Typography"));
         if expanded {
             let set = custom::fonts(css);
             out = out.children(fonts.into_iter().map(|name| {
                 let i = usize::from(name == "--font-mono");
-                font_row(st, name, set[i].clone(), [crate::theme::FAMILIES.0, crate::theme::FAMILIES.1][i], p, acc)
+                font_row(st, name, set[i].clone(), [crate::theme::FAMILIES.0, crate::theme::FAMILIES.1][i], p, acc).key(format!("row-{name}"))
             }));
         }
     }
@@ -699,11 +700,11 @@ fn colors<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcc
             continue;
         }
         let expanded = !search.is_empty() || open == group;
-        out = out.child(group_head(group, names.len(), expanded, p, acc));
+        out = out.child(group_head(group, names.len(), expanded, p, acc).key(format!("g-{group}")));
         if !expanded {
             continue;
         }
-        out = out.children(names.into_iter().map(|name| token_row(st, name, &overrides, base.get_mut(name).copied(), p, acc)));
+        out = out.children(names.into_iter().map(|name| token_row(st, name, &overrides, base.get_mut(name).copied(), p, acc).key(format!("row-{name}"))));
     }
     // shortcut: sizes, spacing and other non-colour, non-font variables can't be overridden
     // (Rune lays out with fixed metrics).
@@ -876,11 +877,11 @@ fn share<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
                 .child(Button::new(t("Copy CSS")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).disabled(empty).key("theme-copy").on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(css.clone())).el(p)),
         );
     if empty {
-        c = c.child(muted(t("Turn on a saved theme or write some quick CSS before sharing."), p));
+        c = c.child(muted(t("Turn on a saved theme or write some quick CSS before sharing."), p).key("empty"));
     }
     if let Some(url) = link {
         let u = url.clone();
-        c = c.child(row().gap(8.0).center_y().child(text(url).font(font(14.0, 500.0).lh(20.0)).color(p.text_link).selectable(true)).child(
+        c = c.child(row().key("link").gap(8.0).center_y().child(text(url).font(font(14.0, 500.0).lh(20.0)).color(p.text_link).selectable(true)).child(
             Button::new(t("Copy link")).variant(ButtonVariant::Secondary).size(ButtonSize::Small).key("theme-link-copy").on_press_tx(move |_: &mut S, tx: &mut Tx| tx.copy(u.clone())).el(p),
         ));
     }
@@ -911,10 +912,10 @@ fn share<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
         })
         .el(p);
     c = c
-        .child(text(t("Import a theme")).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
-        .child(row().w_full().gap(8.0).center_y().child(boxed(field(st, "theme-import", "", p, acc).single_line().placeholder("https://fluxer.app/theme/…", p.text_tertiary), p).grow(1.0)).child(import));
+        .child(text(t("Import a theme")).key("import-title").font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
+        .child(row().key("import").w_full().gap(8.0).center_y().child(boxed(field(st, "theme-import", "", p, acc).single_line().placeholder("https://fluxer.app/theme/…", p.text_tertiary), p).grow(1.0)).child(import));
     if let Some(s) = status {
-        c = c.child(muted(&s, p));
+        c = c.child(muted(&s, p).key("status"));
     }
     c = c.children(super::theme_library::backup_rows(st, p, acc));
     section(t("Share and back up"), c, false, p)

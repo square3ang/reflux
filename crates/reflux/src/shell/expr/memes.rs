@@ -63,7 +63,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
         Some(Fetched::Done(v)) => {
             let list = filtered(v.as_array().map_or(&[][..], Vec::as_slice), st.expr.meme_filter, &st.expr.query.text);
             if list.is_empty() {
-                col().w_full().h_full().child(super::empty_state(t("No saved media"), None, p))
+                col().w_full().h_full().key("empty").child(super::empty_state(t("No saved media"), None, p))
             } else {
                 let (cols, w) = super::gif::columns();
                 let tiles = list
@@ -75,6 +75,7 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                         let h = (w * mh / mw.max(1.0)).round().max(40.0);
                         let shown = (!video(&m) || url.ends_with(".gif") || url.contains(".gif?")).then_some(url.as_str());
                         let (id, name) = (m["id"].as_str().unwrap_or_default().to_string(), m["name"].as_str().unwrap_or_default().to_string());
+                        let key = format!("meme-{id}");
                         // `MemeGridItem`'s hover Edit and Delete.
                         let m2 = m.clone();
                         let tools = hover_tools(
@@ -96,17 +97,18 @@ pub fn view<S: 'static>(st: &ShellState, _: For, p: &Palette, acc: ShellAccess<S
                             .role("button")
                             .label(m["name"].as_str().unwrap_or("Media").to_string())
                             .hover_group()
+                            .key(key)
                             .child(super::gif::image(st, shown, w, h, p))
                             .child(tools)
                             .on_press(move |s: &mut S| pick(acc(s), &m));
                         (e, h)
                     })
                     .collect();
-                super::gif::masonry::<S>(cols, w, tiles, p)
+                super::gif::masonry::<S>(cols, w, tiles, p).key("grid")
             }
         }
-        Some(Fetched::Failed(_)) => col().w_full().h_full().child(super::empty_state("Couldn't load saved media", None, p)),
-        _ => col().w_full().h_full().center().child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
+        Some(Fetched::Failed(_)) => col().w_full().h_full().key("failed").child(super::empty_state("Couldn't load saved media", None, p)),
+        _ => col().w_full().h_full().center().key("loading").child(text(t("Loading…")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
     (bar, body)
 }

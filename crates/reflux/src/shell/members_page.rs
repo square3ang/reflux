@@ -381,10 +381,10 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let date = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).map(|d| crate::desktop::time::short_date(&d.with_timezone(&chrono::Local), locale)).unwrap_or_default();
     let roles = store.guilds.get(&g).map(|gs| gs.roles.as_slice()).unwrap_or_default();
     let body: El = match &res {
-        None if st.form.error.is_some() => empty(t("Something went wrong loading members. Try again later."), p),
-        None => row().w_full().grow(1.0).center().child(crate::ui::spinner(p.text_primary_muted)),
-        Some(r) if r.indexing => row().w_full().grow(1.0).center().gap(8.0).child(crate::ui::spinner(p.text_primary_muted)).child(text(t("Indexing…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)),
-        Some(r) if r.members.is_empty() => empty(t("Nobody matches that search."), p),
+        None if st.form.error.is_some() => empty(t("Something went wrong loading members. Try again later."), p).key("error"),
+        None => row().w_full().grow(1.0).center().child(crate::ui::spinner(p.text_primary_muted)).key("loading"),
+        Some(r) if r.indexing => row().w_full().grow(1.0).center().gap(8.0).child(crate::ui::spinner(p.text_primary_muted)).child(text(t("Indexing…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted)).key("indexing"),
+        Some(r) if r.members.is_empty() => empty(t("Nobody matches that search."), p).key("empty"),
         Some(r) => {
             let rows = r.members.iter().map(|mm| {
                 let u = mm.user_id;
@@ -455,7 +455,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                     .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
             });
             let list = col().w_full().children(rows);
-            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("members-page").key("members-page").child(list), false, p)
+            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("members-page").key("members-page").child(list), false, p).key("list")
         }
     };
     let pages = total.div_ceil(u64::from(m.size())).max(1) as u32;

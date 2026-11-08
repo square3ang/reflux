@@ -228,6 +228,7 @@ pub(crate) fn verify_nagbar<S: 'static>(store: &Store, st: &ShellState, p: &Pale
     };
     Some(crate::desktop::top_bars::Bar::new(-3.0, false,
         row()
+            .key("nagbar-verify")
             .w_full()
             .min_h(36.0)
             .py(4.0)
@@ -271,8 +272,10 @@ pub struct ShellState {
     pub hover_guild: Option<Option<Snowflake>>,
     /// Unix ms the views format timestamps against ("Today at …"); the runtime refreshes it.
     pub now_ms: u64,
-    /// `assets/media/images/avatars/{0..5}.png`, picked by user ID % 6.
+    /// `assets/media/images/avatars/{0..5}.png` then `neutral/{0..5}.png`; see [`Self::default_avatar`].
     pub default_avatars: Vec<Image>,
+    /// A self-hosted instance with its own icon or symbol (`usesNeutralDefaultAvatars`).
+    pub neutral_avatars: bool,
     /// Avatars, icons, attachments and emoji from the media proxy.
     pub media: crate::media::Media,
     /// The Neko easter egg's position (`Accessibility.showNeko`).
@@ -441,6 +444,7 @@ impl Default for ShellState {
             now_ms: 0,
             shift_held: false,
             default_avatars: Vec::new(),
+            neutral_avatars: false,
             media: Default::default(),
             neko: Default::default(),
             intents: Vec::new(),
@@ -535,6 +539,11 @@ fn pops<S: 'static>(acc: ShellAccess<S>) -> impl PopupAccess<S> {
 }
 
 impl ShellState {
+    /// `getDefaultAvatarURL`: picked by user ID % 6, from the neutral set on branded self-hosted instances.
+    pub fn default_avatar(&self, user: Snowflake) -> Option<&Image> {
+        self.default_avatars.get((user.0 % 6) as usize + if self.neutral_avatars { 6 } else { 0 })
+    }
+
     pub fn select_guild(&mut self, guild: Option<Snowflake>, channel: Option<Snowflake>) {
         self.nav.favorites = false;
         self.guild = guild;
@@ -655,8 +664,10 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
     // A jumped-to message lands centred (`scrollToMessage`); the end just comes into view.
     let again = st.scroll_again.take();
     let Some(key) = st.scroll_to.take().or(again.clone()) else { return changed };
-    if key.starts_with("msg-") {
-        tx.scroll_center(key.clone());
+    if let Some(id) = key.strip_prefix("msg-") {
+        // Rows are keyed by `chat::row_key`, which differs from `msg-{id}` for sent messages.
+        let row = id.parse().ok().and_then(|id| store.messages.values().flat_map(|w| &w.messages).find(|m| m.id == Snowflake(id))).map(|m| chat::row_key(m, store.my_id()));
+        tx.scroll_center(row.unwrap_or_else(|| key.clone()));
     } else {
         tx.scroll_into_view(key.clone());
     }
@@ -717,15 +728,21 @@ pub fn parse_message_link(web_base: &str, url: &str) -> Option<(Option<Snowflake
     Some((guild, Snowflake(c), Snowflake(m)))
 }
 
-/// Decodes the six default avatars (they are tiny; waits for them).
+/// Decodes the twelve default avatars (they are tiny; waits for them).
 pub fn load_default_avatars(waker: Waker) -> Vec<Image> {
-    const PNGS: [&[u8]; 6] = [
+    const PNGS: [&[u8]; 12] = [
         include_bytes!("../../../../assets/media/images/avatars/0.png"),
         include_bytes!("../../../../assets/media/images/avatars/1.png"),
         include_bytes!("../../../../assets/media/images/avatars/2.png"),
         include_bytes!("../../../../assets/media/images/avatars/3.png"),
         include_bytes!("../../../../assets/media/images/avatars/4.png"),
         include_bytes!("../../../../assets/media/images/avatars/5.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/0.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/1.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/2.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/3.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/4.png"),
+        include_bytes!("../../../../assets/media/images/avatars/neutral/5.png"),
     ];
     let cache = ImageCache::new(waker);
     PNGS.iter()
@@ -807,6 +824,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(el().pin(Some(dim::LAYOUT_SIDEBAR_WIDTH), Some(0.0), None, Some(0.0)).w(1.0).fill(divider)),
     );
     let body = row()
+        .key("app-body")
         .w_full()
         .grow(1.0)
         .min_h(0.0)
@@ -932,7 +950,7 @@ pub(crate) fn avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32,
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn avatar_anim(store: &Store, st: &ShellState, user: Snowflake, size: f32, status: Option<Status>, surface: Color, animate: bool, p: &Palette) -> El {
     let hash = store.users.get(&user).map(|u| &u.avatar).or(store.me.as_ref().filter(|m| m.id == user).map(|m| &m.avatar));
-    let default = || st.default_avatars.get((user.0 % 6) as usize).map(|i| i.pixels().clone());
+    let default = || st.default_avatar(user).map(|i| i.pixels().clone());
     let member = st.guild.and_then(|g| Some((g, store.member(g, user)?.avatar.as_deref()?)));
     let load = match member {
         Some((g, h)) => Some(st.media.asset(|b, s| media::animate(media::member_avatar_url(b, g, user, h, size, s), h, animate))),

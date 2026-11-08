@@ -59,6 +59,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, p: &Pa
     let check = |key: String, lead: El, name: String| {
         let on = chosen.contains(&key);
         row()
+            .key(key.clone())
             .w_full()
             .gap(8.0)
             .py(4.0)
@@ -86,13 +87,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, p: &Pa
     let empty = roles.is_empty() && members.is_empty();
     let mut list = col().w_full().gap(16.0);
     if !roles.is_empty() {
-        list = list.child(col().w_full().gap(4.0).child(heading(t("Roles"), p)).children(roles));
+        list = list.child(col().key("roles").w_full().gap(4.0).child(heading(t("Roles"), p)).children(roles));
     }
     if !members.is_empty() {
-        list = list.child(col().w_full().gap(4.0).child(heading(t("Members"), p)).children(members));
+        list = list.child(col().key("members").w_full().gap(4.0).child(heading(t("Members"), p)).children(members));
     }
     if empty {
-        list = list.child(text(t("No matching members or roles")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
+        list = list.child(text(t("No matching members or roles")).key("none").font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
     }
     col()
         .w_full()

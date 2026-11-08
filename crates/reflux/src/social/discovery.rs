@@ -161,12 +161,13 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         cats = cats.child(pill(c, Some(i as u8)));
     }
     let results = match st.social.data.get("discovery") {
-        None => row().w_full().h(300.0).center().child(spinner(p.text_primary_muted)),
+        None => row().w_full().h(300.0).center().child(spinner(p.text_primary_muted)).key("loading"),
         Some(v) => {
             let guilds = v["guilds"].as_array().cloned().unwrap_or_default();
             if guilds.is_empty() {
                 let searching = !st.social.discovery_query.text.trim().is_empty() || st.social.discovery_category.is_some();
                 col()
+                    .key("empty")
                     .w_full()
                     .min_h(300.0)
                     .center()
@@ -203,7 +204,7 @@ pub fn discovery_page<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
                         ),
                     );
                 }
-                grid
+                grid.key("grid")
             }
         }
     };

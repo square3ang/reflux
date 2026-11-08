@@ -274,8 +274,9 @@ pub fn rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
             let (status, truncated) = s.map_or((Status::Live, false), |s| (s.status, s.truncated));
             let mut info = col().grow(1.0).min_w(0.0).gap(2.0).child(text(folder_name(folder).to_string()).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).truncate());
             info = info.child(match status {
-                Status::Live => text(tf("Watching {path}", &[("path", folder)])).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).wrap(),
+                Status::Live => text(tf("Watching {path}", &[("path", folder)])).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary).wrap().key("live"),
                 bad => row()
+                    .key("warn")
                     .gap(4.0)
                     .center_y()
                     .child(rune::icon(&crate::icons::WARNING_CIRCLE_BOLD, 14.0).color(p.status_warning))
@@ -298,6 +299,7 @@ pub fn rows<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
                 .on_press(move |s: &mut S| acc(s).open_account_modal(super::AccountModal::ThemeStopWatching(f.clone())))
                 .el(p);
             row()
+                .key(format!("dir-{}", folder.replace('/', "\\")))
                 .w_full()
                 .px(12.0)
                 .py(10.0)

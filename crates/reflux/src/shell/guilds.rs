@@ -26,21 +26,17 @@ pub fn rail<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .role("list")
         .pt(dim::SPACING_1)
         .pb(user_area_overlay(st) + dim::SPACING_2)
-        .child(home(store, st, p, acc))
+        .child(home(store, st, p, acc).key("rail-home"))
         .children(crate::look::with(|l| l.show_favorites).then(|| crate::nav::favorites::rail_button(st, p, acc)))
-        .child(divider(p));
+        .child(divider(p).key("rail-divider"));
     for item in store.guild_list() {
         list = match item {
             GuildListItem::Guild(id) => list.child(guild(store, st, id, &rows, p, acc)),
             GuildListItem::Folder { folder, guilds } => list.child(folder_item(store, st, folder, &guilds, &rows, p, acc)),
         };
     }
-    list = list.child(add_button(p, acc)).child(explore_button(st, p, acc));
-    if crate::look::with(|l| l.show_download_button) {
-        list = list.child(rail_action(&icons::DOWNLOAD_SIMPLE_BOLD, t("Download desktop app"), "rail-download", p, move |_: &mut S| {
-            crate::settings::open_url("https://fluxer.com/download");
-        }));
-    }
+    // `buildGuildNavigationRows`: discovery, then add-guild; download is hidden in the desktop app (`!Platform.isElectron`).
+    list = list.child(explore_button(st, p, acc).key("rail-explore-row")).child(add_button(p, acc).key("rail-add-row"));
     if crate::look::with(|l| l.show_help_button)
         && let Some(base) = st.marketing_base.as_deref()
     {
@@ -114,13 +110,14 @@ fn slot<S: 'static>(
     st: &ShellState,
     face: El,
     badge: Option<El>,
+    voice: Option<&'static rune::Icon>,
     p: &Palette,
     acc: ShellAccess<S>,
 ) -> El {
     let hovered = st.hover_guild == Some(target);
     let mut item = row().w_full().h(ROW).center();
     if selected || hovered || unread {
-        item = item.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p));
+        item = item.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p).key("pill"));
     }
     // The keyboard ring hugs the icon (the row is wider than the rail's clip).
     let mut frame = el().size(ICON, ICON).radius(ICON / 2.0).focus_ring(4.0, 0.0, p.focus_primary).child(face);
@@ -134,7 +131,21 @@ fn slot<S: 'static>(
                 .child(b),
         );
     }
-    item.child(frame)
+    if let Some(glyph) = voice {
+        // `VoiceBadge`: a 20px status-online circle at the top corner on the same cutout.
+        frame = frame.child(
+            row()
+                .pin(None, Some(-4.0), Some(-4.0), None)
+                .size(20.0, 20.0)
+                .center()
+                .radius(10.0)
+                .fill(p.status_online)
+                .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 3.0, color: p.guild_badge_surface, inset: false })
+                .child(icon(glyph, 12.0).color(rune::Color::WHITE))
+                .key("voice"),
+        );
+    }
+    item.child(frame.key("icon"))
         .cursor(rune::Cursor::Pointer)
         .role("button").focusable(true)
         .on_hover_change(move |s: &mut S, inside, _| {
@@ -159,7 +170,7 @@ fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAcces
         // `ChatCircleIcon weight="fill"` (`.messageBubbleIcon`, 1.75rem).
         .child(icon(&icons::CHAT_CIRCLE_FILL, 28.0).color(fg));
     let mentions: u32 = store.private_channels().iter().map(|c| store.mention_count(c.id)).sum();
-    slot(None, selected, false, st, face, mention_badge(mentions as u64, true, p), p, acc)
+    slot(None, selected, false, st, face, mention_badge(mentions as u64, true, p), None, p, acc)
         .label("Direct Messages")
         .on_press(move |s: &mut S| acc(s).select_guild(None, None))
 }
@@ -197,7 +208,18 @@ fn guild<S: 'static>(store: &Store, st: &ShellState, id: Snowflake, rows: &Rc<Ve
     };
     let first = first_channel(store, id);
     let dragging = drag.is_some_and(|d| d.src == Slot::Guild(id));
-    let item = slot(Some(id), selected, unread, st, face, mention_badge(mentions as u64, true, p), p, acc)
+    // `resolveVoiceBadgeActivity`: screen share, then camera, then plain voice.
+    let states: Vec<_> = store.voice_states.iter().filter(|((g, _), v)| *g == Some(id) && v.channel_id.is_some()).map(|(_, v)| v).collect();
+    let voice = (!states.is_empty()).then(|| {
+        if states.iter().any(|v| v.self_stream) {
+            &icons::MONITOR_PLAY_FILL
+        } else if states.iter().any(|v| v.self_video) {
+            &icons::VIDEO_CAMERA_FILL
+        } else {
+            &icons::SPEAKER_HIGH_FILL
+        }
+    });
+    let item = slot(Some(id), selected, unread, st, face, mention_badge(mentions as u64, true, p), voice, p, acc)
         .label(name.to_string())
         .key(format!("guild-{id}"))
         .opacity(if dragging { 0.5 } else { 1.0 })
@@ -355,11 +377,11 @@ fn folder_item<S: 'static>(store: &Store, st: &ShellState, folder: &GuildFolder,
     }
     let mut header = row().w_full().h(ROW).center();
     if !open && (selected || hovered || unread) && st.nav.drag.is_none() {
-        header = header.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p));
+        header = header.child(indicator(if selected { 40.0 } else if hovered { 20.0 } else { 8.0 }, p).key("pill"));
     }
     let name = crate::nav::folder::display_name(store, folder);
     let header = header
-        .child(frame)
+        .child(frame.key("icon"))
         .children(drop_marks(st, Slot::Folder(fid), p))
         .opacity(if st.nav.drag.is_some_and(|d| d.src == Slot::Folder(fid)) { 0.5 } else { 1.0 })
         .cursor(rune::Cursor::Pointer)
@@ -399,7 +421,7 @@ fn folder_item<S: 'static>(store: &Store, st: &ShellState, folder: &GuildFolder,
         .radius(dim::GUILD_LIST_ITEM_BOX_SIZE * 0.32)
         .fill(mix(accent, p.background_secondary, if light { 7.0 } else { 8.0 }))
         .inert();
-    col().w_full().child(back).child(header).child(list)
+    col().w_full().key(format!("folder-open-{}", fid.unwrap_or(0))).child(back).child(header).child(list)
 }
 
 /// `MiniGuildIcon`: the icon, else the acronym on the mini surface.

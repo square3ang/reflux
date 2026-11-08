@@ -299,10 +299,10 @@ fn invite<S: 'static>(store: &Store, st: &ShellState, ch: Snowflake, edit: bool,
     let mut body = col()
         .w_full()
         .gap(8.0)
-        .children(friends.map(|f| f.mb(16.0)))
-        .child(label(if has_friends { t("Or send an invite link to a friend:") } else { t("Send an invite link to a friend:") }, 500.0, p))
-        .child(field)
-        .child(row().gap(4.0).child(text(expiry_text(max_age)).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)).child(edit_link));
+        .children(friends.map(|f| f.mb(16.0).key("friends")))
+        .child(label(if has_friends { t("Or send an invite link to a friend:") } else { t("Send an invite link to a friend:") }, 500.0, p).key("label"))
+        .child(field.key("link"))
+        .child(row().key("expiry").gap(4.0).child(text(expiry_text(max_age)).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted)).child(edit_link));
     if let Some(e) = error(st, p) {
         body = body.child(e);
     }
@@ -326,7 +326,7 @@ fn create_channel<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, 
     let me = store.my_id();
     let mut body = col().w_full().gap(20.0);
     if access {
-        body = body.child(super::create_access::view(store, st, guild, p, acc));
+        body = body.child(super::create_access::view(store, st, guild, p, acc).key("access"));
     } else if !category {
         let options = TYPES.iter().map(|&(t, name, sub)| {
             let (name, sub) = (crate::i18n::t(name), crate::i18n::t(sub));
@@ -359,7 +359,7 @@ fn create_channel<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, 
                         ),
                 )
         });
-        body = body.child(col().w_full().gap(8.0).child(label(t("Channel type"), 500.0, p)).child(col().w_full().gap(6.0).role("radiogroup").children(options)));
+        body = body.child(col().key("types").w_full().gap(8.0).child(label(t("Channel type"), 500.0, p)).child(col().w_full().gap(6.0).role("radiogroup").children(options)));
     }
     if !access {
         body = body.child(field(st, acc, "name", "", if category { t("Name") } else { t("Channel name") }, if category { t("New category") } else { "" }, p));
@@ -376,7 +376,8 @@ fn create_channel<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, 
                 .on_toggle(move |s: &mut S| {
                     acc(s).form.data.insert("private".into(), json!(!private));
                 })
-                .el(p),
+                .el(p)
+                .key("private"),
         );
     }
     if let Some(e) = error(st, p) {
@@ -521,19 +522,20 @@ fn notifications<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &P
     let body = col()
         .w_full()
         .gap(24.0)
-        .child(mute)
-        .child(col().w_full().gap(12.0).child(label(t("Community notification settings"), 600.0, p)).child(levels))
-        .children(badges)
+        .child(mute.key("mute"))
+        .child(col().key("levels").w_full().gap(12.0).child(label(t("Community notification settings"), 600.0, p)).child(levels))
+        .children(badges.map(|b| b.key("badges")))
         .child(
             col()
+                .key("suppress")
                 .w_full()
                 .gap(16.0)
                 .child(Switch::new(s.suppress_everyone).label("Suppress @everyone and @here").on_toggle(patch(json!({ "suppress_everyone": !s.suppress_everyone }))).el(p))
                 .child(Switch::new(s.suppress_roles).label(t("Suppress all role mentions")).on_toggle(patch(json!({ "suppress_roles": !s.suppress_roles }))).el(p)),
         )
-        .child(reply)
-        .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p))
-        .child(overrides(store, st, g, level, p, acc, layer));
+        .child(reply.key("reply"))
+        .child(Switch::new(s.mobile_push).label(t("Mobile push notifications")).on_toggle(patch(json!({ "mobile_push": !s.mobile_push }))).el(p).key("push"))
+        .child(overrides(store, st, g, level, p, acc, layer).key("overrides"));
     Modal::new(t("Notification settings"), close(acc)).size(ModalSize::Medium).body(body).el(p)
 }
 
@@ -574,6 +576,7 @@ fn overrides<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, guild_lev
     let head = |s: &str| cell(text(s.to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary));
     section = section.child(
         row()
+            .key("head")
             .w_full()
             .mt(8.0)
             .px(12.0)
@@ -616,6 +619,7 @@ fn overrides<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, guild_lev
             );
         section = section.child(
             row()
+                .key(format!("ov-{id}"))
                 .w_full()
                 .min_h(64.0)
                 .padding(12.0)

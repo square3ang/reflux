@@ -162,12 +162,12 @@ fn close_tag(st: &mut ShellState) {
 /// `ForumTagSettings`: the tags with an edit button each, and Add tag.
 pub fn tags<S: 'static>(st: &ShellState, ch: &Channel, p: &Palette, acc: ShellAccess<S>) -> El {
     let list = if ch.available_tags.is_empty() {
-        small(t("This forum has no tags yet."), p)
+        small(t("This forum has no tags yet."), p).key("empty")
     } else {
-        row().w_full().flex_wrap().gaps(8.0, 8.0).children(ch.available_tags.iter().map(|tag| {
+        row().key("pills").w_full().flex_wrap().gaps(8.0, 8.0).children(ch.available_tags.iter().map(|tag| {
             let id = tag.id;
             let c2 = ch.clone();
-            let mut pill = row().gap(4.0).center_y().child(crate::shell::forum::tag_pill(st, tag, None, false, p));
+            let mut pill = row().key(format!("t-{id}")).gap(4.0).center_y().child(crate::shell::forum::tag_pill(st, tag, None, false, p));
             if tag.moderated {
                 pill = pill.child(icon(&icons::LOCK_FILL, 14.0).color(p.text_primary_muted));
             }

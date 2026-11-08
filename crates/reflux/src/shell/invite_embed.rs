@@ -117,9 +117,9 @@ pub fn menu_items<S: 'static>(st: &ShellState) -> Vec<crate::ui::MenuEntry<S>> {
 fn card(splash: Option<El>, icon_el: El, header: El, footer: Option<El>, p: &Palette) -> El {
     let border = over(p.background_modifier_accent, p.background_secondary);
     let grid = row().w_full().padding(13.6).gap(14.4).center_y().child(row().w(56.0).center().child(icon_el)).child(col().grow(1.0).min_w(0.0).gap(2.4).child(header));
-    let mut c = col().w_full().max_w(360.0).radius(12.0).clip_rounded(12.0).fill(p.background_secondary).border(1.0, border).children(splash).child(grid);
+    let mut c = col().w_full().max_w(360.0).radius(12.0).clip_rounded(12.0).fill(p.background_secondary).border(1.0, border).children(splash.map(|s| s.key("splash"))).child(grid.key("grid"));
     if let Some(f) = footer {
-        c = c.child(el().w_full().h(1.0).fill(border)).child(el().w_full().padding(13.6).child(f));
+        c = c.child(el().w_full().h(1.0).fill(border).key("divider")).child(el().w_full().padding(13.6).child(f).key("footer"));
     }
     c.role("group")
 }

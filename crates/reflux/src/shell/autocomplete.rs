@@ -269,10 +269,10 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, item
             .role("option")
             .key(format!("ac-{i}"))
             .hover(p.background_modifier_hover)
-            .children((!matches!(c.glyph, Glyph::Role(_) | Glyph::Plain)).then(|| row().mr(8.0).child(glyph)))
-            .child(text(label).font(font(16.0, 400.0).lh(20.0)).color(color).truncate().shrink().min_w(0.0))
-            .child(el().grow(1.0))
-            .child(text(c.detail.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).truncate().ml(16.0).shrink())
+            .children((!matches!(c.glyph, Glyph::Role(_) | Glyph::Plain)).then(|| row().mr(8.0).child(glyph).key("glyph")))
+            .child(text(label).font(font(16.0, 400.0).lh(20.0)).color(color).truncate().shrink().min_w(0.0).key("label"))
+            .child(el().grow(1.0).key("gap"))
+            .child(text(c.detail.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).truncate().ml(16.0).shrink().key("detail"))
             .on_press(move |s: &mut S| super::chat::in_slot(acc(s), slot, |st| accept(st, &t2, &c2)));
         if i == selected {
             r = r.fill(p.background_modifier_hover);

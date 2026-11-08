@@ -9,7 +9,7 @@ use rune::{El, Tx, col, row, text};
 use serde_json::{Value, json};
 
 use super::{Done, Modal, body, error, field, label};
-use crate::guild::{card, empty, loaded, save_bar, small, title};
+use crate::guild::{empty, keyed_card, loaded, save_bar, small, title};
 use crate::settings::tabs::section;
 use crate::shell::{ShellAccess, ShellState};
 use crate::theme::{Palette, font};
@@ -191,7 +191,7 @@ fn vanity<S: 'static>(_store: &Store, st: &ShellState, g: Snowflake, p: &Palette
         .child(small("Give your community a short, memorable invite link.", p).wrap())
         .child(row().w_full().gap(8.0).items_end().child(text(format!("{base}/")).font(font(14.0, 500.0).lh(40.0)).color(p.text_primary_muted)).child(col().grow(1.0).child(field(st, acc, "vanity_code", &code, "", "your-community", p))));
     if !code.is_empty() {
-        content = content.child(small(format!("{} {uses}", t("Current uses:")), p));
+        content = content.child(small(format!("{} {uses}", t("Current uses:")), p).key("uses"));
     }
     let mut buttons = row().gap(8.0);
     let code2 = code.clone();
@@ -205,7 +205,7 @@ fn vanity<S: 'static>(_store: &Store, st: &ShellState, g: Snowflake, p: &Palette
         let c = sh.form.value("vanity_code", &code).trim().to_string();
         sh.social(Method::PATCH, format!("/guilds/{g}/vanity-url"), Some(json!({ "code": c })), Done::Reload("vanity".into(), format!("/guilds/{g}/vanity-url")));
     }).el(p));
-    content = content.child(buttons).children(error(st, p));
+    content = content.child(buttons.key("buttons")).children(error(st, p));
     section(t("Vanity URL"), content, true, p)
 }
 
@@ -258,7 +258,7 @@ fn webhooks<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, channel: O
             acc(s).social(Method::POST, format!("/channels/{c}/webhooks"), Some(json!({ "name": "New webhook" })), Done::Reload("webhooks".into(), format!("/channels/{c}/webhooks")))
         }).el(p)));
     }
-    content = content.children(error(st, p)).child(if rows.is_empty() { empty(t("No webhooks"), p) } else { card(rows, p) });
+    content = content.children(error(st, p)).child(if rows.is_empty() { empty(t("No webhooks"), p).key("empty") } else { keyed_card(list.iter().map(|w| w["id"].as_str().map(|id| format!("wh-{id}"))).zip(rows).collect(), p).key("list") });
     section(t("Webhooks"), content, true, p)
 }
 
@@ -396,7 +396,7 @@ fn explore<S: 'static>(st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAcc
             acc(s).social(Method::DELETE, format!("/guilds/{g}/discovery"), None, reload.clone())
         }).el(p));
     }
-    section(t("Explore"), content.child(buttons), true, p)
+    section(t("Explore"), content.child(buttons.key("buttons")), true, p)
 }
 
 // ---- Invites --------------------------------------------------------------------------------
@@ -427,7 +427,7 @@ fn channel_invites<S: 'static>(store: &Store, st: &ShellState, c: Snowflake, p: 
     if let Some(g) = store.channels.get(&c).and_then(|ch| ch.guild_id) {
         content = content.children(pause_invites(store, g, p, acc));
     }
-    content = content.children(error(st, p)).child(if rows.is_empty() { empty("No invites yet.", p) } else { card(rows, p) });
+    content = content.children(error(st, p)).child(if rows.is_empty() { empty("No invites yet.", p).key("empty") } else { keyed_card(list.iter().map(|i| Some(format!("inv-{}", i.code))).zip(rows).collect(), p).key("list") });
     section(t("Invites"), content, true, p)
 }
 

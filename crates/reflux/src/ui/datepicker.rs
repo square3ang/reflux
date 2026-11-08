@@ -250,7 +250,7 @@ impl<'a, S: 'static> DatePicker<'a, S> {
                     .child(row().grow(1.0).px(8.0).py(5.0).radius(6.0).fill(surface).border(1.0, over(p.background_modifier_accent, surface)).child(input)),
             );
         }
-        super::overlay::late(anchor(pop.role("dialog").label(t("Date picker")).modal(true, move |s: &mut S| access(s).close()), self.id, Placement::BottomStart, 8.0));
+        super::overlay::late(anchor(pop.key(format!("{}-picker", self.id)).role("dialog").label(t("Date picker")).modal(true, move |s: &mut S| access(s).close()), self.id, Placement::BottomStart, 8.0));
         c
     }
 }

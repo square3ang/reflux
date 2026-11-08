@@ -34,16 +34,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, m: &Message, md: &Md, p:
     let ms = super::chat::message_ms(m);
     let name = "Fluxerbot";
     let time = format!(" — {}", super::chat::format_relative(ms, st.now_ms));
-    // `UserTag` (system): uppercase 10/600 on brand, 4px corners.
-    let tag = row()
-        .ml(4.0)
-        .px(5.6)
-        .py(2.0)
-        .min_h(15.0)
-        .radius(4.0)
-        .center()
-        .fill(p.brand_primary)
-        .child(text(t("System").to_uppercase()).font(font(10.0, 600.0).lh(10.0)).color(p.brand_primary_fill));
+    let tag = user_tag(t("System"), p).ml(4.0);
     let head = row()
         .center_y()
         .child(text(name).font(font(16.0, 500.0).lh(dim::MESSAGE_LINE_HEIGHT)).color(p.text_primary))
@@ -82,4 +73,16 @@ mod tests {
         assert!(is(&m) && m.author.system && m.channel_id == Snowflake(5));
         assert!(!super::super::chat::is_user_message(&m), "no reply, edit or pin");
     }
+}
+
+/// `UserTag` (small): uppercase 10/600 on brand, 4px corners.
+pub(crate) fn user_tag(label: &str, p: &Palette) -> El {
+    row()
+        .px(5.6)
+        .py(2.0)
+        .min_h(15.0)
+        .radius(4.0)
+        .center()
+        .fill(p.brand_primary)
+        .child(text(label.to_uppercase()).font(font(10.0, 600.0).lh(10.0)).color(p.brand_primary_fill))
 }

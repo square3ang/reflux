@@ -84,15 +84,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, guild: Snowflake, tab: &
             .filter(|t| t.1 == cat)
             .map(|t| {
                 let id = t.0;
-                nav_item(t.3, t.2, tab == id, false, p, &c).on_press(move |s: &mut S| select_tab(acc(s), guild, id))
+                nav_item(t.3, t.2, tab == id, false, p, &c).key(id).on_press(move |s: &mut S| select_tab(acc(s), guild, id))
             })
             .collect();
         if !items.is_empty() {
-            nav = nav.child(nav_group((!cat.is_empty()).then_some(cat), items, p));
+            nav = nav.child(nav_group((!cat.is_empty()).then_some(cat), items, p).key(format!("cat-{cat}")));
         }
     }
     if info.owner_id == store.my_id() {
-        nav = nav.child(nav_item(&icons::TRASH_FILL, t("Delete community"), false, true, p, &c).on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteGuild(guild))));
+        nav = nav.child(nav_item(&icons::TRASH_FILL, t("Delete community"), false, true, p, &c).key("delete").on_press(move |s: &mut S| acc(s).form.confirm = Some(Confirm::DeleteGuild(guild))));
     }
     nav = nav.children(super::overview_extra::threshold_button(store, guild, p, acc));
     let label = TABS.iter().find(|t| t.0 == tab).map_or(t("Community settings"), |x| t(x.2));
@@ -154,10 +154,14 @@ pub(crate) fn title(t: impl Into<String>, p: &Palette) -> El {
 }
 
 /// A bordered card of rows split by hairlines (`AccountSecurityCard`-style lists).
-pub(crate) fn card(rows: Vec<El>, p: &Palette) -> El {
+/// A bordered list card; rows keep their identity by key while rows around them come and go.
+pub(crate) fn keyed_card(rows: Vec<(Option<String>, El)>, p: &Palette) -> El {
     let n = rows.len();
-    col().w_full().radius(12.0).border(1.0, p.background_modifier_accent).children(rows.into_iter().enumerate().map(move |(i, r)| {
-        let r = row().w_full().px(16.0).py(12.0).gap(12.0).center_y().child(r);
+    col().w_full().radius(12.0).border(1.0, p.background_modifier_accent).children(rows.into_iter().enumerate().map(move |(i, (k, r))| {
+        let mut r = row().w_full().px(16.0).py(12.0).gap(12.0).center_y().child(r);
+        if let Some(k) = k {
+            r = r.key(k);
+        }
         if i + 1 < n { r.child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).h(1.0).fill(p.background_modifier_accent)) } else { r }
     }))
 }
@@ -180,7 +184,7 @@ pub(crate) fn loaded<T: serde::de::DeserializeOwned + 'static>(st: &ShellState, 
     let v = match st.form.data.get(key) {
         Some(v) => v,
         None if st.form.error.is_some() => return Err(error(st, p).unwrap_or_else(el)),
-        None => return Err(empty(t("Loading…"), p)),
+        None => return Err(empty(t("Loading…"), p).key("loading")),
     };
     let slot = (key.to_string(), std::any::TypeId::of::<T>());
     let hit = TYPED.with_borrow(|m| m.get(&slot).filter(|(src, _)| src == v).and_then(|(_, t)| t.clone().downcast::<T>().ok()));
@@ -228,7 +232,7 @@ pub(crate) fn save_bar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAcces
         )
         .child(Button::new(t("Save changes")).size(ButtonSize::Small).submitting(st.form.busy).key("save-changes").on_press(save).el(p));
     if let Some(e) = error(st, p) {
-        bar = col().w_full().gap(8.0).child(bar).child(e);
+        bar = col().key("bar-error").w_full().gap(8.0).child(bar).child(e);
     }
     bar
 }
@@ -277,11 +281,11 @@ fn overview<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palett
     let banner_load = info.banner.as_deref().map_or(Load::Failed, |h| st.media.asset(|b, s| media::guild_banner_url(b, g, h, s)));
     // `BrandingSection`: icon, name, detached banner, banner, splashes.
     let mut branding = col().w_full().gap(20.0).child(image_field(st, t("Icon"), "icon", icon_load, 80.0, 80.0, 40.0, p, acc)).child(field(st, acc, "name", &info.name, t("Name"), t("My awesome community"), p));
-    branding = branding.children(super::overview_extra::detached(st, info, p, acc));
+    branding = branding.children(super::overview_extra::detached(st, info, p, acc).map(|e| e.key("detached")));
     if info.features.iter().any(|f| f == "BANNER") {
-        branding = branding.child(image_field(st, t("Banner"), "banner", banner_load, 240.0, 135.0, 8.0, p, acc));
+        branding = branding.child(image_field(st, t("Banner"), "banner", banner_load, 240.0, 135.0, 8.0, p, acc).key("banner"));
     }
-    branding = branding.children(super::overview_extra::splashes(st, g, info, p, acc));
+    branding = branding.children(super::overview_extra::splashes(st, g, info, p, acc).map(|e| e.key("splashes")));
 
     // Channel pickers keep their choice in `form.data` as a string ID ("" = none).
     let chosen = |key: &str, cur: Option<Snowflake>| f.data.get(key).and_then(Value::as_str).map_or_else(|| cur.map_or(String::new(), |c| c.to_string()), str::to_string);
@@ -411,7 +415,7 @@ fn roles<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let movable: Vec<Snowflake> = all.iter().filter(|r| r.id != g).map(|r| r.id).collect();
     let counts = |r: Snowflake| store.guilds.get(&g).map_or(0, |gs| gs.members.values().filter(|m| m.roles.contains(&r)).count());
     let drag = super::role_extra::drag_state(st);
-    let rows: Vec<El> = all
+    let rows: Vec<(Option<String>, El)> = all
         .iter()
         .map(|r| {
             let id = r.id;
@@ -427,14 +431,14 @@ fn roles<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
                 // The landing spot gets a 2px line on the side the row will go.
                 if let Some((from, to)) = drag.filter(|d| d.1 == i && d.0 != d.1) {
                     let mark = if to < from { el().pin(Some(0.0), Some(-11.0), Some(0.0), None) } else { el().pin(Some(0.0), None, Some(0.0), Some(-11.0)) };
-                    line = line.child(mark.h(2.0).radius(1.0).fill(p.brand_primary_light).inert());
+                    line = line.child(mark.h(2.0).radius(1.0).fill(p.brand_primary_light).inert().key("mark"));
                 }
                 if drag.is_some_and(|d| d.0 == i) {
                     line = line.opacity(0.5);
                 }
                 line = super::role_extra::draggable(line, g, i, movable.clone(), 24.0, acc);
             }
-            line.child(Button::new(t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| open_role(acc(s), g, id)).el(p))
+            (Some(format!("r-{id}")), line.child(Button::new(t("Edit")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| open_role(acc(s), g, id)).el(p).key("edit")))
         })
         .collect();
     let create = Button::new(t("Create role")).icon(&icons::PLUS_BOLD).size(ButtonSize::Small).key("create-role").on_press(move |s: &mut S| {
@@ -444,7 +448,7 @@ fn roles<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    section(t("Roles"), content.child(card(rows, p)), true, p)
+    section(t("Roles"), content.child(keyed_card(rows, p).key("list")), true, p)
 }
 
 fn open_role(st: &mut ShellState, g: Snowflake, r: Snowflake) {
@@ -580,7 +584,7 @@ fn emoji_row<S: 'static>(st: &ShellState, e: &Emoji, g: Snowflake, manage: bool,
     let by = e.user.as_ref().map(user_name).unwrap_or_default();
     let mine = manage || e.user.as_ref().is_some_and(|u| u.id == me);
     if editing == Some(id) {
-        return row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(field(st, acc, "emoji-rename", &e.name, "", "", p))).child(
+        return row().key("edit").w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(field(st, acc, "emoji-rename", &e.name, "", "", p))).child(
             Button::<S>::new(t("Save")).size(ButtonSize::Small).key("emoji-save").el(p).on_press(move |s: &mut S| {
                 let sh = acc(s);
                 // `handleSave`: strip what the API refuses, then 2-32 characters.
@@ -609,7 +613,7 @@ fn emoji_row<S: 'static>(st: &ShellState, e: &Emoji, g: Snowflake, manage: bool,
             f.text.remove("emoji-rename");
         });
     }
-    let mut line = row().w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(name).child(small(by, p)));
+    let mut line = row().key("view").w_full().gap(12.0).center_y().child(img).child(col().grow(1.0).min_w(0.0).child(name).child(small(by, p)));
     if mine {
         line = line.child(
             row()
@@ -642,7 +646,7 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     let editing = st.form.data.get("emoji-edit").and_then(Value::as_str).and_then(|s| s.parse::<Snowflake>().ok());
     let q = st.form.value("emoji-search", "");
     let found: Vec<&Emoji> = list.iter().copied().filter(|e| emoji_search_matches(&e.name, &q)).collect();
-    let rows = |items: &[&Emoji]| -> Vec<El> { items.iter().map(|e| emoji_row(st, e, g, manage, me, editing, p, acc)).collect() };
+    let rows = |items: &[&Emoji]| -> Vec<(Option<String>, El)> { items.iter().map(|e| (Some(format!("e-{}", e.id)), emoji_row(st, e, g, manage, me, editing, p, acc))).collect() };
     let still: Vec<&Emoji> = found.iter().copied().filter(|e| !e.animated).collect();
     let animated: Vec<&Emoji> = found.iter().copied().filter(|e| e.animated).collect();
     let heading = |label: String, p: &Palette| text(label).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary);
@@ -650,19 +654,21 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     if !still.is_empty() {
         groups = groups.child(
             col()
+                .key("still")
                 .w_full()
                 .gap(8.0)
                 .child(heading(tf("Non-animated emoji ({emojiCount})", &[("emojiCount", &still.len().to_string())]), p))
-                .child(card(rows(&still), p)),
+                .child(keyed_card(rows(&still), p)),
         );
     }
     if !animated.is_empty() {
         groups = groups.child(
             col()
+                .key("animated")
                 .w_full()
                 .gap(8.0)
                 .child(heading(tf("Animated emoji ({emojiCount})", &[("emojiCount", &animated.len().to_string())]), p))
-                .child(card(rows(&animated), p)),
+                .child(keyed_card(rows(&animated), p)),
         );
     }
     let mut content = col()
@@ -680,14 +686,14 @@ fn emoji<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, 
     }
     let failed = super::expr_upload::failures(st);
     if !failed.is_empty() {
-        content = content.child(col().w_full().gap(4.0).child(title(t("Some emojis could not be added"), p)).children(failed.into_iter().map(|(n, e)| small(format!("{n}: {e}"), p).wrap())));
+        content = content.child(col().key("failed").w_full().gap(4.0).child(title(t("Some emojis could not be added"), p)).children(failed.into_iter().map(|(n, e)| small(format!("{n}: {e}"), p).wrap())));
     }
     content = content.child(if found.is_empty() {
-        empty(if q.is_empty() { "No emoji yet." } else { "No emojis found matching your search." }, p)
+        empty(if q.is_empty() { "No emoji yet." } else { "No emojis found matching your search." }, p).key("empty")
     } else {
-        groups
+        groups.key("groups")
     });
-    section(&format!("Emoji — {}", list.len()), content, true, p)
+    section(&format!("Emoji — {}", list.len()), content, true, p).key("sec-emoji")
 }
 
 // ---- Invites and bans -----------------------------------------------------------------------
@@ -697,7 +703,7 @@ fn invites<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette
         Ok(l) => l,
         Err(e) => return section(t("Invites"), e, true, p),
     };
-    let rows: Vec<El> = list
+    let rows: Vec<(Option<String>, El)> = list
         .iter()
         .map(|i| {
             let code = i.code.clone();
@@ -705,21 +711,22 @@ fn invites<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette
             let ch = i.channel.as_ref().and_then(|c| c.name.clone()).or_else(|| i.channel_id.and_then(|c| store.channels.get(&c)?.name.clone())).unwrap_or_default();
             let uses = if i.max_uses == 0 { format!("{} uses", i.uses) } else { format!("{}/{} uses", i.uses, i.max_uses) };
             let expires = i.expires_at.as_deref().map_or("Never expires".to_string(), |t| format!("Expires {}", date(t)));
-            row()
+            let key = Some(format!("i-{code}"));
+            (key, row()
                 .w_full()
                 .gap(12.0)
                 .center_y()
                 .child(col().grow(1.0).min_w(0.0).child(title(code.clone(), p)).child(small(format!("#{ch} · by {by} · {uses} · {expires}"), p)))
                 .child(Button::new(t("Revoke")).variant(ButtonVariant::Danger).size(ButtonSize::Compact).on_press(move |s: &mut S| {
                     acc(s).api(Method::DELETE, format!("/invites/{code}"), None, Then::Reload("invites".into(), format!("/guilds/{g}/invites")))
-                }).el(p))
+                }).el(p)))
         })
         .collect();
     let mut content = col().w_full().gap(16.0).children(crate::social::pause_invites(store, g, p, acc));
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    section(t("Invites"), content.child(if rows.is_empty() { empty("No invites yet.", p) } else { card(rows, p) }), true, p)
+    section(t("Invites"), content.child(if rows.is_empty() { empty("No invites yet.", p).key("empty") } else { keyed_card(rows, p).key("list") }), true, p)
 }
 
 fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -728,13 +735,13 @@ fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, a
         Err(e) => return section(t("Bans"), e, true, p),
     };
     let q = st.form.value("search", "").trim().to_lowercase();
-    let rows: Vec<El> = list
+    let rows: Vec<(Option<String>, El)> = list
         .iter()
         .filter(|b| q.is_empty() || b.user.username.to_lowercase().contains(&q))
         .map(|b| {
             let u = b.user.id;
             let ban = serde_json::to_value(b).unwrap_or_default();
-            row()
+            (Some(format!("b-{u}")), row()
                 .w_full()
                 .gap(12.0)
                 .center_y()
@@ -749,14 +756,14 @@ fn bans<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palette, a
                 .child(col().grow(1.0).min_w(0.0).child(title(user_name(&b.user), p)).child(small(b.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| "No reason given".into()), p)))
                 .child(Button::new("Unban").variant(ButtonVariant::Secondary).size(ButtonSize::Compact).on_press(move |s: &mut S| {
                     acc(s).api(Method::DELETE, format!("/guilds/{g}/bans/{u}"), None, Then::Reload("bans".into(), format!("/guilds/{g}/bans")))
-                }).el(p))
+                }).el(p)))
         })
         .collect();
     let mut content = col().w_full().gap(16.0).child(field(st, acc, "search", "", "", t("Search bans"), p));
     if let Some(e) = error(st, p) {
         content = content.child(e);
     }
-    section(&format!("Bans — {}", list.len()), content.child(if rows.is_empty() { empty("No bans.", p) } else { card(rows, p) }), true, p)
+    section(&format!("Bans — {}", list.len()), content.child(if rows.is_empty() { empty("No bans.", p).key("empty") } else { keyed_card(rows, p).key("list") }), true, p).key("sec-bans")
 }
 
 // ---- Activity log ---------------------------------------------------------------------------
@@ -970,7 +977,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
                     header = header.fill(c.hover);
                 }
             }
-            let mut entry = col().w_full().radius(12.0).clip_rounded(12.0).border(1.0, p.background_modifier_accent).fill(p.background_textarea).child(header);
+            let mut entry = col().key(format!("a-{id}")).w_full().radius(12.0).clip_rounded(12.0).border(1.0, p.background_modifier_accent).fill(p.background_textarea).child(header);
             if open {
                 let mut details = col().w_full().px(16.0).py(12.0).gap(12.0).child(el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(1.0).fill(p.background_modifier_accent));
                 for (ban, text_) in &pres.blocks {
@@ -1000,7 +1007,7 @@ fn audit_log<S: 'static>(store: &Store, st: &ShellState, g: Snowflake, p: &Palet
             entry
         })
         .collect();
-    let mut body = head.child(if rows.is_empty() { empty(t("No logs yet"), p) } else { col().w_full().gap(8.0).children(rows) });
+    let mut body = head.child(if rows.is_empty() { empty(t("No logs yet"), p).key("empty") } else { col().key("list").w_full().gap(8.0).children(rows) });
     let last = log.audit_log_entries.last().and_then(|e| e["id"].as_str()).map(str::to_string);
     if let Some(last) = last.filter(|_| !st.form.data.contains_key("audit-end") && log.audit_log_entries.len() >= AUDIT_PAGE) {
         // `INFINITE_SCROLL_OVERSCAN_PX`: the next page loads once this sentinel comes within

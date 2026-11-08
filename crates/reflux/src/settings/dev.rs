@@ -107,6 +107,7 @@ pub(super) fn applications<S: 'static>(st: &ShellState, p: &Palette, acc: ShellA
     let buttons = row().gap(12.0).center_y().child(Button::new(t("Create application")).key("dev-create").on_press(move |s: &mut S| acc(s).nav.dev.create = true).el(p)).child(docs);
     let body = if list.is_empty() {
         col()
+            .key("empty")
             .w_full()
             .py(32.0)
             .gap(8.0)
@@ -115,7 +116,7 @@ pub(super) fn applications<S: 'static>(st: &ShellState, p: &Palette, acc: ShellA
             .child(text(t("No applications yet")).font(font(16.0, 600.0).lh(20.0)).color(p.text_primary))
             .child(muted(tf("Create your first application to get started with the {apiName}.", &[("apiName", "Fluxer API")]), p))
     } else {
-        col().w_full().gap(8.0).children(list.iter().map(|a| item(a, p, acc)))
+        col().key("list").w_full().gap(8.0).children(list.iter().map(|a| item(a, p, acc)))
     };
     section(t("Applications"), col().w_full().gap(20.0).child(buttons).child(body), true, p)
 }
@@ -214,6 +215,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
         let all = redirects.clone();
         redirect_rows = redirect_rows.child(
             row()
+                .key(format!("r-{}", r.replace('/', "\\")))
                 .w_full()
                 .gap(8.0)
                 .center_y()
@@ -236,7 +238,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
     }
     let all = redirects.clone();
     redirect_rows = redirect_rows.child(
-        row().w_full().gap(8.0).items_end().child(el().grow(1.0).min_w(0.0).child(super::input(st, acc, "dev.redirect", "", "", "https://example.com/callback", false, p))).child(small_button(
+        row().key("add").w_full().gap(8.0).items_end().child(el().grow(1.0).min_w(0.0).child(super::input(st, acc, "dev.redirect", "", "", "https://example.com/callback", false, p))).child(small_button(
             t("Add redirect"),
             true,
             "dev-redir-add",
@@ -343,7 +345,8 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
         fields = fields.child(match banner {
             Some(px) => {
                 let (w, h) = px.size();
-                el().w_full()
+                el().key("banner")
+                    .w_full()
                     .radius(8.0)
                     .clip_rounded(8.0)
                     .fill(p.background_secondary)
@@ -351,6 +354,7 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
                     .child(el().w_full().aspect_fit(w.max(1) as f32 / h.max(1) as f32).pixels_fit(&px, rune::SurfaceFit::Fit).label(t("Bot banner preview")))
             }
             None => row()
+                .key("no-banner")
                 .w_full()
                 .min_h(80.0)
                 .padding(16.0)
@@ -411,13 +415,14 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
             }
             grid = grid.child(r);
         }
-        builder = builder.child(col().w_full().gap(8.0).child(label(t("Bot permissions"), p)).child(grid));
+        builder = builder.child(col().key("perms").w_full().gap(8.0).child(label(t("Bot permissions"), p)).child(grid));
     }
     let url = authorize_url(&st.web_base, &id, &d.scopes, d.perms, d.redirect.as_deref(), code_grant);
     let shown_url = url.clone().unwrap_or_else(|| t("Select scopes (and redirect URI if required)").into());
     let copy = url.clone().unwrap_or_default();
     builder = builder.child(
         row()
+            .key("url")
             .w_full()
             .gap(8.0)
             .items_end()
@@ -465,16 +470,17 @@ fn detail<S: 'static>(st: &ShellState, app: &Value, p: &Palette, acc: ShellAcces
         sh.nav.dev = Dev::default();
         sh.api(Method::DELETE, format!("/oauth2/applications/{del_id}"), Some(json!({})), Then::Reload("dev.apps".into(), LIST.into()));
     };
-    let mut out = col().w_full().gap(24.0).child(header);
+    let mut out = col().key("detail").w_full().gap(24.0).child(header);
     if let Some(e) = &st.form.error {
-        out = out.child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+        out = out.child(text(e.clone()).key("error").font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
     }
-    out.child(info)
-        .child(secrets)
-        .children(bot_card)
-        .child(builder)
+    out.child(info.key("info"))
+        .child(secrets.key("secrets"))
+        .children(bot_card.map(|b| b.key("bot")))
+        .child(builder.key("builder"))
         .child(
             row()
+                .key("actions")
                 .w_full()
                 .gap(8.0)
                 .child(Button::new(t("Delete application")).variant(ButtonVariant::Danger).key("dev-delete").on_press(delete).el(p))
@@ -516,7 +522,7 @@ fn bot_tag<S: 'static>(st: &ShellState, acc: ShellAccess<S>, bot: &Value, p: &Pa
     if st.form.data.contains_key("dev.bot_name_checked")
         && let Some(e) = username_error(&name)
     {
-        c = c.child(text(e).font(font(15.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+        c = c.child(text(e).key("error").font(font(15.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
     }
     let trimmed = name.trim();
     let len = (1..=32).contains(&trimmed.chars().count());
@@ -525,7 +531,7 @@ fn bot_tag<S: 'static>(st: &ShellState, acc: ShellAccess<S>, bot: &Value, p: &Pa
         let color = if ok { p.status_online } else { p.text_tertiary };
         row().gap(8.0).items_start().child(icon(if ok { &crate::icons::CHECK_BOLD } else { &crate::icons::X_BOLD }, 16.0).color(color).mt(2.0)).child(text(label.to_string()).font(font(14.0, 400.0).lh(17.5)).color(color).wrap().shrink())
     };
-    c.child(col().gap(6.0).child(rule(len, t("Between 1 and 32 characters"))).child(rule(chars, t("Letters (a-z, A-Z), numbers (0-9), and underscores (_) only"))))
+    c.child(col().key("rules").gap(6.0).child(rule(len, t("Between 1 and 32 characters"))).child(rule(chars, t("Letters (a-z, A-Z), numbers (0-9), and underscores (_) only"))))
 }
 
 // ---- Embed debugger --------------------------------------------------------------------------
@@ -561,8 +567,8 @@ pub(super) fn embed_debugger<S: 'static>(store: &Store, st: &ShellState, p: &Pal
     }))
     .ok();
     let preview = match msg {
-        Some(m) if !m.embeds.is_empty() => col().w_full().gap(8.0).items_start().children(crate::shell::embeds::embeds(store, st, &m, p, acc)),
-        _ => muted(t("No embeds returned"), p),
+        Some(m) if !m.embeds.is_empty() => col().key("embeds").w_full().gap(8.0).items_start().children(crate::shell::embeds::embeds(store, st, &m, p, acc)),
+        _ => muted(t("No embeds returned"), p).key("none"),
     };
     let raw = serde_json::to_string_pretty(embeds).unwrap_or_default();
     let spans = crate::shell::highlight::spans("json", &raw, crate::ui::is_light(p));

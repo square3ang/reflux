@@ -141,6 +141,7 @@ pub fn gifts<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> E
             None => tf("Purchased {date}", &[("date", super::account::day(g["created_at"].as_str().unwrap_or_default()).as_str())]),
         };
         let mut c = col()
+            .key(format!("gift-{code}"))
             .w_full()
             .padding(16.0)
             .gap(12.0)
@@ -212,7 +213,7 @@ pub fn gift_accept<S: 'static>(st: &ShellState, code: &str, p: &Palette, acc: Sh
     };
     let dismiss = || Button::new(t("Close")).variant(ButtonVariant::Secondary).on_press(close).el(p);
     let (content, footer) = match gift {
-        None if st.form.error.is_none() => (row().w_full().py(16.0).center().child(spinner(p.text_primary_muted)), None),
+        None if st.form.error.is_none() => (row().key("loading").w_full().py(16.0).center().child(spinner(p.text_primary_muted)), None),
         None => {
             let q = row().size(48.0, 48.0).center().radius(999.0).fill(p.background_tertiary).child(icon(&icons::QUESTION_FILL, 24.0).color(p.text_tertiary));
             (line(q, t("Unknown gift").into(), p.status_danger, None, t("This gift code is invalid or already claimed.").into()), Some(dismiss()))
@@ -230,7 +231,7 @@ pub fn gift_accept<S: 'static>(st: &ShellState, code: &str, p: &Palette, acc: Sh
                 let later = Button::new(t("Maybe later")).variant(ButtonVariant::Secondary).disabled(st.form.busy).on_press(close).el(p);
                 let mut items = line(gift_glyph(true), duration(g), p.text_primary, from, help);
                 if let Some(e) = &st.form.error {
-                    items = col().w_full().gap(12.0).child(items).child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
+                    items = col().key("with-error").w_full().gap(12.0).child(items).child(text(e.clone()).font(font(14.0, 400.0).lh(20.0)).color(p.status_danger).wrap());
                 }
                 (items, Some(row().gap(8.0).child(later).child(claim.el(p))))
             }

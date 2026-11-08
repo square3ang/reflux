@@ -347,27 +347,27 @@ fn tile<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, t:
         .min_w(0.0);
     if !t.screen {
         if vs.mute || vs.self_mute {
-            pill = pill.child(glyph(&icons::MICROPHONE_SLASH_FILL, if vs.mute { danger() } else { rgba(255, 255, 255, 0.72) }));
+            pill = pill.child(glyph(&icons::MICROPHONE_SLASH_FILL, if vs.mute { danger() } else { rgba(255, 255, 255, 0.72) }).key("mute"));
         }
         if vs.deaf || vs.self_deaf {
-            pill = pill.child(glyph(&icons::SPEAKER_SLASH_FILL, if vs.deaf { danger() } else { rgba(255, 255, 255, 0.72) }));
+            pill = pill.child(glyph(&icons::SPEAKER_SLASH_FILL, if vs.deaf { danger() } else { rgba(255, 255, 255, 0.72) }).key("deaf"));
         }
         if st.voice.local_mutes.contains(&t.user) {
-            pill = pill.child(glyph(&icons::SPEAKER_X_FILL, danger()));
+            pill = pill.child(glyph(&icons::SPEAKER_X_FILL, danger()).key("local-mute"));
         }
     } else {
         pill = pill.child(glyph(&icons::MONITOR_PLAY_FILL, Color::WHITE));
     }
     let label = if t.screen { crate::i18n::tf("{streamerDisplayName}'s screen", &[("streamerDisplayName", &name.to_string())]) } else { name.clone() };
-    pill = pill.child(text(label).font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().shrink().ml(3.0));
+    pill = pill.child(text(label).key("name").font(font(12.0, 500.0).lh(14.4)).color(Color::WHITE).truncate().shrink().ml(3.0));
     if st.voice.settings.show_connection_ids
         && let Some(c) = &vs.connection_id
     {
-        pill = pill.child(text(format!(" · {c}")).font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72)).truncate().shrink());
+        pill = pill.child(text(format!(" · {c}")).key("conn").font(font(12.0, 500.0).lh(14.4)).color(rgba(255, 255, 255, 0.72)).truncate().shrink());
     }
     if st.call.layout == LayoutMode::Focus && st.voice.focus == Some(t.user) {
         // `pinnedParticipant`: the pin glyph marks the focused tile.
-        pill = pill.child(glyph(&icons::PUSH_PIN_FILL, rgba(255, 255, 255, 0.9)));
+        pill = pill.child(glyph(&icons::PUSH_PIN_FILL, rgba(255, 255, 255, 0.9)).key("pin"));
     }
     let key = format!("tile-{}-{}", t.user, t.screen as u8);
     let mut outer = el()
@@ -479,7 +479,7 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
             // inner row is at least the viewport's last width.
             let tile_h = ROW_H - 12.0;
             let inner_w = rune::memo::layout_size("call-strip").map_or(0.0, |[w, _]| w);
-            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.iter().copied().map(|t| el().w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
+            let inner = row().min_w(inner_w).h_full().gap(8.0).center_y().justify_center().children(rest.iter().copied().map(|t| el().key(format!("s-{}-{}", t.user, t.screen as u8)).w(tile_h * 16.0 / 9.0).h(tile_h).child(make(t, false))));
             c = c.child(row().key("call-strip").w_full().h(ROW_H).scroll_x().child(inner));
         }
         // `focusMembersToggle`: the users pill under the focused tile that hides and shows the
@@ -517,7 +517,7 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     // `VoiceGridLayout`: the packed columns, each tile the computed 16:9 size, rows centred.
     let mut grid = col().key(grid_key).w_full().h_full().min_w(0.0).min_h(0.0).gap(packed.gap).center();
     for chunk in all.chunks(packed.columns.max(1)) {
-        grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().size(packed.tile[0], packed.tile[1]).child(make(*t, false)))));
+        grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().key(format!("g-{}-{}", t.user, t.screen as u8)).size(packed.tile[0], packed.tile[1]).child(make(*t, false)))));
     }
     grid
 }
@@ -646,18 +646,18 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
         .fill(rgb(0, 0, 0))
         .border(1.0, hud_border());
     let mic_button = button(if v.self_mute { &icons::MICROPHONE_SLASH_FILL } else { &icons::MICROPHONE_FILL }, if v.self_mute { t("Unmute") } else { t("Mute") }, mic.0, mic.1, mic.2, Box::new(move |s: &mut S| acc(s).toggle_mute()));
-    bar = bar.child(control_pair(mic_button, MENU_INPUT, t("Input settings"), p, acc));
+    bar = bar.child(control_pair(mic_button, MENU_INPUT, t("Input settings"), p, acc).key("mic"));
     let deaf_button = button(if v.self_deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::SPEAKER_HIGH_FILL }, if v.self_deaf { t("Undeafen") } else { t("Deafen") }, deaf.0, deaf.1, deaf.2, Box::new(move |s: &mut S| acc(s).toggle_deaf()));
-    bar = bar.child(control_pair(deaf_button, MENU_OUTPUT, t("Output settings"), p, acc));
+    bar = bar.child(control_pair(deaf_button, MENU_OUTPUT, t("Output settings"), p, acc).key("deaf"));
     if can_video {
         let cam_button = button(if v.camera { &icons::VIDEO_CAMERA_FILL } else { &icons::VIDEO_CAMERA_SLASH_FILL }, if v.camera { t("Turn off camera") } else { t("Turn on camera") }, cam.0, cam.1, cam.2, Box::new(op(acc, Op::ToggleCamera)));
-        bar = bar.child(control_pair(cam_button, MENU_CAMERA, t("Camera settings"), p, acc));
+        bar = bar.child(control_pair(cam_button, MENU_CAMERA, t("Camera settings"), p, acc).key("camera"));
     }
     let scr_button = button(&icons::MONITOR_PLAY_FILL, if v.screen { t("End screen share") } else { t("Share your screen") }, scr.0, scr.1, scr.2, Box::new(move |s: &mut S| {
         let sh = acc(s);
         if sh.voice.screen { sh.intents.push(Intent::ToggleScreen) } else { open_screen_picker(sh) }
     }));
-    bar = bar.child(control_pair(scr_button, MENU_SCREEN, t("Screen share settings"), p, acc));
+    bar = bar.child(control_pair(scr_button, MENU_SCREEN, t("Screen share settings"), p, acc).key("screen"));
     // `VoiceMoreOptionsMenu`: layout, own camera, speakers, region and settings.
     bar = bar.child(
         row()
@@ -680,12 +680,12 @@ fn control_bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: She
             }),
     );
     // `.buttonSeparator`: 1×22, 12% white, before Disconnect.
-    bar = bar.child(el().size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)));
-    bar = bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())));
+    bar = bar.child(el().key("separator").size(1.0, 22.0).radius(999.0).fill(rgba(255, 255, 255, 0.12)));
+    bar = bar.child(button(&icons::PHONE_X_FILL, t("Disconnect"), rgb(0xff, 0x3b, 0x30), danger(), Color::WHITE, Box::new(move |s: &mut S| acc(s).leave_voice())).key("disconnect"));
     // `canStopWatchingFocusedStream`: the focused tile is a stream we watch from elsewhere.
     let me = store.my_id();
     if v.watching.is_some_and(|w| w != me) && st.call.pinned(v.focus) == v.watching {
-        bar = bar.child(button(&icons::EYE_SLASH_FILL, t("Stop watching stream"), red.0, red.1, red.2, Box::new(move |s: &mut S| super::voice::stop_watching(s, acc))));
+        bar = bar.child(button(&icons::EYE_SLASH_FILL, t("Stop watching stream"), red.0, red.1, red.2, Box::new(move |s: &mut S| super::voice::stop_watching(s, acc))).key("stop-watching"));
     }
     bar
 }
@@ -759,7 +759,7 @@ fn participant_stack<S: 'static>(store: &Store, st: &ShellState, guild: Option<S
         if speaking {
             face = face.border(2.0, p.status_online);
         }
-        stack = stack.child(face.cursor(rune::Cursor::Pointer).role("button").label(store.display_name(guild, user)).on_press(move |s: &mut S| {
+        stack = stack.child(face.key(format!("p-{user}")).cursor(rune::Cursor::Pointer).role("button").label(store.display_name(guild, user)).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.focus = Some(user);
             sh.call.pin(Some(user));
@@ -769,6 +769,7 @@ fn participant_stack<S: 'static>(store: &Store, st: &ShellState, guild: Option<S
         let extra = people.len() - 5;
         stack = stack.child(
             row()
+                .key("more")
                 .min_w(24.0)
                 .h(24.0)
                 .px(5.0)
@@ -825,15 +826,15 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(icon(&icons::SPEAKER_HIGH_FILL, 20.0).color(rgba(255, 255, 255, 0.72)))
         .child(text(name).font(font(16.0, 600.0).lh(20.0)).color(Color::WHITE).truncate().shrink());
     if st.voice.encrypted {
-        header = header.child(e2ee_badge());
+        header = header.child(e2ee_badge().key("e2ee"));
     }
     let mut right = row().gap(4.0).center_y();
     // `StreamFocusHeaderInfo`: the focused tile is the watched stream.
     if st.voice.watching.is_some() && st.call.pinned(st.voice.focus) == st.voice.watching {
-        right = right.child(super::voice::stream_controls(store, st, p, acc));
+        right = right.child(super::voice::stream_controls(store, st, p, acc).key("stream-controls"));
     }
     if !people.is_empty() {
-        right = right.child(participant_stack(store, st, guild, &people, p, acc));
+        right = right.child(participant_stack(store, st, guild, &people, p, acc).key("stack"));
     }
     right = right
         .child(
@@ -868,13 +869,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .child(header_button(if st.call.app_fullscreen { &icons::CORNERS_IN_BOLD } else { &icons::CORNERS_OUT_BOLD }, if st.call.app_fullscreen { t("Exit fullscreen") } else { t("Enter fullscreen") }, p, acc, move |s: &mut S| {
             let sh = acc(s);
             if sh.call.app_fullscreen { exit_fullscreen(sh) } else { sh.call.app_fullscreen = true }
-        }))
+        }).key("fullscreen"))
         .child(chat_pill(store, st, channel, true, p, acc));
-    header = header.child(el().grow(1.0)).child(right);
+    header = header.child(el().key("spacer").grow(1.0)).child(right.key("right"));
     let body = if st.voice.connected {
         layout(store, st, guild, &people, false, p, acc)
     } else {
-        row().w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
+        row().key("connecting").w_full().h_full().center().child(text(if st.voice.reconnecting { t("Reconnecting…") } else { t("Connecting…") }).font(font(16.0, 500.0).lh(20.0)).color(rgba(255, 255, 255, 0.72)))
     };
     let mut body = body;
     if let Some(until) = st.call.teleport_until
@@ -882,7 +883,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     {
         // shortcut: no region-teleport event from the engine; the overlay runs for a few seconds
         // after the region PATCH. Replace with the reconnect event when reflux-voice exposes it.
-        body = el().w_full().grow(1.0).min_h(0.0).child(body).child(teleport_overlay(p));
+        body = el().key("teleport").w_full().grow(1.0).min_h(0.0).child(body).child(teleport_overlay(p));
     }
     let mut root = col()
         .grow(1.0)
@@ -1489,13 +1490,13 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
             if st.voice.speaking.contains(u) {
                 face = face.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(12.0).border(2.0, p.status_online));
             }
-            row_tiles = row_tiles.child(face);
+            row_tiles = row_tiles.child(face.key(format!("f-{user}")));
         }
     } else {
         for t in &all {
             let vs = people.iter().find(|(u, _)| *u == t.user).map(|(_, v)| *v);
             if let Some(vs) = vs {
-                row_tiles = row_tiles.child(el().w(240.0).h_full().child(tile(store, st, None, *t, vs, false, p, acc)));
+                row_tiles = row_tiles.child(el().key(format!("t-{}-{}", t.user, t.screen as u8)).w(240.0).h_full().child(tile(store, st, None, *t, vs, false, p, acc)));
             }
         }
     }
@@ -1503,6 +1504,7 @@ pub fn dm_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pal
     for u in ringing.iter().filter(|u| !people.iter().any(|(x, _)| x == *u)) {
         row_tiles = row_tiles.child(
             col()
+                .key(format!("r-{u}"))
                 .w(135.0)
                 .h(135.0)
                 .center()
@@ -1562,7 +1564,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
         let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
         let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(edge).pt(pad_top).pb(pad_bottom);
         if people.is_empty() {
-            content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)));
+            content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
         } else if !has_media {
             // `audioAvatarLayout` + `VoiceParticipantWrappedAvatarList`: wrapping avatars,
             // clamp(44, 18% of the smaller side, 88), with their mute / deafen badges.
@@ -1583,9 +1585,9 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
                         sh.voice.focus = next;
                         sh.call.pin(next);
                     });
-                list = list.child(face);
+                list = list.child(face.key(format!("a-{user}")));
             }
-            content = content.child(list);
+            content = content.child(list.key("avatars"));
         } else {
             // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
             // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
@@ -1677,7 +1679,7 @@ pub fn guild_strip<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &
     let mut strip = col().w_full().pt(12.0).pb(10.0).gap(10.0).items_center().fill(surface_1());
     let mut faces = row().gap(6.0).center_y();
     for (u, _) in people.iter().take(8) {
-        faces = faces.child(avatar(store, st, *u, 32.0, None, surface_3(), p));
+        faces = faces.child(avatar(store, st, *u, 32.0, None, surface_3(), p).key(format!("f-{u}")));
     }
     let mut left = row().gap(12.0).center_y().child(faces);
     if !people.is_empty() {
@@ -2292,7 +2294,7 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
         "devices" => {
             let cams = v.cameras.clone().unwrap_or_default();
             if cams.is_empty() {
-                body = body.child(body_text(t("No capture devices found."), p));
+                body = body.child(body_text(t("No capture devices found."), p).key("none"));
             } else {
                 // shortcut: device cards are names only (Fluxer shows live previews, which needs
                 // camera permission and a capture per device); add previews if users ask.
@@ -2322,14 +2324,14 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                             }),
                     );
                 }
-                body = body.child(cards);
+                body = body.child(cards.key("devices"));
             }
         }
         _ if !listed => {
-            body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p))
+            body = body.child(body_text("Choose the stream quality, then pick a screen or window in the system dialog.", p).key("portal"))
         }
         _ => match &v.screen_sources {
-            None => body = body.child(body_text(t("Loading…"), p)),
+            None => body = body.child(body_text(t("Loading…"), p).key("loading")),
             Some(list) => {
                 let windows = tab == "apps";
                 let card = |src: &reflux_voice::ScreenSource, px: &Pixels| {
@@ -2356,21 +2358,21 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                 };
                 let cards: Vec<El> = list.iter().filter(|(s, _)| s.window == windows).map(|(s, px)| card(s, px)).collect();
                 if cards.is_empty() {
-                    body = body.child(body_text(t(if windows { "No application windows found." } else { "No displays found." }), p));
+                    body = body.child(body_text(t(if windows { "No application windows found." } else { "No displays found." }), p).key("none"));
                 } else {
-                    body = body.child(row().w_full().flex_wrap().gap(8.0).children(cards));
+                    body = body.child(row().key("sources").w_full().flex_wrap().gap(8.0).children(cards));
                 }
             }
         },
     }
-    body = body.child(row().w_full().gap(16.0).child(r).child(f));
+    body = body.child(row().key("quality").w_full().gap(16.0).child(r).child(f));
     if let Some(preset) = set.screen_preset() {
         let note = crate::i18n::tf("Set by the {preset} preset. Picking a value here switches to Custom.", &[("preset", t(preset.0))]);
-        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap());
+        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap().key("preset"));
     }
     if !higher && st.premium {
         let note = crate::i18n::tf("Frame rates above 30 FPS require {premiumProductName}", &[("premiumProductName", "Plutonium")]);
-        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap());
+        body = body.child(text(note).font(font(13.0, 400.0).lh(18.0)).color(p.text_primary_muted).wrap().key("premium"));
     }
     if let Some(apps) = &v.audio_sources {
         let opts: Vec<(&str, &str)> = std::iter::once(("", "No audio")).chain(apps.iter().map(|(id, name)| (id.as_str(), name.as_str()))).collect();
@@ -2384,7 +2386,8 @@ fn screen_picker<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, 
                     sh.voice.settings.stream_audio = (!v.is_empty()).then(|| v.to_string());
                     sh.intents.push(Intent::Voice(Op::Settings));
                 })
-                .el(&st.popups, pops(acc), p, layer),
+                .el(&st.popups, pops(acc), p, layer)
+                .key("audio"),
         );
     }
     // A camera/device share or a listed source; on Wayland the portal's default pick counts.

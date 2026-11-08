@@ -529,9 +529,9 @@ pub fn claim_modal<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
             .child(desc(tf("Enter the code we sent to {email}.", &[("email", &to)])))
             .child(Input::new("claim-code", &c.code, move |s: &mut S| -> &mut TextEdit { &mut claim_mut(acc(s)).code }).placeholder("000000").error(err("code")).el(p));
         if c.resent && c.error.is_none() {
-            body = body.child(text(t("We sent a new code.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted));
+            body = body.child(text(t("We sent a new code.")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).key("resent"));
         }
-        body = body.child(row().w_full().child(resend.el(p)));
+        body = body.child(row().w_full().child(resend.el(p)).key("resend"));
         let complete = c.code.text.split_whitespace().collect::<String>().chars().count() == 6;
         let footer = row()
             .gap(8.0)

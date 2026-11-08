@@ -455,7 +455,7 @@ fn popout<S: 'static>(store: &Store, st: &ShellState, t: For, p: &Palette, acc: 
         }
         header = header.child(nav);
     }
-    header = header.child(bar);
+    header = header.child(bar.key(format!("bar-{}", st.expr.tab.label())));
     col()
         .w(WIDTH)
         .h(HEIGHT)
@@ -470,7 +470,7 @@ fn popout<S: 'static>(store: &Store, st: &ShellState, t: For, p: &Palette, acc: 
         .key("expr-picker")
         .child(header)
         .child(el().w_full().h(1.0).fill(over(p.background_modifier_hover, bg)))
-        .child(col().w_full().grow(1.0).min_h(0.0).fill(p.background_primary).child(body))
+        .child(col().w_full().grow(1.0).min_h(0.0).fill(p.background_primary).key(format!("body-{}", st.expr.tab.label())).child(body))
 }
 
 // ---- Shared grid ---------------------------------------------------------------------------
@@ -740,6 +740,7 @@ fn rail<S: 'static>(store: &Store, st: &ShellState, rows: &[Row], scope: &'stati
             .cursor(rune::Cursor::Pointer)
             .role("button")
             .label(label)
+            .key(format!("rail-{cat}"))
             .child(glyph)
             .on_press(move |s: &mut S| acc(s).expr.jump = Some((scope.to_string(), head.clone())))
     };
@@ -839,7 +840,7 @@ fn grid_list<S: 'static>(
                     .w_full()
                     .h(g.row_h)
                     .gap(if g.kind == "sticker" { 8.0 } else { 0.0 })
-                    .children(items.iter().enumerate().map(|(c, it)| cell(&cx, it, g, sel == Some((i, c)), acc))),
+                    .children(items.iter().enumerate().map(|(c, it)| cell(&cx, it, g, sel == Some((i, c)), acc).key(it.key()))),
                 _ => el(),
             };
             let gap = matches!(rows[i], Row::Items(_)) && matches!(rows.get(i + 1), Some(Row::Head { .. }));

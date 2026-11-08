@@ -109,6 +109,7 @@ pub(super) fn section<S: 'static>(st: &ShellState, saved: &Draft, busy: bool, p:
     let own = st.form.data.get(PREVIEW).and_then(|v| v["own_badges"].as_array());
     let body = match own {
         None if st.form.error.is_some() => row()
+            .key("error")
             .gap(12.0)
             .center_y()
             .child(muted(t("Your badges couldn't be loaded."), p))
@@ -117,9 +118,9 @@ pub(super) fn section<S: 'static>(st: &ShellState, saved: &Draft, busy: bool, p:
                 sh.form.error = None;
                 load(sh);
             }).el(p)),
-        None => muted(t("Loading…"), p),
-        Some(a) if a.is_empty() => muted(t("You don't have any badges yet."), p),
-        Some(a) => list(st, a, &d, busy, p, acc),
+        None => muted(t("Loading…"), p).key("loading"),
+        Some(a) if a.is_empty() => muted(t("You don't have any badges yet."), p).key("empty"),
+        Some(a) => list(st, a, &d, busy, p, acc).key("list"),
     };
     col().w_full().gap(16.0).child(muted(t("Choose which badges other people see on your profile."), p)).child(body)
 }
@@ -130,11 +131,11 @@ fn list<S: 'static>(st: &ShellState, own: &[Value], d: &Draft, busy: bool, p: &P
     if own.len() > FILTER_THRESHOLD {
         let edit = st.form.text.get("badge-filter").cloned().unwrap_or_default();
         let field = Input::new("form-badge-filter", &edit, move |s: &mut S| acc(s).form.text.entry("badge-filter".into()).or_default()).placeholder(t("Filter badges")).el(p);
-        out = out.child(field.label(t("Filter badges")));
+        out = out.child(field.label(t("Filter badges")).key("filter"));
     }
     let shown: Vec<&Value> = own.iter().filter(|b| filter.is_empty() || b["label"].as_str().unwrap_or_default().to_lowercase().contains(&filter)).collect();
     if shown.is_empty() {
-        out = out.child(muted(t("No badges match."), p));
+        out = out.child(muted(t("No badges match."), p).key("none"));
     }
     let premium = "Plutonium";
     for b in shown {
@@ -165,9 +166,9 @@ fn list<S: 'static>(st: &ShellState, own: &[Value], d: &Draft, busy: bool, p: &P
             .child(art(st, b, p))
             .child(text(label.clone()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).wrap().grow(1.0).shrink())
             .child(Switch::new(visible).disabled(busy || number_moot).on_toggle(toggle).el(p).label(tf("Show {badgeLabel} on your profile", &[("badgeLabel", &label)])));
-        let mut item = col().w_full().gap(12.0).child(head);
+        let mut item = col().key(format!("b-{key}")).w_full().gap(12.0).child(head);
         if number_moot {
-            item = item.child(muted(t("Shown only when your Visionary badge is visible and not masked."), p).pl(52.0));
+            item = item.child(muted(t("Shown only when your Visionary badge is visible and not masked."), p).pl(52.0).key("note"));
         }
         let product = if key == "visionary" { "Visionary" } else { premium };
         let date = (0usize, tf("Hide {premiumProductName} purchase date", &[("premiumProductName", product)]), Some(tf("Remove when you first bought {premiumProductName} from your badge", &[("premiumProductName", product)])));
@@ -192,7 +193,7 @@ fn list<S: 'static>(st: &ShellState, own: &[Value], d: &Draft, busy: bool, p: &P
                 }
                 vs = vs.child(sw.el(p));
             }
-            item = item.child(vs);
+            item = item.child(vs.key("variants"));
         }
         out = out.child(item);
     }

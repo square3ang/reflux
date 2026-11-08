@@ -204,7 +204,7 @@ fn modal<S: 'static>(head: El, splash: Option<Pixels>, p: &Palette, acc: ShellAc
         .focusable(true)
         .on_press(x.clone())
         .child(rune::icon(&icons::X_BOLD, 18.0).color(Color::WHITE));
-    root = root.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).padding(24.0).center().child(card)).child(inset_close).role("dialog").label(t("Invite modal preview"));
+    root = root.child(row().key("card").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).padding(24.0).center().child(card)).child(inset_close.key("close")).role("dialog").label(t("Invite modal preview"));
     el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(Color::BLACK).opacity(0.85))
         .child(col().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).padding(24.0).center().child(root.modal(true, x)))

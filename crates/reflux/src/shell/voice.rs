@@ -1075,7 +1075,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .child(status("Connection failed", p.status_danger).cursor(rune::Cursor::Pointer).on_press(retry))
             .child(control_button(&icons::ARROW_CLOCKWISE_BOLD, t("Try again"), p, retry))
             .child(control_button(&icons::X_BOLD, t("Dismiss"), p, move |s: &mut S| acc(s).voice.failed = None));
-        return Some(shell.child(status_row).child(divider));
+        return Some(shell.key("voice-failed").child(status_row).child(divider));
     };
     let (label, color) = match (v.connected, v.reconnecting) {
         (_, true) => (t("Reconnecting..."), p.status_idle),
@@ -1084,18 +1084,18 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     };
     let mut status_row = row().w_full().h(32.0).gap(8.0).center_y();
     if v.connected {
-        status_row = status_row.child(signal_icon(v, p));
+        status_row = status_row.child(signal_icon(v, p).key("signal"));
     }
     // The status opens `VoiceDetailsPopout`; the lock is `VoiceE2EEIndicator`.
     let details = status(label, color).key(super::call::DETAILS).cursor(rune::Cursor::Pointer).role("button").on_press(move |s: &mut S| acc(s).popups.toggle(super::call::DETAILS));
     status_row = status_row.child(details);
     if v.encrypted {
-        status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted"));
+        status_row = status_row.child(icon(&icons::LOCK_SIMPLE_FILL, 16.0).color(p.status_online).label("Call media is encrypted").key("lock"));
     }
     // `AudioProcessingButton`: opens `AudioProcessingModal`.
     status_row = status_row
-        .child(control_button(&icons::WAVEFORM_BOLD, t("Audio processing"), p, move |s: &mut S| acc(s).voice.modal = Some(Modal::AudioProcessing)))
-        .child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()));
+        .child(control_button(&icons::WAVEFORM_BOLD, t("Audio processing"), p, move |s: &mut S| acc(s).voice.modal = Some(Modal::AudioProcessing)).key("audio"))
+        .child(control_button(&icons::PHONE_X_FILL, t("Disconnect"), p, move |s: &mut S| acc(s).leave_voice()).key("disconnect"));
     let channel_name = store.channels.get(&channel).map(|c| super::chat::channel_title(store, c)).unwrap_or_default();
     let source = match guild.and_then(|g| store.guilds.get(&g)).and_then(|g| g.info.as_ref()) {
         Some(g) => format!("{channel_name} / {}", g.name),
@@ -1149,7 +1149,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         // `.connectionIdRow`: 12/16 text-secondary after a 16px text-tertiary desktop icon.
         let glyph = if mine.is_some_and(|s| s.is_mobile) { &icons::DEVICE_MOBILE } else { &icons::DESKTOP };
         info = info.child(
-            row().w_full().gap(8.0).center_y().child(icon(glyph, 16.0).color(p.text_tertiary)).child(text(id.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).truncate().shrink().label(id)),
+            row().key("connection-id").w_full().gap(8.0).center_y().child(icon(glyph, 16.0).color(p.text_tertiary)).child(text(id.clone()).font(font(12.0, 400.0).lh(16.0)).color(p.text_secondary).truncate().shrink().label(id)),
         );
     }
     if v.connected && v.settings.panel_avatars {
@@ -1166,19 +1166,19 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             let mut stack = row().gap(0.0).center_y();
             for &(u, muted, deaf) in users.iter().take(4) {
                 // `VoiceParticipantAvatarList`'s context menu.
-                let face = voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p);
+                let face = voice_avatar(store, st, u, 32.0, v.speaking.contains(&u), muted, deaf, p.background_secondary, p).key(format!("u-{u}"));
                 stack = stack.child(super::call::ParticipantMenu::participant_menu(face, u, guild, acc));
             }
             if users.len() > 4 {
                 stack = stack.child(
-                    row().size(32.0, 32.0).center().radius(999.0).fill(p.background_tertiary).child(text(format!("+{}", users.len() - 4)).font(font(10.0, 600.0).lh(12.0)).color(p.text_secondary)),
+                    row().key("more").size(32.0, 32.0).center().radius(999.0).fill(p.background_tertiary).child(text(format!("+{}", users.len() - 4)).font(font(10.0, 600.0).lh(12.0)).color(p.text_secondary)),
                 );
             }
-            info = info.child(stack);
+            info = info.child(stack.key("avatars"));
         }
     }
     let shell = shell.on_secondary_press(move |s: &mut S, at, _| acc(s).popups.open_at(PANEL_MENU, [at.x, at.y]));
-    Some(shell.child(status_row).child(info).child(media).child(divider))
+    Some(shell.key("voice-panel").child(status_row).child(info).child(media).child(divider))
 }
 
 const PANEL_MENU: &str = "voice-panel-menu";
@@ -1189,7 +1189,7 @@ const PANEL_MENU: &str = "voice-panel-menu";
 pub(crate) fn voice_avatar(store: &Store, st: &ShellState, user: Snowflake, size: f32, speaking: bool, muted: bool, deaf: bool, surface: Color, p: &Palette) -> El {
     let mut a = el().size(size, size).radius(999.0).child(super::avatar(store, st, user, size, None, surface, p));
     if speaking {
-        a = a.child(el().pin(Some(-3.0), Some(-3.0), Some(-3.0), Some(-3.0)).radius(999.0).border(3.0, p.status_online));
+        a = a.child(el().key("ring").pin(Some(-3.0), Some(-3.0), Some(-3.0), Some(-3.0)).radius(999.0).border(3.0, p.status_online));
     }
     if muted || deaf {
         let glyph = if deaf { &icons::SPEAKER_SLASH_FILL } else { &icons::MICROPHONE_SLASH_FILL };
@@ -1197,6 +1197,7 @@ pub(crate) fn voice_avatar(store: &Store, st: &ShellState, user: Snowflake, size
         let out = -(badge * 0.2).round();
         a = a.child(
             row()
+                .key("mute-badge")
                 .pin(None, None, Some(out), Some(out))
                 .size(badge, badge)
                 .center()
@@ -1261,25 +1262,25 @@ pub fn viewer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
     let paused = st.voice.self_stream && st.desktop.unfocused && crate::look::with(|l| l.pause_preview_unfocused);
     let content = if !watched || paused {
         if paused && last_frame {
-            body = body.child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
+            body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
         }
         // An own stream's tile (`isOwnScreenShare && isOwnStreamPreviewPaused`).
-        self_preview(p)
+        self_preview(p).key("paused")
     } else {
         match state {
-            WatchState::Failed(code) => failure_frame(code, p),
+            WatchState::Failed(code) => failure_frame(code, p).key("failed"),
             WatchState::Ended => {
-                body = body.child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
-                ended_overlay(p, acc)
+                body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
+                ended_overlay(p, acc).key("ended")
             }
             WatchState::Buffering if last_frame => {
-                body = body.child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
-                buffering_frame(true, p)
+                body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit).opacity(0.5));
+                buffering_frame(true, p).key("buffering-corner")
             }
-            WatchState::Buffering => buffering_frame(false, p),
+            WatchState::Buffering => buffering_frame(false, p).key("buffering"),
             _ => {
-                body = body.child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
-                el()
+                body = body.child(el().key("frame").w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit));
+                el().key("live")
             }
         }
     };
@@ -1301,7 +1302,7 @@ pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
     let (vol, muted) = (st.voice.settings.stream_volumes.get(&user.0).copied().unwrap_or(100.0), st.voice.settings.stream_mutes.contains(&user.0));
     let mut header = row().gap(dim::SPACING_2).center_y();
     if let Some(info) = stream_info(&st.voice.stream, st.voice.watch_fps).filter(|_| state == WatchState::Live || state == WatchState::Buffering) {
-        header = header.child(stream_pill(info, p));
+        header = header.child(stream_pill(info, p).key("stream-info"));
     }
     if watched && !spectators_for(store, guild, user).is_empty() {
         header = header.child(spectators_button(store, st, guild, user, p, acc));
@@ -1466,7 +1467,7 @@ fn spectators_button<S: 'static>(store: &Store, st: &ShellState, guild: Option<S
         .child(icon(&icons::EYE_FILL, 16.0).color(p.text_tertiary).group_color(p.control_button_hover_text))
         .child(text(watchers.len().to_string()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).group_color(p.control_button_hover_text));
     for w in watchers.iter().take(5) {
-        r = r.child(super::avatar(store, st, w.user, 20.0, None, p.background_primary, p));
+        r = r.child(super::avatar(store, st, w.user, 20.0, None, p.background_primary, p).key(format!("w-{}-{}", w.user, w.connection)));
     }
     r
 }

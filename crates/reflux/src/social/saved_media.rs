@@ -97,6 +97,7 @@ fn tag_list<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El
         c = c.child(row().w_full().wrap().gap(8.0).children(list.into_iter().map(|tag| {
             let x = tag.clone();
             row()
+                .key(format!("tag-{tag}"))
                 .gap(6.0)
                 .py(6.0)
                 .px(12.0)

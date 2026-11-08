@@ -129,6 +129,7 @@ impl<'a, S: 'static> Select<'a, S> {
             });
             // `.list`: padding 4 4 0, gap 1, and an ::after that leaves 4 at the bottom.
             let popup = col()
+                .key(format!("{}-popup", self.id))
                 .min_w(self.width)
                 .padding(1.0)
                 .fill(bg)

@@ -428,7 +428,7 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
     let step = std::rc::Rc::new(step);
     let mut items = vec![col().gap(4.0).child(label(sc["title"].as_str().unwrap_or_default(), p)).children(sc["subtitle"].as_str().map(|t| desc(t, p)))];
     if let Some(h) = sc["options_heading"].as_str() {
-        items.push(text(h.to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary));
+        items.push(text(h.to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_tertiary).key("heading"));
     }
     let mut footer_btn = None;
     if let Some(opts) = sc["options"].as_array().filter(|o| !o.is_empty()) {
@@ -436,6 +436,7 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
             let oid = o["id"].as_str().unwrap_or_default().to_string();
             let s2 = step.clone();
             row()
+                .key(format!("opt-{oid}"))
                 .w_full()
                 .py(10.0)
                 .px(12.0)
@@ -451,13 +452,14 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
                 .child(text(o["label"].as_str().unwrap_or_default().to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0).shrink().wrap())
                 .child(rune::icon(&icons::CARET_RIGHT_BOLD, 16.0).color(p.text_tertiary))
         }));
-        items.push(list);
+        items.push(list.key("options"));
     } else {
         if let Some(cl) = sc["checklist"]["items"].as_array() {
             items.push(col().w_full().gap(8.0).children(cl.iter().map(|it| {
                 let iid = it["id"].as_str().unwrap_or_default().to_string();
                 let on = checked.contains(&iid);
                 row()
+                    .key(format!("item-{iid}"))
                     .w_full()
                     .gap(10.0)
                     .items_start()
@@ -476,13 +478,13 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
                     })
                     .child(crate::ui::Checkbox::<S>::new(on).el(p))
                     .child(col().grow(1.0).shrink().child(text(it["label"].as_str().unwrap_or_default().to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)).children(it["description"].as_str().map(|d| text(d.to_string()).font(font(12.0, 400.0).lh(16.0)).color(p.text_primary_muted).wrap())))
-            })));
+            })).key("checklist"));
         }
         let s2 = step.clone();
         footer_btn = Some(Button::new(t("Next")).submitting(st.form.busy).key("report-next").on_press(move |s: &mut S| s2(s, None, None)).el(p));
     }
     if sc["urgent"].as_bool() == Some(true) {
-        items.push(desc("If someone is in immediate danger, contact your local emergency services.", p));
+        items.push(desc("If someone is in immediate danger, contact your local emergency services.", p).key("urgent"));
     }
     items.extend(error(st, p));
     let mut d = Dialog::new(title, close(acc)).body(body(items));

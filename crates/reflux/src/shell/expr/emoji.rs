@@ -176,7 +176,7 @@ fn skin_tones<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         x.skin_open = !x.skin_open;
     });
     if !st.expr.skin_open {
-        return button;
+        return button.key("skin");
     }
     const LABELS: [&str; 6] = ["Default skin tone", "Light skin tone", "Medium-light skin tone", "Medium skin tone", "Medium-dark skin tone", "Dark skin tone"];
     let order = std::iter::once(tone).chain((0..=5).filter(|&t| t != tone));
@@ -197,7 +197,7 @@ fn skin_tones<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
                 x.save();
             })
     }));
-    el().size(24.0, 24.0).child(options)
+    el().size(24.0, 24.0).key("skin-open").child(options)
 }
 
 /// (search bar, body).

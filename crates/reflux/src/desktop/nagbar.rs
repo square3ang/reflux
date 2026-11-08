@@ -156,7 +156,7 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
             .child(icon(ic, 20.0).color(color))
             .child(text(t.text.clone()).font(font(16.0, 600.0).lh(22.0)).color(p.text_primary))
             .on_press(move |s: &mut S| acc(s).desktop.toasts.clear());
-        layer.push(row().pin(Some(0.0), Some(24.0), Some(0.0), None).justify_center().items_start().child(pill));
+        layer.push(row().key("toast-layer").pin(Some(0.0), Some(24.0), Some(0.0), None).justify_center().items_start().child(pill));
     }
     if !st.popups.is_open("spell-menu") {
         return;

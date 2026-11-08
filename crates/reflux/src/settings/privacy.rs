@@ -197,6 +197,7 @@ fn review_alert<S: 'static>(default_friends: bool, p: &Palette, acc: ShellAccess
 fn review_guild(store: &Store, st: &ShellState, g: Snowflake, restricted: bool, p: &Palette) -> El {
     let name = store.guilds.get(&g).and_then(|x| x.info.as_ref()).map_or(String::new(), |i| i.name.clone());
     row()
+        .key(format!("g-{g}"))
         .w_full()
         .gap(8.0)
         .center_y()
@@ -317,6 +318,7 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
     if changed && !affected.is_empty() {
         body = body.child(
             col()
+                .key("affected")
                 .w_full()
                 .gap(8.0)
                 .padding(12.0)
@@ -347,8 +349,8 @@ pub(super) fn review_modal<S: 'static>(store: &Store, st: &ShellState, review: &
         t("Communities you join from now on will use this.")
     };
     body = body
-        .child(text(summary).font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).wrap())
-        .child(desc(t("You can change this anytime in your privacy settings, including for each community.")));
+        .child(text(summary).key("summary").font(font(14.0, 500.0).lh(19.6)).color(p.text_primary).wrap())
+        .child(desc(t("You can change this anytime in your privacy settings, including for each community.")).key("hint"));
 
     let patch = review_patch(review.friends, changed, applying, &all);
     let save = move |s: &mut S| {
@@ -451,14 +453,14 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
     let mut communication = col()
         .w_full()
         .gap(24.0)
-        .child(sub(t("Friend requests"), t("Choose who can send you a friend request."), friends, p));
+        .child(sub(t("Friend requests"), t("Choose who can send you a friend request."), friends, p).key("friends"));
     if review_pending(store, st) {
-        communication = communication.child(review_alert(s.default_guilds_restricted, p, acc));
+        communication = communication.child(review_alert(s.default_guilds_restricted, p, acc).key("alert"));
     }
     communication = communication
-        .child(sub(t("Direct messages"), t("Friends can always message you. These settings cover people and bots you only share a community with."), dms, p))
-        .child(sub(t("Incoming calls"), t("Choose who can start a call with you."), calls, p))
-        .child(sub(t("Group chats"), t("Choose who can add you to a group chat without asking first."), groups, p));
+        .child(sub(t("Direct messages"), t("Friends can always message you. These settings cover people and bots you only share a community with."), dms, p).key("dms"))
+        .child(sub(t("Incoming calls"), t("Choose who can start a call with you."), calls, p).key("calls"))
+        .child(sub(t("Group chats"), t("Choose who can add you to a group chat without asking first."), groups, p).key("groups"));
 
     let level = s.profile_privacy.to_string();
     let profile_opts = [
@@ -575,6 +577,7 @@ pub(super) fn devices<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
         let id = s["id_hash"].as_str().unwrap_or_default().to_string();
         let glyph = rune::icon(if mobile { &crate::icons::DEVICE_MOBILE } else { &crate::icons::DESKTOP }, 24.0).color(p.text_secondary);
         let mut r = row()
+            .key(format!("d-{id}"))
             .w_full()
             .px(16.0)
             .py(12.0)
@@ -590,12 +593,12 @@ pub(super) fn devices<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess
     let (current, others): (Vec<&Value>, Vec<&Value>) = sessions.iter().partition(|s| s["current"].as_bool() == Some(true));
     let mut c = col().w_full().gap(24.0);
     if let Some(cur) = current.first() {
-        c = c.child(col().w_full().gap(8.0).child(txt(t("Current device"), 12.0, 600.0, p.text_tertiary)).child(card(None, vec![device_row(cur, true)], p)));
+        c = c.child(col().key("current").w_full().gap(8.0).child(txt(t("Current device"), 12.0, 600.0, p.text_tertiary)).child(card(None, vec![device_row(cur, true)], p)));
     }
     if !others.is_empty() {
         let ids: Vec<String> = others.iter().filter_map(|s| s["id_hash"].as_str().map(str::to_string)).collect();
         c = c
-            .child(col().w_full().gap(8.0).child(txt(t("Other devices"), 12.0, 600.0, p.text_tertiary)).child(card(None, others.iter().map(|s| device_row(s, false)).collect(), p)))
+            .child(col().key("others").w_full().gap(8.0).child(txt(t("Other devices"), 12.0, 600.0, p.text_tertiary)).child(card(None, others.iter().map(|s| device_row(s, false)).collect(), p)))
             .child(
                 Button::new(t("Sign out all other devices"))
                     .variant(ButtonVariant::Danger)
@@ -625,7 +628,7 @@ pub(super) fn apps<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>
             let id = app["id"].as_str().unwrap_or_default().to_string();
             let scopes = a["scopes"].as_array().map(|s| s.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
             let desc = format!("{} · {} {}", scopes, t("Authorized"), day(a["authorized_at"].as_str().unwrap_or_default()));
-            card_row(app["name"].as_str().unwrap_or_default(), Some(muted(desc, p)), vec![small_button(t("Deauthorize"), true, &format!("deauth-{id}"), open(acc, AccountModal::Deauthorize(id.clone())), p)], p)
+            card_row(app["name"].as_str().unwrap_or_default(), Some(muted(desc, p)), vec![small_button(t("Deauthorize"), true, &format!("deauth-{id}"), open(acc, AccountModal::Deauthorize(id.clone())), p)], p).key(format!("app-{id}"))
         })
         .collect();
     section(t("Authorized apps"), card(None, rows, p), true, p)
@@ -659,7 +662,7 @@ pub(super) fn connections<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
     let mut rows = Vec::new();
     if list.is_empty() {
         let hint = if st.bluesky { crate::i18n::tf("Link your {blueskyProviderName} account or verify domain ownership to display them on your profile.", &[("blueskyProviderName", "Bluesky")]) } else { t("Verify domain ownership to display it on your profile.").to_string() };
-        rows.push(row().w_full().px(16.0).py(12.0).child(muted(hint, p)));
+        rows.push(row().key("empty").w_full().px(16.0).py(12.0).child(muted(hint, p)));
     }
     for c in &list {
         let (kind, id) = (c["type"].as_str().unwrap_or_default().to_string(), c["id"].as_str().unwrap_or_default().to_string());
@@ -675,12 +678,13 @@ pub(super) fn connections<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAc
                 .el(p)
         }));
         let verified = if c["verified"].as_bool() == Some(true) { t("Verified") } else { t("Not verified") };
+        let key = format!("c-{kind}-{id}");
         rows.push(card_row(
             &label,
             Some(col().gap(8.0).child(muted(verified, p)).child(toggles)),
             vec![Button::new(t("Remove")).variant(ButtonVariant::Ghost).size(ButtonSize::Small).on_press(open(acc, AccountModal::RemoveConnection { kind, id })).el(p)],
             p,
-        ));
+        ).key(key));
     }
     section(t("Connections"), card(Some((t("Connections"), Some(t("Show accounts and domains you own on your profile.")), Some(add))), rows, p), true, p)
 }

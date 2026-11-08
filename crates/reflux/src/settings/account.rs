@@ -172,7 +172,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
         p,
     );
     let sign_in = match super::recovery_kit::shown(store, st).then(|| super::recovery_kit::reminder(st, p, acc)).flatten() {
-        Some(alert) => col().w_full().child(alert).child(sign_in),
+        Some(alert) => col().key("reminder").w_full().child(alert).child(sign_in),
         None => sign_in,
     };
 
@@ -182,7 +182,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
     let unverified = !me.verified && me.email.is_some();
     let mut two_fa = Vec::new();
     if unverified {
-        two_fa.push(card_row(t("Confirm your email to turn on two-factor authentication or add a passkey."), None, vec![], p));
+        two_fa.push(card_row(t("Confirm your email to turn on two-factor authentication or add a passkey."), None, vec![], p).key("unverified"));
     }
     let totp_desc = if totp { t("Codes from your authenticator app are your second step when you sign in.") } else { t("Use an authenticator app to generate codes for two-factor authentication") };
     let totp_button = if totp {
@@ -190,14 +190,14 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
     } else {
         small_button(t("Set up"), false, "acct-totp-on", move |s: &mut S| acc(s).open_account_modal(AccountModal::TotpEnable(totp_secret())), p)
     };
-    two_fa.push(card_row(t("Authenticator app"), Some(muted(totp_desc, p)), vec![totp_button], p));
+    two_fa.push(card_row(t("Authenticator app"), Some(muted(totp_desc, p)), vec![totp_button], p).key("totp"));
     if totp || passkey_mfa {
         let view = move |s: &mut S| {
             let sh = acc(s);
             sh.open_account_modal(AccountModal::BackupCodes);
             sh.api(Method::POST, "/users/@me/mfa/backup-codes", Some(json!({ "regenerate": false })), Then::Keep("m.codes".into()));
         };
-        two_fa.push(card_row(t("Backup codes"), Some(muted(t("View and manage your backup codes for account recovery"), p)), vec![small_button(t("View codes"), true, "acct-codes", view, p)], p));
+        two_fa.push(card_row(t("Backup codes"), Some(muted(t("View and manage your backup codes for account recovery"), p)), vec![small_button(t("View codes"), true, "acct-codes", view, p)], p).key("codes"));
     }
     let two_fa = card(Some((t("Two-factor authentication"), Some(t("Ask for a second step after your password when you sign in.")), None)), two_fa, p);
 
@@ -217,7 +217,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
         .el(p);
     let mut rows = Vec::new();
     if passkeys.is_empty() && !unverified {
-        rows.push(row().w_full().px(16.0).py(12.0).child(muted(t("No passkeys yet. Add one to sign in with your fingerprint, face or a security key."), p)));
+        rows.push(row().key("empty").w_full().px(16.0).py(12.0).child(muted(t("No passkeys yet. Add one to sign in with your fingerprint, face or a security key."), p)));
     }
     for k in &passkeys {
         let id = k["id"].as_str().unwrap_or_default().to_string();
@@ -232,15 +232,15 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &super::Settin
             Some(muted(desc, p)),
             vec![
                 small_button(t("Rename"), true, &format!("passkey-rename-{id}"), open(acc, AccountModal::RenamePasskey(id.clone())), p),
-                Button::new(t("Delete")).variant(ButtonVariant::Ghost).size(ButtonSize::Small).on_press(open(acc, AccountModal::DeletePasskey(id))).el(p),
+                Button::new(t("Delete")).variant(ButtonVariant::Ghost).size(ButtonSize::Small).on_press(open(acc, AccountModal::DeletePasskey(id.clone()))).el(p),
             ],
             p,
-        ));
+        ).key(format!("pk-{id}")));
     }
     if !passkeys.is_empty() {
         let toggle = move |s: &mut S| acc(s).api(Method::PUT, "/users/@me/mfa/webauthn/two-factor", Some(json!({ "enabled": !passkey_mfa })), Then::Nothing);
         rows.push(
-            row().w_full().px(16.0).py(12.0).child(
+            row().key("require").w_full().px(16.0).py(12.0).child(
                 Switch::new(passkey_mfa)
                     .label(t("Require a passkey as your second factor"))
                     .description(t("Ask for a passkey after your password when you sign in"))
@@ -296,6 +296,7 @@ pub(super) fn blocked<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
     ids.sort_by_key(|u| store.display_name(None, *u).to_lowercase());
     if ids.is_empty() {
         return col()
+            .key("blocked-empty")
             .w_full()
             .py(24.0)
             .gap(4.0)
@@ -308,6 +309,7 @@ pub(super) fn blocked<S: 'static>(store: &Store, st: &ShellState, p: &Palette, a
         .map(|u| {
             let name = store.display_name(None, u);
             row()
+                .key(format!("b-{u}"))
                 .w_full()
                 .px(16.0)
                 .py(10.0)

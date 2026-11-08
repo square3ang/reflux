@@ -178,7 +178,7 @@ impl<S: 'static> Button<S> {
             b = b.w_full();
         }
         if self.submitting {
-            b = b.child(spinner(fg).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)));
+            b = b.child(spinner(fg).pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).key("spinner"));
         }
         if self.disabled {
             b = b.opacity(0.5);
@@ -193,7 +193,7 @@ impl<S: 'static> Button<S> {
             b = b.hover(hover).press(press).cursor(rune::Cursor::Pointer);
             // The hover border: a second border over the first, shown while the button is hovered.
             if let Some(c) = hover_border {
-                b = b.hover_group().child(rune::el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(radius).border(1.0, over(c, hover)).group_opacity(0.0, 1.0).inert());
+                b = b.hover_group().child(rune::el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(radius).border(1.0, over(c, hover)).group_opacity(0.0, 1.0).inert().key("hover-border"));
             }
             if let Some(f) = self.on_press {
                 b = b.on_press(move |s: &mut S| f(s));

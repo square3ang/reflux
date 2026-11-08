@@ -115,6 +115,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     let header = row().w_full().px(16.0).pt(16.0).pb(12.0).child(text(t("Active now")).font(font(20.0, 700.0).lh(26.0)).color(p.text_primary).role("heading"));
     let body = if list.is_empty() {
         col()
+            .key("empty")
             .w_full()
             .grow(1.0)
             .padding(24.0)
@@ -125,7 +126,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(text(t("When friends are active in voice channels, their activity will appear here.")).font(font(12.0, 400.0).lh(16.8)).color(p.text_tertiary).wrap().align(rune::Align::Center))
     } else {
         let list = col().w_full().px(12.0).pb(12.0).gap(8.0).children(list.iter().map(|a| card(store, st, a, p, acc)));
-        crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("active-now").key("active-now").child(list), false, p)
+        crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("active-now").key("active-now").child(list), false, p).key("list")
     };
     Some(
         col()
@@ -176,7 +177,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, a: &Activity, p: &Palette, a
     let mut stack = row().center_y();
     for (i, u) in a.users.iter().take(5).enumerate() {
         let face = row().padding(2.0).radius(12.0).fill(p.background_secondary).child(super::avatar(store, st, *u, 20.0, None, p.background_secondary, p));
-        stack = stack.child(if i == 0 { face } else { face.ml(-6.0) });
+        stack = stack.child(if i == 0 { face } else { face.ml(-6.0) }.key(format!("u-{u}")));
     }
     if a.users.len() > 5 {
         stack = stack.child(text(format!("+{}", a.users.len() - 5)).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted).ml(4.0));
@@ -197,6 +198,7 @@ fn card<S: 'static>(store: &Store, st: &ShellState, a: &Activity, p: &Palette, a
         })
         .el(p);
     col()
+        .key(format!("an-{c}"))
         .w_full()
         .gap(12.0)
         .py(12.0)

@@ -326,12 +326,12 @@ pub fn sidebar_rows<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
             .child(el().absolute(0.0, -10.0).size(18.0, spine_h + 10.0).corners([0.0, 0.0, 0.0, 6.0]).border(2.0, spine_c));
         let mut r = row().w_full().pt(1.0).pl(28.0).child(spine);
         if i + 1 < n {
-            r = r.child(el().absolute(25.0, 0.0).size(2.0, h).fill(spine_c).inert());
+            r = r.child(el().absolute(25.0, 0.0).size(2.0, h).fill(spine_c).inert().key("line"));
         }
         if unread && !is_sel {
-            r = r.child(el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary));
+            r = r.child(el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).key("dot"));
         }
-        list = list.child(r.child(item).key(format!("thread-{id}")));
+        list = list.child(r.child(item.key("item")).key(format!("thread-{id}")));
     }
     Some(list)
 }
@@ -454,7 +454,7 @@ pub(super) fn starter_message<S: 'static>(store: &Store, st: &ShellState, m: &Me
                 .px(dim::CHAT_HORIZONTAL_PADDING_DEFAULT + 20.0)
                 .center_y()
                 .child(el().grow(1.0).h(2.0).fill(p.background_modifier_accent).opacity(0.3));
-            col().w_full().child(col().w_full().inert().child(super::chat::message_preview(store, st, &s, &md, p, acc))).child(line)
+            col().w_full().key("starter").child(col().w_full().inert().child(super::chat::message_preview(store, st, &s, &md, p, acc))).child(line)
         }
         None => row()
             .w_full()
@@ -462,6 +462,7 @@ pub(super) fn starter_message<S: 'static>(store: &Store, st: &ShellState, m: &Me
             .px(16.0)
             .gap(8.0)
             .center_y()
+            .key("starter-deleted")
             .child(icon(&icons::TRASH_FILL, 16.0).color(p.text_tertiary))
             .child(text(t("Original message was deleted.")).font(font(14.0, 400.0).italic().lh(20.0)).color(p.text_tertiary)),
     }
@@ -546,12 +547,12 @@ pub(super) fn panel<S: 'static>(store: &Store, st: &ShellState, parent: &Channel
     let (title, body, thread) = match st.threads.panel? {
         Panel::Thread(id) => {
             let t = store.thread(id).filter(|t| t.parent_id == Some(parent.id))?;
-            let mut body = col().w_full().grow(1.0).min_h(0.0).child(super::chat::messages(store, st, t, p, acc, layer, true));
+            let mut body = col().w_full().grow(1.0).min_h(0.0).key(format!("thread-body-{id}")).child(super::chat::messages(store, st, t, p, acc, layer, true).key("messages"));
             body = body.children(composer_area(store, st, t, true, p, acc));
             super::upload::plus_menu(store, st, t, true, p, acc, layer);
             (t.name.clone().unwrap_or_default(), body, Some(t))
         }
-        Panel::Create { parent: pid, message } if pid == parent.id => (t("New thread").to_string(), create_pane(store, st, parent, message, p, acc), None),
+        Panel::Create { parent: pid, message } if pid == parent.id => (t("New thread").to_string(), create_pane(store, st, parent, message, p, acc).key("create-pane"), None),
         Panel::Create { .. } => return None,
     };
     let forum_post = thread.is_some_and(|t| t.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| rules::is_forum(p.kind)));
@@ -651,7 +652,7 @@ pub(super) fn composer_area<S: 'static>(store: &Store, st: &ShellState, t: &Chan
     if rules::is_locked(t) && !r.send {
         // `BarrierBase`: the composer's place, with a lock.
         return vec![
-            col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).child(
+            col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).key("locked").child(
                 row()
                     .w_full()
                     .min_h(dim::FOOTER_BOX_HEIGHT)
@@ -668,13 +669,13 @@ pub(super) fn composer_area<S: 'static>(store: &Store, st: &ShellState, t: &Chan
     let mut out = Vec::new();
     let post = t.parent_id.and_then(|p| store.channels.get(&p)).is_some_and(|p| rules::is_forum(p.kind));
     if rules::is_archived(t) {
-        out.push(notice(&icons::ARCHIVE_FILL, crate::i18n::t("This thread is closed. Sending a message will open it again."), None));
+        out.push(notice(&icons::ARCHIVE_FILL, crate::i18n::t("This thread is closed. Sending a message will open it again."), None).key("notice-closed"));
     } else if !post && !r.member && r.join {
         let id = t.id;
         let join = Button::new(crate::i18n::t("Join thread")).size(ButtonSize::Small).key(format!("thread-join-{id}")).on_press(move |s: &mut S| op(acc(s), Op::Join(id))).el(p);
-        out.push(notice(&icons::CHATS_FILL, crate::i18n::t("Join this thread to follow it in your channel list and get notifications."), Some(join)));
+        out.push(notice(&icons::CHATS_FILL, crate::i18n::t("Join this thread to follow it in your channel list and get notifications."), Some(join)).key("notice-join"));
     }
-    out.push(super::chat::composer(store, st, t, p, acc, if pane { super::chat::Slot::Pane } else { super::chat::Slot::Main }));
+    out.push(super::chat::composer(store, st, t, p, acc, if pane { super::chat::Slot::Pane } else { super::chat::Slot::Main }).key("composer-box"));
     out
 }
 
@@ -788,6 +789,7 @@ fn roster<S: 'static>(store: &Store, st: &ShellState, t: &Channel, p: &Palette, 
                 .pb(4.0)
                 .px(8.0)
                 .center_y()
+                .key(format!("group-{}", role.map_or_else(|| label.clone(), |r| r.id.to_string())))
                 .children(role.and_then(|r| super::role_icon::view(st, r, 16.0)).map(|i| i.mr(4.0)))
                 .child(text(format!("{label} — {}", users.len())).font(font(14.0, 600.0).lh(16.0)).color(p.text_primary_muted).truncate()),
         );
@@ -866,19 +868,19 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
     let item = |t: &Channel| browser_item(st, t, p, acc);
     let searching = !st.threads.query.text.trim().is_empty();
     match tab {
-        _ if searching => list = search_results(store, st, parent, tab, p, acc),
+        _ if searching => list = search_results(store, st, parent, tab, p, acc).key("search-results"),
         Tab::Active => {
             let mut active: Vec<&Channel> = store.threads(pid).into_iter().filter(|t| !rules::is_archived(t)).collect();
             active.sort_by_key(|t| std::cmp::Reverse(rules::last_activity(t)));
             let (joined, other): (Vec<&Channel>, Vec<&Channel>) = active.into_iter().partition(|t| t.member.is_some());
             if joined.is_empty() && other.is_empty() {
-                list = list.child(empty(p));
+                list = list.child(empty(p).key("empty"));
             }
             for (title, group) in [("Joined", joined), ("Other active threads", other)] {
                 if group.is_empty() {
                     continue;
                 }
-                list = list.child(text(title).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted).pt(12.0).px(8.0).pb(4.0));
+                list = list.child(text(title).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted).pt(12.0).px(8.0).pb(4.0).key(title));
                 for t in group {
                     list = list.child(item(t));
                 }
@@ -888,15 +890,15 @@ pub(super) fn browser<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p
             let a = st.threads.archived.get(&(pid, tab)).cloned().unwrap_or_default();
             let threads: Vec<&Channel> = a.ids.iter().filter_map(|id| store.thread(*id)).filter(|t| (tab == Tab::ArchivedPrivate) == (t.kind == ChannelType::PRIVATE_THREAD)).collect();
             if threads.is_empty() && !a.loading {
-                list = list.child(empty(p));
+                list = list.child(empty(p).key("empty"));
             }
             for t in threads {
                 list = list.child(item(t));
             }
             if a.loading {
-                list = list.child(row().w_full().padding(12.0).center().child(spinner(p.text_primary_muted)));
+                list = list.child(row().w_full().padding(12.0).center().key("loading").child(spinner(p.text_primary_muted)));
             } else if a.has_more {
-                list = list.child(row().w_full().padding(12.0).center().child(
+                list = list.child(row().w_full().padding(12.0).center().key("more").child(
                     Button::new(t("Load more"))
                         .variant(ButtonVariant::Secondary)
                         .size(ButtonSize::Small)
@@ -986,7 +988,7 @@ fn search_results<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, 
     let notice = || col().w_full().py(24.0).px(16.0).gap(8.0).items_center();
     let muted = |s: &str| text(s.to_string()).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center);
     if a.indexing {
-        return list.child(notice().child(spinner(p.text_primary_muted)).child(muted(t("Search is getting ready for this community. Trying again shortly..."))));
+        return list.child(notice().key("indexing").child(spinner(p.text_primary_muted)).child(muted(t("Search is getting ready for this community. Trying again shortly..."))));
     }
     if a.failed {
         let retry = Button::new(t("Retry"))
@@ -998,10 +1000,10 @@ fn search_results<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, 
                 acc(s).threads.archived.remove(&(pid, Tab::Search));
             })
             .el(p);
-        return list.child(notice().role("alert").child(muted(t("Couldn't search threads. Try again later."))).child(retry));
+        return list.child(notice().role("alert").key("failed").child(muted(t("Couldn't search threads. Try again later."))).child(retry));
     }
     if a.loading {
-        return list.child(row().w_full().padding(12.0).center().child(spinner(p.text_primary_muted)));
+        return list.child(row().w_full().padding(12.0).center().key("loading").child(spinner(p.text_primary_muted)));
     }
     let matches = |t: &&Channel| match tab {
         Tab::Active => !rules::is_archived(t),
@@ -1009,7 +1011,7 @@ fn search_results<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, 
     };
     let found: Vec<&Channel> = a.ids.iter().filter_map(|id| store.thread(*id)).filter(|t| t.parent_id == Some(pid)).filter(matches).collect();
     if found.is_empty() {
-        list = list.child(empty_search(p));
+        list = list.child(empty_search(p).key("empty"));
     }
     for t in found {
         list = list.child(browser_item(st, t, p, acc));

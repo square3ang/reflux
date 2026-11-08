@@ -482,6 +482,7 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
             }
             let body = row().w_full().gap(12.0).center_y().child(main).child(action);
             let r = col()
+                .key(id)
                 .w_full()
                 .py(16.0)
                 .child(body)
@@ -490,7 +491,7 @@ pub fn tab<S: 'static>(store: &Store, st: &ShellState, query: &str, p: &Palette,
         })
         .collect();
     if rows.is_empty() {
-        return col().w_full().children(toolbar).child(col().w_full().py(32.0).items_center().child(text(t("No advanced settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary)));
+        return col().w_full().children(toolbar).child(col().key("none").w_full().py(32.0).items_center().child(text(t("No advanced settings found")).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary)));
     }
     let mut out = col().w_full().children(toolbar);
     let mut first = true;

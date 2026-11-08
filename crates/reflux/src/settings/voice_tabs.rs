@@ -38,7 +38,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
 
     // ---- Devices
     let devices = match &v.devices {
-        None => desc("Looking for devices…", p),
+        None => desc("Looking for devices…", p).key("loading"),
         Some((inputs, outputs)) => {
             let options = |names: &[String]| -> Vec<(String, String)> { std::iter::once((String::new(), "Default".to_string())).chain(names.iter().map(|n| (n.clone(), n.clone()))).collect() };
             let (ins, outs) = (options(inputs), options(outputs));
@@ -60,7 +60,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             };
             let a = pick("voice-input", t("Input device"), &ins, &v.input, false);
             let b = pick("voice-output", t("Output device"), &outs, &v.output, true);
-            col().w_full().gap(16.0).child(a).child(b)
+            col().key("devices").w_full().gap(16.0).child(a).child(b)
         }
     };
     let mut out = col().w_full().child(section(t("Devices"), devices, true, p));
@@ -93,7 +93,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             .el(p),
     );
     if set_.processing != "studio" {
-        processing = processing.child(Switch::new(set_.push_to_talk).label(t("Push-to-talk")).on_toggle(set(acc, |st: &mut Settings| st.push_to_talk ^= true)).el(p));
+        processing = processing.child(Switch::new(set_.push_to_talk).label(t("Push-to-talk")).on_toggle(set(acc, |st: &mut Settings| st.push_to_talk ^= true)).el(p).key("ptt"));
         if set_.push_to_talk {
             let key = if v.recording_key { "Press a key…".to_string() } else { set_.ptt_key.clone().unwrap_or_else(|| t("No keybind set").into()) };
             let record = Button::new(if v.recording_key { t("Cancel") } else { t("Edit keybind") })
@@ -103,7 +103,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
                 .el(p);
             processing = processing
                 .child(
-                    col().w_full().gap(8.0).child(label(t("Keybind"), p)).child(
+                    col().key("ptt-key").w_full().gap(8.0).child(label(t("Keybind"), p)).child(
                         row()
                             .w_full()
                             .gap(12.0)
@@ -112,9 +112,10 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
                             .child(record),
                     ),
                 )
-                .child(desc("This key works while Reflux has focus. The global Push-to-talk shortcut (set in your desktop's settings) works anywhere.", p))
+                .child(desc("This key works while Reflux has focus. The global Push-to-talk shortcut (set in your desktop's settings) works anywhere.", p).key("ptt-note"))
                 .child(
                     col()
+                        .key("ptt-release")
                         .w_full()
                         .gap(8.0)
                         .child(label(t("Release delay"), p))
@@ -134,15 +135,17 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
                     .label(t("Automatic gain control"))
                     .description(t("Evens out your mic volume so you are not too quiet."))
                     .on_toggle(set(acc, |st: &mut Settings| st.auto_gain_control ^= true))
-                    .el(p),
+                    .el(p)
+                    .key("agc"),
             )
-            .child(Switch::new(set_.stereo).label(t("Stereo microphone")).on_toggle(set(acc, |st: &mut Settings| st.stereo ^= true)).el(p));
+            .child(Switch::new(set_.stereo).label(t("Stereo microphone")).on_toggle(set(acc, |st: &mut Settings| st.stereo ^= true)).el(p).key("stereo"));
     }
     if !set_.ptt() && set_.processing != "studio" {
-        processing = processing.child(Switch::new(set_.vad_auto).label(t("Auto-set activity threshold")).on_toggle(set(acc, |st: &mut Settings| st.vad_auto ^= true)).el(p));
+        processing = processing.child(Switch::new(set_.vad_auto).label(t("Auto-set activity threshold")).on_toggle(set(acc, |st: &mut Settings| st.vad_auto ^= true)).el(p).key("vad-auto"));
         if !set_.vad_auto {
             processing = processing.child(
                 col()
+                    .key("vad")
                     .w_full()
                     .gap(8.0)
                     .child(label(t("Activity threshold"), p))
@@ -153,8 +156,8 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     }
     if set_.processing == "custom" {
         processing = processing
-            .child(crate::shell::call::noise_select(st, p, acc, layer))
-            .child(Switch::new(set_.echo_cancellation).label(t("Echo cancellation")).on_toggle(set(acc, |st: &mut Settings| st.echo_cancellation ^= true)).el(p));
+            .child(crate::shell::call::noise_select(st, p, acc, layer).key("noise"))
+            .child(Switch::new(set_.echo_cancellation).label(t("Echo cancellation")).on_toggle(set(acc, |st: &mut Settings| st.echo_cancellation ^= true)).el(p).key("echo"));
     }
     out = out.child(section(t("Voice processing"), processing, false, p));
 
@@ -273,11 +276,11 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
     let mut share = col().w_full().gap(20.0).child(row().w_full().gap(16.0).child(r).child(f));
     if let Some(preset) = set_.screen_preset() {
         let note = crate::i18n::tf("Set by the {preset} preset. Picking a value here switches to Custom.", &[("preset", t(preset.0))]);
-        share = share.child(desc(&note, p));
+        share = share.child(desc(&note, p).key("preset"));
     }
     if !higher && st.premium {
         let note = crate::i18n::tf("Frame rates above 30 FPS require {premiumProductName}", &[("premiumProductName", "Plutonium")]);
-        share = share.child(desc(&note, p));
+        share = share.child(desc(&note, p).key("fps-note"));
     }
     // `UserVideoTab`: the bitrate select is part of the higher-quality tier.
     if higher {
@@ -294,6 +297,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
             .el(&st.popups, pops, p, layer);
         share = share.child(
             col()
+                .key("bitrate")
                 .w_full()
                 .gap(8.0)
                 .child(b)
@@ -311,7 +315,7 @@ pub fn tab<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette
 /// inherits), the library with preview / delete, and upload through the trimmer.
 fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {
     let Some(lib) = &st.voice.entrance else {
-        return col().w_full().gap(8.0).child(desc(t("Loading…"), p)).child(
+        return col().key("loading").w_full().gap(8.0).child(desc(t("Loading…"), p)).child(
             Button::new(t("Load")).variant(ButtonVariant::Secondary).key("entrance-load").on_press(move |s: &mut S| acc(s).intents.push(Intent::Voice(Op::LoadEntrance))).el(p),
         );
     };
@@ -375,6 +379,7 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
     let mut others: Vec<(Snowflake, String)> = store.guilds.keys().filter(|g| Some(**g) != here && store.guilds[*g].info.is_some()).map(|g| (*g, guild_name(*g))).collect();
     others.sort_by(|a, b| a.1.cmp(&b.1));
     let mut c = col()
+        .key("library")
         .w_full()
         .gap(12.0)
         .child(desc(t("Plays for everyone else in the voice channel when you join."), p))
@@ -382,7 +387,7 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
         .child(grid);
     if !others.is_empty() {
         let list = el().w_full().equal_columns(2).gap(6.0).children(others.into_iter().map(|(g, n)| tile(format!("guild:{g}"), None, Some(g), n, None)));
-        c = c.child(text(t("Community overrides").to_uppercase()).font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted)).child(list);
+        c = c.child(text(t("Community overrides").to_uppercase()).key("others-title").font(font(12.0, 600.0).lh(16.0)).color(p.text_primary_muted)).child(list.key("others"));
     }
     let pops = crate::ui::popup_access(move |s: &mut S| &mut acc(s).popups);
     let ids: Vec<String> = lib.sounds.iter().map(|x| x.id.to_string()).collect();
@@ -394,7 +399,7 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
         .width(340.0)
         .on_choose(move |s: &mut S, v| acc(s).intents.push(Intent::Voice(Op::SelectEntrance(sc.clone(), v.parse().ok().map(reflux_model::Snowflake)))))
         .el(&st.popups, pops, p, layer);
-    c = c.child(pick);
+    c = c.child(pick.key("pick"));
     // The sound this scope plays: set here, or inherited.
     if let Some((id, from)) = lib.resolve_scope(&scope)
         && let Some(x) = lib.sounds.iter().find(|x| x.id == id)
@@ -402,6 +407,7 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
         let badge = if from == scope { t("Set here").to_string() } else { crate::i18n::tf("Inherited from {inheritedFromLabel}", &[("inheritedFromLabel", &label(&from))]) };
         c = c.child(
             row()
+                .key("resolved")
                 .w_full()
                 .padding(10.0)
                 .gap(10.0)
@@ -430,6 +436,7 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
         let id = x.id;
         c = c.child(
             row()
+                .key(format!("snd-{id}"))
                 .w_full()
                 .gap(8.0)
                 .center_y()
@@ -457,9 +464,9 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
             }
         });
     });
-    c = c.child(row().child(upload.el(p)));
+    c = c.child(row().key("upload").child(upload.el(p)));
     if full {
-        c = c.child(desc(t("Library full (8 sounds max). Delete one before adding another."), p));
+        c = c.child(desc(t("Library full (8 sounds max). Delete one before adding another."), p).key("full"));
     }
     c
 }

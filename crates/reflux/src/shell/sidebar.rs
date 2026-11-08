@@ -18,12 +18,12 @@ fn header_bar(p: &Palette) -> El {
 }
 
 fn list_following<S: 'static>(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("channel-list-banner");
     scroller(crate::ui::smooth_wheel_with::<S>(viewport.child(content.focus_group().role("list")), "channel-list-banner", f), false, p)
 }
 
 fn list<S: 'static>(content: El, key: &str, p: &Palette) -> El {
-    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false });
+    let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key(key);
     scroller(crate::ui::smooth_wheel::<S>(viewport.child(content.focus_group().role("list")), key), false, p)
 }
 
@@ -73,8 +73,8 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         // `GuildBadge` (`visibleCustomBadges={2}`, 20px) before the name.
         // shortcut: the `banner` variant's drop shadow isn't drawn.
         .children(info.and_then(|i| super::invite_embed::guild_badge_sized(&i.features, &i.badge_ids, 20.0, 2, false, st, p, acc)))
-        .child(row().grow(1.0).shrink().min_w(0.0).child(tinted(name_el(Color::WHITE), name_el(p.text_primary)).w_full()))
-        .child(tinted(icon(caret, 16.0).color(Color::WHITE).rotate(turn), icon(caret, 16.0).color(p.text_primary).rotate(turn)));
+        .child(row().key("name").grow(1.0).shrink().min_w(0.0).child(tinted(name_el(Color::WHITE), name_el(p.text_primary)).w_full()))
+        .child(tinted(icon(caret, 16.0).color(Color::WHITE).rotate(turn), icon(caret, 16.0).color(p.text_primary).rotate(turn)).key("caret"));
     header = match &banner {
         Some(_) => header,
         None => header.fill(p.background_secondary).hover(p.background_modifier_hover).child(header_bar(p)),
@@ -85,19 +85,19 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
         Some((img, l, collapsible)) => {
             let scrim = el().pin(Some(0.0), Some(0.0), Some(0.0), None).h(40.0).linear_gradient(std::f32::consts::PI, [(0.0, rgba(0, 0, 0, 0.3)), (1.0, Color::TRANSPARENT)]).live_opacity(&l.scrim);
             let glass = collapsible.then(|| el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).fill(p.background_secondary).child(header_bar(p)).live_opacity(&l.glass));
-            el().w_full().h(dim::LAYOUT_HEADER_HEIGHT).child(img.clone()).children(glass).child(scrim).child(header)
+            el().w_full().h(dim::LAYOUT_HEADER_HEIGHT).child(img.clone()).children(glass).child(scrim.key("scrim")).child(header)
         }
         None => header,
     };
 
     // `.navigationContainer`: padding-right 8; 10px drop zones above and below.
     let mut groups = col().w_full().pr(dim::SPACING_2).pt(10.0).children(banner.as_ref().map(|(_, l, _)| l.spacer()));
-    groups = groups.children(super::members_page::sidebar_row(store, st, gid, p, acc));
+    groups = groups.children(super::members_page::sidebar_row(store, st, gid, p, acc).map(|r| r.key("members")));
     let hide_muted = store.guild_settings.get(&Some(gid)).is_some_and(|s| s.hide_muted_channels);
     for g in store.channel_groups(gid) {
         let collapsed = g.category.is_some_and(|c| st.collapsed.contains(&c.id));
         if let Some(cat) = g.category {
-            groups = groups.child(category(cat, collapsed, p, acc));
+            groups = groups.child(category(cat, collapsed, p, acc).key(format!("cat-{}", cat.id)));
         }
         for c in g.text.iter().chain(g.voice.iter()) {
             let selected = st.channel == Some(c.id) && st.social.members.is_none();
@@ -109,13 +109,13 @@ pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Pal
                 continue;
             }
             groups = groups.child(channel_row(store, st, c, selected, p, acc));
-            groups = groups.children(super::threads::sidebar_rows(store, st, c, p, acc));
+            groups = groups.children(super::threads::sidebar_rows(store, st, c, p, acc).map(|t| t.key(format!("threads-{}", c.id))));
             if c.kind == ChannelType::GUILD_VOICE {
-                groups = groups.child(voice_users(store, st, c, p, acc));
+                groups = groups.child(voice_users(store, st, c, p, acc).key(format!("voice-{}", c.id)));
             }
         }
     }
-    groups = groups.child(el().h(10.0 + user_area_overlay(st) + dim::SPACING_2));
+    groups = groups.child(el().h(10.0 + user_area_overlay(st) + dim::SPACING_2).key("end"));
     col()
         .w(dim::LAYOUT_SIDEBAR_WIDTH)
         .h_full()
@@ -159,10 +159,13 @@ fn category<S: 'static>(cat: &Channel, collapsed: bool, p: &Palette, acc: ShellA
                     .color(p.text_tertiary_muted)
                     .group_color(p.text_primary)
                     .truncate()
+                    .grow(1.0)
                     .shrink(),
             )
             .child(
+                // `.categoryIcon` sits in `.actionsContainer` (margin-inline-start 0.5rem) at the row's end.
                 icon(if collapsed { &icons::CARET_RIGHT_BOLD } else { &icons::CARET_DOWN_BOLD }, 12.0)
+                    .ml(8.0)
                     .color(p.text_tertiary_muted)
                     .group_color(p.text_primary),
             ),
@@ -214,20 +217,20 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
         if mode == 0 {
             // `AvatarStack` of 12px avatars, at most 5, overlapping by 4.
             t = t.child(row().children(typers.iter().take(5).enumerate().map(|(i, u)| {
-                super::avatar(store, st, *u, 12.0, None, p.background_secondary, p).ml(if i == 0 { 0.0 } else { -4.0 })
+                super::avatar(store, st, *u, 12.0, None, p.background_secondary, p).ml(if i == 0 { 0.0 } else { -4.0 }).key(format!("t-{u}"))
             })));
         }
-        item = item.child(t);
+        item = item.child(t.key("typing"));
     }
     // `hoverAffordancesActive`: hovered, selected, or its context menu is open.
     let menu = st.popups.open.is_some() && st.target == Some(Target::Channel(id));
     let affordances = (selected || st.hover_channel == Some(id) || menu) && c.kind != ChannelType::GUILD_CATEGORY;
     // `showMentionBadge`: not while the affordances show.
     if let Some(b) = mention_badge(mentions as u64, true, p).filter(|_| !affordances) {
-        item = item.child(b);
+        item = item.child(b.key("mention"));
     }
     if affordances {
-        item = item.child(affordance_icons(store, c, selected, p, acc));
+        item = item.child(affordance_icons(store, c, selected, p, acc).key("affordances"));
     }
     item = item.on_hover_change(move |s: &mut S, inside, _| {
         let st = acc(s);
@@ -298,7 +301,7 @@ fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &
     };
     let mut r = row().gap(4.0).center_y().ml(8.0);
     if voice && !crate::look::with(|l| l.join_double_click) {
-        r = r.child(button(&icons::CHAT_TEARDROP_FILL, t("Open chat")).on_press(move |s: &mut S| {
+        r = r.child(button(&icons::CHAT_TEARDROP_FILL, t("Open chat")).key("chat").on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.voice.call_view = false;
             sh.select_channel(id);
@@ -307,10 +310,10 @@ fn affordance_icons<S: 'static>(store: &Store, c: &Channel, selected: bool, p: &
     let invitable = matches!(c.kind, ChannelType::GUILD_TEXT | ChannelType::GUILD_ANNOUNCEMENT | ChannelType::GUILD_VOICE)
         && store.permissions(id).contains(reflux_model::Permissions::CREATE_INSTANT_INVITE);
     if invitable {
-        r = r.child(button(&icons::USER_PLUS_FILL, t("Invite members")).on_press(move |s: &mut S| crate::guild::open_invite(acc(s), id)));
+        r = r.child(button(&icons::USER_PLUS_FILL, t("Invite members")).key("invite").on_press(move |s: &mut S| crate::guild::open_invite(acc(s), id)));
     }
     if let Some(tab) = crate::guild::first_channel_tab(store, id) {
-        r = r.child(button(&icons::GEAR_FILL, t("Channel settings")).on_press(move |s: &mut S| acc(s).open_channel_settings(id, tab, voice)));
+        r = r.child(button(&icons::GEAR_FILL, t("Channel settings")).key("settings").on_press(move |s: &mut S| acc(s).open_channel_settings(id, tab, voice)));
     }
     r
 }
@@ -321,8 +324,10 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
     let gid = c.guild_id;
     let me = store.my_id();
     let mut users: Vec<_> = store.voice_states.iter().filter(|((g, _), v)| *g == gid && v.channel_id == Some(c.id)).map(|((_, u), v)| (*u, v)).collect();
-    users.sort_by_key(|(u, _)| *u);
-    col().w_full().pl(8.0 + 8.0 + 20.0 + 6.0 - 8.0).children(users.into_iter().map(|(u, v)| {
+    // shortcut: case-insensitive by name like `DISPLAY_NAME_COLLATOR`, without its numeric collation or join-order snapshot.
+    users.sort_by_cached_key(|(u, _)| (store.display_name(gid, *u).to_lowercase(), *u));
+    // `VoiceParticipantsList.module.css` `.container`.
+    col().w_full().mt(4.0).pl(24.0).gap(2.0).children(users.into_iter().map(|(u, v)| {
         let speaking = st.voice.speaking.contains(&u);
         let current = u == me && st.voice.channel == Some((gid, c.id));
         let fg = if speaking || current { p.text_primary } else { p.text_primary_muted };
@@ -334,17 +339,18 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
         let glyph = |i: &'static rune::Icon, c: Color| icon(i, 16.0).color(c);
         let mut icons_row = row().gap(4.0).center_y();
         if v.self_video {
-            icons_row = icons_row.child(glyph(&icons::VIDEO_CAMERA_FILL, p.text_primary_muted));
+            icons_row = icons_row.child(glyph(&icons::VIDEO_CAMERA_FILL, p.text_primary_muted).key("video"));
         }
         if v.mute || v.self_mute {
-            icons_row = icons_row.child(glyph(&icons::MICROPHONE_SLASH_FILL, if v.mute { rgb(239, 68, 68) } else { p.text_primary_muted }));
+            icons_row = icons_row.child(glyph(&icons::MICROPHONE_SLASH_FILL, if v.mute { rgb(239, 68, 68) } else { p.text_primary_muted }).key("mute"));
         }
         if v.deaf || v.self_deaf {
-            icons_row = icons_row.child(glyph(&icons::SPEAKER_SLASH_FILL, if v.deaf { rgb(239, 68, 68) } else { p.text_primary_muted }));
+            icons_row = icons_row.child(glyph(&icons::SPEAKER_SLASH_FILL, if v.deaf { rgb(239, 68, 68) } else { p.text_primary_muted }).key("deaf"));
         }
         if v.self_stream {
             // `LiveBadge`: red pill, 10/600 uppercase white; opens the stream viewer.
             let mut badge = row()
+                .key("live")
                 .px(6.0)
                 .py(2.0)
                 .radius(999.0)
@@ -360,6 +366,7 @@ fn voice_users<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Pale
             icons_row = icons_row.child(badge);
         }
         let mut item = row()
+            .key(format!("vu-{u}"))
             .w_full()
             .px(8.0)
             .py(4.0)
@@ -417,12 +424,13 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         st.social.discovery = false;
     }));
     if st.personal_notes {
-        rows = rows.child(special(&icons::NOTE_PENCIL_FILL, "Personal Notes", st.channel == Some(me), 0, p).on_press(move |s: &mut S| acc(s).select_channel(me)));
+        rows = rows.child(special(&icons::NOTE_PENCIL_FILL, "Personal Notes", st.channel == Some(me), 0, p).key("notes").on_press(move |s: &mut S| acc(s).select_channel(me)));
     }
     rows = rows
-        .child(el().h(1.0).mx(-dim::SPACING_2).my(dim::SPACING_2).fill(p.user_area_divider_color))
+        .child(el().h(1.0).mx(-dim::SPACING_2).my(dim::SPACING_2).fill(p.user_area_divider_color).key("divider"))
         .child(
             row()
+                .key("dm-header")
                 .mt(8.0)
                 .mb(8.0)
                 .px(8.0)
@@ -444,7 +452,7 @@ pub fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     for c in store.private_channels() {
         rows = rows.child(dm_row(store, st, c, p, acc));
     }
-    rows = rows.child(el().h(user_area_overlay(st) + dim::SPACING_2));
+    rows = rows.child(el().h(user_area_overlay(st) + dim::SPACING_2).key("end"));
     col()
         .w(dim::LAYOUT_SIDEBAR_WIDTH)
         .h_full()
@@ -509,9 +517,9 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     // `.dmItemName`: the pin icon (14px) 0.15rem before the name.
     let mut name_row = row().min_w(0.0).gap(2.4).center_y();
     if store.pinned_dms.contains(&id) {
-        name_row = name_row.child(icon(&icons::PUSH_PIN_FILL, 14.0).color(fg).group_color(if selected { fg } else { p.text_primary }));
+        name_row = name_row.child(icon(&icons::PUSH_PIN_FILL, 14.0).color(fg).group_color(if selected { fg } else { p.text_primary }).key("pin"));
     }
-    let name_row = name_row.child(text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate().shrink());
+    let name_row = name_row.child(text(name.clone()).font(font(16.0, 500.0).lh(20.0)).color(fg).group_color(if selected { fg } else { p.text_primary }).truncate().shrink().key("name"));
     let mut info = col().grow(1.0).min_w(0.0).gap(1.0).child(name_row);
     if let Some(t) = subtext {
         info = info.child(t.mt(if group { -2.0 } else { -1.0 }));
@@ -534,7 +542,7 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .child(icon(&icons::X_BOLD, 16.0).color(fg));
     let mut content = row().w_full().gap(12.0).center_y().child(face).child(info);
     if let Some(b) = mention_badge(store.mention_count(id) as u64, true, p) {
-        content = content.child(b);
+        content = content.child(b.key("mention"));
     }
     let target = match other {
         Some(user) if !group => Target::User { user, guild: None, dm: Some(id) },
@@ -553,7 +561,7 @@ fn dm_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
         .key(format!("dm-{id}"))
         .on_press(move |s: &mut S| acc(s).select_channel(id))
         .on_secondary_press(move |s: &mut S, at, _| acc(s).open_user_menu(target, [at.x, at.y], format!("dm-{id}"), crate::ui::Placement::RightStart))
-        .child(content.child(close));
+        .child(content.child(close.key("close")));
     item = if selected { item.fill(mix(p.surface_interactive_selected_bg, Color::TRANSPARENT, 35.0)) } else { item.hover(p.surface_interactive_hover_bg) };
     if unread && !selected {
         // `.dmItemUnreadIndicator`: an 8px half-pill 12px past the row's left edge.
@@ -705,7 +713,7 @@ pub fn user_area<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
     if let Some(panel) = voice::panel(store, st, p, acc) {
         inner = inner.child(panel);
     }
-    let inner = inner.child(user_row);
+    let inner = inner.child(user_row.key("user"));
     row()
         .pin(Some(0.0), None, None, Some(0.0))
         .w(dim::LAYOUT_GUILD_LIST_WIDTH + dim::LAYOUT_SIDEBAR_WIDTH + 1.0)

@@ -128,7 +128,7 @@ pub(crate) fn kit<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: 
             Some(e) => text(format!("{}: {e}", t("Could not create a recovery kit"))).font(font(14.0, 400.0).lh(20.0)).color(mix(p.status_danger, p.text_primary, 78.0)).wrap(),
             None => text(t("Loading…")).font(font(14.0, 400.0).lh(20.0)).color(p.text_primary_muted),
         };
-        return Modal::new(t("Your recovery kit"), close).body(col().w_full().child(msg)).footer(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p)).el(p);
+        return Modal::new(t("Your recovery kit"), close).body(col().w_full().child(msg.key("loading"))).footer(Button::new(t("Cancel")).variant(ButtonVariant::Secondary).on_press(close).el(p)).el(p);
     };
     let key = k["recovery_key"].as_str().unwrap_or_default().to_string();
     let created = k["created_at"].as_str().unwrap_or_default().to_string();

@@ -193,7 +193,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
 
     let Some(init) = initial(store, st, guild) else {
         let body = if st.form.error.is_some() { muted(st.form.error.clone().unwrap_or_default(), p) } else { muted(t("Loading…"), p) };
-        return col().w_full().child(selector).child(body);
+        return col().w_full().child(selector).child(body.key("loading"));
     };
     let name = text_of(st, "p.name", &init.name);
     let pronouns = text_of(st, "p.pronouns", &init.pronouns);
@@ -205,7 +205,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
     if let Some(g) = guild {
         let can = crate::guild::can(store, g, Permissions::CHANGE_NICKNAME);
         let fallback = me.base.global_name.clone().unwrap_or_else(|| me.base.username.clone());
-        form = form.child(col().w_full().gap(6.0).child(input(st, acc, "p.name", &init.name, t("Community nickname"), &fallback, false, p)).child(muted(
+        form = form.child(col().key("nick").w_full().gap(6.0).child(input(st, acc, "p.name", &init.name, t("Community nickname"), &fallback, false, p)).child(muted(
             if can { t("This nickname will only be visible in this community") } else { t("You can't change your nickname here") },
             p,
         )));
@@ -213,6 +213,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         form = form
             .child(
                 row()
+                    .key("username")
                     .w_full()
                     .gap(12.0)
                     .center_y()
@@ -223,7 +224,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
     }
     form = form.child(input(st, acc, "p.pronouns", &init.pronouns, t("Pronouns"), "", false, p));
     if guild.is_none() {
-        form = form.child(super::timezone::section(p, acc));
+        form = form.child(super::timezone::section(p, acc).key("tz"));
     }
 
     let asset_row = |title: &str, key: &'static str, asset: super::crop::Asset, has: bool| {
@@ -250,7 +251,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
                     .el(p),
             );
         }
-        col().w_full().gap(8.0).child(label(if title == "avatar" { t("Avatar") } else { t("Banner") }, p)).child(buttons)
+        col().key(title).w_full().gap(8.0).child(label(if title == "avatar" { t("Avatar") } else { t("Banner") }, p)).child(buttons)
     };
     form = form.child(asset_row("avatar", "p.avatar", super::crop::Asset::Avatar, init.avatar.is_some())).child(asset_row("banner", "p.banner", super::crop::Asset::ProfileBanner, init.banner.is_some()));
 
@@ -265,6 +266,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
     .el(p);
     form = form.child(
         col()
+            .key("accent")
             .w_full()
             .gap(8.0)
             .child(label(t("Accent color"), p))
@@ -306,6 +308,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
     let count = txt(format!("{}/{BIO_MAX}", bio.chars().count()), 12.0, 400.0, if over_limit { mix(p.status_danger, p.text_primary, 78.0) } else { p.text_tertiary });
     form = form.child(
         col()
+            .key("bio")
             .w_full()
             .gap(8.0)
             .child(row().w_full().justify_between().child(label(t("About me"), p)).child(count))
@@ -320,7 +323,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
             None => el().size(80.0, 80.0).radius(40.0).fill(p.background_secondary_alt),
         },
         Some(Value::Null) => {
-            let px = st.default_avatars.get((me_id.0 % 6) as usize).map(|i| i.pixels().clone());
+            let px = st.default_avatar(me_id).map(|i| i.pixels().clone());
             crate::ui::Avatar::new(80.0).pixels(px.as_ref()).el(p)
         }
         _ => crate::shell::avatar(store, st, me_id, 80.0, None, p.background_primary, p),
@@ -360,7 +363,7 @@ pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p
         .gap(16.0)
         .child(muted(t("Edit your profile appearance and see a live preview"), p))
         .child(row().w_full().gap(40.0).items_start().child(form).child(preview));
-    let mut page = col().w_full().child(selector).child(section(&title, content, true, p));
+    let mut page = col().w_full().child(selector).child(section(&title, content, true, p).key("sec-profile"));
     if let Some(saved) = &init.badges {
         page = page.child(section("Badges", super::badges::section(st, saved, busy, p, acc), false, p));
     }
@@ -407,7 +410,7 @@ fn save_bar<S: 'static>(st: &ShellState, busy: bool, invalid: bool, p: &Palette,
         )
         .child(Button::new(t("Save changes")).size(ButtonSize::Small).disabled(invalid).submitting(busy).key("save-changes").on_press(save).el(p));
     if let Some(e) = &st.form.error {
-        bar = col().w_full().gap(8.0).child(bar).child(txt(e.clone(), 14.0, 400.0, mix(p.status_danger, p.text_primary, 78.0)));
+        bar = col().key("bar-error").w_full().gap(8.0).child(bar).child(txt(e.clone(), 14.0, 400.0, mix(p.status_danger, p.text_primary, 78.0)));
     }
     bar
 }

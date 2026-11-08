@@ -514,10 +514,10 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
             .child(text(line.to_string()).font(font(14.0, 400.0)).color(p.text_primary_muted).wrap().align(rune::Align::Center))
     };
     let body = match r {
-        Results::Loading => col().w_full().grow(1.0).center().child(spinner(p.text_primary_muted)),
-        Results::Indexing => message_state(&icons::CIRCLE_NOTCH_FILL, t("Indexing channel"), "This channel is being indexed. Try again in a moment."),
-        Results::Failed => message_state(&icons::WARNING_CIRCLE_FILL, t("Error"), t("An error occurred while searching.")),
-        Results::Done { messages, .. } if messages.is_empty() => message_state(&icons::MAGNIFYING_GLASS, t("No results"), t("Try a different search query.")),
+        Results::Loading => col().w_full().grow(1.0).center().key("loading").child(spinner(p.text_primary_muted)),
+        Results::Indexing => message_state(&icons::CIRCLE_NOTCH_FILL, t("Indexing channel"), "This channel is being indexed. Try again in a moment.").key("indexing"),
+        Results::Failed => message_state(&icons::WARNING_CIRCLE_FILL, t("Error"), t("An error occurred while searching.")).key("failed"),
+        Results::Done { messages, .. } if messages.is_empty() => message_state(&icons::MAGNIFYING_GLASS, t("No results"), t("Try a different search query.")).key("empty"),
         Results::Done { messages, total } => {
             let mut list = col().w_full().pt(8.0).px(8.0).pb(12.0);
             let mut last = None;
@@ -532,13 +532,14 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
                                 .pt(8.0)
                                 .pb(4.0)
                                 .center_y()
+                                .key(format!("channel-{}", m.id))
                                 .child(icon(super::channel_icon(store.channels.get(&m.channel_id).map(|c| c.kind).unwrap_or_default()), 16.0).color(p.text_primary_muted))
                                 .child(text(name).font(font(14.0, 600.0)).color(p.text_primary_muted)),
                         );
                     }
                     last = Some(m.channel_id);
                 }
-                list = list.child(result(store, st, m, p, acc));
+                list = list.child(result(store, st, m, p, acc).key(format!("result-{}", m.id)));
             }
             let pages = total.div_ceil(PER_PAGE).min(400);
             if pages > 1 {
@@ -561,7 +562,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
                         .child(Button::new(t("Next")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page >= pages).key("search-next").on_press(go(page + 1)).el(p)),
                 );
             }
-            col().w_full().grow(1.0).min_h(0.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("search-results").key("search-results").child(list), false, p))
+            col().w_full().grow(1.0).min_h(0.0).key("results").child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("search-results").key("search-results").child(list), false, p))
         }
     };
     Some(

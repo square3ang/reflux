@@ -305,7 +305,7 @@ pub(super) fn view<S: 'static>(st: &ShellState, step: Step, p: &Palette, acc: Sh
     let footer = match step {
         Step::Url => {
             body = body
-                .child(desc(tf("Paste a {theOtherPlatform} template URL to import its structure into a new community.", &[("theOtherPlatform", PLATFORM)])))
+                .child(desc(tf("Paste a {theOtherPlatform} template URL to import its structure into a new community.", &[("theOtherPlatform", PLATFORM)])).key("url-desc"))
                 .child(field(st, acc, "tpl-url", "", t("Template URL"), "https://discord.new/abcd1234", p));
             let empty = st.form.value("tpl-url", "").trim().is_empty();
             let next = Button::new(t("Next")).disabled(empty).submitting(st.form.busy).key("tpl-url-next").on_press(move |s: &mut S| resolve(acc(s)));
@@ -323,8 +323,8 @@ pub(super) fn view<S: 'static>(st: &ShellState, step: Step, p: &Palette, acc: Sh
                     t("Couldn't load the template automatically. Open the link below in your browser, then copy the entire JSON response and paste it into the box.").into()
                 } else {
                     t("Open the link below in your browser, then copy the entire JSON response and paste it into the box.").into()
-                }))
-                .child(row().child(open.el(p)))
+                }).key("json-desc"))
+                .child(row().key("open").child(open.el(p)))
                 .child(textarea(st, acc, "tpl-json", "", t("Template JSON"), t("Paste the JSON response here..."), 6.0 * 20.0 + 16.0, p));
             let empty = st.form.value("tpl-json", "").trim().is_empty();
             let next = Button::new(t("Next")).disabled(empty).key("tpl-json-next").on_press(move |s: &mut S| parse_pasted(acc(s)));
@@ -335,6 +335,7 @@ pub(super) fn view<S: 'static>(st: &ShellState, step: Step, p: &Palette, acc: Sh
                 // `.templatePreview`.
                 body = body.child(
                     col()
+                        .key("preview")
                         .w_full()
                         .gap(8.0)
                         .padding(12.0)
@@ -350,7 +351,7 @@ pub(super) fn view<S: 'static>(st: &ShellState, step: Step, p: &Palette, acc: Sh
                         .child(text(stats_text(g)).font(font(13.0, 400.0).lh(17.0)).color(p.text_primary_muted).wrap()),
                 );
             }
-            body = body.child(super::modals::create_fields(st, p, acc));
+            body = body.child(super::modals::create_fields(st, p, acc).key("fields"));
             let direct = st.form.data.get("tpl-direct").and_then(Value::as_bool).unwrap_or(false);
             let empty = st.form.value("name", "").trim().is_empty();
             let create = move |s: &mut S| {

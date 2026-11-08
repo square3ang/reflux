@@ -141,7 +141,8 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             Input::new("sudo-code", &x.code, move |s: &mut S| -> &mut TextEdit { &mut acc(s).account.sudo.get_or_insert_with(Default::default).code })
                 .label(label)
                 .placeholder(ph)
-                .el(p),
+                .el(p)
+                .key("code"),
         );
     }
     if x.webauthn {
@@ -166,7 +167,7 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             if wrong {
                 i = i.error(Some(t("Wrong PIN. Try again.")));
             }
-            body = body.child(i.el(p)).child(
+            body = body.child(i.el(p).key("pin")).child(
                 Button::new(t("Continue"))
                     .key("sudo-pin-submit")
                     .on_press(move |s: &mut S| {
@@ -191,12 +192,13 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
                     .on_press(move |s: &mut S| acc(s).intents.push(Intent::Account(Op::SudoEmail)))
                     .el(p),
             ),
-            Some(_) => body.child(desc(t("Enter the code we sent to your email address."))).child(
+            Some(_) => body.child(desc(t("Enter the code we sent to your email address.")).key("email-hint")).child(
                 Input::new("sudo-email-code", &x.email_code, move |s: &mut S| -> &mut TextEdit {
                     &mut acc(s).account.sudo.get_or_insert_with(Default::default).email_code
                 })
                 .label(t("Verification code"))
-                .el(p),
+                .el(p)
+                .key("email-code"),
             ),
         };
     }
@@ -205,7 +207,8 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
             Input::new("sudo-password", &x.secret, move |s: &mut S| -> &mut TextEdit { &mut acc(s).account.sudo.get_or_insert_with(Default::default).secret })
                 .label(t("Password"))
                 .secure()
-                .el(p),
+                .el(p)
+                .key("password"),
         );
     }
     if let Some(e) = &x.error {
