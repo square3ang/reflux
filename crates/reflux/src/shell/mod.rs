@@ -300,6 +300,8 @@ pub struct ShellState {
     pub stream_card: (Option<String>, Option<String>),
     /// `GroupedVoiceParticipant`: users whose connections are listed.
     pub voice_expanded: HashSet<Snowflake>,
+    /// A participant row being dragged onto another voice channel (`DragItemType.VOICE_PARTICIPANT`).
+    pub voice_drag: Option<voice_list::VoiceDrag>,
     /// Shift is down (the action bar's Shift to expand).
     pub shift_held: bool,
     /// The message the open menu or picker belongs to (keeps its action bar up).
@@ -465,6 +467,7 @@ impl Default for ShellState {
             hover_channel: None,
             stream_card: (None, None),
             voice_expanded: HashSet::new(),
+            voice_drag: None,
             active_msg: None,
             msg_selection: None,
             reply: None,

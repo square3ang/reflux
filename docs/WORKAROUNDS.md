@@ -16,7 +16,7 @@ Rules:
 
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
-| Voice participants move with "Move to…", not by dragging the row onto a channel | Rune has no internal drag-and-drop: drops carry files, and neither an element's rect nor the window pointer position is readable during `on_drag`, so the target under the pointer can't be found | `shell/voice_list.rs` (participant row), `social/moderation.rs` (`voice_parts`) | Rune exposes element rects or global pointer position, or internal drop targets |
+| Dragging a voice participant onto a channel is the row's own `on_drag`, hit-tested by hand | Rune's drops carry only files. While the drag runs, the sidebar records each voice channel row's `window_layout`, and the dragged row's origin plus `Drag.x/y` gives the pointer to test against them | `shell/voice_list.rs` (`draggable`, `drop_target`), `shell/sidebar.rs` (`channel_row`) | Rune gains internal drop targets |
 | System titlebar instead of Fluxer's custom one | Rune has no frameless window / custom titlebar on Linux and Windows | `main.rs` window setup | Rune gets frameless windows with hit-testing |
 | Advanced hides eight direct controls instead of faking them: video seek thumbnails, smooth scrolling, middle-click autoscroll, stay interactive unfocused, pre-upload attachments, connection volume controls, native title bar and source maps | Rune's wheel/pointer input has no browser smooth-scroll, autoscroll or focus guard; the inline player has no frame-at-time snapshot API; uploads only start at send (`Intent::SendMessage`); the per-user volume menu lives in `shell/call.rs` (platform-audio work); Rune always uses the system titlebar; a Rust build has no JS source maps | `settings/advanced.rs` (`UNAVAILABLE`), `shell/chat.rs`, `shell/attachments.rs` | the Rune/platform pieces above exist |
 | Neko draws only its idle and four look frames, without oneko's walk/scratch physics | the shell has no per-frame animation clock for a purely decorative overlay; a pointer-driven sprite is enough for the easter egg | `shell/neko.rs`, `media.rs` | a shell animation tick |
@@ -232,8 +232,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/markdown.rs:62` Reflux's chrome text isn't selectable, so the setting changes nothing yet.
 - `crates/reflux/src/shell/markdown.rs:94` a scaled span keeps its half-leading even, so the line's baseline lands where that
 - `crates/reflux/src/shell/markdown.rs:393` emoji in one-line previews stay text (Fluxer draws 1.25em images).
-- `crates/reflux/src/shell/mod.rs:555` Rune hovers an element by its own rect, not its children's (DOM keeps the row
-- `crates/reflux/src/shell/mod.rs:804` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+- `crates/reflux/src/shell/mod.rs:558` Rune hovers an element by its own rect, not its children's (DOM keeps the row
+- `crates/reflux/src/shell/mod.rs:807` Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:77` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
@@ -250,8 +250,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/voice_list.rs:87` no accent folding or ICU punctuation order, upgrade if names with accents sort wrong.
 - `crates/reflux/src/shell/voice_list.rs:136` LiveKit speakers are tracked per user, so all of a user's connections speak; upgrade when speaking is per connection.
 - `crates/reflux/src/shell/voice_list.rs:374` Rune rounds the ring from the row's radius, not `.channelItemFocusRing`'s 8px; upgrade when rings take a radius.
-- `crates/reflux/src/shell/voice_list.rs:393` Fluxer drags a participant onto another voice channel (MOVE_MEMBERS); Rune
-- `crates/reflux/src/shell/voice_list.rs:526` the shell doesn't know this client's connection ID, our latest voice state's stands in; upgrade when `ShellState` mirrors it.
+- `crates/reflux/src/shell/voice_list.rs:434` Rune's drops are file-only, so the row's own drag hit-tests the pointer against the
+- `crates/reflux/src/shell/voice_list.rs:603` the shell doesn't know this client's connection ID, our latest voice state's stands in; upgrade when `ShellState` mirrors it.
 crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sans` and `system-ui` are left to Rune's own fallbacks.
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/controls.rs:314` it shows while the whole control is hovered (Rune's hover group), which also
