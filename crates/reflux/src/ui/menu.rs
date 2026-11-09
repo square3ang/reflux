@@ -202,7 +202,9 @@ fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>,
     let key = format!("{menu}-sub-{id}");
     let open = inside(&popups.sub, &id);
     let caret = row().size(18.0, 18.0).center().child(icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
-    let mut words = col().grow(1.0).shrink().min_w(0.0).child(label_text(&label, p.text_primary));
+    // In a column, `label_text`'s row grow/shrink would squash the label to no height (it hung
+    // 9px below the row's centre); here it only fills the width.
+    let mut words = col().grow(1.0).shrink().min_w(0.0).child(text(label.as_str()).font(font(13.0, 500.0).lh(18.0)).color(p.text_primary).truncate().w_full());
     let min_w = hint.as_deref().map(|h| hint_width(h) + 2.0 * 9.0 + 8.0 + 18.0);
     if let Some(h) = hint {
         words = words.child(hint_text(&h, p));
