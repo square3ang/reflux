@@ -70,7 +70,8 @@ pub fn step_zoom(z: f32, up: bool) -> f32 {
 /// (text re-rasterizes crisp at the scaled size).
 pub fn root(content: El, size: [f32; 2]) -> El {
     let z = zoom();
-    let root = el().w_full().h_full().on_layout(|s: &mut State, r| s.desktop.size = [r[2], r[3]]);
+    let dir = if crate::i18n::rtl() { rune::Direction::Rtl } else { rune::Direction::Ltr };
+    let root = el().w_full().h_full().dir(dir).on_layout(|s: &mut State, r| s.desktop.size = [r[2], r[3]]);
     if (z - 1.0).abs() < 0.005 || size[0] <= 0.0 {
         return root.child(content);
     }

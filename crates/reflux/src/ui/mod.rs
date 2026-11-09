@@ -2,6 +2,15 @@
 // Builder handler fields (`Option<Rc<dyn Fn(&mut S, &str)>>`) read better spelled out than aliased.
 #![allow(clippy::type_complexity)]
 
+/// `rune::icon`, flipped in right-to-left layout for the icons `DirectionalIcons.tsx` mirrors
+/// (arrows, carets, the reply and forward bends).
+pub fn icon(i: &'static rune::Icon, size: f32) -> rune::El {
+    let e = rune::icon(i, size);
+    const DIRECTIONAL: [&str; 6] = ["arrow-left", "arrow-right", "caret-left", "caret-right", "arrow-bend-up-left", "arrow-bend-up-right"];
+    let base = i.name.split('_').next().unwrap_or(i.name);
+    if DIRECTIONAL.contains(&base) { e.mirror_in_rtl() } else { e }
+}
+
 pub mod avatar;
 pub mod button;
 pub mod controls;

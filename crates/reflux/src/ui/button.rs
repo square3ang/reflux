@@ -2,7 +2,8 @@
 
 use std::rc::Rc;
 
-use rune::{Color, El, Icon, LoopSpec, icon, row, text};
+use rune::{Color, El, Icon, LoopSpec, row, text};
+use super::icon;
 
 use super::{mix, over, rgba};
 use crate::theme::{Palette, font};

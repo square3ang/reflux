@@ -70,7 +70,7 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .child(row().size(22.0, 22.0).center().child(icon_el))
             .child(words);
         if chevron {
-            r = r.child(rune::icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
+            r = r.child(crate::ui::icon(&icons::CARET_RIGHT_BOLD, 14.0).color(p.text_tertiary));
         }
         r
     };
@@ -83,7 +83,7 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             }
         })
         .on_press(move |s: &mut S| acc(s).popups.sub = Some(STATUS_ROW.into()));
-    let accounts = action("user-area-accounts", rune::icon(&icons::USERS_THREE_BOLD, 16.0).color(p.text_secondary), t("Switch accounts").to_string(), None, true)
+    let accounts = action("user-area-accounts", crate::ui::icon(&icons::USERS_THREE_BOLD, 16.0).color(p.text_secondary), t("Switch accounts").to_string(), None, true)
         .on_hover_change(move |s: &mut S, inside, _| {
             if inside {
                 acc(s).popups.sub = None;
@@ -92,7 +92,7 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         // shortcut: Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
         // click opens the account switcher, as Fluxer's does.
         .on_press(move |s: &mut S| open(acc(s), ShellModal::Accounts));
-    let copy = action("user-area-copy-id", rune::icon(&icons::IDENTIFICATION_BADGE_BOLD, 16.0).color(p.text_secondary), t("Copy user ID").to_string(), None, false)
+    let copy = action("user-area-copy-id", crate::ui::icon(&icons::IDENTIFICATION_BADGE_BOLD, 16.0).color(p.text_secondary), t("Copy user ID").to_string(), None, false)
         .on_hover_change(move |s: &mut S, inside, _| {
             if inside {
                 acc(s).popups.sub = None;
@@ -120,7 +120,7 @@ pub fn menu<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
             .cursor(rune::Cursor::Pointer)
             .role("button")
             // `SmileyIcon weight="regular"` (`.customStatusPlaceholderIcon`).
-            .child(rune::icon(&icons::SMILEY, 14.0).color(p.text_tertiary))
+            .child(crate::ui::icon(&icons::SMILEY, 14.0).color(p.text_tertiary))
             .child(text(t("Set a custom status")).font(font(12.0, 400.0).lh(16.0)).color(p.text_tertiary))
             .on_press(move |s: &mut S| open(acc(s), ShellModal::CustomStatus))
     });
@@ -267,7 +267,7 @@ pub fn custom_status_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palet
         .key("status-emoji")
         .hover(p.background_modifier_hover)
         .on_press(move |s: &mut S| super::expr::open_status(acc(s)))
-        .child(emoji_el(22.0).unwrap_or_else(|| rune::icon(&icons::SMILEY_FILL, 22.0).color(p.text_primary_muted)));
+        .child(emoji_el(22.0).unwrap_or_else(|| crate::ui::icon(&icons::SMILEY_FILL, 22.0).color(p.text_primary_muted)));
     let trigger = if picking { trigger.fill(p.background_modifier_hover) } else { trigger };
     let edit = st.form.text.get("m.status").cloned().unwrap_or_else(|| rune::TextEdit::new(&initial));
     let init = initial.clone();
@@ -294,7 +294,7 @@ pub fn custom_status_modal<S: 'static>(store: &Store, st: &ShellState, p: &Palet
                     sh.form.text.insert("m.status".into(), rune::TextEdit::new(""));
                     sh.form.data.insert("m.emoji".into(), Value::Null);
                 })
-                .child(rune::icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted)),
+                .child(crate::ui::icon(&icons::X_BOLD, 16.0).color(p.text_primary_muted)),
         );
     }
     let mut body = col()

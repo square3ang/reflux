@@ -7,7 +7,8 @@
 use crate::ui::SmoothWheel;
 use reflux_model::{ChannelType, Snowflake};
 use reflux_store::Store;
-use rune::{El, ScrollSpec, TextEdit, Tx, col, el, icon, row, text};
+use rune::{El, ScrollSpec, TextEdit, Tx, col, el, row, text};
+use crate::ui::icon;
 use serde::{Deserialize, Serialize};
 
 use super::favorites_drag as drag;

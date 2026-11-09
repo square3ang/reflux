@@ -3,7 +3,8 @@
 
 use reflux_model::{Channel, ChannelType, Snowflake};
 use reflux_store::Store;
-use rune::{Color, El, ScrollSpec, col, el, icon, row, text};
+use rune::{Color, El, ScrollSpec, col, el, row, text};
+use crate::ui::icon;
 
 use super::{ShellAccess, ShellState, Target, avatar, channel_icon, group_avatar, presence, user_area_overlay, voice};
 use crate::icons;

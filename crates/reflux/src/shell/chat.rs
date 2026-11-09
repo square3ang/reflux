@@ -12,7 +12,8 @@ use reflux_model::{
 };
 use reflux_store::Store;
 use rune::text::Span;
-use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el, icon, rich, row, text, text_input};
+use rune::{Color, El, GrowthSpec, Key, ScrollSpec, Shadow, TextEdit, Tx, col, el, rich, row, text, text_input};
+use crate::ui::icon;
 
 use super::autocomplete;
 use super::markdown::{self, Md};
@@ -1204,7 +1205,7 @@ fn message_rest<S: 'static>(store: &Store, st: &ShellState, m: &Message, head: b
     } else if let Some((_, edit)) = st.editing.as_ref().filter(|e| e.0 == m.id) {
         content = content.child(editor(edit, m, p, acc).key("editor"));
     } else if !m.content.is_empty() || m.edited_timestamp.is_some() {
-        content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))).key("text"));
+        content = content.child(markdown::render_edited(&m.content, md, m.edited_timestamp.is_some().then(|| t("(edited)"))).dir(rune::Direction::Auto).key("text"));
     }
     let acc_el = accessories(store, st, m, p, acc).filter(|_| !unknown);
     if let Some(a) = acc_el {

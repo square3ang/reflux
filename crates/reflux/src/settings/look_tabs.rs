@@ -465,7 +465,7 @@ fn overrides<S: 'static>(st: &ShellState, look: &Prefs, all_off: bool, p: &Palet
                 .child(text(t("Per-sound volume")).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary))
                 .child(text(desc).font(font(13.0, 400.0).lh(18.0)).color(p.text_secondary).wrap()),
         )
-        .child(rune::icon(if open { &crate::icons::CARET_UP_BOLD } else { &crate::icons::CARET_DOWN_BOLD }, 16.0).color(p.text_tertiary));
+        .child(crate::ui::icon(if open { &crate::icons::CARET_UP_BOLD } else { &crate::icons::CARET_DOWN_BOLD }, 16.0).color(p.text_tertiary));
     let mut c = col().w_full().px(12.0).radius(8.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).child(head);
     if !open {
         return c;
@@ -482,7 +482,7 @@ fn overrides<S: 'static>(st: &ShellState, look: &Prefs, all_off: bool, p: &Palet
             Some(_) => pct(value),
             None => tf("Following master • {effectiveValue}", &[("effectiveValue", &pct(value))]),
         };
-        let mute = rune::icon(if enabled { &crate::icons::SPEAKER_HIGH_FILL } else { &crate::icons::SPEAKER_X_FILL }, 14.0)
+        let mute = crate::ui::icon(if enabled { &crate::icons::SPEAKER_HIGH_FILL } else { &crate::icons::SPEAKER_X_FILL }, 14.0)
             .color(if enabled { p.text_secondary } else { p.status_danger })
             .cursor(rune::Cursor::Pointer)
             .role("button")
@@ -498,7 +498,7 @@ fn overrides<S: 'static>(st: &ShellState, look: &Prefs, all_off: bool, p: &Palet
             .child(text(shown).font(font(12.0, 500.0).lh(16.0)).color(p.text_secondary));
         if over.is_some() && !disabled {
             header = header.child(
-                rune::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0)
+                crate::ui::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0)
                     .color(p.text_tertiary)
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
@@ -535,7 +535,7 @@ fn sound_row<S: 'static>(snd: Sound, look: &Prefs, all_off: bool, p: &Palette, a
     let label = t(snd.label());
     let custom = look.custom_sounds.get(id).cloned();
     let icon_btn = |icon: &'static rune::Icon, label: String| {
-        rune::icon(icon, 16.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(label)
+        crate::ui::icon(icon, 16.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(label)
     };
     let (volume, custom2) = (look.sound_gain(id), custom.clone());
     let mut r = row()
@@ -622,7 +622,7 @@ pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
         let swatch = crate::ui::rgb(r, g, b);
         let mut b = el().size(56.0, 56.0).radius(28.0).fill(swatch).border(2.0, crate::ui::over(border, swatch)).role("radio").checked(selected).label(t(label));
         if value == "system" {
-            b = b.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(rune::icon(&crate::icons::ARROWS_COUNTER_CLOCKWISE_BOLD, 24.0).color(rune::Color::WHITE)));
+            b = b.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(crate::ui::icon(&crate::icons::ARROWS_COUNTER_CLOCKWISE_BOLD, 24.0).color(rune::Color::WHITE)));
         }
         if selected {
             b.child(
@@ -632,7 +632,7 @@ pub fn themes<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shel
                     .radius(10.0)
                     .center()
                     .fill(p.brand_primary)
-                    .child(rune::icon(&crate::icons::CHECK_BOLD, 12.0).color(p.brand_primary_fill)),
+                    .child(crate::ui::icon(&crate::icons::CHECK_BOLD, 12.0).color(p.brand_primary_fill)),
             )
         } else {
             b.cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| {
@@ -758,7 +758,7 @@ fn group_head<S: 'static>(group: &'static str, n: usize, expanded: bool, p: &Pal
         .center_y()
         .cursor(rune::Cursor::Pointer)
         .role("button")
-        .child(rune::icon(if expanded { &crate::icons::CARET_DOWN_BOLD } else { &crate::icons::CARET_RIGHT_BOLD }, 14.0).color(p.text_tertiary))
+        .child(crate::ui::icon(if expanded { &crate::icons::CARET_DOWN_BOLD } else { &crate::icons::CARET_RIGHT_BOLD }, 14.0).color(p.text_tertiary))
         .child(text(t(group)).font(font(14.0, 600.0).lh(20.0)).color(p.text_primary).grow(1.0))
         .child(text(n.to_string()).font(font(12.0, 500.0).lh(16.0)).color(p.text_tertiary))
         .on_press(move |s: &mut S| {
@@ -789,7 +789,7 @@ fn font_row<S: 'static>(st: &ShellState, name: &'static str, value: Option<Strin
         .child(text(name).font(font(13.0, 400.0).mono().lh(18.0)).color(if value.is_some() { p.text_primary } else { p.text_secondary }).grow(1.0).min_w(0.0).truncate())
         .child(row().w(200.0).px(8.0).py(4.0).radius(6.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).child(input.grow(1.0)));
     if value.is_some() {
-        r = r.child(rune::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(t("Reset")).on_press(move |s: &mut S| {
+        r = r.child(crate::ui::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(t("Reset")).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.form.text.remove(&format!("tok-{name}"));
             sh.form.text.remove("quick-css");
@@ -822,7 +822,7 @@ fn token_row<S: 'static>(st: &ShellState, name: &'static str, overrides: &[(Stri
         .child(text(name).font(font(13.0, 400.0).mono().lh(18.0)).color(if value.is_some() { p.text_primary } else { p.text_secondary }).grow(1.0).min_w(0.0).truncate())
         .child(row().w(140.0).px(8.0).py(4.0).radius(6.0).fill(p.form_surface_background).border(1.0, p.background_modifier_accent).child(input.grow(1.0)));
     if value.is_some() {
-        r = r.child(rune::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(t("Reset")).on_press(move |s: &mut S| {
+        r = r.child(crate::ui::icon(&crate::icons::ARROW_COUNTER_CLOCKWISE_BOLD, 14.0).color(p.text_tertiary).cursor(rune::Cursor::Pointer).role("button").label(t("Reset")).on_press(move |s: &mut S| {
             let sh = acc(s);
             sh.form.text.remove(&format!("tok-{name}"));
             sh.form.text.remove("quick-css");

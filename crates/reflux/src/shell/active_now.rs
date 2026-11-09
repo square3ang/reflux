@@ -8,7 +8,8 @@ use std::collections::{HashMap, HashSet};
 
 use reflux_model::{ChannelType, Permissions, RelationshipType, Snowflake};
 use reflux_store::Store;
-use rune::{El, col, el, icon, row, text};
+use rune::{El, col, el, row, text};
+use crate::ui::icon;
 
 use super::{ShellAccess, ShellState};
 use crate::i18n::t;

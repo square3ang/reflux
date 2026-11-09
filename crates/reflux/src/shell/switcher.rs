@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{ChannelType, NotificationLevel, RelationshipType, Snowflake};
 use reflux_store::Store;
-use rune::{Color, El, Key, ScrollSpec, TextEdit, col, el, icon, row, text, text_input};
+use rune::{Color, El, Key, ScrollSpec, TextEdit, col, el, row, text, text_input};
+use crate::ui::icon;
 
 use super::{Intent, ShellAccess, ShellState, avatar, channel_icon};
 use crate::theme::{Palette, font};

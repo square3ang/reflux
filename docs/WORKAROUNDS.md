@@ -34,7 +34,6 @@ Rules:
 | Spellcheck uses our own dictionary; the caret stands in for the pointer position | no OS text services; no pointer→text-offset API | `desktop/spell.rs` | Rune exposes hit-testing into text |
 | Undo/Redo always enabled | Rune doesn't expose the edit history depth | `compose.rs` | history API |
 | Inline video/audio and gifv on Windows/Linux don't use Rune's `Player`: our `VideoPlayer` (GStreamer `playbin` on Linux, Media Foundation `IMFSourceReader` on Windows) draws RGBA frames into a `Pixels` with our own control bar | `Player` has only a macOS (AVFoundation) backend | `gst.rs`, `mf.rs`, `shell/{clip,gifv}.rs` | `Player` gains Windows/Linux backends |
-| RTL: bidi text runs only, layout isn't mirrored | Rune has no layout direction | `i18n.rs` | layout direction in Rune |
 | No minimize-to-tray, window size only (no position/maximized) — **WONTFIX** (user decision) | no minimize event; position impossible on Wayland | `desktop/window.rs` | — |
 | Keyboard-mode intro shows only for a Tab no field takes | the app-level `on_key` only sees keys the focused control passes on, and a field's Tab moves focus itself | `nav/keys.rs` | a pre-dispatch key hook |
 | Spinner dots only fade (no 0.8 scale) | Rune's looping motion is opacity, rotation or slide; the scale-capable `Sequence` runs once | `ui/misc.rs` | looping scale keyframes |
@@ -178,7 +177,6 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
 - `crates/reflux/src/gst.rs:386` Fluxer's virtmic links new streams as PipeWire announces them; this rescans
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
-- `crates/reflux/src/i18n.rs:11` Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
 - `crates/reflux/src/mf.rs:100` rodio's speed shifts the pitch (no `preservesPitch` like playbin's scaletempo);
 - `crates/reflux/src/mf.rs:157` readers open and close one at a time, and an E_UNEXPECTED open is retried: under
 - `crates/reflux/src/nav/keys.rs:82` a Tab inside a field moves focus without showing the intro.
@@ -198,28 +196,28 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/voice_tabs.rs:512` opens the Advanced tab at its top; Fluxer scrolls to its Media section.
 - `crates/reflux/src/settings/voice_tabs.rs:695` Fluxer's bars are slanted (`clip-path` parallelograms); these are plain rounded bars.
 - `crates/reflux/src/shell/attachments.rs:552` plain text; Fluxer links it to the attachment-expiry help article.
-- `crates/reflux/src/shell/call.rs:130` kept for the session; Fluxer persists it. Persist with the other layout prefs.
-- `crates/reflux/src/shell/call.rs:202` the store keeps a 200-message window and no total unread count, so a channel with
-- `crates/reflux/src/shell/call.rs:496` only our own Speak permission is known here; others show red for a server mute only.
-- `crates/reflux/src/shell/call.rs:578` no "Add stream" button; reflux watches one stream at a time. Add it with
-- `crates/reflux/src/shell/call.rs:670` other users' accent colours only arrive with their profile, which the tile
-- `crates/reflux/src/shell/call.rs:1290` reflux keeps favorites for community channels only, so a DM call has no star.
-- `crates/reflux/src/shell/call.rs:1315` `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
-- `crates/reflux/src/shell/call.rs:1343` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:1610` checking it needs an app, which is picked in the share dialog; with none picked
-- `crates/reflux/src/shell/call.rs:1720` `localeCompare` is approximated by a case-insensitive compare.
-- `crates/reflux/src/shell/call.rs:1904` a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
-- `crates/reflux/src/shell/call.rs:2007` Rune loops opacity only, so the ring fades in and out at half its spread
-- `crates/reflux/src/shell/call.rs:2048` Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
-- `crates/reflux/src/shell/call.rs:2448` Rune has no brightness filter or pressed offset, so hover only swaps the colour
-- `crates/reflux/src/shell/call.rs:2475` Rune loops opacity only, so the ring fades in and out at half its spread.
-- `crates/reflux/src/shell/call.rs:2565` no backdrop blur behind the card.
-- `crates/reflux/src/shell/call.rs:2617` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
-- `crates/reflux/src/shell/call.rs:2685` Rune has no diagonal resize cursor, so it shows the row one.
-- `crates/reflux/src/shell/call.rs:3170` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:3453` the shell has no WebRTC stats handle; values stay dashes until the engine
-- `crates/reflux/src/shell/call.rs:3480` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
-- `crates/reflux/src/shell/call.rs:3538` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
+- `crates/reflux/src/shell/call.rs:131` kept for the session; Fluxer persists it. Persist with the other layout prefs.
+- `crates/reflux/src/shell/call.rs:203` the store keeps a 200-message window and no total unread count, so a channel with
+- `crates/reflux/src/shell/call.rs:497` only our own Speak permission is known here; others show red for a server mute only.
+- `crates/reflux/src/shell/call.rs:579` no "Add stream" button; reflux watches one stream at a time. Add it with
+- `crates/reflux/src/shell/call.rs:671` other users' accent colours only arrive with their profile, which the tile
+- `crates/reflux/src/shell/call.rs:1291` reflux keeps favorites for community channels only, so a DM call has no star.
+- `crates/reflux/src/shell/call.rs:1316` `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
+- `crates/reflux/src/shell/call.rs:1344` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:1611` checking it needs an app, which is picked in the share dialog; with none picked
+- `crates/reflux/src/shell/call.rs:1721` `localeCompare` is approximated by a case-insensitive compare.
+- `crates/reflux/src/shell/call.rs:1905` a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
+- `crates/reflux/src/shell/call.rs:2008` Rune loops opacity only, so the ring fades in and out at half its spread
+- `crates/reflux/src/shell/call.rs:2049` Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
+- `crates/reflux/src/shell/call.rs:2449` Rune has no brightness filter or pressed offset, so hover only swaps the colour
+- `crates/reflux/src/shell/call.rs:2476` Rune loops opacity only, so the ring fades in and out at half its spread.
+- `crates/reflux/src/shell/call.rs:2566` no backdrop blur behind the card.
+- `crates/reflux/src/shell/call.rs:2618` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
+- `crates/reflux/src/shell/call.rs:2686` Rune has no diagonal resize cursor, so it shows the row one.
+- `crates/reflux/src/shell/call.rs:3171` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:3454` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:3481` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
+- `crates/reflux/src/shell/call.rs:3539` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -232,7 +230,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
 - `crates/reflux/src/shell/search.rs:77` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
-- `crates/reflux/src/shell/sidebar.rs:74` the `banner` variant's drop shadow isn't drawn.
+- `crates/reflux/src/shell/sidebar.rs:75` the `banner` variant's drop shadow isn't drawn.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
 - `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
@@ -250,7 +248,7 @@ crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sa
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/controls.rs:314` it shows while the whole control is hovered (Rune's hover group), which also
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
-- `crates/reflux/src/ui/menu.rs:227` rune can't tell us which way the parent flipped, so a nested submenu opens to the
+- `crates/reflux/src/ui/menu.rs:228` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
 - `crates/reflux/src/ui/misc.rs:169` a virtual list keeps what's on screen when rows above it are measured

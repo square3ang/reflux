@@ -4,7 +4,8 @@
 //! (match count, the first three matched items as chips) with the tab itself inline.
 
 use reflux_store::Store;
-use rune::{El, col, icon, row, text};
+use rune::{El, col, row, text};
+use crate::ui::icon;
 
 use super::search_index::ITEMS;
 use super::{SettingsUi, TABS, colors, tabs};

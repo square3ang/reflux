@@ -10,7 +10,8 @@ use reflux_model::{Channel, ChannelType, Message, NotificationLevel, Snowflake, 
 use reflux_store::Store;
 use reflux_store::threads::{self as rules, CreateKind};
 use rune::text::Span;
-use rune::{Color, El, ScrollSpec, TextEdit, col, el, icon, rich, row, text};
+use rune::{Color, El, ScrollSpec, TextEdit, col, el, rich, row, text};
+use crate::ui::icon;
 
 use super::{Intent, ShellAccess, ShellState, format_relative, pops};
 use crate::icons;

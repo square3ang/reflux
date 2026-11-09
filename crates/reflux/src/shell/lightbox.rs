@@ -6,7 +6,8 @@
 //! zoom on the right.
 
 use reflux_model::Snowflake;
-use rune::{Color, El, Icon, KeyEvent, PlayerState, Tx, col, el, icon, row, text};
+use rune::{Color, El, Icon, KeyEvent, PlayerState, Tx, col, el, row, text};
+use crate::ui::icon;
 
 use super::{ReplyTo, ShellAccess, ShellState};
 use crate::icons;

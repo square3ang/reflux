@@ -9,7 +9,8 @@
 use std::rc::Rc;
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
-use rune::{El, Span, TextEdit, col, el, icon, row, text, text_input};
+use rune::{El, Span, TextEdit, col, el, row, text, text_input};
+use super::icon;
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, popout_shadow};
 use super::{mix, over};

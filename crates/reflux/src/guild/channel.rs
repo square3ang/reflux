@@ -4,7 +4,8 @@
 use reflux_model::{ChannelType, OverwriteType, PermissionOverwrite, Permissions as P, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, Icon, col, el, icon, row, text};
+use rune::{El, Icon, col, el, row, text};
+use crate::ui::icon;
 use serde_json::{Value, json};
 
 use super::modals::confirm;

@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{Channel, ChannelType, Permissions, Snowflake, VoiceState};
 use reflux_store::Store;
-use rune::{Color, El, Pixels, Shadow, col, el, icon, row, text};
+use rune::{Color, El, Pixels, Shadow, col, el, row, text};
+use crate::ui::icon;
 
 use super::voice::{Modal, Op};
 use super::{Intent, ShellAccess, ShellState, avatar, pops};

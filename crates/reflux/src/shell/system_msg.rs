@@ -6,7 +6,8 @@ use chrono::DateTime;
 use reflux_model::{ChannelType, Message, MessageType, Snowflake};
 use reflux_store::Store;
 use rune::text::Span;
-use rune::{Color, El, Tx, el, icon, rich, row, text};
+use rune::{Color, El, Tx, el, rich, row, text};
+use crate::ui::icon;
 
 use super::chat::{author_name, format_relative, format_time};
 use super::{ShellAccess, ShellState};

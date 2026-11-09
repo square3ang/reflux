@@ -7,7 +7,8 @@ use crate::ui::SmoothWheel;
 use reflux_model::{Channel, ChannelType, Message, MessageFlags, Permissions as P, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, Icon, ScrollSpec, col, icon, row, text};
+use rune::{El, Icon, ScrollSpec, col, row, text};
+use crate::ui::icon;
 use serde_json::{Value, json};
 
 use super::{Done, Modal, body, close, desc, error, field, footer};

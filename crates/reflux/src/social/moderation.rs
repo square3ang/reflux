@@ -477,7 +477,7 @@ pub fn report<S: 'static>(st: &ShellState, target: &'static str, g: Option<Snowf
                 .label(o["label"].as_str().unwrap_or_default().to_string())
                 .on_press_tx(move |s: &mut S, tx| s2(s, Some(oid.clone()), Some(tx)))
                 .child(text(o["label"].as_str().unwrap_or_default().to_string()).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary).grow(1.0).shrink().wrap())
-                .child(rune::icon(&icons::CARET_RIGHT_BOLD, 16.0).color(p.text_tertiary))
+                .child(crate::ui::icon(&icons::CARET_RIGHT_BOLD, 16.0).color(p.text_tertiary))
         }));
         items.push(list.key("options"));
     } else {

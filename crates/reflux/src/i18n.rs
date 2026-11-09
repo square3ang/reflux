@@ -8,8 +8,6 @@
 // (gateway/passkey errors, "Signing in to {host}", the quick CSS note, "Delete '{name}'" for a
 // community) has no translation anywhere, so it stays English, as do the component gallery
 // and the shell demo. Wrap new literals in `t(...)` and re-run scripts/i18n-extract.py.
-// shortcut: Arabic and Hebrew get right-to-left text runs (parley's bidi) but the layout isn't
-// mirrored: Rune has no layout-direction setting, so rows still run left to right.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
@@ -124,6 +122,12 @@ pub fn set_locale(tag: &str) {
 
 pub fn locale() -> &'static str {
     CURRENT.read().unwrap().code
+}
+
+/// `getLocaleDirection` (`LocaleDirection.ts`): Arabic, Hebrew, Persian and Urdu run right to
+/// left, and the app's root takes that direction (`document.documentElement.dir`).
+pub fn rtl() -> bool {
+    matches!(locale().split(['-', '_']).next(), Some("ar" | "he" | "fa" | "ur"))
 }
 
 /// `Intl.DisplayNames(locale, {type: 'region'}).of(code)` (Fluxer's `RegionFormatting`): a

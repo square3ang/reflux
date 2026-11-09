@@ -5,7 +5,8 @@
 
 use std::rc::Rc;
 
-use rune::{Color, El, Icon, Key, Tx, col, el, icon, row, text};
+use rune::{Color, El, Icon, Key, Tx, col, el, row, text};
+use super::icon;
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, anchor_at_point, popout_shadow};
 use super::{mix, over};

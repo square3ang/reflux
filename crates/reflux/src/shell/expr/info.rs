@@ -332,7 +332,7 @@ fn action<S: 'static>(glyph: &'static rune::Icon, label: &str, p: &Palette, f: i
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(label.to_string())
-        .child(rune::icon(glyph, 18.0).color(p.text_primary_muted))
+        .child(crate::ui::icon(glyph, 18.0).color(p.text_primary_muted))
         .child(text(label.to_string()).font(font(14.0, 500.0).lh(18.0)).color(p.text_primary).truncate().shrink().min_w(0.0))
         .on_press(f)
 }

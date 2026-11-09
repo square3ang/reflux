@@ -2,7 +2,8 @@
 //! masonry grid of results. Picking sends the GIF's page URL.
 
 use crate::ui::SmoothWheel;
-use rune::{Color, El, Tx, col, el, icon, row, text};
+use rune::{Color, El, Tx, col, el, row, text};
+use crate::ui::icon;
 use serde_json::Value;
 
 use super::{For, Fetched, GifView, ShellAccess, ShellState, close, fetch, search_bar};

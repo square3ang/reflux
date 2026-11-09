@@ -5,7 +5,8 @@
 use reflux_model::{Ban, ChannelType, Emoji, Invite, PartialUser, Permissions as P, Role, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
-use rune::{El, Icon, Tx, col, el, icon, row, text};
+use rune::{El, Icon, Tx, col, el, row, text};
+use crate::ui::icon;
 use serde_json::{Value, json};
 
 use super::modals::confirm;
