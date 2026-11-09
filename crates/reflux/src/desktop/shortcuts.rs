@@ -367,7 +367,34 @@ mod portal {
         }
     }
 
+    /// Our app id with the portal. Without one the portal files the shortcuts under whatever
+    /// launched us (KDE kept them under `org.kde.konsole` from a terminal, unassigned), so
+    /// keys assigned in one launch were gone in the next. Registering needs a desktop entry.
+    const APP_ID: &str = "app.fluxer.reflux";
+
+    /// `~/.local/share/applications/app.fluxer.reflux.desktop`, hidden from launchers, so the
+    /// portal knows the id. Release builds only, as the protocol registration on Windows.
+    fn install_entry() {
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let (Some(dir), Ok(exe)) = (dirs::data_dir().map(|d| d.join("applications")), std::env::current_exe()) else { return };
+        let path = dir.join(format!("{APP_ID}.desktop"));
+        let body = format!("[Desktop Entry]\nType=Application\nName=Fluxer (Reflux)\nExec=\"{}\" %u\nIcon=reflux\nTerminal=false\nNoDisplay=true\n", exe.display());
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Err(e) = std::fs::write(&path, body) {
+                eprintln!("reflux: {}: {e}", path.display());
+            }
+        }
+    }
+
     async fn portal(triggers: Vec<(Action, Option<String>)>, mut configure: tokio::sync::mpsc::UnboundedReceiver<()>) -> ashpd::Result<()> {
+        install_entry();
+        // Before any other portal call on this connection, as the registry requires.
+        if let Err(e) = ashpd::register_host_app(APP_ID.try_into().expect("app id")).await {
+            eprintln!("reflux: global shortcuts: registering {APP_ID}: {e}");
+        }
         let gs = GlobalShortcuts::new().await?;
         let session = gs.create_session(Default::default()).await?;
         // `preferred_trigger`s let the backend pre-fill the keys; KDE keeps what the user
