@@ -134,7 +134,7 @@ impl Demo {
             self.older = Some((channel, std::time::Instant::now()));
         }
         let Some((channel, asked)) = self.older else { return false };
-        if asked.elapsed() < std::time::Duration::from_millis(300) || crate::app::older_held() {
+        if asked.elapsed() < std::time::Duration::from_millis(300) {
             tx.wake_after(std::time::Duration::from_millis(30));
             return false;
         }

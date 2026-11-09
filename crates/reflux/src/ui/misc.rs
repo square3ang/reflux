@@ -87,24 +87,7 @@ const RUNE_LINE: f32 = 40.0;
 /// `ozone/wayland: Fix high resolution scroll handling` (M140; Fluxer's Electron 44 is M146).
 const WHEEL_STEP: f32 = 120.0;
 
-/// A wheel glide from `.0` to `.1`, set at `.2`.
-type Glide = (f32, f32, std::time::Instant);
-
-/// How long after a tick the next one still adds to its glide (the glide is ~0.15 s).
-const GLIDE_FOR: std::time::Duration = std::time::Duration::from_millis(400);
-
-/// Where the next tick starts from: the running glide's target while the offset is still on its
-/// way there, else the offset. A target the offset left (older messages loading above re-anchor
-/// it, the list following its end) would send the next tick back to it, thousands of points off.
-fn wheel_base(at: f32, glide: Option<Glide>, now: std::time::Instant) -> f32 {
-    match glide {
-        Some((from, to, t)) if now.duration_since(t) < GLIDE_FOR && at >= from.min(to) - 2.0 && at <= from.max(to) + 2.0 => to,
-        _ => at,
-    }
-}
-
-/// `REFLUX_DEBUG_WHEEL`: logs each wheel delta the smooth wheel hears and each move it didn't
-/// make (Rune's own wheel scrolling or an instant jump).
+/// `REFLUX_DEBUG_WHEEL`: logs each wheel delta the smooth wheel hears.
 fn debug_wheel() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_WHEEL").is_some())
@@ -116,34 +99,16 @@ pub(crate) fn debug_scroll() -> bool {
     *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_SCROLL").is_some())
 }
 
-/// A [`smooth_wheel`] viewport's last scroll position, its glide, and how far rows measured
-/// above the view moved it since the glide was last retargeted.
-struct Wheel {
-    pos: rune::ScrollPos,
-    aim: Option<Glide>,
-    shift: f32,
-}
-
 thread_local! {
-    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, Wheel>> = Default::default();
+    /// Each [`smooth_wheel`] viewport's last scroll position.
+    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, rune::ScrollPos>> = Default::default();
 }
 
-/// The wheel glide's spring.
-const GLIDE: rune::Spring = rune::Spring::new(0.15, 0.0);
-
-/// Whether `aim` still runs with the viewport at `at`. Rune lands a glide exactly on its target;
-/// until then its spring still pulls, however close (an older page added in that tail was
-/// pulled back out of view, which loaded the next one).
-#[allow(clippy::float_cmp)]
-fn on_its_way(aim: Option<Glide>, at: f32) -> bool {
-    aim.is_some_and(|(_, to, t)| t.elapsed() < std::time::Duration::from_millis(500) && at != to)
-}
-
-/// Chromium's smooth wheel scrolling on a vertical scroll viewport: a notched wheel's line
-/// steps go Chromium's [`WHEEL_STEP`] and glide instead of jumping, each adding to where the glide was heading. Trackpads and
-/// free-spinning wheels (`precise`) and modified wheels scroll as before. `key` names a marker
-/// (`{key}-wheel`, absolute and empty) the glide finds the viewport by, so it must be unique
-/// among what's on screen; the viewport's own key is left alone.
+/// Chromium's wheel step on a vertical scroll viewport: a notched wheel's line steps go
+/// Chromium's [`WHEEL_STEP`], at once (no glide). Trackpads and free-spinning wheels (`precise`)
+/// and modified wheels scroll as before. `key` names a marker (`{key}-wheel`, absolute and
+/// empty) the step finds the viewport by, so it must be unique among what's on screen; the
+/// viewport's own key is left alone.
 pub fn smooth_wheel<S: 'static>(viewport: El, key: &str) -> El {
     smooth_wheel_with::<S>(viewport, key, |_| {})
 }
@@ -158,32 +123,7 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
             if debug_scroll() && k1.starts_with("msgs") {
                 eprintln!("scroll {k1}: offset {:.1} max {:.1}", pos.offset[1], pos.max[1]);
             }
-            if debug_wheel() {
-                let (hand, instant, _) = rune::scroll_watch_state();
-                if hand {
-                    eprintln!("wheel {k1}: moved without a glide to {:.1} (instant frame: {instant})", pos.offset[1]);
-                }
-            }
-            WHEEL.with_borrow_mut(|m| {
-                let w = m.entry(k1.clone()).or_insert(Wheel { pos, aim: None, shift: 0.0 });
-                // shortcut: a virtual list keeps what's on screen when rows above it are measured
-                // (or grow) by moving the offset as much, but Rune leaves a running glide's
-                // target where it was, so the glide flies on by that much. Gliding up, the rows
-                // mounting are above the view: the content's growth is taken as that move, and
-                // `retarget_wheels` moves the glide's target by it a frame later. Growth below
-                // the view while gliding up (a new message) moves the target too far by as much.
-                let d = pos.max[1] - w.pos.max[1];
-                if d != 0.0
-                    && pos.viewport == w.pos.viewport
-                    && on_its_way(w.aim, w.pos.offset[1])
-                    && let Some((from, to, _)) = w.aim.as_mut()
-                    && *to < *from
-                {
-                    (*from, *to) = (*from + d, (*to + d).max(0.0));
-                    w.shift += d;
-                }
-                w.pos = pos;
-            });
+            WHEEL.with_borrow_mut(|m| m.insert(k1.clone(), pos));
             f(pos);
         })
         .on_wheel(move |_: &mut S, e: rune::WheelEvent, tx: &mut rune::Tx| {
@@ -194,38 +134,15 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
             if e.precise || e.dx != 0.0 || e.dy == 0.0 || m.cmd || m.ctrl || m.alt || m.shift {
                 return false;
             }
-            let Some(to) = WHEEL.with_borrow_mut(|w| {
-                let Wheel { pos, aim, shift } = w.get_mut(&k2)?;
-                let at = pos.offset[1];
-                let now = std::time::Instant::now();
-                let to = (wheel_base(at, *aim, now) - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0));
-                *aim = Some((at, to, now));
-                *shift = 0.0;
-                Some((pos.offset[0], to))
+            let Some(to) = WHEEL.with_borrow(|w| {
+                let pos = w.get(&k2)?;
+                Some((pos.offset[1] - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0)))
             }) else {
                 return false;
             };
-            tx.scroll_to_with(k2.clone(), to.0, to.1, GLIDE);
+            tx.scroll_to_y(k2.clone(), to);
             true
         })
-}
-
-/// Each frame, before the view: moves the target of each wheel glide that rows measured above
-/// its view shifted (see [`smooth_wheel_with`]).
-pub fn retarget_wheels(tx: &mut rune::Tx) {
-    WHEEL.with_borrow_mut(|m| {
-        for (key, w) in m.iter_mut().filter(|(_, w)| w.shift != 0.0) {
-            w.shift = 0.0;
-            if let Some((_, to, _)) = w.aim.filter(|_| on_its_way(w.aim, w.pos.offset[1])) {
-                tx.scroll_to_with(key.clone(), w.pos.offset[0], to, GLIDE);
-            }
-        }
-    });
-}
-
-/// Whether the [`smooth_wheel`] viewport `key`'s wheel glide is still on its way.
-pub fn gliding(key: &str) -> bool {
-    WHEEL.with_borrow(|m| m.get(&format!("{key}-wheel")).is_some_and(|w| on_its_way(w.aim, w.pos.offset[1])))
 }
 
 /// [`smooth_wheel`] chained after `.scroll(…)`.
@@ -241,17 +158,6 @@ impl SmoothWheel for El {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_tick_adds_to_a_running_glide_only() {
-        use super::wheel_base;
-        use std::time::{Duration, Instant};
-        let t = Instant::now();
-        assert_eq!(wheel_base(50.0, Some((0.0, 120.0, t)), t), 120.0, "on its way: adds to the target");
-        assert_eq!(wheel_base(3050.0, Some((0.0, 120.0, t)), t), 3050.0, "re-anchored: from where it is");
-        assert_eq!(wheel_base(50.0, Some((0.0, 120.0, t)), t + Duration::from_secs(1)), 50.0, "an old glide");
-        assert_eq!(wheel_base(50.0, None, t), 50.0);
-    }
-
     use super::*;
 
     #[test]
