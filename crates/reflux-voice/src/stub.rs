@@ -300,6 +300,18 @@ impl Call {
 
     pub fn set_mic_muted(&self, _muted: bool) {}
 
+    pub fn mic_missing(&self) -> bool {
+        false
+    }
+
+    pub fn mic_sid(&self) -> Option<String> {
+        None
+    }
+
+    pub async fn drop_mic_publication(&self) -> Option<String> {
+        None
+    }
+
     pub fn play(&self, _track: RemoteAudioTrack, _participant: &RemoteParticipant, _source: TrackSource) -> Option<impl Future<Output = ()> + Send + 'static> {
         None::<std::future::Ready<()>>
     }
@@ -338,7 +350,7 @@ impl Call {
         false
     }
 
-    pub fn sync_streams(&self, _watching: Option<u64>) {}
+    pub fn sync_streams(&self, _watching: Option<u64>, _previewing: Option<u64>) {}
 
     pub fn screen_track(&self, _user: u64) -> Option<RtcVideoTrack> {
         None

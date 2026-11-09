@@ -106,6 +106,12 @@ fn main() {
         }
         return;
     }
+    // Windows: one process (`requestSingleInstanceLock`); a later launch hands its link to it
+    // (`on_open_url`) or brings its window forward, then returns here.
+    let windowed = !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo");
+    if windowed && app::live::scene().is_none() && !rune::single_instance("app.fluxer.reflux") {
+        return;
+    }
     if !rune::is_headless() {
         crash::install();
     }
@@ -146,6 +152,8 @@ fn main() {
     .keep_running()
     .modifier_keys()
     .on_close(desktop::on_close)
+    // Windows and macOS hand us `fluxer://` links (Linux starts a process with one).
+    .on_open_url(|s, url, _| desktop::open_link(s, url))
     .on_focus(|s, focused, _| {
         s.desktop.focused = focused;
         s.app.shell.desktop.unfocused = !focused;
@@ -161,7 +169,7 @@ fn main() {
         reflux_net::force_readonly();
         app::live::capture();
         app::start(app.handle());
-    } else if !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo") {
+    } else if windowed {
         desktop::start(&app.handle());
         app::start(app.handle());
     }

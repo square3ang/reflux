@@ -1191,6 +1191,7 @@ async fn ping_loop(call: std::sync::Weak<Call>, generation: u64) {
 
 /// Others stopped hearing us after an hour or two while we still heard them, until a rejoin:
 /// a full reconnect's republish of the mic had failed. Publish it again, as the rejoin did.
+#[cfg(feature = "voice-webrtc")]
 fn republish_mic(call: Arc<Call>, generation: u64) {
     static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if BUSY.swap(true, std::sync::atomic::Ordering::AcqRel) {

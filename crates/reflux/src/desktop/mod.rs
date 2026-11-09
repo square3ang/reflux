@@ -297,26 +297,32 @@ pub fn boot(s: &mut State) {
 }
 
 /// Startup in a windowed run: forwards to a running instance (then exits) or starts listening
-/// for later launches, and remembers a launch link for after sign-in.
+/// for later launches, and remembers a launch link for after sign-in. Windows does this through
+/// Rune (`rune::single_instance`, `on_open_url`).
 pub fn start(ui: &rune::AppHandle<State>) {
-    let link = link::from_args();
-    if link::forward(link.as_deref()) {
-        std::process::exit(0);
-    }
-    let handle = ui.clone();
-    link::listen(move |token, link| {
-        match token {
-            Some(t) => handle.activate(t),
-            None => handle.open(),
-        }
-        if let Some(l) = link {
-            handle.update(move |s, _| open_link(s, &l));
-        }
-    });
     link::register_protocol();
-    if let Some(l) = link {
-        ui.update(move |s, _| open_link(s, &l));
+    #[cfg(unix)]
+    {
+        let link = link::from_args();
+        if link::forward(link.as_deref()) {
+            std::process::exit(0);
+        }
+        let handle = ui.clone();
+        link::listen(move |token, link| {
+            match token {
+                Some(t) => handle.activate(t),
+                None => handle.open(),
+            }
+            if let Some(l) = link {
+                handle.update(move |s, _| open_link(s, &l));
+            }
+        });
+        if let Some(l) = link {
+            ui.update(move |s, _| open_link(s, &l));
+        }
     }
+    #[cfg(not(unix))]
+    let _ = ui;
 }
 
 /// A `fluxer://` link from a launch: kept until the shell is up.
