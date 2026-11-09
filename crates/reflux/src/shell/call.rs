@@ -736,8 +736,10 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
     if let Some(f) = focused {
         if compact {
-            // The compact view shows just the focused tile.
-            return col().w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
+            // The compact view shows just the focused tile. It keeps the grid's key: `grid_area`
+            // measures it, and an area that vanished with the grid read as the default, which
+            // fit every tile, so the view flipped between grid and focus every frame.
+            return col().key(grid_key).w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
         }
         return focus_layout(f, &all, st, &make, acc);
     }

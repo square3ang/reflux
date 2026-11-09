@@ -1127,6 +1127,12 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
         }
     }
     // A fifth participant, as Fluxer's compact-strip reference has five.
+    // More tiles than a short window's grid fits: the call view focuses the first one.
+    if scene.starts_with("call-crowd") || scene == "compact-crowd" {
+        for u in 1002..=1011u64 {
+            apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": u.to_string(), "channel_id": "2301", "connection_id": format!("c{u}"), "self_stream": u % 3 == 0}));
+        }
+    }
     if scene == "call-five" {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1002", "channel_id": "2301", "connection_id": "c1002"}));
         // Fluxer's capture had the call resized to 297px tall.
@@ -1134,7 +1140,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
     }
     if matches!(scene, "call" | "own-share" | "focus" | "details" | "tile-menu" | "tile-stream" | "tile-preview" | "share-menu" | "share-menu-res" | "camera" | "share" | "share-fps" | "share-devices" | "share-pick" | "full" | "refused" | "processing" | "trim"
         | "bar-tip" | "panel-share-menu" | "menu-input" | "menu-output" | "menu-camera" | "menu-screen" | "menu-screen-active" | "menu-more" | "participants" | "stats" | "fullscreen" | "hud-hidden" | "audio-only" | "teleport" | "hide-camera"
-        | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" | "call-connecting" | "call-reconnecting" | "no-video" | "call-speaking") {
+        | "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" | "call-connecting" | "call-reconnecting" | "no-video" | "call-speaking" | "call-crowd" | "call-crowd-watch" | "compact-crowd") {
         apply(store, "VOICE_STATE_UPDATE", json!({"guild_id": HQ.to_string(), "user_id": "1001", "channel_id": "2301", "connection_id": "c1001", "self_video": true}));
         fake_frames(st.voice.videos.entry(Snowflake(1001)).or_default(), 90);
         (st.voice.call_view, st.voice.encrypted) = (true, true);
@@ -1170,6 +1176,11 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
                 }
                 _ => {}
             }
+        }
+        // A crowded call focused on a watched stream.
+        "call-crowd-watch" => {
+            (st.voice.focus, st.voice.watching) = (Some(Snowflake(1003)), Some(Snowflake(1003)));
+            st.call.layout = super::call::LayoutMode::Focus;
         }
         "focus" => {
             st.voice.focus = Some(Snowflake(1004));
@@ -1257,7 +1268,7 @@ fn voice_scene(st: &mut ShellState, store: &mut Store, scene: &str) {
             st.call.region = Some("eu-central".into());
         }
         "hide-camera" => st.call.hide_camera_confirm = Some(false),
-        "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" => {
+        "compact" | "compact-tall" | "compact-unread" | "compact-stream" | "compact-watch" | "compact-crowd" => {
             (st.guild, st.channel) = (Some(Snowflake(HQ)), Some(Snowflake(2301)));
             st.voice.call_view = false;
             st.voice.videos.clear();
