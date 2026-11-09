@@ -338,6 +338,10 @@ impl Call {
         Err(Error::Unavailable)
     }
 
+    pub async fn requality_screen(&self, _share: ScreenHandle, _quality: ScreenQuality) -> Result<(), Error> {
+        Ok(())
+    }
+
     pub async fn stop_screen(&self, _share: ScreenShare) -> Result<(), Error> {
         Ok(())
     }
@@ -407,7 +411,13 @@ impl Camera {
 /// A running screen share. There are none.
 pub struct ScreenShare;
 
+pub struct ScreenHandle;
+
 impl ScreenShare {
+    pub fn handle(&self) -> ScreenHandle {
+        ScreenHandle
+    }
+
     /// No capture in the stub build, so a share never ends on its own.
     pub fn ended(&self) -> bool {
         false

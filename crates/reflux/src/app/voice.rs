@@ -158,7 +158,10 @@ fn run_op(s: &mut State, op: Op) {
             apply_self(s);
             // `StreamSettingsMenuContent` with applyToLiveStream: a running share picks up
             // resolution / frame rate / bitrate / audio / encoder changes at once.
-            if (s.app.voice.share.is_some() || s.app.voice.device_share.is_some()) && screen_settings_changed(&before, &s.app.saved.voice_settings) {
+            let after = &s.app.saved.voice_settings;
+            if s.app.voice.share.is_some() && !screen_restart_needed(&before, after) && screen_settings_changed(&before, after) {
+                requality_screen(s);
+            } else if (s.app.voice.share.is_some() || s.app.voice.device_share.is_some()) && screen_settings_changed(&before, after) {
                 s.app.voice.restart_screen = true;
                 s.app.shell.intents.push(crate::shell::Intent::ToggleScreen);
             }
@@ -1352,6 +1355,43 @@ fn verify_encoder(s: &mut State, codec: &'static str) {
     });
 }
 
+/// Whether a settings change needs a new share (codec, SVC, encoder or audio), rather than the
+/// running capture's track published again at a new size, frame rate or bitrate.
+fn screen_restart_needed(a: &Settings, b: &Settings) -> bool {
+    a.screen_svc != b.screen_svc
+        || a.screen_codec != b.screen_codec
+        || a.screen_av1_opt_in != b.screen_av1_opt_in
+        || a.screen_hevc_opt_in != b.screen_hevc_opt_in
+        || a.encoder != b.encoder
+        || a.stream_audio != b.stream_audio
+}
+
+/// A live quality change: the share keeps its source (no picker again) and publishes anew.
+fn requality_screen(s: &mut State) {
+    let (Some(call), Some(share)) = (s.app.voice.call.clone(), s.app.voice.share.as_ref()) else { return };
+    let higher = s.app.shell.limits.higher_video_quality || call.mesh().is_some();
+    let quality = s.app.shell.voice.settings.screen_quality(&s.app.shell.limits, higher);
+    let handle = share.handle();
+    let generation = s.app.voice.generation;
+    spawn(async move {
+        if let Err(e) = call.requality_screen(handle, quality).await {
+            eprintln!("reflux: stream quality: {e}");
+        }
+        update(move |s| {
+            if s.app.voice.generation != generation || s.app.voice.share.is_none() {
+                return;
+            }
+            // A new track: the self preview and our own watched stream follow it.
+            render_own_share(s);
+            let me = s.app.store.my_id();
+            if s.app.shell.voice.watching == Some(me) {
+                watch(s, Some(me));
+            }
+            send_state(s);
+        });
+    });
+}
+
 /// Whether a settings change affects what a live screen share publishes.
 fn screen_settings_changed(a: &Settings, b: &Settings) -> bool {
     a.streaming_mode != b.streaming_mode
@@ -1906,12 +1946,16 @@ fn send_voice_message(s: &mut State) {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_live_stream_quality_pick_restarts_the_share_with_it() {
+    fn a_live_stream_quality_pick_republishes_without_a_new_share() {
         // The "Stream quality" radios switch to Custom and set the value (`stream_quality_entries`).
         let before = super::Settings::default();
         let mut after = before.clone();
         (after.screen_fps, after.streaming_mode) = (15, "custom".into());
         assert!(super::screen_settings_changed(&before, &after));
+        assert!(!super::screen_restart_needed(&before, &after), "same source, no picker");
+        let mut codec = before.clone();
+        codec.screen_svc.push('x');
+        assert!(super::screen_restart_needed(&before, &codec), "an SVC change needs a new share");
         let limits = crate::shell::upload::Limits::default();
         assert_eq!(after.screen_quality(&limits, true).fps, 15);
         after.screen_height = Some(480);

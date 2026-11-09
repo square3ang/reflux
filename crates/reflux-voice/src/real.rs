@@ -364,8 +364,9 @@ impl Call {
         let stop = Arc::new(AtomicBool::new(false));
         let ended = Arc::new(AtomicBool::new(false));
         let slot: Arc<Mutex<Option<NativeVideoSource>>> = Arc::default();
+        let live = Arc::new(Mutex::new((quality, (0, 0))));
         let (first, size) = tokio::sync::oneshot::channel();
-        spawn_capture(stop.clone(), ended.clone(), slot.clone(), first, quality, pick);
+        spawn_capture(stop.clone(), ended.clone(), slot.clone(), first, live.clone(), pick);
         let Ok((width, height)) = size.await else {
             return Err(Error::Capture);
         };
@@ -379,7 +380,32 @@ impl Call {
             }
         };
         *slot.lock().unwrap() = Some(source);
-        Ok(ScreenShare { sid, stop, ended, track })
+        Ok(ScreenShare(Arc::new(ShareInner { sid: Mutex::new(sid), stop, ended, track: Mutex::new(track), slot, live })))
+    }
+
+    /// `applyToLiveStream`: a running share takes a new resolution, frame rate or bitrate
+    /// without picking its source again. The capture keeps running; its track is published
+    /// again at the new size and encoding (the codec and SVC mode are fixed for a share).
+    pub async fn requality_screen(&self, share: ScreenHandle, quality: ScreenQuality) -> Result<(), Error> {
+        let s = &share.0;
+        let size = {
+            let mut live = s.live.lock().unwrap();
+            live.0 = quality;
+            live.1
+        };
+        let (width, height) = quality.fit(size.0.max(1), size.1.max(1));
+        let old = s.sid.lock().unwrap().clone();
+        self.unpublish(&old).await?;
+        let source = NativeVideoSource::new(VideoResolution { width, height }, true);
+        let (sid, track) = self.publish_screen(&source, quality, width, height).await?;
+        // Stopped meanwhile: take the new publication down too.
+        if s.stop.load(Ordering::Relaxed) {
+            return self.unpublish(&sid).await;
+        }
+        *s.slot.lock().unwrap() = Some(source);
+        *s.sid.lock().unwrap() = sid;
+        *s.track.lock().unwrap() = track;
+        Ok(())
     }
 
     /// Publishes a prepared screen source; [`start_screen`] and the live test share this so both
@@ -392,8 +418,9 @@ impl Call {
     }
 
     pub async fn stop_screen(&self, share: ScreenShare) -> Result<(), Error> {
-        share.stop.store(true, Ordering::Relaxed);
-        self.unpublish(&share.sid).await
+        share.0.stop.store(true, Ordering::Relaxed);
+        let sid = share.0.sid.lock().unwrap().clone();
+        self.unpublish(&sid).await
     }
 
     /// The first subscribed screen share of `user`.
@@ -748,35 +775,48 @@ impl ScreenQuality {
 }
 
 /// A running screen share; stop it with [`Call::stop_screen`]. Dropping it also stops capture.
-pub struct ScreenShare {
-    sid: TrackSid,
+pub struct ScreenShare(Arc<ShareInner>);
+
+/// A running share for [`Call::requality_screen`]; it doesn't keep the share alive.
+pub struct ScreenHandle(Arc<ShareInner>);
+
+struct ShareInner {
+    sid: Mutex<TrackSid>,
     stop: Arc<AtomicBool>,
     /// The capture ended on its own (the source went away), not through [`Call::stop_screen`].
     ended: Arc<AtomicBool>,
     /// The published track, for drawing our own stream ([`render_video`] reads local tracks too).
-    track: RtcVideoTrack,
+    track: Mutex<RtcVideoTrack>,
+    /// The source the capture feeds (swapped by a quality change).
+    slot: Arc<Mutex<Option<NativeVideoSource>>>,
+    /// The quality the capture scales and paces to, and the size it last captured.
+    live: Arc<Mutex<(ScreenQuality, (u32, u32))>>,
 }
 
 impl ScreenShare {
     pub fn ended(&self) -> bool {
-        self.ended.load(Ordering::Relaxed)
+        self.0.ended.load(Ordering::Relaxed)
     }
 
     /// Our own published stream, for the self preview.
     pub fn track(&self) -> Option<RtcVideoTrack> {
-        Some(self.track.clone())
+        Some(self.0.track.lock().unwrap().clone())
+    }
+
+    pub fn handle(&self) -> ScreenHandle {
+        ScreenHandle(self.0.clone())
     }
 }
 
 impl Drop for ScreenShare {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.0.stop.store(true, Ordering::Relaxed);
     }
 }
 
 /// Captures on its own thread (the capturer is not `Send`) until `stop`; reports the first
 /// frame's size through `first`, or drops it when capture fails or the picker is cancelled.
-fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource>>>, first: tokio::sync::oneshot::Sender<(u32, u32)>, quality: ScreenQuality, pick: Option<ScreenSource>) {
+fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<Option<NativeVideoSource>>>, first: tokio::sync::oneshot::Sender<(u32, u32)>, live: Arc<Mutex<(ScreenQuality, (u32, u32))>>, pick: Option<ScreenSource>) {
     std::thread::spawn(move || {
         // Generic = the portal picker (screens and windows) on Wayland/X11 via PipeWire.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -796,6 +836,7 @@ fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<
         let failed = Arc::new(AtomicBool::new(false));
         let mut out = VideoFrame { rotation: VideoRotation::VideoRotation0, timestamp_us: 0, frame_metadata: None, buffer: I420Buffer::new(1, 1) };
         let cb_failed = failed.clone();
+        let cb_live = live.clone();
         let callback = move |r: Result<DesktopFrame, CaptureError>| {
             let frame = match r {
                 Ok(f) => f,
@@ -816,6 +857,11 @@ fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<
             let (sy, su, sv) = out.buffer.strides();
             let (y, u, v) = out.buffer.data_mut();
             yuv_helper::argb_to_i420(frame.data(), frame.stride(), y, sy, u, su, v, sv, w, h);
+            let quality = {
+                let mut live = cb_live.lock().unwrap();
+                live.1 = (w as u32, h as u32);
+                live.0
+            };
             if let Some(source) = slot.lock().unwrap().as_ref() {
                 let (fw, fh) = quality.fit(w as u32, h as u32);
                 if (fw, fh) == (w as u32, h as u32) {
@@ -836,7 +882,8 @@ fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<
         capturer.start_capture(source, callback);
         while !stop.load(Ordering::Relaxed) && !failed.load(Ordering::Relaxed) {
             capturer.capture_frame();
-            std::thread::sleep(Duration::from_millis(1000 / quality.fps.clamp(1, 60) as u64));
+            let fps = live.lock().unwrap().0.fps;
+            std::thread::sleep(Duration::from_millis(1000 / fps.clamp(1, 60) as u64));
         }
         if !stop.load(Ordering::Relaxed) {
             ended.store(true, Ordering::Relaxed);
