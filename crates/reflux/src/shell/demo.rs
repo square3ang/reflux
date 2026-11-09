@@ -790,6 +790,11 @@ fn guild_scene(st: &mut ShellState, scene: &str) {
         "popout" => crate::popout::demo(true),
         // The general UI with the member list closed, to compare against Fluxer at the same width.
         "chat-nomembers" => st.member_list = false,
+        // A thread from a long message: its suggested name is the field's one-line placeholder.
+        "thread-create-long" => {
+            let m = id_at(at(0, 11, 5), 0).parse().ok().map(Snowflake);
+            st.threads.panel = Some(super::threads::Panel::Create { parent: Snowflake(GENERAL), message: m });
+        }
         // The call strip with the member list closed, as Fluxer's reference capture has it.
         "voice-chat-joined-nomembers" => {
             st.select_guild(Some(g), Some(Snowflake(2301)));

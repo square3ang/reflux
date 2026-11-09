@@ -37,7 +37,6 @@ Rules:
 | RTL: bidi text runs only, layout isn't mirrored | Rune has no layout direction | `i18n.rs` | layout direction in Rune |
 | No minimize-to-tray, window size only (no position/maximized) — **WONTFIX** (user decision) | no minimize event; position impossible on Wayland | `desktop/window.rs` | — |
 | Keyboard-mode intro shows only for a Tab no field takes | the app-level `on_key` only sees keys the focused control passes on, and a field's Tab moves focus itself | `nav/keys.rs` | a pre-dispatch key hook |
-| The thread composer's long placeholder is cut near the field width | Rune wraps a placeholder even in a single-line field | `shell/threads.rs` | single-line placeholders clip |
 | Spinner dots only fade (no 0.8 scale) | Rune's looping motion is opacity, rotation or slide; the scale-capable `Sequence` runs once | `ui/misc.rs` | looping scale keyframes |
 | Scrollbars keep rune-kit's 2pt edge gap and 24pt minimum thumb (Fluxer's regular bar: 4 in, 40 minimum) | `ScrollBarStyle` has no gap / minimum knobs | `ui/misc.rs` | rune-kit exposes them |
 | The smooth wheel moves its glide's target by the content's growth while it glides up (a frame late, `retarget_wheels`), and older message pages that arrive mid-glide wait for it to stop (`app::fetch_older`) | a virtual list moves the offset by what's measured or added above the view, but not a running glide's target, so the glide flew on by that much (rows measured from the 48pt estimate, a whole page) | `ui/misc.rs`, `app.rs`, `main.rs` | Rune shifts `glide_to` with the anchor |
@@ -239,7 +238,6 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
 - `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
-- `crates/reflux/src/shell/threads.rs:689` Rune wraps a long placeholder even in a single-line field; cut it near the
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
 - `crates/reflux/src/shell/voice.rs:1199` Rune's press has no pointer position, so a click anchors the menu to the
 - `crates/reflux/src/shell/voice.rs:1617` the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them

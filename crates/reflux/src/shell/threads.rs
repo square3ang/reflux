@@ -686,9 +686,7 @@ fn create_pane<S: 'static>(store: &Store, st: &ShellState, parent: &Channel, mes
     let suggested = suggested_name(store, parent.guild_id, source);
     let can_private = message.is_none() && parent.kind == ChannelType::GUILD_TEXT && store.can_create_thread(parent, CreateKind::Private);
     let can_public = store.can_create_thread(parent, if message.is_some() { CreateKind::FromMessage } else { CreateKind::Public });
-    // shortcut: Rune wraps a long placeholder even in a single-line field; cut it near the
-    // field's width instead of clipping it like an `<input>`.
-    let placeholder = if suggested.is_empty() { "New thread".to_string() } else { suggested.chars().take(48).collect() };
+    let placeholder = if suggested.is_empty() { "New thread".to_string() } else { suggested };
     let mut body = col()
         .w_full()
         .gap(16.0)
