@@ -162,8 +162,9 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
-- `crates/reflux/src/desktop/mod.rs:606` a watchdog, not a fix of whichever call teardown hangs.
+- `crates/reflux/src/desktop/mod.rs:609` a watchdog, not a fix of whichever call teardown hangs.
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
+- `crates/reflux/src/desktop/shortcuts.rs:391` KDE only (Fluxer leaves the keys to the desktop); other desktops keep theirs
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
 - `crates/reflux/src/desktop/tray.rs:28` Fluxer only adds Disconnect while connected, but Rune's SNI menu numbers items

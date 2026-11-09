@@ -290,6 +290,10 @@ pub fn sync(binds: Vec<Binding>) {
             released.push(b.action);
             false
         });
+        #[cfg(target_os = "linux")]
+        if STARTED.load(Ordering::Relaxed) && wayland() {
+            portal::follow(&binds);
+        }
         st.0 = binds;
     }
     for a in released {
@@ -349,7 +353,69 @@ mod portal {
     use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
     use futures_util::StreamExt;
 
-    use super::{ACTIONS, Action, fire};
+    use super::{ACTIONS, Action, Binding, GKey, fire};
+
+    /// What [`follow`] last saw: each action's keys as Qt key codes.
+    static FOLLOWED: Mutex<Option<Vec<(Action, Vec<i32>)>>> = Mutex::new(None);
+
+    /// A binding as kglobalaccel stores keys: a Qt key code with its modifier bits.
+    pub(super) fn qt_key(b: &Binding) -> Option<i32> {
+        let key = match b.key {
+            GKey::Char(c) if c.is_ascii_alphanumeric() => c.to_ascii_uppercase() as i32,
+            GKey::Char(' ') => 0x20,
+            GKey::Escape => 0x0100_0000,
+            GKey::Tab => 0x0100_0001,
+            GKey::Backspace => 0x0100_0003,
+            GKey::Enter => 0x0100_0004,
+            GKey::Insert => 0x0100_0006,
+            GKey::Delete => 0x0100_0007,
+            GKey::Home => 0x0100_0010,
+            GKey::End => 0x0100_0011,
+            GKey::Left => 0x0100_0012,
+            GKey::Up => 0x0100_0013,
+            GKey::Right => 0x0100_0014,
+            GKey::Down => 0x0100_0015,
+            GKey::PageUp => 0x0100_0016,
+            GKey::PageDown => 0x0100_0017,
+            GKey::F(n) if (1..=24).contains(&n) => 0x0100_0030 + i32::from(n) - 1,
+            _ => return None,
+        };
+        let m = b.mods.unwrap_or_default();
+        Some(key | if m.shift { 0x0200_0000 } else { 0 } | if m.ctrl { 0x0400_0000 } else { 0 } | if m.alt { 0x0800_0000 } else { 0 })
+    }
+
+    /// An in-app keybind change reaches the desktop's assignment. The portal only takes
+    /// preferred keys for shortcuts it hasn't seen, so on KDE the changed actions' keys are set in
+    /// kglobalaccel directly. The first bindings seen are the baseline: a launch doesn't
+    /// overwrite keys the user assigned in the system settings.
+    // shortcut: KDE only (Fluxer leaves the keys to the desktop); other desktops keep theirs
+    // until the user changes them there.
+    pub fn follow(binds: &[Binding]) {
+        if !std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|d| d == "KDE")) {
+            return;
+        }
+        let now: Vec<(Action, Vec<i32>)> = ACTIONS.iter().map(|(a, _, _)| (*a, binds.iter().filter(|b| b.action == *a).filter_map(qt_key).collect())).collect();
+        let Some(before) = FOLLOWED.lock().unwrap_or_else(|e| e.into_inner()).replace(now.clone()) else { return };
+        let changed: Vec<_> = now.into_iter().filter(|x| !before.contains(x)).collect();
+        if changed.is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            let r = (|| -> zbus::Result<()> {
+                let conn = zbus::blocking::Connection::session()?;
+                for (action, keys) in changed {
+                    let Some((_, id, description)) = ACTIONS.iter().find(|(a, _, _)| *a == action) else { continue };
+                    let action_id = [APP_ID, id, "Fluxer (Reflux)", description];
+                    let keys: Vec<(Vec<i32>,)> = keys.into_iter().map(|k| (vec![k, 0, 0, 0],)).collect();
+                    conn.call_method(Some("org.kde.kglobalaccel"), "/kglobalaccel", Some("org.kde.KGlobalAccel"), "setForeignShortcutKeys", &(action_id.as_slice(), keys))?;
+                }
+                Ok(())
+            })();
+            if let Err(e) = r {
+                eprintln!("reflux: global shortcuts: updating KDE's keys: {e}");
+            }
+        });
+    }
 
     /// The portal task asks for its shortcut dialog.
     static CONFIGURE: Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>> = Mutex::new(None);
@@ -437,6 +503,16 @@ mod portal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn qt_keys_match_kglobalaccel() {
+        // As kglobalaccel reported them: Ctrl+Shift+M and Ctrl+M.
+        let b = |key, ctrl, shift| Binding { action: Action::ToggleMute, key, mods: Some(Mods { ctrl, alt: false, shift }) };
+        assert_eq!(super::portal::qt_key(&b(GKey::char('m'), true, true)), Some(100_663_373));
+        assert_eq!(super::portal::qt_key(&b(GKey::char('m'), true, false)), Some(67_108_941));
+        assert_eq!(super::portal::qt_key(&b(GKey::F(1), false, false)), Some(0x0100_0030));
+    }
 
     #[test]
     fn ptt_follows_press_and_release_and_disable() {
