@@ -74,11 +74,15 @@ fn scopes(dm: bool) -> Vec<(&'static str, &'static str, &'static rune::Icon)> {
 /// `SearchTokenNode`: each recognised `key:value` reads as a chip (a bold key and its value on
 /// `background-modifier-selected`; excluded ones on the danger fill). A value the filter can't
 /// use is warning-coloured with an underline instead (`.tokenUnapplied`).
-// shortcut: Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
-// value halves round all four corners and the padding doesn't widen the text; needs span boxes.
-pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
+/// A `span_ring`: bytes, colour, width.
+pub type Ring = (usize, usize, rune::Color, f32);
+
+/// Each chip's 1px `--border-color` ring goes round its filled key and value (`span_ring`).
+// shortcut: the key and value halves round all four corners and the padding doesn't widen the
+// text (Rune spans draw a padded rounded fill only); needs span boxes.
+pub fn token_spans(q: &str, p: &Palette) -> (Vec<rune::Span>, Vec<Ring>) {
     let now = chrono::Local::now();
-    let mut out = Vec::new();
+    let (mut out, mut rings) = (Vec::new(), Vec::new());
     let mut at = 0;
     for word in q.split(' ') {
         let start = at;
@@ -94,10 +98,16 @@ pub fn token_spans(q: &str, p: &Palette) -> Vec<rune::Span> {
         if colon < start + word.len() {
             let value = &word[key.len() + 1..];
             let span = rune::Span::new(colon, start + word.len());
-            out.push(if search_query::applies(key, value, now) { span.bg(bg, 2.0).color(fg) } else { span.color(p.text_warning).underline(p.status_warning) });
+            if search_query::applies(key, value, now) {
+                out.push(span.bg(bg, 2.0).color(fg));
+                rings.push((start, start + word.len(), p.border_color, 1.0));
+                continue;
+            }
+            out.push(span.color(p.text_warning).underline(p.status_warning));
         }
+        rings.push((start, colon, p.border_color, 1.0));
     }
-    out
+    (out, rings)
 }
 
 /// `getSearchDateWords` / `matchSearchDateWords`: exact, then prefixed, then scattered matches.
@@ -289,6 +299,7 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         picks = list.iter().map(|sg| Pick::Value(sg.token.clone())).collect();
         layer.push(suggestions(store, st, title, list, selected(s, true), p, acc));
     }
+    let (spans, rings) = token_spans(&s.query.text, p);
     let field = text_input(&s.query, font(14.0, 400.0).lh(20.0))
         .key("search-field")
         .grow(1.0)
@@ -298,7 +309,8 @@ pub fn bar<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         .placeholder(t("Search"), p.text_tertiary)
         .caret(p.text_primary, p.text_selection)
         .on_edit(move |s: &mut S| -> &mut TextEdit { &mut acc(s).search.query })
-        .decorations(token_spans(&s.query.text, p))
+        .decorations(spans)
+        .span_rings(rings)
         .on_input_key(move |s: &mut S, k, _| {
             let st = acc(s);
             match k.key {
@@ -657,7 +669,8 @@ mod tests {
         assert_eq!((title, dates.len()), ("Date options", 3));
         let (_, words) = suggest(&d.store, g, "during:jan").unwrap();
         assert_eq!(words[0].token, "during:january");
-        let spans = token_spans("hi from:ada -has:link", crate::theme::palette(crate::theme::Kind::Dark));
+        let (spans, rings) = token_spans("hi from:ada -has:link", crate::theme::palette(crate::theme::Kind::Dark));
         assert_eq!(spans.len(), 4, "a key and a value span per token");
+        assert_eq!(rings.iter().map(|r| (r.0, r.1)).collect::<Vec<_>>(), [(3, 11), (12, 21)], "one ring round each whole chip");
     }
 }

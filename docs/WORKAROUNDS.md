@@ -84,7 +84,6 @@ Rules:
 | "No hardware encoder was found" never shows on the encoder setting | webrtc-sys doesn't expose its encoder factory probe | `settings/advanced.rs` | the SDK exposes the probe |
 | P2P mesh is our own implementation of `VoiceMeshEngine` (op 13, STUN only) | no JS engine to reuse | `reflux-voice/src/mesh.rs`, `app/voice.rs` | — |
 | Screen-share source-ended detection is a flag the capturer thread sets when it stops; only display/window shares report it | libwebrtc's `DesktopCapturer` has no track-ended callback, and `Devices` shares capture through the camera pipeline, which has no end signal | `reflux-voice/src/real.rs` `spawn_capture`, `app/voice.rs` `tick` | the SDK exposes a track `ended` event or a capture-ended callback |
-| Compact-call and HUD chrome hides on pointer enter/leave plus a 2.5 s timer | Rune reports hover changes but not pointer movement, so Fluxer's move-to-reveal behaviour isn't available | `shell/call.rs` `view` | Rune exposes pointer-move events |
 | The region-teleport overlay runs on a timer after the region PATCH | the shell has no engine event for "teleport started/finished"; the request is the only signal | `shell/call.rs` `more_menu`, `view` | the engine reports a region-change/reconnect event |
 | Stream previews in the compact call reuse the Active Now thumbnail cache | the shell can't subscribe a preview track without taking over the watcher state; Fluxer previews a live low-res track | `shell/call.rs` `stream_preview` | a preview-only subscription exists |
 | Connection-stats packet loss and bitrate show "—" until the engine reports them | `Voice` carries ping/history only; the shell has no WebRTC stats handle | `shell/call.rs` `details` | `app/voice.rs` forwards a stats snapshot |
@@ -229,7 +228,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/mod.rs:650` Rune reports no full screen state for the main window, so a full screen left
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
-- `crates/reflux/src/shell/search.rs:77` Rune spans draw a padded rounded fill only, so the chip has no 1px border, the key and
+- `crates/reflux/src/shell/search.rs:78` the key and value halves round all four corners and the padding doesn't widen the
 - `crates/reflux/src/shell/sidebar.rs:75` the `banner` variant's drop shadow isn't drawn.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on
