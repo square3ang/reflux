@@ -645,6 +645,14 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 /// Once a frame, where the store and a `Tx` are at hand: runs a requested search, settles jumps
 /// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
+    // `useVoiceCallAppFullscreen`'s `requestFullscreen`: the OS window follows the call's
+    // fullscreen, however it was entered or left (the button, Escape, leaving the call).
+    // shortcut: Rune reports no full screen state for the main window, so a full screen left
+    // from the window manager isn't noticed; the next exit enters it again.
+    if st.call.app_fullscreen != st.call.os_fullscreen {
+        st.call.os_fullscreen = st.call.app_fullscreen;
+        tx.toggle_full_screen();
+    }
     // `NewDeviceMonitoring.suppressAlerts`: the device cards stay known, but no prompt opens.
     if !crate::look::with(|l| l.new_device_alerts)
         && matches!(st.voice.modal, Some(voice::Modal::NewDevice(_)))
@@ -803,8 +811,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         voice::layer(store, st, p, acc, &mut layer);
         return crate::ui::root(v, layer);
     }
-    // `useVoiceCallAppFullscreen`: the call fills the app window.
-    // shortcut: Rune can't request OS fullscreen; filling the app window is the desktop equivalent.
+    // `useVoiceCallAppFullscreen`: the call fills the window, which goes full screen.
     if st.call.app_fullscreen
         && st.voice.call_view
         && st.voice.channel.is_some()

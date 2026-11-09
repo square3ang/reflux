@@ -116,6 +116,8 @@ pub struct CallUi {
     pub hud_until: Option<Instant>,
     /// `useVoiceCallAppFullscreen`: the call fills the app window.
     pub app_fullscreen: bool,
+    /// What [`super::poll_shell`] last asked the OS window for.
+    pub os_fullscreen: bool,
     /// Fullscreen was entered from the compact call view, so leaving it goes back there.
     pub fullscreen_from_compact: bool,
     /// `VoiceCallLayout.focusMembersRowVisible`: focus layout's row of the other participants.
@@ -155,6 +157,7 @@ impl Default for CallUi {
             teleport_until: None,
             hud_until: None,
             app_fullscreen: false,
+            os_fullscreen: false,
             fullscreen_from_compact: false,
             focus_members_row: true,
             incoming_drag: None,
