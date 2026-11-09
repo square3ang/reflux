@@ -297,6 +297,11 @@ pub fn sync(binds: Vec<Binding>) {
     }
 }
 
+/// Whether [`start`] ran.
+pub fn started() -> bool {
+    STARTED.load(Ordering::Relaxed)
+}
+
 /// Starts listening once, in a windowed run. `triggers` are the portal's preferred ones.
 pub fn start(enabled: bool, triggers: Vec<(Action, Option<String>)>) {
     set_enabled(enabled);

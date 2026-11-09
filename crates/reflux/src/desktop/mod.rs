@@ -281,15 +281,13 @@ pub fn play(s: &State, sound: Sound) {
     }
 }
 
-/// After the saved session loads: zoom, spellcheck, global shortcuts, and the autostart
+/// After the saved session loads: zoom, spellcheck, and the autostart
 /// preference following the entry on disk (the user may have removed it).
 pub fn boot(s: &mut State) {
     let p = &mut s.app.saved.desktop;
     window::set_zoom(p.zoom);
     crate::look::set(&p.look);
     spell::configure(p);
-    let triggers = shortcuts::preferred_triggers(&s.app.shell);
-    shortcuts::start(p.global_shortcuts, triggers);
     if !rune::is_headless() && p.autostart != autostart::is_enabled() {
         p.autostart = !p.autostart;
         crate::session::save(&s.app.saved);
@@ -457,6 +455,11 @@ pub fn tick(s: &mut State, tx: &mut rune::Tx) {
     updater::tick(s);
     tts::on_channel(s.app.shell.channel);
     notices::tick(s);
+    // The portal pre-fills the user's own keys, which are kept per account: it starts once the
+    // account is known (at boot they were Fluxer's defaults, and KDE keeps what it was first given).
+    if !shortcuts::started() && !rune::is_headless() && s.app.shell.account.me.0 != 0 {
+        shortcuts::start(s.app.saved.desktop.global_shortcuts, shortcuts::preferred_triggers(&s.app.shell));
+    }
     shortcuts::sync(shortcuts::bindings(&s.app.shell));
     let prefs = &mut s.app.saved.desktop;
     let here = s.app.shell.channel.map(|c| (s.app.shell.guild, c));
