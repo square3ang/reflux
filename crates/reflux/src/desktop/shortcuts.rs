@@ -355,8 +355,11 @@ mod portal {
 
     use super::{ACTIONS, Action, Binding, GKey, fire};
 
-    /// What [`follow`] last saw: each action's keys as Qt key codes.
-    static FOLLOWED: Mutex<Option<Vec<(Action, Vec<i32>)>>> = Mutex::new(None);
+    /// Each action's keys as Qt key codes.
+    type Keys = Vec<(Action, Vec<i32>)>;
+
+    /// What [`follow`] last saw.
+    static FOLLOWED: Mutex<Option<Keys>> = Mutex::new(None);
 
     /// A binding as kglobalaccel stores keys: a Qt key code with its modifier bits.
     pub(super) fn qt_key(b: &Binding) -> Option<i32> {
@@ -394,7 +397,7 @@ mod portal {
         if !std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|d| d == "KDE")) {
             return;
         }
-        let now: Vec<(Action, Vec<i32>)> = ACTIONS.iter().map(|(a, _, _)| (*a, binds.iter().filter(|b| b.action == *a).filter_map(qt_key).collect())).collect();
+        let now: Keys = ACTIONS.iter().map(|(a, _, _)| (*a, binds.iter().filter(|b| b.action == *a).filter_map(qt_key).collect())).collect();
         let Some(before) = FOLLOWED.lock().unwrap_or_else(|e| e.into_inner()).replace(now.clone()) else { return };
         let changed: Vec<_> = now.into_iter().filter(|x| !before.contains(x)).collect();
         if changed.is_empty() {
