@@ -669,7 +669,8 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
             }
         });
         let weak = Arc::downgrade(&call);
-        spawn(ping_loop(weak, generation));
+        spawn(ping_loop(weak.clone(), generation));
+        spawn(self_speaking(weak, generation));
         while let Some(ev) = events.recv().await {
             // A share published or auto-subscribed while not watched: unsubscribe it.
             if let RoomEvent::TrackPublished { publication, .. } | RoomEvent::TrackSubscribed { publication, .. } = &ev
@@ -687,13 +688,18 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                 RoomEvent::ActiveSpeakersChanged { speakers } => {
                     // Others only: our own ring is the local gate's (`self_speaking`), so a server
                     // update can't flicker it (Fluxer's `VoiceSpeakingDetection` does the same).
-                    let ids: std::collections::HashSet<Snowflake> = speakers
+                    let mut ids: std::collections::HashSet<Snowflake> = speakers
                         .iter()
                         .filter_map(|p| reflux_voice::user_of(&p.identity().0))
                         .map(Snowflake)
                         .collect();
                     update(move |s| {
                         if s.app.voice.generation == generation {
+                            let me = s.app.store.my_id();
+                            ids.remove(&me);
+                            if s.app.shell.voice.speaking.contains(&me) {
+                                ids.insert(me);
+                            }
                             s.app.shell.voice.speaking = ids;
                         }
                     });
@@ -831,8 +837,8 @@ fn start_mesh(s: &mut State, v: &VoiceServerUpdate) {
     });
 }
 
-/// No server reports who speaks in a P2P call: we're speaking while the gate is open and the mic
-/// is loud (300 ms hang).
+/// Our own ring, from the local gate (a P2P call has no server to report it, and LiveKit's active
+/// speakers lag): we're speaking while the gate is open and the mic is loud (300 ms hang).
 #[cfg(feature = "voice-webrtc")]
 async fn self_speaking(call: std::sync::Weak<Call>, generation: u64) {
     let (mut on, mut quiet, mut noise) = (false, u32::MAX, reflux_voice::NoiseState::Idle);
