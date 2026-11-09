@@ -175,7 +175,7 @@ impl Errors {
 /// The white waves of `fluxer-logo-color.svg`; the blue disc is drawn as a circle under them.
 static LOGO_WAVES: Icon = Icon { name: "fluxer-logo-waves", view: 512.0, body: include_str!("logo_wave.svg") };
 /// `fluxer-wordmark.svg` (1374×366) in a square view box: drawn 120.1 wide, its top 32px hold it.
-static WORDMARK: Icon =
+pub static WORDMARK: Icon =
     Icon { name: "fluxer-wordmark", view: 1374.0, body: include_str!("../../../assets/media/images/fluxer-wordmark.svg") };
 
 /// `SpaceBackground` `::before` stars: (vw, vh, spread, rgb, alpha) on a 1px dot.

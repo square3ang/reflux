@@ -87,6 +87,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             crash::view(&crash::shown().unwrap_or_default(), s.desktop.update.as_ref(), &p)
         }
     };
+    let dark = cx.system_dark();
+    let look = &s.app.saved.desktop.look;
+    let content = match desktop::window::titlebar(cx, || theme::custom::effective(look.theme(&s.app.store.settings.theme), dark, look.saturation, &look.theme_css())) {
+        Some(band) => rune::col().w_full().h_full().child(band).child(rune::col().w_full().grow(1.0).child(content)),
+        None => content,
+    };
     desktop::window::root(content, s.desktop.size)
 }
 
@@ -152,6 +158,8 @@ fn main() {
     .keep_running()
     .modifier_keys()
     .on_close(desktop::on_close)
+    // Fluxer's own titlebar on Windows and macOS (`useNativeTitleBar` off); Linux keeps its frame.
+    .titlebar(rune::Titlebar::new(desktop::window::TITLEBAR))
     // Windows and macOS hand us `fluxer://` links (Linux starts a process with one).
     .on_open_url(|s, url, _| desktop::open_link(s, url))
     .on_focus(|s, focused, _| {

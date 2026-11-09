@@ -68,6 +68,36 @@ pub fn step_zoom(z: f32, up: bool) -> f32 {
 /// The root: records the window size, and draws the app scaled by the zoom. The content lays
 /// out at the window size divided by the zoom, then `scale` draws it back to the window's size
 /// (text re-rasterizes crisp at the scaled size).
+/// `--native-titlebar-height` with Fluxer's own chrome (`useNativeTitleBar`), in CSS pixels.
+pub const TITLEBAR: f32 = 32.0;
+
+/// `.fluxer-native-titlebar` (`NativeTitlebarShell`) where Rune replaced the native titlebar
+/// (Windows, macOS; `App::titlebar`): a 32px band of `--background-secondary` that drags the
+/// window, with the wordmark at its start (after the traffic lights on macOS, where it sits at
+/// the end). Rune draws the Windows caption buttons over its end. None elsewhere and in full
+/// screen, where `guildsLayoutContainer` drops the padding.
+// shortcut: the caption buttons are Rune's (46pt, Windows' own glyphs) rather than Fluxer's
+// 48px Phosphor ones.
+pub fn titlebar(cx: &mut rune::Cx<State>, palette: impl FnOnce() -> crate::theme::Palette) -> Option<El> {
+    let insets = cx.chrome_insets();
+    if insets.height <= 0.0 || (insets.leading <= 0.0 && insets.trailing <= 0.0) {
+        return None;
+    }
+    let p = &palette();
+    let z = zoom();
+    cx.titlebar_height(TITLEBAR * z);
+    cx.caption_color(p.text_secondary);
+    // `.fluxer-native-titlebar__wordmark`: 13px tall, `--text-primary-muted` at 80%.
+    let w = 13.0 * 1374.0 / 366.0;
+    let mark = el().size(w, 13.0).opacity(0.8).child(rune::icon(&crate::login::WORDMARK, w).color(p.text_primary_muted).absolute(0.0, 0.0)).label("Fluxer");
+    let band = rune::row().key("titlebar").w_full().h(TITLEBAR).fill(p.background_secondary).center_y().window_drag().unmirrored();
+    Some(if insets.leading > 0.0 {
+        band.pl(insets.leading / z).pr(12.0).child(el().grow(1.0)).child(mark)
+    } else {
+        band.pl(12.0).pr(insets.trailing / z).child(mark)
+    })
+}
+
 pub fn root(content: El, size: [f32; 2]) -> El {
     let z = zoom();
     let dir = if crate::i18n::rtl() { rune::Direction::Rtl } else { rune::Direction::Ltr };

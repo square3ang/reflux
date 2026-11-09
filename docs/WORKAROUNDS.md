@@ -17,7 +17,6 @@ Rules:
 | Workaround | Why | Where | Remove when |
 |---|---|---|---|
 | Dragging a voice participant onto a channel is the row's own `on_drag`, hit-tested by hand | Rune's drops carry only files. While the drag runs, the sidebar records each voice channel row's `window_layout`, and the dragged row's origin plus `Drag.x/y` gives the pointer to test against them | `shell/voice_list.rs` (`draggable`, `drop_target`), `shell/sidebar.rs` (`channel_row`) | Rune gains internal drop targets |
-| System titlebar instead of Fluxer's custom one | Rune has no frameless window / custom titlebar on Linux and Windows | `main.rs` window setup | Rune gets frameless windows with hit-testing |
 | Advanced hides eight direct controls instead of faking them: video seek thumbnails, smooth scrolling, middle-click autoscroll, stay interactive unfocused, pre-upload attachments, connection volume controls, native title bar and source maps | Rune's wheel/pointer input has no browser smooth-scroll, autoscroll or focus guard; the inline player has no frame-at-time snapshot API; uploads only start at send (`Intent::SendMessage`); the per-user volume menu lives in `shell/call.rs` (platform-audio work); Rune always uses the system titlebar; a Rust build has no JS source maps | `settings/advanced.rs` (`UNAVAILABLE`), `shell/chat.rs`, `shell/attachments.rs` | the Rune/platform pieces above exist |
 | Neko draws only its idle and four look frames, without oneko's walk/scratch physics | the shell has no per-frame animation clock for a purely decorative overlay; a pointer-driven sprite is enough for the easter egg | `shell/neko.rs`, `media.rs` | a shell animation tick |
 | Advanced's "Enable text selection" gates message bodies; IDs, keys and logs stay selectable | Rune sets selection per text, and those debug values are meant to be copied even with message selection off | `shell/markdown.rs`, `shell/chat.rs` | Rune gets a window-wide selection switch |
@@ -174,6 +173,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
+- `crates/reflux/src/desktop/window.rs:79` the caption buttons are Rune's (46pt, Windows' own glyphs) rather than Fluxer's
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
 - `crates/reflux/src/gst.rs:386` Fluxer's virtmic links new streams as PipeWire announces them; this rescans
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
