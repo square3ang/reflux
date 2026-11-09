@@ -26,8 +26,8 @@ pub struct Bar {
 
 #[derive(Default)]
 pub struct Popout {
-    /// Its slot in [`SLOTS`] (so closing it frees the slot).
-    slot: usize,
+    /// Its key in [`SLOTS`] (so closing it removes the slot).
+    key: String,
     title: String,
     /// One video (a camera or stream); `None` = the call grid.
     video: Option<Pixels>,
@@ -42,27 +42,20 @@ struct Tile {
     video: Option<Pixels>,
 }
 
-/// Windows Rune can add only before the app runs, so the pop-outs are a fixed pool.
-// shortcut: at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
-const POOL: usize = 4;
-
-/// One pooled window and what it shows.
+/// One open pop-out window and what it shows.
 struct Slot {
     app: AppHandle<Popout>,
     win: WindowHandle,
     /// `getVoiceCallPopoutKey` / `getVoiceTilePopoutKey`: `call:{channel}` or
-    /// `tile:{user}:{camera|screen}`; `None` = free.
-    key: Option<String>,
+    /// `tile:{user}:{camera|screen}`.
+    key: String,
     /// A call pop-out's last tiles: (name, speaking, has video), and its control bar.
     shown: Vec<(String, bool, bool)>,
     shown_bar: Bar,
-    /// When it opened, so the oldest gives way when all are taken.
-    opened: u64,
 }
 
 thread_local! {
     static SLOTS: RefCell<Vec<Slot>> = const { RefCell::new(Vec::new()) };
-    static OPENED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The watched stream ended or was closed: stream pop-outs go with it.
@@ -70,36 +63,31 @@ pub fn stream_ended() {
     close_where(|k| k.ends_with(":screen"));
 }
 
-/// Adds the (hidden) pop-out windows to the app.
-pub fn register(app: &mut rune::App<State>) {
-    for i in 0..POOL {
-        let spec = AppSpec { fonts: crate::theme::FONTS, families: crate::theme::FAMILIES, min_size: Some((160.0, 90.0)), ..AppSpec::new("Fluxer", (960.0, 540.0), Popout::default, view) };
-        let options = WindowOptions { visible: false, min_size: Some((160.0, 90.0)), ..Default::default() };
-        // Closing it from the title bar frees its slot.
-        // `windowless`: no window until opened (Wayland can't hide one, so a hidden pooled window
-        // was a blank taskbar entry that also broke the launcher's click-to-minimize).
-        let papp = rune::App::new(spec).windowless().on_close(|p: &mut Popout, _| free(p.slot));
-        let (handle, win) = app.window(WindowSpec::from_app(format!("voice-popout-{i}"), papp).options(options));
-        SLOTS.with(|s| s.borrow_mut().push(Slot { app: handle, win, key: None, shown: Vec::new(), shown_bar: Bar::default(), opened: 0 }));
-    }
+/// Opens a pop-out window for `key` (`open_window`, as `PopoutWindowManager` opens one per key).
+fn spawn(key: &str, size: (f32, f32)) -> Slot {
+    let spec = AppSpec { fonts: crate::theme::FONTS, families: crate::theme::FAMILIES, min_size: Some((160.0, 90.0)), ..AppSpec::new("Fluxer", size, Popout::default, view) };
+    let options = WindowOptions { min_size: Some((160.0, 90.0)), ..Default::default() };
+    // Closing it from the title bar forgets it.
+    let papp = rune::App::new(spec).on_close(|p: &mut Popout, _| forget(&p.key));
+    let app = papp.handle();
+    let win = rune::open_window(WindowSpec::from_app(format!("voice-popout-{key}"), papp).options(options));
+    Slot { app, win, key: key.to_string(), shown: Vec::new(), shown_bar: Bar::default() }
 }
 
-fn free(i: usize) {
-    SLOTS.with(|s| {
-        if let Some(slot) = s.borrow_mut().get_mut(i) {
-            (slot.key, slot.shown, slot.shown_bar) = (None, Vec::new(), Bar::default());
-        }
-    });
+fn forget(key: &str) {
+    SLOTS.with(|s| s.borrow_mut().retain(|x| x.key != key));
 }
 
-/// Hides the pop-outs whose key matches.
+/// Closes the pop-outs whose key matches.
 fn close_where(f: impl Fn(&str) -> bool) {
     SLOTS.with(|s| {
-        for slot in s.borrow_mut().iter_mut().filter(|x| x.key.as_deref().is_some_and(&f)) {
-            (slot.key, slot.shown) = (None, Vec::new());
-            slot.app.update(|p, _| (p.title, p.video, p.tiles) = (String::new(), None, Vec::new()));
-            slot.win.hide();
-        }
+        s.borrow_mut().retain(|slot| {
+            let gone = f(&slot.key);
+            if gone {
+                slot.win.close();
+            }
+            !gone
+        })
     });
 }
 
@@ -111,10 +99,6 @@ fn key(user: Option<Snowflake>, screen: bool, channel: Snowflake) -> String {
     }
 }
 
-/// The slot for `key`: its own if open, else a free one, else the oldest.
-fn pick(slots: &[Slot], key: &str) -> Option<usize> {
-    slots.iter().position(|s| s.key.as_deref() == Some(key)).or_else(|| slots.iter().position(|s| s.key.is_none())).or_else(|| (0..slots.len()).min_by_key(|i| slots[*i].opened))
-}
 
 fn view(s: &Popout, _cx: &mut Cx<Popout>) -> El {
     let p = palette();
@@ -247,25 +231,29 @@ pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
     if user.is_none() {
         close_where(|x| x.starts_with("call:") && x != k);
     }
-    let n = OPENED.with(|o| {
-        o.set(o.get() + 1);
-        o.get()
-    });
+    let size = if pip { (320.0, 180.0) } else { (960.0, 540.0) };
     SLOTS.with(|slots| {
         let mut slots = slots.borrow_mut();
-        let Some(i) = pick(&slots, &k) else { return };
+        let i = match slots.iter().position(|s| s.key == k) {
+            Some(i) => {
+                if pip {
+                    slots[i].win.resize(size);
+                }
+                i
+            }
+            None => {
+                slots.push(spawn(&k, size));
+                slots.len() - 1
+            }
+        };
         let slot = &mut slots[i];
-        let again = slot.key.as_deref() == Some(k.as_str());
-        (slot.key, slot.shown, slot.opened) = (Some(k), Vec::new(), n);
+        slot.shown = Vec::new();
+        let key = k.clone();
         slot.app.update(move |p, tx| {
             tx.set_title(title.clone());
-            (p.slot, p.title, p.video, p.tiles) = (i, title, video, Vec::new());
+            (p.key, p.title, p.video, p.tiles) = (key, title, video, Vec::new());
         });
         slot.win.set_always_on_top(pip);
-        if !again || pip {
-            slot.win.resize(if pip { (320.0, 180.0) } else { (960.0, 540.0) });
-        }
-        slot.win.open();
         slot.win.focus();
     });
     sync(s);
@@ -274,24 +262,24 @@ pub fn open(s: &mut State, user: Option<Snowflake>, screen: bool, pip: bool) {
 /// `isCallPopoutOpenForChannel`.
 pub fn call_open(channel: Snowflake) -> bool {
     let k = key(None, false, channel);
-    SLOTS.with(|s| s.borrow().iter().any(|x| x.key.as_deref() == Some(k.as_str())))
+    SLOTS.with(|s| s.borrow().iter().any(|x| x.key == k))
 }
 
-/// Hides every pop-out (the call ended).
+/// Closes every pop-out (the call ended).
 pub fn close() {
     close_where(|_| true);
 }
 
 /// Once a frame: refreshes a call pop-out's tiles when who's there, speaking or on camera changed.
 pub fn sync(s: &State) {
-    let open = SLOTS.with(|x| x.borrow().iter().any(|s| s.key.is_some()));
+    let open = SLOTS.with(|x| !x.borrow().is_empty());
     if !open {
         return;
     }
     let v = &s.app.shell.voice;
     let Some((guild, channel)) = v.channel else { return close() };
     let call = format!("call:{channel}");
-    let Some(shown) = SLOTS.with(|x| x.borrow().iter().find(|s| s.key.as_deref() == Some(call.as_str())).map(|s| s.shown.clone())) else { return };
+    let Some(shown) = SLOTS.with(|x| x.borrow().iter().find(|s| s.key == call).map(|s| s.shown.clone())) else { return };
     let me = s.app.store.my_id();
     let mut people: Vec<Snowflake> = s.app.store.voice_states.iter().filter(|((g, _), st)| *g == guild && st.channel_id == Some(channel)).map(|((_, u), _)| *u).collect();
     people.sort();
@@ -305,12 +293,12 @@ pub fn sync(s: &State) {
         .collect();
     let bar = Bar { mute: v.self_mute, deaf: v.self_deaf, camera: v.camera, screen: v.screen };
     let key: Vec<(String, bool, bool)> = tiles.iter().map(|t| (t.name.clone(), t.speaking, t.video.is_some())).collect();
-    let same = key == shown && SLOTS.with(|x| x.borrow().iter().find(|s| s.key.as_deref() == Some(call.as_str())).is_some_and(|s| s.shown_bar == bar));
+    let same = key == shown && SLOTS.with(|x| x.borrow().iter().find(|s| s.key == call).is_some_and(|s| s.shown_bar == bar));
     if same {
         return;
     }
     SLOTS.with(|x| {
-        if let Some(slot) = x.borrow_mut().iter_mut().find(|s| s.key.as_deref() == Some(call.as_str())) {
+        if let Some(slot) = x.borrow_mut().iter_mut().find(|s| s.key == call) {
             (slot.shown, slot.shown_bar) = (key, bar);
             slot.app.update(move |p, _| (p.tiles, p.bar) = (tiles, bar));
         }

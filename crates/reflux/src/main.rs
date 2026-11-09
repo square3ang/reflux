@@ -152,7 +152,6 @@ fn main() {
     })
     .on_window(desktop::window::on_window);
     let mut app = desktop::menu::install(app);
-    popout::register(&mut app);
     quick_css::register(&mut app);
     if desktop::autostart::start_hidden(&prefs) && !rune::is_headless() {
         app = app.windowless();

@@ -27,7 +27,6 @@ Rules:
 | Custom emoji pills in the composer show `:name:` | pill chips take only a vector `Icon` and no pill rect is exposed | `compose.rs` | Rune exposes pill rects or image pills |
 | Format toolbar centres on the caret end | Rune exposes the caret's rect, not the selection's | `compose.rs` | a selection rect API |
 | Compact layout: text wraps under its own start, not 32px under the name | no text-indent; placeholder spaces would leak into copies | `shell/compact.rs` | Rune gets text-indent |
-| Pop-out windows are a fixed pool of 4, the oldest gives way | Rune can add windows only before the app runs | `popout.rs` | runtime window creation |
 | Pulsing call rings (someone being rung, the incoming call avatar) fade a fixed ring at half the spread instead of growing a box shadow | Rune's `LoopSpec` loops opacity (and rotation/slides), not scale or shadow spread | `shell/call.rs` (`call_participants_row`, `incoming`) | a looping scale or shadow track |
 | Settings-search highlight covers the shared helpers and the tabs' `text()`, not `rich()` runs (texts with an inline link) | Rune keeps the element tree private | `ui/mark.rs` | a tree walk / text query API |
 | Search tokens are coloured spans: no 1px border, both halves round all corners, padding doesn't widen the text | a Rune span draws a padded rounded fill only | `shell/search.rs` | span boxes with borders and per-corner radius |
@@ -163,10 +162,10 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/app.rs:881` Rune shifts the offset by what lands above the view but not a running
 - `crates/reflux/src/app.rs:894` Rune's virtual list holds the topmost row in view, which at the top of what's
 - `crates/reflux/src/app/share_preview.rs:88` Fluxer snapshots the live video element; the call tile's renderer tees one
-- `crates/reflux/src/app/voice.rs:1114` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1320` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1784` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1793` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1120` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1326` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1790` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1799` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:167` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -188,7 +187,6 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/nav/keys.rs:82` a Tab inside a field moves focus without showing the intro.
 - `crates/reflux/src/passkey.rs:14` no hybrid (phone) flow off Windows.
 - `crates/reflux/src/popout.rs:6` on Wayland the compositor ignores always-on-top and placement (winit can't ask for
-- `crates/reflux/src/popout.rs:46` at most this many pop-outs at once (Fluxer has no limit); the oldest gives way.
 - `crates/reflux/src/quick_css_syntax.rs:4` only the variable completions; selector, `data-flx`, property and snippet completions,
 - `crates/reflux/src/session.rs:230` userData guessed as `<config dir>/fluxer` (Linux ~/.config, Windows %APPDATA%, macOS
 - `crates/reflux/src/settings/advanced.rs:363` only default and custom emoji are in the composer's `:` autocomplete; the
