@@ -11,6 +11,8 @@ thiserror.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# LiveKit reports its own failures (a track it couldn't republish after a reconnect) only here.
+log = "0.4"
 # Our own audio I/O: mic capture into a NativeAudioSource and the remote mix out to the speakers.
 cpal = "0.18"
 # RNNoise in pure Rust: noise suppression on the mic path.
@@ -35,6 +37,5 @@ default = ["webrtc"]
 webrtc = ["dep:livekit", "dep:deep_filter", "dep:ndarray"]
 
 [dev-dependencies]
-log = "0.4"
 # Already in the tree (rustls): an independent PBKDF2 + AES-GCM for tests/e2ee.rs.
 ring = "0.17"

@@ -32,6 +32,7 @@ enum Step {
     Echo,
     Ping,
     Speaking,
+    Republish,
     Mute,
     Unmute,
     Deafen,
@@ -44,12 +45,13 @@ enum Step {
     Done,
 }
 
-const ORDER: [Step; 15] = [
+const ORDER: [Step; 16] = [
     Step::Preflight,
     Step::Join,
     Step::Echo,
     Step::Ping,
     Step::Speaking,
+    Step::Republish,
     Step::Mute,
     Step::Unmute,
     Step::Deafen,
@@ -96,6 +98,8 @@ pub struct Run {
     device_ok: bool,
     /// The last whole second the Speaking step logged the mic level.
     mic_logged: u64,
+    /// The mic publication the Republish step dropped.
+    dropped: Arc<Mutex<Option<String>>>,
     /// `useScreensharePreviewUploader` checked during the first device-share case.
     preview_checked: bool,
     preview_due: bool,
@@ -147,6 +151,7 @@ impl Run {
             device_stopping: false,
             device_ok: false,
             mic_logged: u64::MAX,
+            dropped: Arc::default(),
             preview_checked: false,
             preview_due: false,
             camera_case: 0,
@@ -395,6 +400,30 @@ impl Run {
                     }
                 }
                 sh.voice.speaking.contains(&me).then_some(true)
+            }
+            // A full reconnect whose republish failed: the mic is gone from the room while we
+            // still hear everyone. The ping loop's watchdog must publish it again.
+            Step::Republish => {
+                let c = call?;
+                if first {
+                    let dropped = self.dropped.clone();
+                    let cc = c.clone();
+                    self.spawn(async move {
+                        let sid = cc.drop_mic_publication().await.ok_or("no microphone publication to drop")?;
+                        *dropped.lock().unwrap() = Some(sid.clone());
+                        Ok(format!("dropped {sid}"))
+                    });
+                    return None;
+                }
+                if let Some(false) = self.result("drop mic") {
+                    return Some(false);
+                }
+                let dropped = self.dropped.lock().unwrap().clone()?;
+                let now = c.mic_sid()?;
+                (now != dropped).then(|| {
+                    say(format!("microphone published again as {now} (was {dropped})"));
+                    true
+                })
             }
             Step::Mute | Step::Unmute | Step::Deafen | Step::Undeafen => {
                 if first {

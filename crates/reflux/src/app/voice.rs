@@ -1166,6 +1166,9 @@ async fn ping_loop(call: std::sync::Weak<Call>, generation: u64) {
     loop {
         tokio::time::sleep(PING_EVERY).await;
         let Some(call) = call.upgrade() else { return };
+        if call.mic_missing() {
+            republish_mic(call.clone(), generation);
+        }
         let Some(ms) = call.rtt_ms().await else { continue };
         update(move |s| {
             if s.app.voice.generation == generation {
@@ -1178,6 +1181,39 @@ async fn ping_loop(call: std::sync::Weak<Call>, generation: u64) {
             }
         });
     }
+}
+
+/// Others stopped hearing us after an hour or two while we still heard them, until a rejoin:
+/// a full reconnect's republish of the mic had failed. Publish it again, as the rejoin did.
+fn republish_mic(call: Arc<Call>, generation: u64) {
+    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if BUSY.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    update(move |s| {
+        let v = &s.app.shell.voice;
+        let Some((_, channel)) = v.channel.filter(|_| s.app.voice.generation == generation) else {
+            return BUSY.store(false, std::sync::atomic::Ordering::Release);
+        };
+        let muted = v.self_mute || v.self_deaf;
+        let bitrate = crate::guild::channel::mic_bitrate(&s.app.store, channel);
+        eprintln!("reflux: voice: our microphone is no longer published (a reconnect lost it); publishing it again");
+        spawn(async move {
+            let result = call.publish_mic(muted, bitrate).await;
+            BUSY.store(false, std::sync::atomic::Ordering::Release);
+            if let Err(e) = result {
+                return eprintln!("reflux: voice: republishing the microphone failed: {e}");
+            }
+            update(move |s| {
+                if s.app.voice.generation == generation {
+                    // The new track starts gated; the next tick opens it per voice activity.
+                    call.set_mic_gate(false);
+                    s.app.voice.track_open = false;
+                    apply_self(s);
+                }
+            });
+        });
+    });
 }
 
 /// The join failed or the room dropped: show "Connection failed" with retry.

@@ -69,6 +69,25 @@ pub struct Call {
     rt: tokio::runtime::Handle,
 }
 
+/// LiveKit's warnings and errors on stderr (`[livekit…] …`); without a logger they vanish.
+fn install_log() {
+    struct Stderr;
+    impl log::Log for Stderr {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            m.level() <= log::Level::Warn && m.target().starts_with("livekit")
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                eprintln!("reflux-voice: [{} {}] {}", r.level(), r.target(), r.args());
+            }
+        }
+        fn flush(&self) {}
+    }
+    if log::set_logger(&Stderr).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
 impl Call {
     /// `with_audio` plays the room through our mixer on the default output (see
     /// [`Call::set_devices`]).
@@ -76,6 +95,7 @@ impl Call {
     /// key, as livekit-client's `ExternalE2EEKeyProvider.setKey(string)` does (PBKDF2 over the
     /// UTF-8 bytes, salt `LKFrameEncryptionKey`, AES-GCM).
     pub async fn connect(endpoint: &str, token: &str, with_audio: bool, e2ee_key: Option<&str>) -> Result<(Self, UnboundedReceiver<RoomEvent>), Error> {
+        install_log();
         let audio = with_audio.then(Engine::new);
         if let Some(a) = &audio
             && !a.open_output(None)
@@ -219,6 +239,31 @@ impl Call {
         }
         *self.mic.lock().unwrap() = Some(track);
         Ok(())
+    }
+
+    /// Whether the microphone we published is gone from the room while it's connected: a full
+    /// reconnect unpublishes every track and publishes it again, and when that fails LiveKit
+    /// only logs it. Others then hear nothing until the mic is published again (a rejoin did).
+    pub fn mic_missing(&self) -> bool {
+        let Some(room) = self.room() else { return false };
+        if self.mic.lock().unwrap().is_none() || room.connection_state() != ConnectionState::Connected {
+            return false;
+        }
+        !room.local_participant().track_publications().values().any(|p| p.source() == TrackSource::Microphone && p.track().is_some())
+    }
+
+    /// The room's microphone publication SID, if it has one.
+    pub fn mic_sid(&self) -> Option<String> {
+        let room = self.room()?;
+        room.local_participant().track_publications().values().find(|p| p.source() == TrackSource::Microphone && p.track().is_some()).map(|p| p.sid().to_string())
+    }
+
+    /// Live tests: unpublish the microphone but keep our track, as a failed republish after a
+    /// full reconnect leaves it. Returns the dropped SID.
+    pub async fn drop_mic_publication(&self) -> Option<String> {
+        let sid = self.mic_sid()?;
+        self.unpublish(&TrackSid::try_from(sid.clone()).ok()?).await.ok()?;
+        Some(sid)
     }
 
     pub fn set_mic_muted(&self, muted: bool) {
