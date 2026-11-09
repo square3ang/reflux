@@ -164,6 +164,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
+- `crates/reflux/src/desktop/mod.rs:606` a watchdog, not a fix of whichever call teardown hangs.
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
@@ -228,7 +229,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/mod.rs:650` Rune reports no full screen state for the main window, so a full screen left
 - `crates/reflux/src/shell/neko.rs:3` walk/scratch/sleep animations and fling physics are left out; add them with a
 - `crates/reflux/src/shell/pins.rs:5` only the left and bottom edges resize (the ones facing away from the anchor; Rune
-- `crates/reflux/src/shell/search.rs:78` the key and value halves round all four corners and the padding doesn't widen the
+- `crates/reflux/src/shell/search.rs:81` the key and value halves round all four corners and the padding doesn't widen the
 - `crates/reflux/src/shell/sidebar.rs:75` the `banner` variant's drop shadow isn't drawn.
 - `crates/reflux/src/shell/status.rs:92` Fluxer's hover submenu (`UserAreaAccountSwitchMenu`) isn't built; the row's
 - `crates/reflux/src/shell/status.rs:129` a set custom status shows read-only (`CustomStatusDisplay isEditable` edits it on

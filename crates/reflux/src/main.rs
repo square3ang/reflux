@@ -158,6 +158,7 @@ fn main() {
     .keep_running()
     .modifier_keys()
     .on_close(desktop::on_close)
+    .on_quit(desktop::on_quit)
     // Fluxer's own titlebar on Windows and macOS (`useNativeTitleBar` off); Linux keeps its frame.
     .titlebar(rune::Titlebar::new(desktop::window::TITLEBAR))
     // Windows and macOS hand us `fluxer://` links (Linux starts a process with one).

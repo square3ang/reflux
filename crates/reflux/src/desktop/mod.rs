@@ -600,6 +600,20 @@ fn on_tray(e: TrayEvent) {
     }
 }
 
+/// `App::on_quit`: quitting ends the process, as Electron's `app.quit()` does. Tearing down a
+/// call (LiveKit, audio threads) could keep it alive after the window went, so if it hasn't
+/// exited a few seconds on, it exits.
+// shortcut: a watchdog, not a fix of whichever call teardown hangs.
+pub fn on_quit(_: &mut State, _: &mut rune::Tx) {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if rune::quitting() {
+            eprintln!("reflux: still running 3 s after quitting; exiting");
+            std::process::exit(0);
+        }
+    });
+}
+
 /// `App::on_close`: hide to the tray when it shows and close-to-tray is on, else quit.
 pub fn on_close(s: &mut State, tx: &mut rune::Tx) {
     window::save_size(s);
