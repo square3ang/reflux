@@ -37,7 +37,6 @@ Rules:
 | Keyboard-mode intro shows only for a Tab no field takes | the app-level `on_key` only sees keys the focused control passes on, and a field's Tab moves focus itself | `nav/keys.rs` | a pre-dispatch key hook |
 | Spinner dots only fade (no 0.8 scale) | Rune's looping motion is opacity, rotation or slide; the scale-capable `Sequence` runs once | `ui/misc.rs` | looping scale keyframes |
 | Scrollbars keep rune-kit's 2pt edge gap and 24pt minimum thumb (Fluxer's regular bar: 4 in, 40 minimum) | `ScrollBarStyle` has no gap / minimum knobs | `ui/misc.rs` | rune-kit exposes them |
-| The smooth wheel moves its glide's target by the content's growth while it glides up (a frame late, `retarget_wheels`), and older message pages that arrive mid-glide wait for it to stop (`app::fetch_older`) | a virtual list moves the offset by what's measured or added above the view, but not a running glide's target, so the glide flew on by that much (rows measured from the 48pt estimate, a whole page) | `ui/misc.rs`, `app.rs`, `main.rs` | Rune shifts `glide_to` with the anchor |
 | An older message page is added with `keep_on_screen` on the message that was first (`app::prepend_older`) | a virtual list holds the topmost row in view, which at the top of what's loaded is the head skeleton filler: the page went in under it, the filler stayed in view and loaded the next page, on to the channel's start | `app.rs` | Rune anchors on a row the app marks, or skips fillers |
 | Scaled markdown spans (headings) keep even half-leading, so their baseline differs a little from Fluxer's | Rune lays out a scaled span with its own line height | `shell/markdown.rs` | per-span baseline control |
 | Jumbo emoji can't be selected or copied in place ("Copy text" has them); one-line previews keep emoji as text | the emoji are image overlays, not text; truncated one-line text has no overlay slots | `shell/markdown.rs` | inline images in text runs |
@@ -153,13 +152,12 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux-voice/src/lib.rs:18` a second, hand-maintained implementation of the same API (`stub.rs`); delete it when
 - `crates/reflux-voice/src/lib.rs:26` Fluxer's Noise gate, Speex and GTCRN backends aren't offered (no Rust ports wired).
 - `crates/reflux-voice/src/real.rs:225` no `forceStereo` (stereo capture at 64 kbps+): the mic source is mono.
-- `crates/reflux/src/app.rs:881` Rune shifts the offset by what lands above the view but not a running
-- `crates/reflux/src/app.rs:894` Rune's virtual list holds the topmost row in view, which at the top of what's
+- `crates/reflux/src/app.rs:888` Rune's virtual list holds the topmost row in view, which at the top of what's
 - `crates/reflux/src/app/share_preview.rs:88` Fluxer snapshots the live video element; the call tile's renderer tees one
-- `crates/reflux/src/app/voice.rs:1120` no ETag / 304 and no ×4 slower polling while the window is hidden.
-- `crates/reflux/src/app/voice.rs:1327` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
-- `crates/reflux/src/app/voice.rs:1791` only display/window shares report this; camera-device shares can't tell.
-- `crates/reflux/src/app/voice.rs:1800` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
+- `crates/reflux/src/app/voice.rs:1123` no ETag / 304 and no ×4 slower polling while the window is hidden.
+- `crates/reflux/src/app/voice.rs:1330` Fluxer's Automatic mode warns only when its GPU probe expected hardware; webrtc-sys
+- `crates/reflux/src/app/voice.rs:1831` only display/window shares report this; camera-device shares can't tell.
+- `crates/reflux/src/app/voice.rs:1840` 2 s, not Fluxer's 1 s — each refresh re-captures every source's thumbnail.
 - `crates/reflux/src/audio_share/mod.rs:167` first two channels; downmix when a 5.1 user reports a missing centre channel.
 - `crates/reflux/src/compose.rs:324` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:361` Undo and Redo are always enabled (Rune doesn't expose the history depth).
@@ -198,26 +196,26 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/attachments.rs:552` plain text; Fluxer links it to the attachment-expiry help article.
 - `crates/reflux/src/shell/call.rs:131` kept for the session; Fluxer persists it. Persist with the other layout prefs.
 - `crates/reflux/src/shell/call.rs:203` the store keeps a 200-message window and no total unread count, so a channel with
-- `crates/reflux/src/shell/call.rs:497` only our own Speak permission is known here; others show red for a server mute only.
-- `crates/reflux/src/shell/call.rs:579` no "Add stream" button; reflux watches one stream at a time. Add it with
-- `crates/reflux/src/shell/call.rs:671` other users' accent colours only arrive with their profile, which the tile
-- `crates/reflux/src/shell/call.rs:1291` reflux keeps favorites for community channels only, so a DM call has no star.
-- `crates/reflux/src/shell/call.rs:1316` `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
-- `crates/reflux/src/shell/call.rs:1344` no region-teleport event from the engine; the overlay runs for a few seconds
-- `crates/reflux/src/shell/call.rs:1611` checking it needs an app, which is picked in the share dialog; with none picked
-- `crates/reflux/src/shell/call.rs:1721` `localeCompare` is approximated by a case-insensitive compare.
-- `crates/reflux/src/shell/call.rs:1905` a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
-- `crates/reflux/src/shell/call.rs:2008` Rune loops opacity only, so the ring fades in and out at half its spread
-- `crates/reflux/src/shell/call.rs:2049` Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
-- `crates/reflux/src/shell/call.rs:2449` Rune has no brightness filter or pressed offset, so hover only swaps the colour
-- `crates/reflux/src/shell/call.rs:2476` Rune loops opacity only, so the ring fades in and out at half its spread.
-- `crates/reflux/src/shell/call.rs:2566` no backdrop blur behind the card.
-- `crates/reflux/src/shell/call.rs:2618` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
-- `crates/reflux/src/shell/call.rs:2686` Rune has no diagonal resize cursor, so it shows the row one.
-- `crates/reflux/src/shell/call.rs:3171` device cards are names only (Fluxer shows live previews, which needs
-- `crates/reflux/src/shell/call.rs:3454` the shell has no WebRTC stats handle; values stay dashes until the engine
-- `crates/reflux/src/shell/call.rs:3481` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
-- `crates/reflux/src/shell/call.rs:3539` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
+- `crates/reflux/src/shell/call.rs:499` only our own Speak permission is known here; others show red for a server mute only.
+- `crates/reflux/src/shell/call.rs:581` no "Add stream" button; reflux watches one stream at a time. Add it with
+- `crates/reflux/src/shell/call.rs:674` other users' accent colours only arrive with their profile, which the tile
+- `crates/reflux/src/shell/call.rs:1313` reflux keeps favorites for community channels only, so a DM call has no star.
+- `crates/reflux/src/shell/call.rs:1338` `MediaVerticalVolumeControl`'s slider isn't here; the button mutes the stream.
+- `crates/reflux/src/shell/call.rs:1366` no region-teleport event from the engine; the overlay runs for a few seconds
+- `crates/reflux/src/shell/call.rs:1633` checking it needs an app, which is picked in the share dialog; with none picked
+- `crates/reflux/src/shell/call.rs:1743` `localeCompare` is approximated by a case-insensitive compare.
+- `crates/reflux/src/shell/call.rs:1927` a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
+- `crates/reflux/src/shell/call.rs:2030` Rune loops opacity only, so the ring fades in and out at half its spread
+- `crates/reflux/src/shell/call.rs:2071` Button draws every icon at 16px; Reject's X and Ignore's bell are 18px in Fluxer.
+- `crates/reflux/src/shell/call.rs:2465` Rune has no brightness filter or pressed offset, so hover only swaps the colour
+- `crates/reflux/src/shell/call.rs:2492` Rune loops opacity only, so the ring fades in and out at half its spread.
+- `crates/reflux/src/shell/call.rs:2582` no backdrop blur behind the card.
+- `crates/reflux/src/shell/call.rs:2634` no edge resizing (240px .. 70% of the window) or fling physics; it keeps 320px and
+- `crates/reflux/src/shell/call.rs:2702` Rune has no diagonal resize cursor, so it shows the row one.
+- `crates/reflux/src/shell/call.rs:3187` device cards are names only (Fluxer shows live previews, which needs
+- `crates/reflux/src/shell/call.rs:3470` the shell has no WebRTC stats handle; values stay dashes until the engine
+- `crates/reflux/src/shell/call.rs:3497` no "Copy stats JSON" or "Screen share privacy" (Reflux has neither).
+- `crates/reflux/src/shell/call.rs:3555` no "Pop out user", "Disable video locally" or "Change friend nickname" (no
 - `crates/reflux/src/shell/compact.rs:5` the text wraps under its own start, not 32px under the name
 - `crates/reflux/src/shell/devtools.rs:634` a failure is a toast, not Fluxer's "Failed to update premium perk state." modal; add the modal if staff want it.
 - `crates/reflux/src/shell/devtools.rs:942` no pending label ("Forgetting authorized IPs...") and failures are toasts, not error modals; track the request if staff need them.
@@ -248,10 +246,9 @@ crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sa
 - `crates/reflux/src/ui/controls.rs:52` a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
 - `crates/reflux/src/ui/controls.rs:314` it shows while the whole control is hovered (Rune's hover group), which also
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
-- `crates/reflux/src/ui/menu.rs:228` rune can't tell us which way the parent flipped, so a nested submenu opens to the
+- `crates/reflux/src/ui/menu.rs:230` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:76` rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
-- `crates/reflux/src/ui/misc.rs:169` a virtual list keeps what's on screen when rows above it are measured
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it
 - `scripts/mf-wine-test.sh:8` wine's MF (winegstreamer) stands in for Windows' own decoders; run the same on a
 

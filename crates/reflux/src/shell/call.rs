@@ -466,7 +466,9 @@ fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>,
     if pres == Pres::Grid && t.user != me && w > 220.0 {
         let user = t.user;
         let bk = format!("tile-menu-{}-{}", t.user, t.screen as u8);
-        let anchor = bk.clone();
+        // Read while building: layout reads are empty inside a handler, which opened the menu
+        // at the window's top-left corner.
+        let rect = rune::memo::window_layout(&bk);
         let size = if n280 { 18.0 } else { 20.0 };
         pill = pill.child(
             row()
@@ -485,7 +487,7 @@ fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>,
                 .child(icon(&icons::DOTS_THREE_BOLD, 15.0).color(rgba(255, 255, 255, 0.78)).group_color(Color::WHITE))
                 .on_press(move |s: &mut S| {
                     // `handleMenuButtonKeyDown`: the menu opens from the button's centre.
-                    let at = rune::memo::window_layout(&anchor).map_or([0.0, 0.0], |[x, y, w, h]| [x + w / 2.0, y + h / 2.0]);
+                    let at = rect.map_or([0.0, 0.0], |[x, y, w, h]| [x + w / 2.0, y + h / 2.0]);
                     let sh = acc(s);
                     sh.popups.open_at(TILE_MENU, at);
                     sh.target = Some(super::Target::User { user, guild, dm: None });
@@ -573,8 +575,8 @@ fn tile_badge(label: El, fill: Color) -> El {
         .child(label.font(font(10.0, 600.0).lh(12.0)).color(Color::WHITE))
 }
 
-/// `WatchStreamOverlay`: the primary Watch stream button on `--voice-overlay-strong`; narrow tiles
-/// shrink it, then drop its label.
+/// `WatchStreamOverlay`: the primary Watch stream button (`Button variant="primary"`: the
+/// brand colour) on `--voice-overlay-strong`; narrow tiles shrink it, then drop its label.
 fn watch_overlay<S: 'static>(user: Snowflake, w: f32, p: &Palette, acc: ShellAccess<S>) -> El {
     // shortcut: no "Add stream" button; reflux watches one stream at a time. Add it with
     // multi-stream watching.
@@ -584,18 +586,19 @@ fn watch_overlay<S: 'static>(user: Snowflake, w: f32, p: &Palette, acc: ShellAcc
         .gap(6.0)
         .center()
         .radius(8.0)
-        .fill(p.button_primary_fill)
-        .hover(p.button_primary_active_fill)
+        .fill(p.brand_primary)
+        .border(1.0, crate::ui::over(crate::ui::mix(p.brand_primary, Color::WHITE, 82.0), p.brand_primary))
+        .hover(p.brand_secondary)
         .shadow(1.0, 2.0, rgba(0, 0, 0, 0.1))
         .cursor(rune::Cursor::Pointer)
         .role("button")
         .label(t("Watch stream"))
-        .child(icon(&icons::MONITOR_PLAY_FILL, 18.0).color(p.button_primary_text));
+        .child(icon(&icons::MONITOR_PLAY_FILL, 18.0).color(p.brand_primary_fill));
     if w <= 190.0 {
         button = button.w(32.0);
     } else {
         let f = if small { 12.0 } else { 13.0 };
-        button = button.px(if small { 10.0 } else { 12.0 }).child(text(t("Watch stream")).font(font(f, 600.0).lh(f * 1.2)).color(p.button_primary_text).truncate());
+        button = button.px(if small { 10.0 } else { 12.0 }).child(text(t("Watch stream")).font(font(f, 600.0).lh(f * 1.2)).color(p.brand_primary_fill).truncate());
     }
     el()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -702,10 +705,25 @@ struct FocusInfo {
 /// 48px and 1rem paddings), so it is known while the focus layout shows instead of the grid.
 fn grid_area(compact: bool) -> [f32; 2] {
     if compact {
-        return rune::memo::layout_size("call-grid-compact").unwrap_or([960.0, 540.0]);
+        // The layout box, which both layouts fill, less the grid's safe paddings: the box
+        // focus shows in is the same, so the choice can't flip between them.
+        return rune::memo::layout_size("call-layout-compact").map_or([960.0, 540.0], |[w, h]| {
+            let (top, bottom) = compact_safe(h);
+            [w, (h - top - bottom).max(0.0)]
+        });
     }
     let chrome = dim::LAYOUT_HEADER_HEIGHT + rune::memo::layout_size("call-footer").map_or(78.0, |[_, h]| h) + 96.0 + 32.0;
     rune::memo::layout_size("call-view").map_or([960.0, 540.0], |[w, h]| [w, (h - chrome).max(0.0)])
+}
+
+/// `.layoutHostFullHeightGrid`'s padding in a compact call `height` tall: its box starts at the
+/// window top (23 above this strip, under the floating header), so its safe top is 30% and its
+/// safe bottom 34% of that taller box; measured in Fluxer at a 320 call: 103.2 top, 116.96
+/// bottom, 124 of grid (tiles 202×114). Reflux's strip starts below the header, so the 23 is
+/// taken off the top.
+fn compact_safe(height: f32) -> (f32, f32) {
+    let host_h = height + 23.0;
+    (host_h * 0.3 - 23.0, host_h * 0.34)
 }
 
 /// Whether the call view shows the focus layout and what it focuses, as `layout` decides.
@@ -736,10 +754,9 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
     if let Some(f) = focused {
         if compact {
-            // The compact view shows just the focused tile. It keeps the grid's key: `grid_area`
-            // measures it, and an area that vanished with the grid read as the default, which
-            // fit every tile, so the view flipped between grid and focus every frame.
-            return col().key(grid_key).w_full().h_full().gap(8.0).padding(16.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
+            // The compact view shows just the focused tile, as `.focusLayoutContentCompact`'s
+            // main: no host padding (`.layoutHostFullHeightFocus`), `100cqh - 0.5rem` tall.
+            return col().w_full().grow(1.0).min_h(0.0).py(4.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
         }
         return focus_layout(f, &all, st, &make, acc);
     }
@@ -751,7 +768,10 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     for chunk in all.chunks(packed.columns.max(1)) {
         grid = grid.child(row().gap(packed.gap).justify_center().children(chunk.iter().map(|t| el().key(format!("g-{}-{}", t.user, t.screen as u8)).size(packed.tile[0], packed.tile[1]).child(make(*t, Pres::Grid)))));
     }
-    if compact { grid } else { col().w_full().h_full().min_w(0.0).min_h(0.0).py(16.0).child(grid) }
+    if compact {
+        let (top, bottom) = compact_safe(rune::memo::layout_size("call-layout-compact").map_or(320.0, |[_, h]| h));
+        grid.grow(1.0).pt(top).pb(bottom)
+    } else { col().w_full().h_full().min_w(0.0).min_h(0.0).py(16.0).child(grid) }
 }
 
 /// `focusLayoutContentFullscreen`: the focused tile as large a 16:9 box as fits above what the
@@ -2168,15 +2188,9 @@ fn compact_call<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowfl
     let footer = control_reserve + (height * 0.052).clamp(14.0, 22.0);
     let pad_bottom = edge.max(footer.min(height * 0.34));
     let pad_top = edge.max((height * 0.065).clamp(18.0, 28.0).min(control_reserve * 0.34));
-    // `.gridLayoutWrapperCompact`: its box starts at the window top (23 above this strip, under
-    // the floating header), so its safe top is 30% and its safe bottom 34% of that taller box;
-    // measured in Fluxer at a 320 call: 103.2 top, 116.96 bottom, 124 of grid (tiles 202×114).
-    // Reflux's strip starts below the header, so the 23 is taken off the top.
-    let host_h = height + 23.0;
-    let safe_top = host_h * 0.3 - 23.0;
-    let safe_bottom = host_h * 0.34;
+    // The media layouts pad themselves (`compact_safe` for the grid, none for focus).
     let grid = has_media && !people.is_empty();
-    let (px, pt, pb) = if grid { (0.0, safe_top, safe_bottom) } else { (edge, pad_top, pad_bottom) };
+    let (px, pt, pb) = if grid { (0.0, 0.0, 0.0) } else { (edge, pad_top, pad_bottom) };
     let mut content = row().w_full().grow(1.0).min_h(0.0).center().fill(rgb(0, 0, 0)).px(px).pt(pt).pb(pb);
     if people.is_empty() {
         content = content.child(text(t("No one else is here yet.")).font(font(14.0, 500.0).lh(18.0)).color(rgba(255, 255, 255, 0.55)).key("empty"));
@@ -2208,7 +2222,7 @@ fn compact_call<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowfl
     } else {
         // `VoiceCallLayoutContent compact`: the call view's grid / focus layout, whose tiles
         // shrink to fit (a single row of fixed-minimum tiles overflowed the window).
-        content = content.child(col().key("layout").w_full().h_full().min_w(0.0).child(layout(store, st, guild, people, true, p, acc)));
+        content = content.child(col().key("call-layout-compact").w_full().self_stretch().min_w(0.0).child(layout(store, st, guild, people, true, p, acc)));
     }
     // `.heightTogglePill` / `.fullscreenButtonWrap button`: 42px black squares, radius 14.
     let corner = |key: &'static str, glyph: &'static rune::Icon, label: String| {
