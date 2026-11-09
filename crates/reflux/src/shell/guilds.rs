@@ -159,7 +159,8 @@ fn slot<S: 'static>(
 }
 
 fn home<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> El {
-    let selected = st.guild.is_none();
+    // Favorites has no guild either; it lights its own button.
+    let selected = st.guild.is_none() && !st.nav.favorites;
     let lit = selected || st.hover_guild == Some(None);
     let (bg, fg) = if lit { (p.brand_primary, p.brand_primary_fill) } else { (p.guilds_layout_item_bg, p.text_primary) };
     let face = row()
