@@ -164,7 +164,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
 - `crates/reflux/src/desktop/mod.rs:609` a watchdog, not a fix of whichever call teardown hangs.
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
-- `crates/reflux/src/desktop/shortcuts.rs:391` KDE only (Fluxer leaves the keys to the desktop); other desktops keep theirs
+- `crates/reflux/src/desktop/shortcuts.rs:394` KDE only (Fluxer leaves the keys to the desktop); other desktops keep theirs
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
 - `crates/reflux/src/desktop/tray.rs:28` Fluxer only adds Disconnect while connected, but Rune's SNI menu numbers items
@@ -187,6 +187,7 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/settings/advanced.rs:621` Fluxer's "No hardware encoder was found" description needs webrtc-sys's factory
 - `crates/reflux/src/settings/crop.rs:6` animated WebP crops to its first frame (no WebP animation encoder in `image`).
 - `crates/reflux/src/settings/look_tabs.rs:747` sizes, spacing and other non-colour, non-font variables can't be overridden
+- `crates/reflux/src/settings/mod.rs:713` the list appears at once; Fluxer unfolds it over 0.25 s (a grid-rows transition).
 - `crates/reflux/src/settings/premium.rs:4` no in-app Plutonium page, checkout, plan changes or gift code redeem form (the web
 - `crates/reflux/src/settings/recovery_kit.rs:6` Print opens the PDF in the system viewer (Rune can't print).
 - `crates/reflux/src/settings/recovery_pdf.rs:4` text outside Windows-1252 (CJK, Cyrillic…) is written in English instead of being

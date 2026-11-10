@@ -62,6 +62,8 @@ pub struct SettingsUi {
     /// The typed query waiting out the 300 ms debounce, and since when.
     pub typed: Option<(String, std::time::Instant)>,
     pub collapsed: Vec<&'static str>,
+    /// The open tab's section list in the sidebar is folded (`expandedTab` is not this tab).
+    pub sections_folded: bool,
     /// The `PrivacySetupModal`, while it's open.
     pub privacy_review: Option<privacy::Review>,
 }
@@ -70,7 +72,7 @@ impl SettingsUi {
     /// Opens on `tab` (a [`TABS`] id), or on the first tab like Fluxer.
     pub fn new(tab: Option<&str>) -> Self {
         let tab = TABS.iter().find(|t| Some(t.id) == tab).map_or("my_profile", |t| t.id);
-        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), typed: None, collapsed: Vec::new(), privacy_review: None }
+        Self { tab, search: TextEdit::new(""), reveal_email: false, confirm_logout: false, modal: None, profile_guild: None, searched: String::new(), typed: None, collapsed: Vec::new(), sections_folded: false, privacy_review: None }
     }
 }
 
@@ -331,7 +333,6 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     let close = move |s: &mut S| acc(s).settings = None;
     let q = ui.searched.as_str();
     let hits = search::search(q, |id| visible_id(id, store, premium));
-    let (head, nav) = sidebar(store, st, ui, p, premium, &hits, acc);
     // Section deep links (`buildUserSettingsDeepLink`) carry the open tab.
     tabs::set_current_tab(ui.tab);
     let (title, body) = if q.is_empty() {
@@ -339,6 +340,9 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pal
     } else {
         (t("Search results"), search::results(store, st, ui, &hits, p, acc, &mut popups))
     };
+    // After the body: the sidebar lists the sections it rendered (none while searching).
+    let (sections, active) = if q.is_empty() && SECTIONED.contains(&ui.tab) { tabs::spy::sections() } else { Default::default() };
+    let (head, nav) = sidebar(store, st, ui, p, premium, &hits, (&sections, active), acc);
     let link = (q.is_empty()).then(|| tabs::deep_link(ui.tab, None));
     let mut modal = frame(t("User settings"), title, link, head, nav, body, close, p);
     if ui.confirm_logout {
@@ -500,7 +504,8 @@ impl ShellState {
 /// Shows tab `id` with a fresh form, loading what it lists.
 pub(crate) fn open_tab(sh: &mut ShellState, id: &'static str) {
     let Some(u) = sh.settings.as_mut() else { return };
-    (u.tab, u.modal, u.privacy_review) = (id, None, None);
+    // `syncSettingsTreeExpansionToActiveTab`: the tab opened shows its sections.
+    (u.tab, u.modal, u.privacy_review, u.sections_folded) = (id, None, None, false);
     sh.form = Default::default();
     load_tab(sh, id);
 }
@@ -549,7 +554,8 @@ pub(crate) fn colors(p: &Palette) -> Colors {
 }
 
 /// The search field and profile card, and the nav.
-fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, hits: &[search::Hit], acc: ShellAccess<S>) -> (Vec<El>, El) {
+#[allow(clippy::too_many_arguments)]
+fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, premium: bool, hits: &[search::Hit], sections: (&[String], usize), acc: ShellAccess<S>) -> (Vec<El>, El) {
     let c = colors(p);
     // `SettingsSearch`: 34 tall, a 16 bold magnifier 12 in, text 13/18.
     let search = row()
@@ -633,14 +639,30 @@ fn sidebar<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Pale
         if items.is_empty() {
             continue;
         }
-        let items = items.into_iter().map(|tab| {
-            let item = nav_item(tab.icon, t(tab.label), ui.tab == tab.id, false, p, &c).key(tab.id).on_press(select(acc, tab.id));
+        let items = items.into_iter().flat_map(|tab| {
+            let selected = ui.tab == tab.id;
+            let expandable = SECTIONED.contains(&tab.id) && (!selected || sections.0.len() > 1);
+            let expanded = expandable && selected && !ui.sections_folded;
+            let id = tab.id;
+            let mut item = nav_item(tab.icon, t(tab.label), selected, false, p, &c).key(tab.id).on_press(move |s: &mut S| {
+                // `toggleOnSelectedClick`: the open tab's item folds and unfolds its sections.
+                if expandable && acc(s).settings.as_ref().is_some_and(|u| u.tab == id) {
+                    set(acc, s, |u| u.sections_folded = !u.sections_folded);
+                } else {
+                    open_tab(acc(s), id);
+                }
+            });
             // `attentionLabel` on the Privacy item while the setup is unreviewed.
             if tab.id == "privacy_safety" && privacy_review {
-                item.child(el().size(8.0, 8.0).radius(4.0).fill(p.status_danger).ml(6.0))
-            } else {
-                item
+                item = item.child(el().size(8.0, 8.0).radius(4.0).fill(p.status_danger).ml(6.0));
             }
+            if expandable {
+                // `.sidebarItemChevron`: shown on the selected, expanded or hovered item.
+                let glyph = if expanded { &icons::CARET_DOWN_BOLD } else { &icons::CARET_RIGHT_BOLD };
+                let chevron = crate::ui::icon(glyph, 16.0).color(if selected { p.text_primary } else { p.text_tertiary });
+                item = item.child(if selected { chevron } else { chevron.group_opacity(0.0, 1.0) });
+            }
+            [Some(item), expanded.then(|| sub_items(sections.0, sections.1, p, &c, acc).key(format!("{}-sections", tab.id)))].into_iter().flatten()
         });
         nav = nav.child(nav_group(Some(cat.label()), items, p).key(format!("cat-{}", cat.label())));
     }
@@ -680,6 +702,52 @@ fn os_name() -> &'static str {
         "windows" => "Windows",
         other => other,
     }
+}
+
+/// `tabHasMultipleLinkableSections` for the tabs reflux has: the ones whose sidebar item lists
+/// its sections (`SECTION_REGISTRY`, and Advanced's categories).
+const SECTIONED: &[&str] = &["account_security", "privacy_safety", "appearance", "themes", "notifications", "chat_settings", "voice_video", "accessibility", "language", "advanced_settings"];
+
+/// `SettingsModalSidebarSubItems`: the open tab's sections under its item, on a 1px tree line
+/// whose stretch beside the active one is highlighted.
+// shortcut: the list appears at once; Fluxer unfolds it over 0.25 s (a grid-rows transition).
+fn sub_items<S: 'static>(sections: &[String], active: usize, p: &Palette, c: &Colors, acc: ShellAccess<S>) -> El {
+    // `.sidebarSubItem`: 30 tall, padding 4 10 inside a 1px border, 13/18, 2 apart.
+    const H: f32 = 30.0;
+    const GAP: f32 = 2.0;
+    let _ = acc;
+    let mut list = col().w_full().gap(GAP).pl(7.0).role("group");
+    for (i, title) in sections.iter().enumerate() {
+        let on = i == active;
+        let jump = title.clone();
+        let label = text(title.clone()).font(font(13.0, if on { 600.0 } else { 500.0 }).lh(18.0)).truncate().grow(1.0).shrink();
+        let item = row()
+            .key(format!("sub-{title}"))
+            .w_full()
+            .min_h(H)
+            .px(11.0)
+            .py(5.0)
+            .center_y()
+            .radius(6.0)
+            .cursor(rune::Cursor::Pointer)
+            .role("treeitem")
+            .focusable(true)
+            .focus_ring(4.0, 0.0, p.focus_primary)
+            .motion(rune::Spring::NONE)
+            .checked(on)
+            .label(title.clone())
+            .on_press_tx(move |_: &mut S, tx: &mut rune::Tx| tabs::spy::scroll_to(&jump, tx));
+        list = list.child(if on {
+            item.fill(c.selected).child(label.color(p.text_primary))
+        } else {
+            item.hover(c.hover).hover_group().child(label.color(p.text_tertiary).group_color(p.text_secondary))
+        });
+    }
+    // `--settings-sidebar-subtree-line-x`: 21 in (under the item icon's centre).
+    list = list
+        .child(el().key("line").pin(Some(0.0), None, Some(0.0), Some(0.0)).w(1.0).radius(1.0).fill(over(c.border, c.surface)).inert())
+        .child(el().key("active-line").absolute(0.0, active as f32 * (H + GAP)).size(1.0, H).radius(1.0).fill(p.text_primary).inert());
+    col().w_full().mt(3.0).mb(4.0).pl(21.0).child(list)
 }
 
 /// A nav category: its uppercase 11/600 title (if any) over its items.
@@ -776,14 +844,14 @@ fn content<S: 'static>(title: &str, link: Option<String>, body: El, p: &Palette,
     // Keyed by tab so a new tab mounts fresh instead of morphing the old tab's elements.
     let inner = col().key(format!("tab-{title}")).w_full().max_w(m.inner_max).px(m.gutter).child(el().h(20.0)).child(body).child(el().h(32.0));
     let viewport = col()
-        .key("settings-content")
+        .key(tabs::spy::VIEWPORT)
         .instant_changes()
         .w_full()
         .grow(1.0)
         .min_h(0.0)
         .scroll(ScrollSpec { stick_bottom: false })
         .child(row().w_full().justify_center().child(inner));
-    col().grow(1.0).min_w(0.0).h_full().fill(bg).child(header).child(scroller(crate::ui::smooth_wheel::<S>(viewport, "settings-content"), true, p))
+    col().grow(1.0).min_w(0.0).h_full().fill(bg).child(header).child(scroller(crate::ui::smooth_wheel_with::<S>(viewport, tabs::spy::VIEWPORT, tabs::spy::scrolled), true, p))
 }
 
 #[cfg(test)]
