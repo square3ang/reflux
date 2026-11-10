@@ -35,7 +35,7 @@ Fluxer's look and behaviour, screen for screen, without a browser engine.
     <td><img src="docs/screenshots/embeds.png" alt="Rich and YouTube embeds"><br><sub><b>Embeds</b>: rich embeds, YouTube and GIFs</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/settings.png" alt="Community settings"><br><sub><b>Community settings</b>: roles, moderation, expressions, members</sub></td>
+    <td><img src="docs/screenshots/settings.png" alt="User settings with the open tab's sections in the sidebar"><br><sub><b>Settings</b>: the open tab's sections listed in the sidebar, following the scroll</sub></td>
     <td><img src="docs/screenshots/switcher.png" alt="Quick switcher"><br><sub><b>Quick switcher</b>: <kbd>Ctrl</kbd> + <kbd>K</kbd> across people, channels and communities</sub></td>
   </tr>
 </table>
