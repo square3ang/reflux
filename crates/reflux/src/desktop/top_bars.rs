@@ -250,7 +250,7 @@ fn voice_restore<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: S
         clear(s);
         let sh = acc(s);
         sh.voice.restore_media = media;
-        sh.intents.push(Intent::JoinVoice { guild, channel });
+        sh.join_voice(guild, channel);
     };
     let actions = vec![button("nagbar-voice-not-now", t("Not now"), p, clear), button("nagbar-voice-reconnect", t("Reconnect"), p, reconnect)];
     Some(Bar::new(-3.5, true, bar::<S>("nagbar-voice-restore", rgb(0x15, 0x80, 0x3d), message, actions, None)))

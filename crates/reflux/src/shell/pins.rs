@@ -5,7 +5,7 @@
 // shortcut: only the left and bottom edges resize (the ones facing away from the anchor; Rune
 // has no diagonal resize cursor for corners and the anchored edges would need re-placement).
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use reflux_model::{Channel, ChannelType, Message, Permissions, Snowflake};
 use reflux_store::Store;
 use rune::{El, ScrollSpec, col, el, icon, row, text};
@@ -163,7 +163,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
             list = list.child(state(&icons::FLAG_CHECKERED_FILL, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p).key("end"));
         }
     }
-    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("pins-list").key("pins-list").child(list), false, p);
+    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("pins-list").key("pins-list").child(list), false, p);
     let (w, h) = size(st);
     let surface = col()
         .size(w, h)

@@ -1,7 +1,7 @@
 //! The login screen: `AuthLayout` card with `AuthBrandPanel` and the login method / credential
 //! steps (`fluxer_app/src/features/auth`). Numbers come from `assets/reference/login-layout.json`.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::f32::consts::PI;
 
 use rune::{Align, Color, Cx, El, Icon, Shadow, TextEdit, col, el, icon, row, text};
@@ -224,7 +224,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .key("login-scroll")
         .w_full()
         .h_full()
-        .scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<State>("login-page")
+        .scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<State>("login-page")
         .key("login-page")
         .child(col().w_full().min_h(size[1]).py(24.0).center().child(card(s, p, &mut layer)));
     let root = col()

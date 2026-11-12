@@ -288,6 +288,8 @@ pub(super) fn view<S: 'static>(store: &Store, st: &ShellState, t: &Trigger, item
         .border(1.0, over(p.background_modifier_accent, bg))
         .box_shadow(rune::Shadow { x: 0.0, y: 8.0, blur: 16.0, spread: 0.0, color: crate::ui::rgba(0, 0, 0, 0.24), inset: false })
         .clip_rounded(8.0)
+        // The list shows only while the composer is focused; a press that blurred it would unmount the row.
+        .preserve_focus_on_press(true)
         .child(list)
 }
 

@@ -33,7 +33,7 @@ pub use datepicker::DatePicker;
 pub use controls::{Checkbox, RadioGroup, Slider, Switch, radio_dot};
 pub use input::Input;
 pub use menu::{Menu, MenuEntry, MenuItem, menu_slider};
-pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller, smooth_wheel, smooth_wheel_with, SmoothWheel};
+pub use misc::{SpinnerSize, mention_badge, notification_dot, scroller, chromium_wheel, chromium_wheel_with, ChromiumWheel};
 pub use modal::{Modal, ModalSize};
 pub use overlay::{Placement, PopupAccess, Popups, Tooltip, popup_access};
 pub use select::Select;

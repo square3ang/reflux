@@ -1,7 +1,7 @@
 //! Who reacted: the pill's `ReactionTooltip`, `MessageReactionsModal`, its removal buttons,
 //! the "Remove all reactions" confirmation and the message menu's reaction items.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use reflux_model::{Message, Permissions, ReactionEmoji, Snowflake};
 use reflux_store::Store;
 use rune::{El, Tx, col, el, row, text};
@@ -308,7 +308,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
                 }
                 false
             });
-            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("reaction-list").key("reaction-list").child(l), false, p).key("list")
+            scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("reaction-list").key("reaction-list").child(l), false, p).key("list")
         }
         _ => col().w_full().h_full().center().key("loading").child(text(t("Loading reactions")).font(font(14.0, 400.0)).color(p.text_primary_muted)),
     };
@@ -318,7 +318,7 @@ fn modal<S: 'static>(store: &Store, st: &ShellState, m: &Message, sel: &str, p: 
         .radius(8.0)
         .clip_rounded(8.0)
         .fill(p.background_primary)
-        .child(col().w(96.0).h_full().fill(p.background_secondary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("reaction-filters").key("reaction-filters").child(filters), false, p)))
+        .child(col().w(96.0).h_full().fill(p.background_secondary).child(scroller(col().w_full().h_full().scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("reaction-filters").key("reaction-filters").child(filters), false, p)))
         .child(col().grow(1.0).min_w(0.0).h_full().padding(8.0).child(list));
     Modal::new(t("Reactions"), move |s: &mut S| acc(s).expr.reactions = None).size(ModalSize::Medium).body(body).el(p)
 }

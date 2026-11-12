@@ -90,7 +90,7 @@ const RUNE_LINE: f32 = 40.0;
 /// `ozone/wayland: Fix high resolution scroll handling` (M140; Fluxer's Electron 44 is M146).
 const WHEEL_STEP: f32 = 120.0;
 
-/// `REFLUX_DEBUG_WHEEL`: logs each wheel delta the smooth wheel hears.
+/// `REFLUX_DEBUG_WHEEL`: logs each wheel delta [`chromium_wheel`] hears.
 fn debug_wheel() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_WHEEL").is_some())
@@ -103,7 +103,7 @@ pub(crate) fn debug_scroll() -> bool {
 }
 
 thread_local! {
-    /// Each [`smooth_wheel`] viewport's last scroll position.
+    /// Each [`chromium_wheel`] viewport's last scroll position.
     static WHEEL: std::cell::RefCell<std::collections::HashMap<String, rune::ScrollPos>> = Default::default();
 }
 
@@ -112,12 +112,12 @@ thread_local! {
 /// and modified wheels scroll as before. `key` names a marker (`{key}-wheel`, absolute and
 /// empty) the step finds the viewport by, so it must be unique among what's on screen; the
 /// viewport's own key is left alone.
-pub fn smooth_wheel<S: 'static>(viewport: El, key: &str) -> El {
-    smooth_wheel_with::<S>(viewport, key, |_| {})
+pub fn chromium_wheel<S: 'static>(viewport: El, key: &str) -> El {
+    chromium_wheel_with::<S>(viewport, key, |_| {})
 }
 
-/// [`smooth_wheel`] for a viewport that also follows its offset with `f` (`on_scroll_offset`).
-pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::ScrollPos) + 'static) -> El {
+/// [`chromium_wheel`] for a viewport that also follows its offset with `f` (`on_scroll_offset`).
+pub fn chromium_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::ScrollPos) + 'static) -> El {
     let mark = format!("{key}-wheel");
     let (k1, k2) = (mark.clone(), mark.clone());
     viewport
@@ -148,14 +148,14 @@ pub fn smooth_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::S
         })
 }
 
-/// [`smooth_wheel`] chained after `.scroll(…)`.
-pub trait SmoothWheel {
-    fn smooth_wheel<S: 'static>(self, key: impl AsRef<str>) -> El;
+/// [`chromium_wheel`] chained after `.scroll(…)`.
+pub trait ChromiumWheel {
+    fn chromium_wheel<S: 'static>(self, key: impl AsRef<str>) -> El;
 }
 
-impl SmoothWheel for El {
-    fn smooth_wheel<S: 'static>(self, key: impl AsRef<str>) -> El {
-        smooth_wheel::<S>(self, key.as_ref())
+impl ChromiumWheel for El {
+    fn chromium_wheel<S: 'static>(self, key: impl AsRef<str>) -> El {
+        chromium_wheel::<S>(self, key.as_ref())
     }
 }
 

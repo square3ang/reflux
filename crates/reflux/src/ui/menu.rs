@@ -9,7 +9,7 @@ use rune::{Color, El, Icon, Key, Tx, col, el, row, text};
 use super::icon;
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, anchor_at_point, popout_shadow};
-use super::{mix, over};
+use super::{ChromiumWheel, mix, over};
 use crate::icons;
 use crate::theme::{Palette, font};
 
@@ -130,16 +130,7 @@ impl<S: 'static> Menu<S> {
 /// `parent`: the submenu path this surface belongs to (`None` = the menu itself).
 fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>) -> El {
     let bg = p.form_surface_background;
-    let mut c = col()
-        .min_w(208.0)
-        .max_w(344.0)
-        .padding(7.0)
-        .fill(bg)
-        .border(1.0, over(p.background_modifier_accent, bg))
-        .radius(8.0)
-        .box_shadow(popout_shadow(p, 0.24, 0.14))
-        .focus_group()
-        .role("menu");
+    let mut c = col();
     // `.separator:first-child, :last-child, + .separator { display: none }`.
     let mut prev_sep = true;
     let n = entries.len();
@@ -169,6 +160,22 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
             MenuEntry::SubmenuHint { id, label, hint, disabled, entries } => submenu(menu, popups, access, p, parent, id, label, hint, disabled, entries),
         });
     }
+    // `.menuScroller`: the entries scroll when the menu is capped to the room it has.
+    let scroll = format!("{menu}-scroll-{}", parent.unwrap_or(""));
+    let list = col().key(scroll.clone()).shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>(scroll).child(c);
+    let mut c = col()
+        .min_w(208.0)
+        .max_w(344.0)
+        .shrink()
+        .min_h(0.0)
+        .padding(7.0)
+        .fill(bg)
+        .border(1.0, over(p.background_modifier_accent, bg))
+        .radius(8.0)
+        .box_shadow(popout_shadow(p, 0.24, 0.14))
+        .focus_group()
+        .role("menu")
+        .child(super::scroller(list, false, p));
     if parent.is_none() {
         // Escape and Left close one submenu level first (the popup is modal, so Rune would
         // otherwise dismiss the whole menu).
@@ -398,5 +405,31 @@ mod tests {
         assert!(close_sub(&mut p));
         assert_eq!(p.sub, None);
         assert!(!close_sub(&mut p));
+    }
+
+    fn long_menu(s: &Popups, _: &mut rune::Cx<Popups>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        let mut m = Menu::new("m");
+        for i in 0..30 {
+            m = m.entry(MenuEntry::Item(MenuItem::new(format!("i{i}"), "Item")));
+        }
+        m.el(s, |s: &mut Popups| s, &p, &mut Vec::new());
+        let mut root = col().w_full().h_full();
+        for e in super::super::overlay::take_late() {
+            root = root.child(e);
+        }
+        root
+    }
+
+    #[test]
+    fn a_menu_taller_than_its_room_fits_and_scrolls() {
+        let mut s = Popups::default();
+        s.open_at("m", [40.0, 40.0]);
+        let mut rt = rune::Runtime::with_text(s, long_menu, (400.0, 300.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        rt.frame(1.0);
+        let r = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("m-menu")).unwrap().rect;
+        assert!(r[1] >= 40.0 - 0.5 && r[1] + r[3] <= 300.0 - 8.0 + 0.5, "menu {r:?} runs off a 300pt window");
+        assert!(r[2] >= 208.0, "menu {r:?} keeps its width");
     }
 }

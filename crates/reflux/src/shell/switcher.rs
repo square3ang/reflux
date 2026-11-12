@@ -4,7 +4,7 @@
 //! gateway for matching members (op 8, `MemberSearch.fetchMembersInBackground`); `@@` searches
 //! all users.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -294,7 +294,7 @@ fn choose(store_first: impl Fn(Snowflake) -> Option<Snowflake>, st: &mut ShellSt
     match t {
         Target::Guild(g) => st.select_guild(Some(g), store_first(g)),
         Target::Channel(g, c, false) => st.select_guild(g, Some(c)),
-        Target::Channel(g, c, true) => st.intents.push(Intent::JoinVoice { guild: g, channel: c }),
+        Target::Channel(g, c, true) => st.join_voice(g, c),
         Target::User(u) => st.intents.push(Intent::OpenDm(u)),
         Target::Jump(g, Some(c), Some(m)) => super::jump(st, g, c, m),
         Target::Jump(g, c, _) => st.select_guild(g, c),
@@ -455,7 +455,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         .role("dialog")
         .label(t("Quick switcher"))
         .child(row().w_full().padding(12.0).child(input))
-        .child(col().w_full().h(320.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("switcher-results").key("switcher-results").child(list), false, p)))
+        .child(col().w_full().h(320.0).child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("switcher-results").key("switcher-results").child(list), false, p)))
         .child(footer)
         .modal(true, move |s: &mut S| acc(s).switcher = None);
     Some(

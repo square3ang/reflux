@@ -856,7 +856,7 @@ fn tools<S: 'static>(store: &Store, st: &ShellState, acc: ShellAccess<S>) -> Men
         // `MediaEngine.moveToAfkChannel`: only from a guild voice channel that isn't the AFK one.
         MenuEntry::Item(MenuItem::new("afk", t("Force move to AFK channel")).icon(&icons::PHONE_FILL).on_select(move |s: &mut S| {
             if let Some((g, c)) = afk {
-                acc(s).intents.push(Intent::JoinVoice { guild: Some(g), channel: c });
+                acc(s).connect_voice(Some(g), c);
             }
         })),
         MenuEntry::Item(MenuItem::new("new-device", t("Show new device modal")).on_select(move |s: &mut S| {

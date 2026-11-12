@@ -20,12 +20,12 @@ fn header_bar(p: &Palette) -> El {
 
 fn list_following<S: 'static>(content: El, f: impl Fn(rune::ScrollPos) + 'static, p: &Palette) -> El {
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key("channel-list-banner");
-    scroller(crate::ui::smooth_wheel_with::<S>(viewport.child(content.focus_group().role("list")), "channel-list-banner", f), false, p)
+    scroller(crate::ui::chromium_wheel_with::<S>(viewport.child(content.focus_group().role("list")), "channel-list-banner", f), false, p)
 }
 
 fn list<S: 'static>(content: El, key: &str, p: &Palette) -> El {
     let viewport = col().w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).key(key);
-    scroller(crate::ui::smooth_wheel::<S>(viewport.child(content.focus_group().role("list")), key), false, p)
+    scroller(crate::ui::chromium_wheel::<S>(viewport.child(content.focus_group().role("list")), key), false, p)
 }
 
 pub fn guild<S: 'static>(store: &Store, st: &ShellState, gid: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {

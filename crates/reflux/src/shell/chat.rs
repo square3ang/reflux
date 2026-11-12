@@ -2,7 +2,7 @@
 //! (`ChannelHeader`, `ChannelMessages`, `ChannelDivider`, `theme/styles/Message.module.css`,
 //! `MessageReactions`, `textarea/TextareaInput`).
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -715,7 +715,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     // and centring miss rows in an overflowing `justify_end` viewport (seen live: a jump showed
     // an empty list).
     let viewport = if list_fits && !newer { viewport.justify_end() } else { viewport };
-    let viewport = crate::ui::smooth_wheel::<S>(viewport, &format!("{pre}msgs-scroll"));
+    let viewport = crate::ui::chromium_wheel::<S>(viewport, &format!("{pre}msgs-scroll"));
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
     if newer || rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, pre, p, acc));
@@ -1770,7 +1770,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
         // `max-height: 50svh`: the field scrolls past half the window.
         .child({
-            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).smooth_wheel::<S>(format!("composer-{slot:?}")).child(col().w_full().child(field).children(images));
+            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).chromium_wheel::<S>(format!("composer-{slot:?}")).child(col().w_full().child(field).children(images));
             if send_ok { column } else { column.inert() }
         })
         // `TextareaButtons` renders nothing while disabled.

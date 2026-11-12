@@ -6,7 +6,7 @@
 //! and roles; rows per page is 12/25/50/100; while the server is indexing it asks again every 5 s.
 //! "Custom range..." opens `GuildMembersDateRangeModal` (after / before date pickers).
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use reflux_model::{Permissions as P, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
@@ -455,7 +455,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
                     .child(el().pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(p.background_header_secondary))
             });
             let list = col().w_full().children(rows);
-            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("members-page").key("members-page").child(list), false, p).key("list")
+            crate::ui::scroller(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("members-page").key("members-page").child(list), false, p).key("list")
         }
     };
     let pages = total.div_ceil(u64::from(m.size())).max(1) as u32;

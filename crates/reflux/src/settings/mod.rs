@@ -415,7 +415,7 @@ pub(crate) fn frame<S: 'static>(label: &str, title: &str, link: Option<String>, 
                 .px(12.0)
                 .gap(4.0)
                 .children(head)
-                .child(col().w_full().grow(1.0).min_h(0.0).mr(-8.0).child(scroller(crate::ui::smooth_wheel::<S>(viewport, "settings-nav"), false, p))),
+                .child(col().w_full().grow(1.0).min_h(0.0).mr(-8.0).child(scroller(crate::ui::chromium_wheel::<S>(viewport, "settings-nav"), false, p))),
         )
         .child(el().pin(None, Some(0.0), Some(0.0), Some(0.0)).w(1.0).fill(over(c.border, c.surface)));
     // `.layerFullscreen` pads both edges (`--fullscreen-pad-y`), so the card stops that far
@@ -851,7 +851,7 @@ fn content<S: 'static>(title: &str, link: Option<String>, body: El, p: &Palette,
         .min_h(0.0)
         .scroll(ScrollSpec { stick_bottom: false })
         .child(row().w_full().justify_center().child(inner));
-    col().grow(1.0).min_w(0.0).h_full().fill(bg).child(header).child(scroller(crate::ui::smooth_wheel_with::<S>(viewport, tabs::spy::VIEWPORT, tabs::spy::scrolled), true, p))
+    col().grow(1.0).min_w(0.0).h_full().fill(bg).child(header).child(scroller(crate::ui::chromium_wheel_with::<S>(viewport, tabs::spy::VIEWPORT, tabs::spy::scrolled), true, p))
 }
 
 #[cfg(test)]

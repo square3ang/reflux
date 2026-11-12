@@ -4,7 +4,7 @@
 //! (`useMessageSearchAutocomplete`): value lists start on their first row, the filter and
 //! history list only once an arrow was pressed.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use reflux_model::Message;
 use reflux_store::Store;
 use rune::{El, Key, ScrollSpec, TextEdit, col, el, icon, row, text, text_input};
@@ -589,7 +589,7 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
                         .child(Button::new(t("Next")).variant(ButtonVariant::Secondary).size(ButtonSize::Compact).disabled(page >= pages).key("search-next").on_press(go(page + 1)).el(p)),
                 );
             }
-            col().w_full().grow(1.0).min_h(0.0).key("results").child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("search-results").key("search-results").child(list), false, p))
+            col().w_full().grow(1.0).min_h(0.0).key("results").child(scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("search-results").key("search-results").child(list), false, p))
         }
     };
     Some(

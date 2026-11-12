@@ -16,7 +16,7 @@ mod sticker;
 mod sync;
 pub use sticker::pending as pending_sticker;
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
@@ -762,7 +762,7 @@ fn rail<S: 'static>(store: &Store, st: &ShellState, rows: &[Row], scope: &'stati
         .py(8.0)
         .fill(p.background_primary)
         .box_shadow(Shadow { x: -1.0, y: 0.0, blur: 0.0, spread: 0.0, color: p.background_modifier_accent, inset: true })
-        .child(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("expr-rail").child(list))
+        .child(col().w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("expr-rail").child(list))
 }
 
 /// `PickerCategoryHeaderRow`: a 32-tall button folding the section, its icon, name and caret.
@@ -853,7 +853,7 @@ fn grid_list<S: 'static>(
         .grow(1.0)
         .min_h(0.0)
         .fill(p.background_tertiary)
-        .child(scroller(col().w_full().h_full().pt(12.0).px(8.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>(format!("{scope}-scroll")).key(format!("{scope}-scroll")).child(list), false, p))
+        .child(scroller(col().w_full().h_full().pt(12.0).px(8.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>(format!("{scope}-scroll")).key(format!("{scope}-scroll")).child(list), false, p))
 }
 
 /// The empty state over the grid: a duotone sad face and a line.

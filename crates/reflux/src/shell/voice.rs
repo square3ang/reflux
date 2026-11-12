@@ -4,7 +4,7 @@
 //! (`LocalVoiceStateMachine.ts`) and the stream viewer (`WatchStreamOverlay`,
 //! `StreamFocusHeaderInfo`, `StreamSpectatorsPopout`, `ScreenShareBufferingFrame`).
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -916,6 +916,12 @@ impl ShellState {
         if self.channel != Some(channel) {
             self.select_channel(channel);
         }
+        self.connect_voice(guild, channel);
+    }
+
+    /// Joins a voice channel without opening it. The app only takes the grant for
+    /// `voice.channel`, so joins go through here rather than a bare `Intent::JoinVoice`.
+    pub fn connect_voice(&mut self, guild: Option<Snowflake>, channel: Snowflake) {
         let v = &mut self.voice;
         if v.channel == Some((guild, channel)) {
             return;
@@ -1609,7 +1615,7 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
             .child(icon(if w.mobile { &icons::DEVICE_MOBILE } else { &icons::DESKTOP }, 14.0).color(p.text_primary_muted));
         list = list.child(row);
     }
-    card.child(crate::ui::misc::scroller(list.max_h(272.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("voice-watchers"), false, p))
+    card.child(crate::ui::misc::scroller(list.max_h(272.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("voice-watchers"), false, p))
 }
 
 /// `ScreenShareBufferingFrame`: nine dots orbiting the centre over black, sized by the frame's

@@ -3,7 +3,7 @@
 //! [`super::timezones`]) and who may see the offset. Choices go into the profile draft
 //! (`form.data["p.timezone"]`, `["p.timezone_privacy_flags"]`) and save with it.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use reflux_model::ProfileFieldPrivacyFlags as F;
 use reflux_store::Store;
 use rune::{El, col, row};
@@ -100,7 +100,7 @@ pub(super) fn modal<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc
             })
     };
     let opts = options();
-    let mut list = col().w_full().max_h(220.0).scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>("timezone-list");
+    let mut list = col().w_full().max_h(220.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("timezone-list");
     let not_set = t("Not set").to_string();
     if q.is_empty() || not_set.to_lowercase().contains(&q) {
         list = list.child(pick(None, not_set));

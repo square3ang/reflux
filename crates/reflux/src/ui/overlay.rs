@@ -112,12 +112,13 @@ pub fn anchor(content: El, anchor: &str, placement: Placement, gap: f32) -> El {
     content.anchored(anchor, side, align, gap)
 }
 
-/// Places `content` with its top-left at a window point (a context menu at the pointer). Pushes
-/// a zero-size anchor keyed `{key}-at` into `layer` first.
+/// Places `content` with its top-left at a window point (a context menu at the pointer), at most
+/// as tall as the room it gets (`.contextMenu`'s `--available-height`). Pushes a zero-size anchor
+/// keyed `{key}-at` into `layer` first.
 pub fn anchor_at_point(layer: &mut Vec<El>, content: El, key: &str, at: [f32; 2]) -> El {
     let k = format!("{key}-at");
     layer.push(el().key(k.clone()).absolute(at[0], at[1]).size(0.0, 0.0));
-    content.anchored(k, Side::Bottom, Align::Start, 0.0)
+    content.anchored_fit(k, Side::Bottom, Align::Start, 0.0)
 }
 
 /// `0 0.5rem 1rem rgb(0 0 0 / a)`, the popout/menu/tooltip elevation (lighter in the light theme).

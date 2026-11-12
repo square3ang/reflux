@@ -1,7 +1,7 @@
 //! `<Select>`: Fluxer's read-only `FormCombobox` (`components/form/FormCombobox.module.css`),
 //! default and compact sizes.
 
-use crate::ui::SmoothWheel;
+use crate::ui::ChromiumWheel;
 use std::f32::consts::PI;
 use std::rc::Rc;
 
@@ -142,7 +142,7 @@ impl<'a, S: 'static> Select<'a, S> {
                         .key(format!("{}-list", self.id))
                         .w_full()
                         .max_h(300.0)
-                        .scroll(rune::ScrollSpec { stick_bottom: false }).smooth_wheel::<S>(format!("{}-list", self.id))
+                        .scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>(format!("{}-list", self.id))
                         .child(col().w_full().pt(4.0).px(4.0).pb(4.0).gap(1.0).children(rows)),
                     false,
                     p,
