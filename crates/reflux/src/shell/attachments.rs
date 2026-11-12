@@ -582,7 +582,7 @@ pub fn media_tile<S: 'static>(store: &Store, st: &ShellState, t: Tile, hovered: 
     if t.video
         && let Some((_, clip)) = st.media_ui.playing.as_ref().filter(|(k, _)| *k == t.key)
     {
-        return video_player(clip, &t, p, acc, open);
+        return video_player(clip, &t.key, t.url, t.size, p, acc, Some(open));
     }
     if t.video
         && let Some(c) = super::clip::get(st, &t.key)
@@ -856,13 +856,14 @@ fn hud_button<S: 'static>(glyph: &'static rune::Icon, label: &str, f: impl Fn(&m
         .on_press(f)
 }
 
-/// An inline video: the clip, and Fluxer's control bar (play, time, seek, mute, full screen).
-/// Platforms without a player show the poster and offer the browser.
-fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAccess<S>, open: Rc<dyn Fn(&mut S)>) -> El {
-    let (w, h) = t.size;
+/// A video at `size`: the clip, and Fluxer's control bar (play, time, seek, mute, and full
+/// screen when `open` opens the media viewer). Platforms without a player offer the browser.
+#[allow(clippy::too_many_arguments)]
+pub fn video_player<S: 'static>(clip: &Player, key: &str, url: &str, size: (f32, f32), p: &Palette, acc: ShellAccess<S>, open: Option<super::clip::Opener<S>>) -> El {
+    let (w, h) = size;
     let frame = el().size(w, h).radius(dim::MEDIA_BORDER_RADIUS).clip_rounded(dim::MEDIA_BORDER_RADIUS).fill(Color::BLACK);
     if let PlayerState::Failed(err) = clip.state() {
-        let url = t.url.to_owned();
+        let url = url.to_owned();
         let open_btn = row()
             .py(8.0)
             .px(12.0)
@@ -890,11 +891,11 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
     let playing = clip.state() == PlayerState::Playing;
     let dur = clip.duration().unwrap_or(0.0);
     let (c1, c2, c3) = (clip.clone(), clip.clone(), clip.clone());
-    let seek = crate::ui::Slider::new(format!("{}-seek", t.key), clip.time() as f32, 0.0, dur.max(0.01) as f32)
+    let seek = crate::ui::Slider::new(format!("{key}-seek"), clip.time() as f32, 0.0, dur.max(0.01) as f32)
         .mini()
         .on_change(move |_: &mut S, v| c2.seek(v as f64))
         .el(p);
-    let bar = row()
+    let mut bar = row()
         .pin(Some(0.0), None, Some(0.0), Some(0.0))
         .h(40.0)
         .px(4.0)
@@ -906,11 +907,13 @@ fn video_player<S: 'static>(clip: &Player, t: &Tile, p: &Palette, acc: ShellAcce
         }))
         .child(text(format!("{} / {}", clock(clip.time()), clock(dur))).font(font(12.0, 500.0).mono().lh(16.0)).color(Color::WHITE))
         .child(el().grow(1.0).min_w(0.0).px(8.0).child(seek))
-        .child(hud_button(if clip.muted() { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL }, crate::i18n::t("Mute"), move |_: &mut S| c3.set_muted(!c3.muted())))
-        .child(hud_button(&icons::CORNERS_OUT_FILL, "Full screen", move |s: &mut S| {
+        .child(hud_button(if clip.muted() { &icons::SPEAKER_X_FILL } else { &icons::SPEAKER_HIGH_FILL }, crate::i18n::t("Mute"), move |_: &mut S| c3.set_muted(!c3.muted())));
+    if let Some(open) = open {
+        bar = bar.child(hud_button(&icons::CORNERS_OUT_FILL, "Full screen", move |s: &mut S| {
             acc(s).media_ui.playing = None;
             open(s)
         }));
+    }
     frame.child(el().w_full().h_full().video(clip, rune::SurfaceFit::Fit).key("video")).child(bar)
 }
 

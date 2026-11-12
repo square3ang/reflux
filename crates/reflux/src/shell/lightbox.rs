@@ -185,12 +185,12 @@ pub fn view<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Op
 
     // The picture: fitted inside the HUD insets, never past its natural size.
     let gst = super::clip::get(st, &key);
+    // A playing video takes its fitted size so the inline players' control bar sits on it.
+    let (box_w, box_h) = (max_w.min(area_w), max_h.min(area_h));
+    let fitted = (box_w.min(box_h * ratio), box_w.min(box_h * ratio) / ratio);
     let media = match (&clip, it.video) {
-        (None, true) if gst.is_some_and(|c| !c.failed) => {
-            let k = key.clone();
-            el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).pixels_fit(&gst.unwrap().pixels, rune::SurfaceFit::Fit).cursor(rune::Cursor::Pointer).on_press(move |s: &mut S| super::clip::toggle(acc, &k, s))
-        }
-        (Some(c), true) if !matches!(c.state(), PlayerState::Failed(_)) => el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).video(c, rune::SurfaceFit::Fit),
+        (None, true) if gst.is_some_and(|c| !c.failed) => super::clip::video(gst.unwrap(), fitted, p, acc, None),
+        (Some(c), true) if !matches!(c.state(), PlayerState::Failed(_)) => super::attachments::video_player(c, &key, &it.url, fitted, p, acc, None),
         _ => {
             let pic = el().aspect_fit(fit_ratio).max_w(max_w).max_h(max_h).label(it.alt.clone().unwrap_or_else(|| it.name.clone()));
             let pic = match st.media.get(&full_url(it, st.media.scale())) {

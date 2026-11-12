@@ -120,7 +120,7 @@ fn hud<S: 'static>(glyph: &'static rune::Icon, label: &str, f: impl Fn(&mut S) +
 }
 
 /// Opens the media viewer.
-type Opener<S> = std::rc::Rc<dyn Fn(&mut S)>;
+pub(crate) type Opener<S> = std::rc::Rc<dyn Fn(&mut S)>;
 
 /// An inline video at `(w, h)`: the frames and the control bar. `full`: open the media viewer.
 pub fn video<S: 'static>(c: &GstClip, size: (f32, f32), p: &Palette, acc: ShellAccess<S>, full: Option<Opener<S>>) -> El {
