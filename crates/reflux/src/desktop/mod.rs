@@ -603,16 +603,21 @@ fn on_tray(e: TrayEvent) {
     }
 }
 
-/// `App::on_quit`: quitting ends the process, as Electron's `app.quit()` does. Tearing down a
-/// call (LiveKit, audio threads) could keep it alive after the window went, so if it hasn't
-/// exited a few seconds on, it exits.
+/// `App::on_quit`: quitting ends the process, as Electron's `app.quit()` does. The call is hung
+/// up first, so a teardown that hangs can't leave it playing in a windowless process.
 // shortcut: a watchdog, not a fix of whichever call teardown hangs.
-pub fn on_quit(_: &mut State, _: &mut rune::Tx) {
+pub fn on_quit(s: &mut State, _: &mut rune::Tx) {
+    app::stop_for_crash(s);
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(3));
         if rune::quitting() {
             eprintln!("reflux: still running 3 s after quitting; exiting");
-            std::process::exit(0);
+            // Not `process::exit`: its atexit handlers and C++ static destructors (libwebrtc,
+            // GStreamer) can wait on the very threads that hang, so it never returns.
+            unsafe extern "C" {
+                fn _exit(code: std::ffi::c_int) -> !;
+            }
+            unsafe { _exit(0) }
         }
     });
 }
