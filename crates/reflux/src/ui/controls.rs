@@ -47,34 +47,33 @@ impl<S: 'static> Switch<S> {
         } else {
             (rgb(107, 114, 128), rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.1))
         };
-        // The thumb slides 20px over 0.2s in Fluxer. Changes land at once under `ui::root`, but
-        // colours still transition, so a thumb at each end cross-fades instead of sliding.
-        // shortcut: a cross-fade, not a slide; Rune's `instant_changes` has no per-element opt-out.
-        let thumb = |x: f32, shown: bool, fill: Color, glyph: Option<(&'static rune::Icon, f32, Color)>| {
-            let a = if shown { 1.0 } else { 0.0 };
-            let fade = |c: Color| Color { a: c.a * a, ..c };
-            let mut t = el()
-                .absolute(x, 2.0)
-                .size(20.0, 20.0)
-                .radius(10.0)
-                .fill(fade(fill))
-                .box_shadow(sh(0.0, -1.0, 2.0, 0.0, fade(rgba(0, 0, 0, 0.08)), true))
-                .box_shadow(sh(0.0, 1.0, 0.0, 0.0, fade(rgba(0, 0, 0, 0.15)), false))
-                .box_shadow(sh(0.0, 2.0, 4.0, -1.0, fade(rgba(0, 0, 0, 0.2)), false));
-            // `FormSwitch`: the checked thumb carries a white check, the unchecked a grey X.
-            if let Some((i, size, c)) = glyph {
-                t = t.child(row().w_full().h_full().center().child(icon(i, size).color(fade(c))));
-            }
-            t
-        };
+        // `FormSwitch`: the checked thumb carries a brand check, the unchecked a grey X.
+        let (fill, glyph, size, ink) =
+            if on { (p.brand_primary_fill, &icons::CHECK_BOLD, 12.0, p.brand_primary) } else { (Color::WHITE, &icons::X_BOLD, 10.0, rgb(107, 114, 128)) };
+        // `.switchThumb`: only `transform` transitions (150ms, cubic-bezier(.4,0,.2,1)), so it
+        // slides out of `ui::root`'s instant changes while its colour and glyph swap at once,
+        // and it shows in place when mounted (a tab opening).
+        let thumb = el()
+            .absolute(2.0, 2.0)
+            .offset(if on { 20.0 } else { 0.0 }, 0.0)
+            .offset_motion(rune::Curve::tween(0.15, rune::Easing::cubic(0.4, 0.0, 0.2, 1.0)))
+            .animated_changes()
+            .transition(rune::Transition::none())
+            .motion(rune::Spring::NONE)
+            .size(20.0, 20.0)
+            .radius(10.0)
+            .fill(fill)
+            .box_shadow(sh(0.0, -1.0, 2.0, 0.0, rgba(0, 0, 0, 0.08), true))
+            .box_shadow(sh(0.0, 1.0, 0.0, 0.0, rgba(0, 0, 0, 0.15), false))
+            .box_shadow(sh(0.0, 2.0, 4.0, -1.0, rgba(0, 0, 0, 0.2), false))
+            .child(row().w_full().h_full().center().instant_changes().child(icon(glyph, size).color(ink)));
         let mut sw = el()
             .size(44.0, 24.0)
             .radius(12.0)
             .fill(track)
             .box_shadow(sh(0.0, 2.0, 4.0, 0.0, inset, true))
             .box_shadow(sh(0.0, 1.0, 0.0, 0.0, hi, false))
-            .child(thumb(2.0, !on, Color::WHITE, Some((&icons::X_BOLD, 10.0, rgb(107, 114, 128)))))
-            .child(thumb(22.0, on, p.brand_primary_fill, Some((&icons::CHECK_BOLD, 12.0, p.brand_primary))))
+            .child(thumb)
             .role("switch")
             .checked(on)
             .focusable(!self.disabled);

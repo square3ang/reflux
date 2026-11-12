@@ -646,9 +646,12 @@ pub fn jump(st: &mut ShellState, guild: Option<Snowflake>, channel: Snowflake, m
 /// to loaded messages and scrolls to a requested row. Runs after the runtime drained intents.
 pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     // `useVoiceCallAppFullscreen`'s `requestFullscreen`: the OS window follows the call's
-    // fullscreen, however it was entered or left (the button, Escape, leaving the call).
-    // shortcut: Rune reports no full screen state for the main window, so a full screen left
-    // from the window manager isn't noticed; the next exit enters it again.
+    // fullscreen, however it was entered or left (the button, Escape, leaving the call, the
+    // window manager).
+    if crate::desktop::window::left_full_screen(st.call.os_fullscreen) && st.call.os_fullscreen {
+        st.call.os_fullscreen = false;
+        call::exit_fullscreen(st);
+    }
     if st.call.app_fullscreen != st.call.os_fullscreen {
         st.call.os_fullscreen = st.call.app_fullscreen;
         tx.toggle_full_screen();
@@ -681,6 +684,7 @@ pub fn poll_shell(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool
         changed = true;
     }
     changed |= media_poll(store, st, tx);
+    changed |= neko::poll(st, tx);
     changed |= voice::watch_poll(store, st, tx);
     typing::tick(store, st, tx);
     // A jump to a loaded message only scrolls; the runtime loads the others first.
@@ -725,10 +729,6 @@ fn media_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     }
     if st.voice.voice_message.as_ref().is_some_and(|vm| vm.playhead().is_some()) {
         tx.wake_after(std::time::Duration::from_millis(33));
-        changed = true;
-    }
-    if let Some(d) = st.media.take_next_frame() {
-        tx.wake_after(d);
         changed = true;
     }
     let playing = st.media_ui.playing.as_ref().is_some_and(|(_, c)| matches!(c.state(), rune::PlayerState::Playing | rune::PlayerState::Loading));
@@ -879,8 +879,7 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
         if let (Some(e), Some(c)) = (st.form.text.get("quick-css"), crate::quick_css_syntax::CARET.get())
             && let Some(l) = crate::quick_css_syntax::list(e, 0)
         {
-            let [x, y] = crate::desktop::window::unzoom([c[0], c[1] + c[3]]);
-            layer.push(el().key("quick-css-caret").absolute(x, y).size(1.0, 1.0));
+            layer.push(el().key("quick-css-caret").absolute(c[0], c[1] + c[3]).size(1.0, 1.0));
             let edit = move |s: &mut S, f: &mut dyn FnMut(&mut TextEdit)| acc(s).form.text.get_mut("quick-css").into_iter().for_each(f);
             layer.push(crate::quick_css_syntax::popup(&l, 0, p, edit).anchored("quick-css-caret", rune::Side::Bottom, rune::Align::Start, 2.0));
         }

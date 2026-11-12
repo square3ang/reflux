@@ -1910,8 +1910,9 @@ pub fn exit_fullscreen(sh: &mut ShellState) {
     }
 }
 
-/// Keeps the menus' side effects in step each frame: the input menu runs the mic meter.
-pub fn poll(st: &mut ShellState) {
+/// Keeps the menus' side effects in step each frame: the input menu runs the mic meter. True
+/// when a speaker hold ran out (the grid re-sorts).
+pub fn poll(st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let channel = st.voice.channel.map(|(_, c)| c);
     if channel != st.call.region_channel {
         st.call.region_channel = channel;
@@ -1924,9 +1925,9 @@ pub fn poll(st: &mut ShellState) {
         st.call.stats = None;
     }
     // `gridTracks`' speaker promotion: who spoke within `SPEAKER_HOLD`, in first-spoke order.
-    // shortcut: a hold that runs out re-sorts on the next rebuild, not on a timer of its own.
     let now = Instant::now();
     let call = &mut st.call;
+    let mut expired = false;
     if call.prioritize_speakers && st.voice.connected {
         for u in &st.voice.speaking {
             let order = &mut call.next_order;
@@ -1935,7 +1936,12 @@ pub fn poll(st: &mut ShellState) {
                 (now, *order - 1)
             });
         }
+        let held = call.activity.len();
         call.activity.retain(|_, a| now.duration_since(a.0) <= SPEAKER_HOLD);
+        expired = call.activity.len() < held;
+        if let Some(last) = call.activity.values().map(|a| a.0).min() {
+            tx.wake_after((last + SPEAKER_HOLD).saturating_duration_since(now) + Duration::from_millis(1));
+        }
     } else {
         call.activity.clear();
     }
@@ -1969,6 +1975,7 @@ pub fn poll(st: &mut ShellState) {
     } else if !camera_menu {
         st.call.cameras_loading = false;
     }
+    expired
 }
 
 /// `VoiceE2EEIndicator`: a lock and "Encrypted".
@@ -2572,6 +2579,7 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
         .box_shadow(shadow(24.0, 60.0, rgba(0, 0, 0, 0.55)))
         .box_shadow(shadow(4.0, 12.0, rgba(0, 0, 0, 0.35)))
         .box_shadow(Shadow { inset: true, ..shadow(1.0, 0.0, rgba(255, 255, 255, 0.06)) })
+        // No `--ic-surface-blur` pass: the opaque gradient hides it in Fluxer too.
         .clip_rounded(28.0)
         // `CARD_MOTION`: fades in from .94 scale, 8px lower.
         .transition(rune::Transition::opacity().combined(rune::Transition::scale(0.94)).combined(rune::Transition::offset(0.0, 8.0)))
@@ -2579,7 +2587,6 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
         .role("dialog")
         .label(t("Incoming call"))
         // `.card`'s highlight: radial-gradient(140% 100% at 50% 0%, white 6%, transparent 60%).
-        // shortcut: no backdrop blur behind the card.
         .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).inert().radial_gradient([0.5, 0.0], [INCOMING_W * 1.4, INCOMING_H], [(0.0, rgba(255, 255, 255, 0.06)), (0.6, rgba(255, 255, 255, 0.0))]))
         .child(stack)
         .child(handle)

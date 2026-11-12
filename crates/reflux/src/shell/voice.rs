@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use reflux_model::{Permissions, Snowflake};
 use reflux_store::Store;
-use rune::{Color, El, Icon, LoopSpec, Pixels, col, el, icon, row, text};
+use rune::{Color, El, Icon, Pixels, col, el, icon, row, text};
 
 use super::{Intent, ShellAccess, ShellState};
 use crate::icons;
@@ -63,6 +63,8 @@ pub struct Voice {
     pub watch_audio: bool,
     /// `MediaVerticalVolumeControl`'s popout: hovering the button, hovering the popout, dragging.
     pub volume_pop: [bool; 3],
+    /// When the popout closes, 200 ms after all three went false.
+    pub volume_close: Option<Instant>,
     fps_frames: u64,
     fps_at: Option<Instant>,
     /// `applyStreamWatchFocus`: the call view keeps this stream focused (pin).
@@ -1388,7 +1390,7 @@ pub fn stream_controls<S: 'static>(store: &Store, st: &ShellState, p: &Palette, 
                 }
                 sh.intents.push(Intent::Voice(Op::Settings));
             })
-            .on_hover_change(move |s: &mut S, on, _| acc(s).voice.volume_pop[0] = on),
+            .on_hover_change(move |s: &mut S, on, tx| volume_hover(acc(s), 0, on, tx)),
         );
     }
     header
@@ -1418,7 +1420,7 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
         if st.popups.is_open(SPECTATORS_BTN) {
             layer.push(crate::ui::overlay::anchor(spectators_card(store, st, guild, user, p, acc), SPECTATORS_BTN, Placement::BottomEnd, 8.0));
         }
-        if st.voice.watch_audio && st.voice.volume_pop.iter().any(|b| *b) {
+        if st.voice.watch_audio && (st.voice.volume_pop.iter().any(|b| *b) || st.voice.volume_close.is_some()) {
             layer.push(volume_popout(st, user, p, acc));
         }
     }
@@ -1437,7 +1439,11 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
 /// after `WATCH_FIRST_FRAME_TIMEOUT`, and a wake keeps the deadline reachable.
 pub fn watch_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let now = Instant::now();
-    let changed = st.voice.watch_step(store, now);
+    let mut changed = st.voice.watch_step(store, now);
+    if st.voice.volume_close.is_some_and(|at| now >= at) {
+        st.voice.volume_close = None;
+        changed = true;
+    }
     if st.voice.watching.is_some() {
         tx.wake_after(Duration::from_millis(500));
     }
@@ -1614,9 +1620,8 @@ pub(crate) fn buffering_frame(corner: bool, width: f32) -> El {
     let (orbit, dot) = if corner { (8.0, 4.0) } else { (width * 0.01641836, width * 0.00833333) };
     for i in 0..9 {
         let angle = i as f32 * std::f32::consts::TAU / 9.0;
-        // shortcut: the CSS steps each dot's opacity on its own keyframes; Rune's loop fades them
-        // smoothly with a stagger. Upgrade if the stepped ring matters.
-        let opacity = LoopSpec::opacity(0.75075, 0.75075 * i as f64 / 9.0, 0.44, 1.0);
+        // `dot{i}`'s keyframes are `dot0`'s, i ninths later.
+        let opacity = rune::Cycle { phase: i as f32 / 9.0, ..BUFFERING_DOT };
         dots = dots.child(
             el()
                 .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
@@ -1625,7 +1630,7 @@ pub(crate) fn buffering_frame(corner: bool, width: f32) -> El {
                     el()
                         .size(orbit * 2.0 + dot, orbit * 2.0 + dot)
                         .rotate(angle)
-                        .child(row().w_full().h_full().justify_center().items_start().child(el().size(dot, dot).radius(dot / 2.0).fill(Color::WHITE).looping(opacity))),
+                        .child(row().w_full().h_full().justify_center().items_start().child(el().size(dot, dot).radius(dot / 2.0).fill(Color::WHITE).cycle(opacity))),
                 ),
         );
     }
@@ -1636,6 +1641,35 @@ pub(crate) fn buffering_frame(corner: bool, width: f32) -> El {
     };
     frame.role("status").label(t("Stream buffering")).inert()
 }
+
+/// `@keyframes dot0` under `steps(1, end)` over 750.75 ms: each ninth holds its value. Reduced
+/// motion ends the animation, leaving the dot's own opacity of 1.
+const BUFFERING_DOT: rune::Cycle = rune::Cycle {
+    period: 0.75075,
+    phase: 0.0,
+    stops: &[
+        (0.0, 0.44),
+        (0.1111, 0.44),
+        (0.11111, 0.0),
+        (0.2222, 0.0),
+        (0.22222, 1.0),
+        (0.3333, 1.0),
+        (0.33333, 0.98),
+        (0.4444, 0.98),
+        (0.44444, 0.93),
+        (0.5555, 0.93),
+        (0.55556, 0.86),
+        (0.6666, 0.86),
+        (0.66667, 0.78),
+        (0.7777, 0.78),
+        (0.77778, 0.69),
+        (0.8888, 0.69),
+        (0.88889, 0.58),
+        (1.0, 0.58),
+    ],
+    still: 1.0,
+    fps: 60.0,
+};
 
 /// `ScreenShareBufferingFrame status="failed"`: "Watching failed :(" and the error code.
 pub(crate) fn failure_frame(code: i32, _p: &Palette) -> El {
@@ -1710,8 +1744,7 @@ pub(crate) fn self_preview(h: f32, p: &Palette) -> El {
 /// `MediaVerticalVolumeControl`'s popout: a vertical 0–200 % slider (shown at 0 while muted)
 /// next to the volume button, open while either is hovered or the slider is dragged.
 // shortcut: it opens below the button (Reflux's stream controls sit in the header, Fluxer's in
-// the bottom corner), and closes as the pointer leaves rather than 200 ms later (no timers); the
-// 8px gap is part of the popout so crossing it keeps it open.
+// the bottom corner); the 8px gap is part of the popout so crossing it keeps it open.
 fn volume_popout<S: 'static>(st: &ShellState, user: Snowflake, p: &Palette, acc: ShellAccess<S>) -> El {
     let set = &st.voice.settings;
     let value = if set.stream_mutes.contains(&user.0) { 0.0 } else { set.stream_volumes.get(&user.0).copied().unwrap_or(100.0) };
@@ -1744,9 +1777,9 @@ fn volume_popout<S: 'static>(st: &ShellState, user: Snowflake, p: &Palette, acc:
         .range_value(value as f64, 0.0, VOICE_VOLUME_MAX_PERCENT as f64)
         .range_step(1.0)
         .cursor(rune::Cursor::Pointer)
-        .on_drag(move |s: &mut S, d, _| {
+        .on_drag(move |s: &mut S, d, tx| {
             let sh = acc(s);
-            sh.voice.volume_pop[2] = d.phase != rune::Phase::Up;
+            volume_hover(sh, 2, d.phase != rune::Phase::Up, tx);
             let t = (1.0 - (d.y - thumb / 2.0) / (d.h - thumb).max(1.0)).clamp(0.0, 1.0);
             sh.voice.settings.stream_volumes.insert(user.0, (t * VOICE_VOLUME_MAX_PERCENT).round());
             sh.voice.settings.stream_mutes.remove(&user.0);
@@ -1766,13 +1799,35 @@ fn volume_popout<S: 'static>(st: &ShellState, user: Snowflake, p: &Palette, acc:
         .box_shadow(crate::ui::overlay::popout_shadow(p, 0.24, 0.14))
         .role("group")
         .child(slider);
-    let pop = col().w(32.0).pt(8.0).items_center().child(card).on_hover_change(move |s: &mut S, on, _| acc(s).voice.volume_pop[1] = on);
+    let pop = col().w(32.0).pt(8.0).items_center().child(card).on_hover_change(move |s: &mut S, on, tx| volume_hover(acc(s), 1, on, tx));
     crate::ui::overlay::anchor(pop, STREAM_VOLUME, Placement::Bottom, 0.0)
+}
+
+/// Sets one of `volume_pop`; once all are false, the popout closes 200 ms later (`scheduleClose`).
+fn volume_hover(sh: &mut ShellState, which: usize, on: bool, tx: &mut rune::Tx) {
+    let open = sh.voice.volume_pop.iter().any(|b| *b);
+    sh.voice.volume_pop[which] = on;
+    if on {
+        sh.voice.volume_close = None;
+    } else if open && !sh.voice.volume_pop.iter().any(|b| *b) {
+        sh.voice.volume_close = Some(Instant::now() + Duration::from_millis(200));
+        tx.wake_after(Duration::from_millis(210));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffering_dots_step_like_fluxers_keyframes() {
+        // Mid-slot `j` of `dot{i}`, as in Fluxer's `@keyframes dot0`..`dot8`.
+        let at = |i: usize, j: usize| rune::Cycle { phase: i as f32 / 9.0, ..BUFFERING_DOT }.sample(0.75075 * (j as f64 + 0.5) / 9.0);
+        assert!((at(0, 2) - 1.0).abs() < 1e-3);
+        assert!((at(1, 0) - 0.58).abs() < 1e-3);
+        assert!((at(8, 0) - 0.0).abs() < 1e-3);
+        assert!((at(4, 8) - 0.93).abs() < 1e-3);
+    }
 
     #[test]
     fn vad_threshold_follows_fluxers_scale() {

@@ -35,6 +35,7 @@ mod threads;
 pub(crate) use guild::entered;
 pub mod live;
 mod voice;
+pub(crate) use voice::set_window_shown;
 
 const PAGE: u8 = 50;
 const IP_POLL: Duration = Duration::from_millis(2000);
@@ -916,7 +917,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.personal_notes = community.is_none_or(|c| c.personal_notes_enabled != Some(false));
     // The Voice & video tab lists devices once it opens.
     let sh = &mut s.app.shell;
-    crate::shell::call::poll(sh);
+    let held = crate::shell::call::poll(sh, tx);
     if sh.settings.as_ref().is_some_and(|u| u.tab == "voice_video") && sh.voice.devices.is_none() && !s.app.voice.devices_loading {
         s.app.voice.devices_loading = true;
         sh.intents.push(crate::shell::Intent::LoadDevices);
@@ -1000,7 +1001,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     cache::tick(s);
     live::on_poll(s, tx);
     let shell = crate::shell::poll_shell(&s.app.store, &mut s.app.shell, tx);
-    actions::tick(s) || ran || shell || threads_changed || resized
+    actions::tick(s) || ran || shell || threads_changed || resized || held
 }
 
 /// `YYYY-MM-DDTHH:MM:SS.mmmZ` (UTC), the API's timestamp format.

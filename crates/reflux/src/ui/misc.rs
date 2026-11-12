@@ -71,13 +71,16 @@ pub fn spinner(size: SpinnerSize, p: &Palette) -> El {
 }
 
 /// `<Scroller scrollbar="thin" | "regular">` on a vertical [`El::scroll`] viewport: a
-/// `scrollbar-thumb-bg` pill (4 wide thin, 8 regular), `-hover` under the pointer.
+/// `scrollbar-thumb-bg` pill (4 wide thin, 8 regular; 24 and 40 long at least), `-hover` under
+/// the pointer.
 pub fn scroller(viewport: El, regular: bool, p: &Palette) -> El {
-    // shortcut: rune-kit's bar keeps its own 2pt edge gap and 24pt minimum thumb; Fluxer's regular
-    // bar sits 4 in with a 40 minimum. Upgrade if a regular scroller looks off.
-    let w = if regular { 8.0 } else { 4.0 };
+    // shortcut: rune-kit's track sits 2pt in from the ends and the thumb 2pt from the edge; Fluxer's
+    // track runs end to end and its regular thumb sits 4 in. `webkit_parts` moves the thumb 4 in
+    // but also takes a clear border off both ends of the drawn thumb (8pt shorter, 4 in from the
+    // ends), which is further off. Upgrade when `ScrollBarStyle` sets the edge gap and inset alone.
+    let (w, min) = if regular { (8.0, 40.0) } else { (4.0, 24.0) };
     viewport.scroll_bar_styled(
-        ScrollBarStyle::neutral(true).thumb(p.scrollbar_thumb_bg).thumb_hover(p.scrollbar_thumb_bg_hover).width(w).hover_width(w),
+        ScrollBarStyle::neutral(true).thumb(p.scrollbar_thumb_bg).thumb_hover(p.scrollbar_thumb_bg_hover).width(w).hover_width(w).min_thumb(min),
     )
 }
 

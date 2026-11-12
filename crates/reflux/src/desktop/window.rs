@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use reflux_model::ChannelType;
 use reflux_store::Store;
-use rune::{El, col, el};
+use rune::{El, el};
 
 use crate::State;
 use crate::shell::ShellState;
@@ -34,7 +34,23 @@ pub fn on_window(w: &rune::WindowHandle) {
         _ => 0,
     });
     OWN.store(id.unwrap_or(0), Ordering::Relaxed);
+    MAIN.set(Some(w.clone()));
     super::badge::on_window(w);
+}
+
+thread_local! {
+    static MAIN: std::cell::RefCell<Option<rune::WindowHandle>> = const { std::cell::RefCell::new(None) };
+    /// The main window was last seen full screen while `watch`ed.
+    static WAS_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The main window left full screen since the last call, read from its placement while `watch`
+/// (off, it forgets, so a full screen still being entered doesn't read as left).
+// shortcut: Wayland reports no placement, so leaving full screen from the window manager isn't
+// noticed there; the next exit enters it again.
+pub fn left_full_screen(watch: bool) -> bool {
+    let now = watch && MAIN.with_borrow(|w| w.as_ref().and_then(|w| w.placement()).is_some_and(|p| p.full_screen));
+    WAS_FULL.replace(now) && !now
 }
 
 /// A capture source id is one of our windows (`isOwnWindow`).
@@ -65,9 +81,6 @@ pub fn step_zoom(z: f32, up: bool) -> f32 {
     clamp_zoom(next as f32 / 100.0)
 }
 
-/// The root: records the window size, and draws the app scaled by the zoom. The content lays
-/// out at the window size divided by the zoom, then `scale` draws it back to the window's size
-/// (text re-rasterizes crisp at the scaled size).
 /// `--native-titlebar-height` with Fluxer's own chrome (`useNativeTitleBar`), in CSS pixels.
 pub const TITLEBAR: f32 = 32.0;
 
@@ -84,34 +97,28 @@ pub fn titlebar(cx: &mut rune::Cx<State>, palette: impl FnOnce() -> crate::theme
         return None;
     }
     let p = &palette();
+    // Fluxer's titlebar is fixed px (outside its rem zoom): window points here, divided back out
+    // of the zoomed layout. The insets already come in the view's points.
     let z = zoom();
-    cx.titlebar_height(TITLEBAR * z);
+    cx.titlebar_height(TITLEBAR);
     cx.caption_color(p.text_secondary);
     // `.fluxer-native-titlebar__wordmark`: 13px tall, `--text-primary-muted` at 80%.
-    let w = 13.0 * 1374.0 / 366.0;
-    let mark = el().size(w, 13.0).opacity(0.8).child(rune::icon(&crate::login::WORDMARK, w).color(p.text_primary_muted).absolute(0.0, 0.0)).label("Fluxer");
-    let band = rune::row().key("titlebar").w_full().h(TITLEBAR).fill(p.background_secondary).center_y().window_drag().unmirrored();
+    let (h, w) = (13.0 / z, 13.0 * 1374.0 / 366.0 / z);
+    let mark = el().size(w, h).opacity(0.8).child(rune::icon(&crate::login::WORDMARK, w).color(p.text_primary_muted).absolute(0.0, 0.0)).label("Fluxer");
+    let band = rune::row().key("titlebar").w_full().h(TITLEBAR / z).fill(p.background_secondary).center_y().window_drag().unmirrored();
     Some(if insets.leading > 0.0 {
-        band.pl(insets.leading / z).pr(12.0).child(el().grow(1.0)).child(mark)
+        band.pl(insets.leading).pr(12.0 / z).child(el().grow(1.0)).child(mark)
     } else {
-        band.pl(12.0).pr(insets.trailing / z).child(mark)
+        band.pl(12.0 / z).pr(insets.trailing).child(mark)
     })
 }
 
-pub fn root(content: El, size: [f32; 2]) -> El {
-    let z = zoom();
+/// The root: zooms the app as Electron's `setZoomFactor` does (`Cx::zoom`), and records the
+/// window size in window points (the layout is in zoomed ones).
+pub fn root(cx: &mut rune::Cx<State>, content: El) -> El {
+    cx.zoom(zoom());
     let dir = if crate::i18n::rtl() { rune::Direction::Rtl } else { rune::Direction::Ltr };
-    let root = el().w_full().h_full().dir(dir).on_layout(|s: &mut State, r| s.desktop.size = [r[2], r[3]]);
-    if (z - 1.0).abs() < 0.005 || size[0] <= 0.0 {
-        return root.child(content);
-    }
-    root.child(col().absolute(0.0, 0.0).w(size[0] / z).h(size[1] / z).scale(z).origin(0.0, 0.0).child(content))
-}
-
-/// A window point (pointer, context menu) in the zoomed content's points.
-pub fn unzoom(at: [f32; 2]) -> [f32; 2] {
-    let z = zoom();
-    [at[0] / z, at[1] / z]
+    el().w_full().h_full().dir(dir).on_layout(|s: &mut State, r| s.desktop.size = [r[2] * zoom(), r[3] * zoom()]).child(content)
 }
 
 /// The initial window size: the remembered one in a windowed run.

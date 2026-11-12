@@ -8,8 +8,8 @@ edition = "2024"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "565de6bb8a3449edd3dd6caa0c351bee11697964" }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "565de6bb8a3449edd3dd6caa0c351bee11697964" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "fs"] }
@@ -27,6 +27,14 @@ reflux-net = { path = "crates/reflux-net" }
 reflux-store = { path = "crates/reflux-store" }
 reflux-markdown = { path = "crates/reflux-markdown" }
 reflux-voice = { path = "crates/reflux-voice", default-features = false }
+
+# Rune patches these (its `vendor/`) and asks apps to do the same: a dependency's `[patch]` doesn't
+# reach the workspace that builds it. Keep the rev in step with `rune` above.
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
 
 [profile.dev.package."*"]
 debug = false

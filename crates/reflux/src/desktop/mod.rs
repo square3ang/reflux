@@ -294,12 +294,13 @@ pub fn boot(s: &mut State) {
     }
 }
 
-/// Startup in a windowed run: forwards to a running instance (then exits) or starts listening
-/// for later launches, and remembers a launch link for after sign-in. Windows does this through
-/// Rune (`rune::single_instance`, `on_open_url`).
+/// Startup in a windowed run. macOS: forwards to a running instance (then exits) or starts
+/// listening for later launches, and remembers a launch link for after sign-in. Windows and
+/// Linux do this through Rune (`rune::single_instance`, `on_open_url`, `on_reopen`).
 pub fn start(ui: &rune::AppHandle<State>) {
     link::register_protocol();
-    #[cfg(unix)]
+    // shortcut: macOS keeps our socket; drop it once a bundle (`CFBundleURLTypes`) hands links to `on_open_url`.
+    #[cfg(target_os = "macos")]
     {
         let link = link::from_args();
         if link::forward(link.as_deref()) {
@@ -319,8 +320,19 @@ pub fn start(ui: &rune::AppHandle<State>) {
             ui.update(move |s, _| open_link(s, &l));
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(not(target_os = "macos"))]
     let _ = ui;
+}
+
+/// `App::on_reopen`, a later launch without a link: Rune shows a hidden window; one that's
+/// already showing is brought forward (Fluxer's `second-instance` focuses it). Windows' default
+/// raises it itself.
+pub fn on_reopen(_: &mut State, has_visible: bool, _: &mut rune::Tx) -> bool {
+    if cfg!(target_os = "linux") && has_visible {
+        app::show_window();
+        return true;
+    }
+    false
 }
 
 /// A `fluxer://` link from a launch: kept until the shell is up.
@@ -605,21 +617,11 @@ fn on_tray(e: TrayEvent) {
 
 /// `App::on_quit`: quitting ends the process, as Electron's `app.quit()` does. The call is hung
 /// up first, so a teardown that hangs can't leave it playing in a windowless process.
-// shortcut: a watchdog, not a fix of whichever call teardown hangs.
+// shortcut: a deadline (`_exit`, skipping the atexit handlers and C++ destructors that hung), not
+// a fix of whichever call teardown hangs; Rune logs where the quit was stuck.
 pub fn on_quit(s: &mut State, _: &mut rune::Tx) {
     app::stop_for_crash(s);
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        if rune::quitting() {
-            eprintln!("reflux: still running 3 s after quitting; exiting");
-            // Not `process::exit`: its atexit handlers and C++ static destructors (libwebrtc,
-            // GStreamer) can wait on the very threads that hang, so it never returns.
-            unsafe extern "C" {
-                fn _exit(code: std::ffi::c_int) -> !;
-            }
-            unsafe { _exit(0) }
-        }
-    });
+    rune::exit_deadline(std::time::Duration::from_secs(3));
 }
 
 /// `App::on_close`: hide to the tray when it shows and close-to-tray is on, else quit.

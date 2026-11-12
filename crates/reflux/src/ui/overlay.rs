@@ -16,7 +16,7 @@ use crate::theme::{Palette, font};
 pub struct Popups {
     /// The open menu, select or popover, by id.
     pub open: Option<String>,
-    /// Where a context menu opened (window points); `None` anchors it to the element keyed `open`.
+    /// Where a context menu opened (zoomed points); `None` anchors it to the element keyed `open`.
     pub at: Option<[f32; 2]>,
     /// The open submenu of the open menu.
     pub sub: Option<String>,
@@ -38,7 +38,7 @@ impl Popups {
     pub fn open_at(&mut self, id: &str, at: [f32; 2]) {
         self.close();
         self.open = Some(id.into());
-        self.at = Some(crate::desktop::window::unzoom(at));
+        self.at = Some(at);
     }
     pub fn close(&mut self) {
         self.open = None;

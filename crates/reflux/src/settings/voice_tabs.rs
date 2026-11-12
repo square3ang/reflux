@@ -509,7 +509,6 @@ fn video<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &
     }
 
     // `.actionRow`: the encoder path lives in Advanced (`ScreenShareEncoderControls`).
-    // shortcut: opens the Advanced tab at its top; Fluxer scrolls to its Media section.
     let advanced = row()
         .key("advanced")
         .w_full()
@@ -522,7 +521,11 @@ fn video<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &
                 .variant(ButtonVariant::Secondary)
                 .icon(&crate::icons::GEAR_BOLD)
                 .key("open-advanced-media")
-                .on_press(move |s: &mut S| crate::settings::open_tab(acc(s), "advanced_settings"))
+                .on_press_tx(move |s: &mut S, tx: &mut rune::Tx| {
+                    crate::settings::open_tab(acc(s), "advanced_settings");
+                    // `scrollToSection('advanced-settings-media')`: its top lands 24 below the content's.
+                    tx.scroll_key_to(format!("sec-{}", t("Media")), 24.0);
+                })
                 .el(p),
         );
 
@@ -692,21 +695,35 @@ fn entrance<S: 'static>(store: &reflux_store::Store, st: &ShellState, p: &Palett
 
 /// `AudioLevelMeter`: 20 bars rising from 28 % to 100 % high; lit ones run green to red.
 /// `level` is dBFS, shown from -60 to 0 like `useMicTest`.
-// shortcut: Fluxer's bars are slanted (`clip-path` parallelograms); these are plain rounded bars.
 fn level_meter(level: f32, p: &Palette) -> El {
     let lit = ((level + 60.0) / 60.0).clamp(0.0, 1.0);
     let off = p.background_modifier_accent;
     let edge = rune::Color { a: p.text_primary.a * 0.1, ..p.text_primary };
     row().w_full().h(40.0).gap(1.28).items_end().role("meter").label(t("Mic level")).children((0..20).map(|i| {
         let f = (i + 1) as f32 / 20.0;
-        let bar = el().grow(1.0).min_w(1.6).h(40.0 * (28.0 + 72.0 * f).round().max(22.0) / 100.0).radius(1.6);
-        if lit >= f {
+        let h = 40.0 * (28.0 + 72.0 * f).round().max(22.0) / 100.0;
+        // `clip-path: polygon(20% 0, 100% 0, 80% 100%, 0 100%)` between heights `a` and `b`, in a
+        // box 1 wide (stretched to the bar) and `h` points tall.
+        let band = |a: f32, b: f32| vec![[0.2 - 0.2 * a / h, a], [1.0 - 0.2 * a / h, a], [1.0 - 0.2 * b / h, b], [0.2 - 0.2 * b / h, b]];
+        let (top, bottom, ring, bands) = if lit >= f {
             let s = i as f32 / 19.0;
             let hue = 124.0 - 124.0 * s;
-            let (top, bottom) = (crate::theme::custom::hsl(hue, 94.0, 62.0 - 8.0 * s, 1.0), crate::theme::custom::hsl((hue - 8.0).max(0.0), 90.0, 42.0 - 10.0 * s, 1.0));
-            bar.gradient(top, bottom)
+            let top = crate::theme::custom::hsl(hue, 94.0, 62.0 - 8.0 * s, 1.0);
+            (top, crate::theme::custom::hsl((hue - 8.0).max(0.0), 90.0, 42.0 - 10.0 * s, 1.0), top.alpha(0.5), 16)
         } else {
-            bar.fill(off).border(1.0, edge)
+            (off, off, edge, 1)
+        };
+        // Shape fills are flat: the gradient is stacked bands, each running half a point into the
+        // next so their antialiased edges leave no seam.
+        let mut shape = rune::Shape::new();
+        for k in 0..bands {
+            let (a, b) = (h * k as f32 / bands as f32, h * (k + 1) as f32 / bands as f32);
+            shape = shape.fill(band(a, (b + 0.5).min(h)), top.mix(bottom, (k as f32 + 0.5) / bands as f32));
         }
+        // The inset 1px ring survives the clip along the top and bottom edges, plus 1px-wide
+        // slivers at the bottom-left and top-right tips (left out: the bar's width isn't known
+        // here); the clip also hides the outer glow.
+        shape = shape.fill(band(0.0, 1.0), ring).fill(band(h - 1.0, h), ring);
+        el().grow(1.0).min_w(1.6).h(h).shape(shape.view_box(1.0, h))
     }))
 }

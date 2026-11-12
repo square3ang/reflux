@@ -93,7 +93,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         Some(band) => rune::col().w_full().h_full().child(band).child(rune::col().w_full().grow(1.0).child(content)),
         None => content,
     };
-    desktop::window::root(content, s.desktop.size)
+    desktop::window::root(cx, content)
 }
 
 fn main() {
@@ -112,8 +112,8 @@ fn main() {
         }
         return;
     }
-    // Windows: one process (`requestSingleInstanceLock`); a later launch hands its link to it
-    // (`on_open_url`) or brings its window forward, then returns here.
+    // Windows and Linux: one process (`requestSingleInstanceLock`); a later launch hands its link
+    // to it (`on_open_url`) or reopens it (`on_reopen`), then returns here.
     let windowed = !rune::is_headless() && !rune::extra_args().iter().any(|a| a == "--gallery" || a == "--shell-demo");
     if windowed && app::live::scene().is_none() && !rune::single_instance("app.fluxer.reflux") {
         return;
@@ -160,8 +160,13 @@ fn main() {
     .on_quit(desktop::on_quit)
     // Fluxer's own titlebar on Windows and macOS (`useNativeTitleBar` off); Linux keeps its frame.
     .titlebar(rune::Titlebar::new(desktop::window::TITLEBAR))
-    // Windows and macOS hand us `fluxer://` links (Linux starts a process with one).
-    .on_open_url(|s, url, _| desktop::open_link(s, url))
+    // Windows, Linux and macOS hand us `fluxer://` links; Fluxer's `second-instance` focuses first.
+    .on_open_url(|s, url, _| {
+        app::show_window();
+        desktop::open_link(s, url)
+    })
+    .on_reopen(desktop::on_reopen)
+    .on_visibility(|_, shown, _| app::set_window_shown(shown))
     .on_focus(|s, focused, _| {
         s.desktop.focused = focused;
         s.app.shell.desktop.unfocused = !focused;

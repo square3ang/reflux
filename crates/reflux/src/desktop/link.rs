@@ -1,6 +1,6 @@
-//! `fluxer://` links (`fluxer_desktop/src/main/DeepLinks.ts`) and single-instance forwarding: a
-//! second launch hands its link and XDG activation token to the running app over a Unix socket
-//! and exits, like Electron's `requestSingleInstanceLock` + `second-instance` (Windows has
+//! `fluxer://` links (`fluxer_desktop/src/main/DeepLinks.ts`) and, on macOS, single-instance
+//! forwarding: a second launch hands its link to the running app over a Unix socket and exits,
+//! like Electron's `requestSingleInstanceLock` + `second-instance` (Windows and Linux have
 //! Rune's `single_instance` and `on_open_url`).
 
 use reflux_model::Snowflake;
@@ -51,12 +51,12 @@ pub fn parse(url: &str) -> Option<Link> {
 }
 
 /// The `fluxer:` URL among the launch arguments (`--url -- <link>` or a bare one).
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub fn from_args() -> Option<String> {
     std::env::args().skip(1).find(|a| a.to_ascii_lowercase().starts_with("fluxer:"))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn socket() -> std::path::PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
     // The uid keeps users apart where the fallback dir is shared.
@@ -66,7 +66,7 @@ fn socket() -> std::path::PathBuf {
 
 /// Hands `link` (and our activation token) to a running instance; true when one took it and
 /// this process should exit.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub fn forward(link: Option<&str>) -> bool {
     use std::io::Write;
     let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket()) else { return false };
@@ -75,7 +75,7 @@ pub fn forward(link: Option<&str>) -> bool {
 }
 
 /// One launch message: `token\tlink\n`, bounded.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn read_launch(conn: impl std::io::Read, on_launch: &impl Fn(Option<String>, Option<String>)) {
     use std::io::{BufRead, Read};
     let mut line = String::new();
@@ -89,7 +89,7 @@ fn read_launch(conn: impl std::io::Read, on_launch: &impl Fn(Option<String>, Opt
 }
 
 /// Listens for later launches; `on_launch(token, link)` runs on the listener thread.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub fn listen(on_launch: impl Fn(Option<String>, Option<String>) + Send + 'static) {
     let path = socket();
     let _ = std::fs::remove_file(&path); // a stale socket from a crashed run (`forward` found no one)

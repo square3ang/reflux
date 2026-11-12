@@ -1,10 +1,9 @@
 //! Media proxy URLs (`fluxer_docs/media-proxy/*`, `AvatarUtils.ts`, `MediaProxyUtils.ts`) and
 //! the loader that fetches them for the views.
 //!
-//! URLs ask for WebP as Fluxer's do. Rune decodes only PNG and JPEG on native, so WebP and GIF
-//! are decoded here on the blocking pool and handed to Rune as RGBA. Animated ones keep every
-//! frame and draw the one the clock is on; views ask for `animated=true` URLs only when Fluxer
-//! would animate (hover, the user's animation settings).
+//! URLs ask for WebP as Fluxer's do. Rune decodes it (and GIF, APNG) and plays animations while
+//! drawn, so views ask for `animated=true` URLs only when Fluxer would animate (hover, the
+//! user's animation settings).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -128,82 +127,26 @@ pub fn fit_url_animated(proxy_url: &str, css_w: f32, scale: f32) -> String {
 
 /// Network images larger than this on either side are refused before decoding.
 const MAX_SIDE: u32 = 4096;
-/// An animation keeps at most this many RGBA bytes of frames; past it only the first shows.
-const MAX_ANIM_BYTES: usize = 96 << 20;
 
-/// Every frame of an animated GIF or WebP with its delay in ms; `None` for still images (and
-/// animations over [`MAX_ANIM_BYTES`]).
-fn frames(bytes: &[u8]) -> Option<Vec<(image::RgbaImage, u32)>> {
-    use image::AnimationDecoder;
-    use image::codecs::{gif::GifDecoder, webp::WebPDecoder};
-    let cur = || std::io::Cursor::new(bytes);
-    let frames = match image::guess_format(bytes).ok()? {
-        image::ImageFormat::Gif => GifDecoder::new(cur()).ok()?.into_frames(),
-        image::ImageFormat::WebP => {
-            let d = WebPDecoder::new(cur()).ok()?;
-            if !d.has_animation() {
-                return None;
-            }
-            d.into_frames()
-        }
-        _ => return None,
-    };
-    let mut out = Vec::new();
-    let mut total = 0usize;
-    for f in frames {
-        let f = f.ok()?;
-        let (n, d) = f.delay().numer_denom_ms();
-        let img = f.into_buffer();
-        if img.width() > MAX_SIDE || img.height() > MAX_SIDE {
-            return None;
-        }
-        total += img.as_raw().len();
-        if total > MAX_ANIM_BYTES {
-            return None;
-        }
-        // Browsers play delays under 20 ms at 100 ms.
-        let ms = n.checked_div(d).unwrap_or(100);
-        out.push((img, if ms < 20 { 100 } else { ms }));
-    }
-    (out.len() > 1).then_some(out)
-}
-
-/// The frame shown `t` ms into a loop of frames with these delays.
-fn frame_at(delays: &[u32], t: u64) -> (usize, u64) {
-    let total: u64 = delays.iter().map(|&d| d as u64).sum::<u64>().max(1);
-    let mut t = t % total;
-    for (i, &d) in delays.iter().enumerate() {
-        if t < d as u64 {
-            return (i, d as u64 - t);
-        }
-        t -= d as u64;
-    }
-    (0, 1)
-}
-
-/// Encoded bytes to an image: WebP and GIF (first frame) decoded here, PNG and JPEG by Rune's
-/// workers. Bounded to [`MAX_SIDE`] since the bytes come from the network.
+/// Encoded bytes to an image, decoded (and animated) by Rune's workers. Bounded to
+/// [`MAX_SIDE`] from the header since the bytes come from the network.
 pub fn decode(cache: &ImageCache, bytes: Vec<u8>) -> Result<Image, String> {
-    use image::{ImageFormat, ImageReader, Limits};
+    use image::{ImageReader, Limits};
     // Twemoji SVGs, rasterised for the largest (48pt jumbo) emoji at 2×.
     if is_svg(&bytes) {
         return Ok(cache.svg(bytes, 48.0, 2.0));
     }
     let mut reader = ImageReader::new(std::io::Cursor::new(&bytes[..])).with_guessed_format().map_err(|e| e.to_string())?;
-    let format = reader.format().ok_or("unknown image format")?;
+    reader.format().ok_or("unknown image format")?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
     limits.max_image_height = Some(MAX_SIDE);
     reader.limits(limits);
-    if !matches!(format, ImageFormat::WebP | ImageFormat::Gif) {
-        let (w, h) = reader.into_dimensions().map_err(|e| e.to_string())?;
-        if w > MAX_SIDE || h > MAX_SIDE {
-            return Err(format!("{w}×{h} is over {MAX_SIDE}"));
-        }
-        return Ok(cache.load(bytes));
+    let (w, h) = reader.into_dimensions().map_err(|e| e.to_string())?;
+    if w > MAX_SIDE || h > MAX_SIDE {
+        return Err(format!("{w}×{h} is over {MAX_SIDE}"));
     }
-    let img = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
-    Ok(cache.rgba(img.width(), img.height(), img.into_raw()))
+    Ok(cache.load(bytes))
 }
 
 fn is_svg(bytes: &[u8]) -> bool {
@@ -213,7 +156,7 @@ fn is_svg(bytes: &[u8]) -> bool {
 }
 
 /// A 32px cell of `assets/media/images/neko.png` (11×4 oneko frames).
-fn neko_cell(cache: &ImageCache, col: u8, row: u8) -> Result<Image, String> {
+fn neko_cell(cache: &ImageCache, col: u8, row: u8, mirror: bool) -> Result<Image, String> {
     static SHEET: OnceLock<Option<image::RgbaImage>> = OnceLock::new();
     const PNG: &[u8] = include_bytes!("../../../assets/media/images/neko.png");
     let sheet = SHEET
@@ -224,7 +167,11 @@ fn neko_cell(cache: &ImageCache, col: u8, row: u8) -> Result<Image, String> {
     if x + 32 > sheet.width() || y + 32 > sheet.height() {
         return Err("Neko cell is off the sheet".into());
     }
-    Ok(cache.rgba(32, 32, image::imageops::crop_imm(sheet, x, y, 32, 32).to_image().into_raw()))
+    let mut cell = image::imageops::crop_imm(sheet, x, y, 32, 32).to_image();
+    if mirror {
+        image::imageops::flip_horizontal_in_place(&mut cell);
+    }
+    Ok(cache.rgba(32, 32, cell.into_raw()))
 }
 
 /// `EMOJI_SPRITES.BasePerRow` cells of 64 device px in `spritesheet-emoji@2x.png`; the
@@ -269,15 +216,7 @@ pub enum Load {
 enum Slot {
     Pending,
     Ready(Image),
-    /// An animation's frames and their delays (ms).
-    Anim(Vec<Image>, Vec<u32>),
     Failed,
-}
-
-/// Decoded media: a still image or every frame of an animation.
-enum Decoded {
-    Still(Image),
-    Anim(Vec<Image>, Vec<u32>),
 }
 
 #[derive(Default)]
@@ -303,18 +242,10 @@ struct Inner {
     /// `f32` bits of the window scale; 0 = unset (1×).
     scale: AtomicU32,
     entries: Mutex<Entries>,
-    /// Ms until the soonest frame change of an animation drawn this frame (`u64::MAX`: none).
-    next_frame: std::sync::atomic::AtomicU64,
     /// Fetched text files (previews), by URL: `None` while loading or after a failure.
     texts: Mutex<HashMap<String, Option<Result<String, String>>>>,
     /// An image fetched for "Copy image", as PNG, for the next frame to put on the clipboard.
     clip: Mutex<Option<Vec<u8>>>,
-}
-
-/// Animations run on one shared clock so frames of the same GIF stay in step.
-fn clock_ms() -> u64 {
-    static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
-    EPOCH.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
 /// The shared image loader. Views call it through `&`; fetches run on the app runtime and
@@ -403,23 +334,21 @@ impl Media {
                     Slot::Ready(img)
                 });
             }
-            self.decode_later(key.clone(), move |cache| sprite_cell(cache, index, tone).map(Decoded::Still));
+            self.decode_later(key.clone(), move |cache| sprite_cell(cache, index, tone));
             Slot::Pending
         })
     }
 
-    /// A 32px cell of Fluxer's Neko sheet (`NekoSprite`), by `(column, row)`.
-    pub fn neko(&self, cell: (u8, u8)) -> Load {
-        let key = format!("neko:{}:{}", cell.0, cell.1);
+    /// A 32px cell of Fluxer's Neko sheet (`NekoSprite`), by `(column, row)`, `mirror`ed for
+    /// `scaleX(-1)`.
+    pub fn neko(&self, cell: (u8, u8), mirror: bool) -> Load {
+        let key = format!("neko:{}:{}:{mirror}", cell.0, cell.1);
         self.entry(&key, |cache| {
-            let crop = move |cache: &ImageCache| neko_cell(cache, cell.0, cell.1).map(Decoded::Still);
+            let crop = move |cache: &ImageCache| neko_cell(cache, cell.0, cell.1, mirror);
             if self.0.fixture.get().is_some() {
-                return crop(cache).map_or(Slot::Failed, |d| match d {
-                    Decoded::Still(img) => {
-                        let _ = img.wait();
-                        Slot::Ready(img)
-                    }
-                    Decoded::Anim(frames, _) => Slot::Anim(frames, vec![0]),
+                return crop(cache).map_or(Slot::Failed, |img| {
+                    let _ = img.wait();
+                    Slot::Ready(img)
                 });
             }
             self.decode_later(key.clone(), crop);
@@ -435,7 +364,7 @@ impl Media {
                     Slot::Ready(img)
                 });
             }
-            self.decode_later(key.to_owned(), move |cache| read().and_then(|b| decode(cache, b)).map(Decoded::Still));
+            self.decode_later(key.to_owned(), move |cache| read().and_then(|b| decode(cache, b)));
             Slot::Pending
         })
     }
@@ -462,7 +391,7 @@ impl Media {
     }
 
     /// Runs `make` on the blocking pool and stores its image under `key`.
-    fn decode_later(&self, key: String, make: impl FnOnce(&ImageCache) -> Result<Decoded, String> + Send + 'static) {
+    fn decode_later(&self, key: String, make: impl FnOnce(&ImageCache) -> Result<Image, String> + Send + 'static) {
         let inner = self.0.clone();
         crate::app::spawn(async move {
             let job = inner.clone();
@@ -475,13 +404,7 @@ impl Media {
         let inner = self.0.clone();
         crate::app::spawn(async move {
             match get_capped(&inner.http, &url, MAX_IMAGE_BYTES).await {
-                Ok(b) => Media(inner).decode_later(url, move |cache| match frames(&b) {
-                    Some(fs) => {
-                        let delays = fs.iter().map(|f| f.1).collect();
-                        Ok(Decoded::Anim(fs.into_iter().map(|(i, _)| cache.rgba(i.width(), i.height(), i.into_raw())).collect(), delays))
-                    }
-                    None => decode(cache, b.to_vec()).map(Decoded::Still),
-                }),
+                Ok(b) => Media(inner).decode_later(url, move |cache| decode(cache, b)),
                 Err(err) => inner.finish(&url, Err(err)),
             }
         });
@@ -489,10 +412,9 @@ impl Media {
 }
 
 impl Inner {
-    fn finish(&self, key: &str, res: Result<Decoded, String>) {
+    fn finish(&self, key: &str, res: Result<Image, String>) {
         let slot = match res {
-            Ok(Decoded::Still(i)) => Slot::Ready(i),
-            Ok(Decoded::Anim(f, d)) => Slot::Anim(f, d),
+            Ok(i) => Slot::Ready(i),
             Err(err) => {
                 eprintln!("reflux: image {key}: {err}");
                 Slot::Failed
@@ -522,22 +444,7 @@ impl Media {
             Slot::Pending => Load::Pending,
             Slot::Failed => Load::Failed,
             Slot::Ready(img) => still(img),
-            Slot::Anim(frames, delays) => {
-                let (i, left) = frame_at(delays, clock_ms());
-                self.0.next_frame.fetch_min(left, Ordering::Relaxed);
-                // A frame still decoding shows the first.
-                match still(&frames[i]) {
-                    Load::Ready(px) => Load::Ready(px),
-                    _ => still(&frames[0]),
-                }
-            }
         }
-    }
-
-    /// After a frame is drawn: how long until an animation on it changes frame (and resets).
-    pub fn take_next_frame(&self) -> Option<std::time::Duration> {
-        let ms = self.0.next_frame.swap(u64::MAX, Ordering::Relaxed);
-        (ms != u64::MAX).then(|| std::time::Duration::from_millis(ms))
     }
 
     /// A text file's contents (previews), fetched on first use; `None` while loading.
@@ -686,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn animations_keep_frames_and_loop_on_the_clock() {
+    fn animations_go_to_rune() {
         use image::codecs::gif::{GifEncoder, Repeat};
         let mut gif = Vec::new();
         {
@@ -697,14 +604,7 @@ mod tests {
                 enc.encode_frame(image::Frame::from_parts(px, 0, 0, image::Delay::from_numer_denom_ms(ms, 1))).unwrap();
             }
         }
-        let fs = frames(&gif).expect("two frames");
-        assert_eq!(fs.iter().map(|f| f.1).collect::<Vec<_>>(), [50, 150]);
-        assert_eq!(fs[0].0.get_pixel(0, 0).0[0], 255);
-        // Still images aren't animations.
-        assert!(frames(&webp(2, 2)).is_none());
-        assert_eq!(frame_at(&[50, 150], 0), (0, 50));
-        assert_eq!(frame_at(&[50, 150], 60), (1, 140));
-        assert_eq!(frame_at(&[50, 150], 210), (0, 40), "loops");
+        assert_eq!(decode(&cache(), gif).unwrap().wait().unwrap(), [4, 4]);
         assert_eq!(animate("u?size=1".into(), "a_x", true), "u?size=1&animated=true");
         assert_eq!(animate("u?size=1".into(), "x", true), "u?size=1", "only a_ hashes animate");
     }

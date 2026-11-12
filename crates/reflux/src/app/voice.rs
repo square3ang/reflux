@@ -1118,16 +1118,32 @@ fn rollout_delay(interval: Option<f64>, jitter_percent: Option<f64>, failures: u
     Duration::from_millis((target + target * jitter * (r * 2.0 - 1.0)).round().max(30_000.0) as u64)
 }
 
+static WINDOW_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WINDOW_SHOWN: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// `App::on_visibility`: `document.visibilityState` for the experiments poll.
+pub(crate) fn set_window_shown(shown: bool) {
+    WINDOW_HIDDEN.store(!shown, std::sync::atomic::Ordering::Relaxed);
+    if shown {
+        WINDOW_SHOWN.notify_waiters();
+    }
+}
+
 /// `VoiceP2pRollout` from `GET /experiments`, polled like `ExperimentAssignments` for the
-/// session; three 404s in a row stop it.
-// shortcut: no ETag / 304 and no ×4 slower polling while the window is hidden.
+/// session (×4 slower while the window is hidden); three 404s in a row stop it.
+// shortcut: no ETag / 304, every poll fetches the whole body; add `If-None-Match` if it grows.
 pub(super) fn load_rollout(s: &mut State) {
     let Some(inst) = s.app.instance.clone() else { return };
     let Some(b) = super::BRIDGE.get() else { return };
     let task = b.rt.spawn(async move {
         let (mut failures, mut not_found) = (0u32, 0u32);
         let mut poll = (None, None);
+        // `start`: hidden, the first fetch waits a poll.
+        if WINDOW_HIDDEN.load(std::sync::atomic::Ordering::Relaxed) {
+            rollout_wait(rollout_delay(None, None, 0, fastrand::f64()), None).await;
+        }
         loop {
+            let fetched = std::time::Instant::now();
             match inst.rest.get::<Value>("/experiments").await {
                 Ok(v) => {
                     (failures, not_found) = (0, 0);
@@ -1150,11 +1166,29 @@ pub(super) fn load_rollout(s: &mut State) {
                     }
                 }
             }
-            tokio::time::sleep(rollout_delay(poll.0, poll.1, failures, fastrand::f64())).await;
+            rollout_wait(rollout_delay(poll.0, poll.1, failures, fastrand::f64()), Some(fetched)).await;
         }
     });
     if let Some(old) = s.app.voice.rollout.replace(task.abort_handle()) {
         old.abort();
+    }
+}
+
+/// Sleeps `delay`, ×4 if the window is hidden now (`EXPERIMENT_ASSIGNMENTS_HIDDEN_POLL_INTERVAL_MULTIPLIER`).
+/// `handleVisibilityChange`: shown again 30 s or more after the last fetch began, it ends at once.
+async fn rollout_wait(delay: Duration, fetched: Option<std::time::Instant>) {
+    let hidden = WINDOW_HIDDEN.load(std::sync::atomic::Ordering::Relaxed);
+    let sleep = tokio::time::sleep(if hidden { delay * 4 } else { delay });
+    tokio::pin!(sleep);
+    loop {
+        tokio::select! {
+            _ = &mut sleep => return,
+            _ = WINDOW_SHOWN.notified() => {
+                if fetched.is_none_or(|t| t.elapsed() >= Duration::from_secs(30)) {
+                    return;
+                }
+            }
+        }
     }
 }
 

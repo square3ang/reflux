@@ -692,7 +692,7 @@ fn account_scene(sh: &mut ShellState, store: &mut Store, scene: &str) {
         }
         "advanced-neko" => {
             sh.prefs.look.show_neko = true;
-            sh.neko.at = Some((620.0, 420.0));
+            sh.neko.at = Some((636.0, 436.0));
             crate::look::set(&sh.prefs.look);
         }
         "advanced-trust" => {

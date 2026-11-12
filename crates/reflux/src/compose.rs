@@ -306,7 +306,7 @@ pub fn toggle(edit: &mut TextEdit, w: &str) {
 }
 
 thread_local! {
-    /// The composer's caret line `[x, y, w, h]` (window points) while it has a selection, read
+    /// The composer's caret line `[x, y, w, h]` (zoomed points) while it has a selection, read
     /// from `Cx::caret` by the root view; the format toolbar floats above it.
     pub static CARET: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) };
 }
@@ -314,8 +314,7 @@ thread_local! {
 /// The format toolbar over the composer's selection (`FormattingToolbar`), in the root layer.
 pub fn floating_toolbar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let Some(c) = CARET.get() else { return };
-    let [x, y] = crate::desktop::window::unzoom([c[0], c[1]]);
-    layer.push(rune::el().key("format-caret").absolute(x, y).size(1.0, 1.0));
+    layer.push(rune::el().key("format-caret").absolute(c[0], c[1]).size(1.0, 1.0));
     layer.push(toolbar(&st.composer, p, acc).anchored("format-caret", rune::Side::Top, rune::Align::Center, 8.0));
 }
 

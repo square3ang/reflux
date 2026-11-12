@@ -371,8 +371,8 @@ fn participant<S: 'static>(store: &Store, st: &ShellState, c: &Channel, r: Row, 
         item = item
             .role("button")
             .focusable(true)
-            // shortcut: Rune rounds the ring from the row's radius, not `.channelItemFocusRing`'s 8px; upgrade when rings take a radius.
-            .focus_ring(4.0, -2.0, p.focus_primary)
+            // `FocusRing offset={-2}` with `.channelItemFocusRing`: 2px outside the row, 8px corners.
+            .child(el().pin(Some(-2.0), Some(-2.0), Some(-2.0), Some(-2.0)).radius(8.0).inert().focus_ring(4.0, 0.0, p.focus_primary))
             .label(tf("Open profile for {displayName}", &[("displayName", &name)]))
             .on_press(move |s: &mut S| {
                 let sh = acc(s);
@@ -391,7 +391,7 @@ fn participant<S: 'static>(store: &Store, st: &ShellState, c: &Channel, r: Row, 
         }
     }
     if let Some(g) = gid.filter(|g| r.device.is_none() && crate::social::moderation::can_moderate(store, *g, u, Permissions::MOVE_MEMBERS)) {
-        item = draggable(item, st, g, cid, u, me, &r.key, acc);
+        item = draggable(item, store, st, g, cid, u, me, &r.key, acc);
     }
     super::call::ParticipantMenu::participant_menu(item, u, gid, acc)
 }
@@ -402,61 +402,43 @@ pub struct VoiceDrag {
     pub guild: Snowflake,
     pub user: Snowflake,
     pub from: Snowflake,
-    /// The row's key, to find where the window shows it.
+    /// The dragged row's key.
     pub key: String,
     /// The voice channel under the pointer (not the one it's in).
     pub over: Option<Snowflake>,
 }
 
-/// Voice channel rows by id, and the dragged row's top-left, in window points.
-type Drops = (HashMap<Snowflake, [f32; 4]>, Option<[f32; 2]>);
-
-thread_local! {
-    /// While a participant drag runs, the views record where the window shows each voice
-    /// channel row and the dragged row (window points), to hit-test the pointer against.
-    static DROPS: RefCell<Drops> = RefCell::default();
-}
-
-/// Records voice channel `id`'s row as a drop target (only while a participant drag runs).
-pub fn drop_target(id: Snowflake) {
-    if let Some(r) = rune::memo::window_layout(&format!("ch-{id}")) {
-        DROPS.with(|d| d.borrow_mut().0.insert(id, r));
-    }
-}
-
-/// The channel whose row holds window point `(x, y)`, other than `from`.
-fn hit(x: f32, y: f32, from: Snowflake) -> Option<Snowflake> {
-    DROPS.with(|d| d.borrow().0.iter().find(|(id, r)| **id != from && x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]).map(|(id, _)| *id))
-}
-
 /// `VoiceParticipantItem`'s `useDrag` and `ChannelItem`'s drop: dragging the row onto another
 /// voice channel moves the member there (`channel_id` patch), or joins it when it's us.
-// shortcut: Rune's drops are file-only, so the row's own drag hit-tests the pointer against the
-// voice channel rows' window rects that the sidebar records while the drag runs.
+// Rune has no in-app drop targets, so the row's own drag picks the `ch-{id}` row under the pointer.
 #[allow(clippy::too_many_arguments)]
-fn draggable<S: 'static>(item: El, st: &ShellState, gid: Snowflake, cid: Snowflake, u: Snowflake, me: bool, key: &str, acc: ShellAccess<S>) -> El {
-    let dragging = st.voice_drag.as_ref().is_some_and(|d| d.key == key);
+fn draggable<S: 'static>(item: El, store: &Store, st: &ShellState, gid: Snowflake, cid: Snowflake, u: Snowflake, me: bool, key: &str, acc: ShellAccess<S>) -> El {
     let mut item = item;
-    if dragging {
+    if st.voice_drag.as_ref().is_some_and(|d| d.key == key) {
         // `.participantRowDragging`.
         item = item.opacity(0.5);
-        let origin = rune::memo::window_layout(key).map(|r| [r[0], r[1]]);
-        DROPS.with(|d| d.borrow_mut().1 = origin);
     }
+    let voice: std::rc::Rc<[Snowflake]> = store.channels.values().filter(|c| c.guild_id == Some(gid) && c.id != cid && c.kind == reflux_model::ChannelType::GUILD_VOICE).map(|c| c.id).collect();
     let key = key.to_string();
-    item.on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+    item.on_drag(move |s: &mut S, d: &mut rune::Drag, tx| {
         let sh = acc(s);
         match d.phase {
-            rune::Phase::Down => DROPS.with(|x| *x.borrow_mut() = Default::default()),
+            rune::Phase::Down => {}
             rune::Phase::Move => {
                 if sh.voice_drag.is_none() && d.dx * d.dx + d.dy * d.dy <= 16.0 {
                     return;
                 }
-                let over = DROPS.with(|x| x.borrow().1).and_then(|[ox, oy]| hit(ox + d.x, oy + d.y, cid));
-                let next = VoiceDrag { guild: gid, user: u, from: cid, key: key.clone(), over };
-                if sh.voice_drag.as_ref() != Some(&next) {
-                    sh.voice_drag = Some(next);
+                if sh.voice_drag.is_none() {
+                    sh.voice_drag = Some(VoiceDrag { guild: gid, user: u, from: cid, key: key.clone(), over: None });
                 }
+                let [x, y] = d.window_point();
+                let (key, voice) = (key.clone(), voice.clone());
+                tx.element_at(x, y, move |s: &mut S, picked, _| {
+                    let over = picked.and_then(|p| row_channel(p.path())).filter(|id| voice.contains(id));
+                    if let Some(d) = acc(s).voice_drag.as_mut().filter(|d| d.key == key && d.over != over) {
+                        d.over = over;
+                    }
+                });
             }
             rune::Phase::Up => {
                 let over = sh.voice_drag.take().and_then(|v| v.over);
@@ -467,10 +449,14 @@ fn draggable<S: 'static>(item: El, st: &ShellState, gid: Snowflake, cid: Snowfla
                         sh.social(reqwest::Method::PATCH, format!("/guilds/{gid}/members/{u}"), Some(serde_json::json!({ "channel_id": to })), crate::social::Done::Nothing);
                     }
                 }
-                DROPS.with(|x| *x.borrow_mut() = Default::default());
             }
         }
     })
+}
+
+/// The channel whose sidebar row (`ch-{id}`) holds the element at `path`.
+fn row_channel(path: &str) -> Option<Snowflake> {
+    path.split('/').find_map(|seg| seg.strip_prefix("ch-")?.parse().ok()).map(Snowflake)
 }
 
 /// `StreamWatchHoverPopout`'s `useHover` (200ms open, 150ms close) on a LIVE row.
@@ -719,18 +705,13 @@ pub(super) fn user_count(count: usize, limit: u32, p: &Palette) -> El {
 
 #[cfg(test)]
 mod tests {
-    /// A dragged participant lands on the voice channel row under the pointer, never its own.
+    /// A dragged participant lands on the channel row the picked element sits in.
     #[test]
-    fn a_participant_drop_hits_the_channel_row_under_the_pointer() {
+    fn a_participant_drop_reads_the_picked_channel_row() {
         use reflux_model::Snowflake;
-        super::DROPS.with(|d| {
-            let mut d = d.borrow_mut();
-            d.0.insert(Snowflake(1), [73.0, 610.0, 312.0, 33.0]);
-            d.0.insert(Snowflake(2), [73.0, 781.0, 312.0, 33.0]);
-        });
-        assert_eq!(super::hit(210.0, 797.0, Snowflake(1)), Some(Snowflake(2)));
-        assert_eq!(super::hit(210.0, 620.0, Snowflake(1)), None, "its own channel");
-        assert_eq!(super::hit(210.0, 700.0, Snowflake(1)), None, "between rows");
+        assert_eq!(super::row_channel("#0/sidebar/#3/ch-42/#0/#1"), Some(Snowflake(42)));
+        assert_eq!(super::row_channel("#0/sidebar/#3/voice-42/vu-42-7"), None, "a participant row");
+        assert_eq!(super::row_channel("#0/sidebar/ch-42-x"), None);
     }
 
     use super::collate;

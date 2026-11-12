@@ -314,9 +314,6 @@ fn channel_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel, selected
             el().absolute(-4.0, 1.0 + 16.0 - 4.0).size(8.0, 8.0).corners([0.0, 4.0, 4.0, 0.0]).fill(p.text_primary).opacity(if muted || dim_dot { 0.4 } else { 1.0 }),
         );
     }
-    if voice && st.voice_drag.is_some() {
-        super::voice_list::drop_target(id);
-    }
     container.key(format!("ch-{id}"))
 }
 
