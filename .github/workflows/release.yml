@@ -37,7 +37,14 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       # The CJK/Arabic/Hebrew/Devanagari/Thai faces are gitignored; build them from Fluxer's.
+      # shortcut: cached by the script's hash, so a Fluxer font update needs a script change (or cache delete) to land.
+      - id: fonts
+        uses: actions/cache@v4
+        with:
+          path: script-fonts
+          key: script-fonts-${{ hashFiles('scripts/fonts-extract.py') }}
       - name: Script fonts
+        if: steps.fonts.outputs.cache-hit != 'true'
         run: |
           git clone -q --depth 1 --filter=blob:none --sparse https://github.com/fluxerapp/fluxer /tmp/fluxer
           git -C /tmp/fluxer sparse-checkout set packages/fonts/files
@@ -94,6 +101,9 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
+      # Defender scans every object and rlib the build writes.
+      - run: Set-MpPreference -DisableRealtimeMonitoring $true
+        shell: pwsh
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -111,8 +121,8 @@ jobs:
           mkdir -p dist
           cp target/release/reflux.exe dist/
           cp -R assets/fonts dist/fonts
-          command -v makensis || choco install nsis -y
           export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          command -v makensis || choco install nsis -y
           makensis -DVERSION=$v -DSRC="$(cygpath -w "$PWD/dist")" -DOUT="$(cygpath -w "$PWD/Reflux-$v-x86_64-setup.exe")" packaging/windows/reflux.nsi
       - uses: actions/upload-artifact@v4
         with:
