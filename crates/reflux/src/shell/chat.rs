@@ -309,7 +309,7 @@ fn header<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palette, 
     }
     // `UpdaterIcon`: the green download arrow between the search and the inbox while a desktop
     // update can be installed (`--channel-header-update-icon-color: #22c55e`).
-    if let Some(u) = st.desktop.update.as_ref().filter(|u| u.appimage.is_some() && matches!(u.stage, crate::desktop::updater::Stage::Available | crate::desktop::updater::Stage::Downloading)) {
+    if let Some(u) = st.desktop.update.as_ref().filter(|u| u.package.is_some() && matches!(u.stage, crate::desktop::updater::Stage::Available | crate::desktop::updater::Stage::Downloading)) {
         let updating = u.stage == crate::desktop::updater::Stage::Downloading;
         let (label, glyph) = if updating { (t("Updating…"), &icons::ARROW_CLOCKWISE_BOLD) } else { (t("Update available"), &icons::DOWNLOAD_SIMPLE_BOLD) };
         let updater = row()

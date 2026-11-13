@@ -99,7 +99,7 @@ Rules:
 
 | No price-announcement / legacy-price nagbars | they need the account's Stripe billing state, which the client API doesn't return | `desktop/notices.rs` | the API returns it |
 | No in-app Plutonium page, checkout, plan changes, gift redeem form or composer "Send gift" | purchases run through Stripe checkout in the web app; Reflux opens it (and the customer portal) in the browser | `settings/premium.rs`, `shell/upload.rs` | — |
-| The updater is off unless `REFLUX_UPDATE_FEED` names a feed | Reflux publishes no releases yet | `desktop/updater.rs` | releases with a feed |
+| macOS builds are ad-hoc signed, not notarized (first launch: right-click › Open); only Apple silicon | no Developer ID | `packaging/macos/bundle.sh`, `.github/workflows/release.yml` | a Developer ID |
 
 ## Not ported yet (no external limit)
 
@@ -171,7 +171,6 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/spell.rs:339` Rune gives no text offset for a pointer position, so the caret stands in for it.
 - `crates/reflux/src/desktop/tray.rs:28` Fluxer only adds Disconnect while connected, but Rune's SNI menu numbers items
 - `crates/reflux/src/desktop/tts.rs:6` speech goes through the platform's command-line voice (speech-dispatcher's `spd-say`,
-- `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
 - `crates/reflux/src/desktop/window.rs:51` Wayland reports no placement, so leaving full screen from the window manager isn't

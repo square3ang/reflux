@@ -69,6 +69,15 @@ Where Reflux has to differ, and why, is listed in **[docs/WORKAROUNDS.md](docs/W
 | 🪟 **Windows** | Builds and is checked; less runtime testing |
 | 🍎 **macOS** | Builds and is checked; less runtime testing |
 
+## Download
+
+[Releases](https://github.com/square3ang/reflux/releases/latest) have a Linux AppImage, a Windows
+setup and a macOS disk image (Apple silicon). Each updates itself from the next release. The macOS
+app isn't notarized: open it the first time with right-click › Open.
+
+To release, bump `version` in `Cargo.toml` and push a matching `v<version>` tag;
+`.github/workflows/release.yml` builds the three packages and publishes them.
+
 ## Building
 
 You need stable Rust (edition 2024) and a C/C++ toolchain.

@@ -217,7 +217,7 @@ pub fn demo(sh: &mut crate::shell::ShellState, store: &mut reflux_store::Store, 
     match scene {
         "bars" => {
             sh.desktop.offline = true;
-            sh.desktop.update = Some(updater::Available { version: "0.2.0".into(), page: String::new(), appimage: Some(Default::default()), stage: updater::Stage::Available });
+            sh.desktop.update = Some(updater::Available { version: "0.2.0".into(), page: String::new(), package: Some(Default::default()), stage: updater::Stage::Available });
             sh.desktop.streamer = true;
         }
         "spell" => {

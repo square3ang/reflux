@@ -83,7 +83,7 @@ pub fn bars<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> Ve
         let product = [("productName", "Fluxer")];
         let page = u.page.clone();
         let open = move |s: &mut S| acc(s).intents.push(Intent::Desktop(super::Request::OpenUrl(page.clone())));
-        let (message, actions) = match (u.stage, u.appimage.is_some()) {
+        let (message, actions) = match (u.stage, u.package.is_some()) {
             (Stage::Installed, _) => (tf("{productName} closes, installs the update and opens again.", &product), vec![button("nagbar-update-restart", t("Restart now"), p, move |s: &mut S| acc(s).intents.push(Intent::Desktop(super::Request::Restart)))]),
             (Stage::Failed, _) => (t("Couldn't download the desktop update").into(), vec![button("nagbar-update-open", t("Open desktop downloads"), p, open)]),
             (Stage::Downloading, _) => (

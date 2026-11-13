@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Reflux</string>
+	<key>CFBundleDisplayName</key>
+	<string>Reflux</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.fluxer.reflux</string>
+	<key>CFBundleExecutable</key>
+	<string>reflux</string>
+	<key>CFBundleIconFile</key>
+	<string>reflux</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Reflux uses the microphone for voice calls and voice messages.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Reflux uses the camera for video calls.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Fluxer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fluxer</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

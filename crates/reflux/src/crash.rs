@@ -79,7 +79,7 @@ pub fn guard<T>(f: impl FnOnce() -> T) -> Option<T> {
 
 /// The crash screen's poll: once, leave voice and close the gateway (`cleanupRuntimeStateOnCrash`;
 /// Reload starts them again) and check for updates (`ensureLatestAssets({force: true})`); then
-/// restarts once "Update app" installed the AppImage.
+/// restarts once "Update app" installed the update.
 pub fn poll(s: &mut crate::State) {
     if !STARTED.swap(true, Ordering::Relaxed) {
         if s.shell_demo.is_none() {
@@ -125,7 +125,7 @@ fn reset_app_data() {
 }
 
 /// `ErrorFallback`: "Reload app" and "Reset app data" wait for the update check; a found update
-/// turns the first button into "Update app" (installs the AppImage, else opens the release page).
+/// turns the first button into "Update app" (installs the update, else opens the release page).
 pub fn view(report: &str, update: Option<&crate::desktop::updater::Available>, p: &Palette) -> El {
     use crate::desktop::updater::Stage;
     let report = report.to_string();
@@ -137,7 +137,7 @@ pub fn view(report: &str, update: Option<&crate::desktop::updater::Available>, p
         .disabled(checking)
         .submitting(update.is_some_and(|u| u.stage == Stage::Downloading))
         .on_press_tx(move |s: &mut crate::State, tx| match s.desktop.update.as_ref().filter(|_| found) {
-            Some(u) if u.appimage.is_some() && u.stage != Stage::Installed => crate::desktop::updater::install(s),
+            Some(u) if u.package.is_some() && u.stage != Stage::Installed => crate::desktop::updater::install(s),
             Some(u) => {
                 if let Err(e) = tx.open_url(&u.page) {
                     eprintln!("reflux: open {}: {e:?}", u.page);
