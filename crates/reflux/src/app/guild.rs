@@ -114,6 +114,11 @@ pub(super) fn run(s: &mut State, c: Call) {
                     }
                 }
                 Then::Saved { clear, .. } => {
+                    // Our cached profiles (banner, bio, …) are stale after a profile save; cards fetch them again.
+                    if c.path == "/users/@me" || c.path.ends_with("/members/@me") {
+                        let me = s.app.store.my_id();
+                        sh.account.profiles.retain(|(u, _), _| *u != me);
+                    }
                     if same {
                         sh.close_account_modals();
                         sh.form.text.retain(|k, _| !k.starts_with(&clear));

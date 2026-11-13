@@ -115,7 +115,9 @@ impl<S: 'static> Menu<S> {
         if !popups.is_open(&self.id) {
             return;
         }
-        let m = surface(&self.id, self.entries, popups, access, p, None).key(format!("{}-menu", self.id)).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
+        let mut subs = Vec::new();
+        // Open submenus hang off the menu itself, outside its scrolling list, which would clip them.
+        let m = surface(&self.id, self.entries, popups, access, p, None, &mut subs).children(subs).key(format!("{}-menu", self.id)).min_w(self.min_w).modal(true, move |s: &mut S| access(s).close());
         let mut late = Vec::new();
         let m = match popups.at {
             Some(at) => anchor_at_point(&mut late, m, &self.id, at),
@@ -127,8 +129,9 @@ impl<S: 'static> Menu<S> {
     }
 }
 
-/// `parent`: the submenu path this surface belongs to (`None` = the menu itself).
-fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>) -> El {
+/// `parent`: the submenu path this surface belongs to (`None` = the menu itself). Open
+/// submenus go into `subs`, each before the ones it holds.
+fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>, subs: &mut Vec<El>) -> El {
     let bg = p.form_surface_background;
     let mut c = col();
     // `.separator:first-child, :last-child, + .separator { display: none }`.
@@ -156,8 +159,8 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
                 .mt(2.0),
             MenuEntry::Item(it) => item(menu, it, access, p, parent),
             MenuEntry::El(e) => *e,
-            MenuEntry::Submenu(id, label, entries) => submenu(menu, popups, access, p, parent, id, label, None, false, entries),
-            MenuEntry::SubmenuHint { id, label, hint, disabled, entries } => submenu(menu, popups, access, p, parent, id, label, hint, disabled, entries),
+            MenuEntry::Submenu(id, label, entries) => submenu(menu, popups, access, p, parent, id, label, None, false, entries, subs),
+            MenuEntry::SubmenuHint { id, label, hint, disabled, entries } => submenu(menu, popups, access, p, parent, id, label, hint, disabled, entries, subs),
         });
     }
     // `.menuScroller`: the entries scroll when the menu is capped to the room it has.
@@ -201,7 +204,7 @@ fn close_sub(p: &mut Popups) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>, id: String, label: String, hint: Option<String>, disabled: bool, entries: Vec<MenuEntry<S>>) -> El {
+fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>, p: &Palette, parent: Option<&str>, id: String, label: String, hint: Option<String>, disabled: bool, entries: Vec<MenuEntry<S>>, subs: &mut Vec<El>) -> El {
     let id = match parent {
         Some(par) => format!("{par}/{id}"),
         None => id,
@@ -237,12 +240,10 @@ fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>,
         // shortcut: rune can't tell us which way the parent flipped, so a nested submenu opens to the
         // left (it flips right when there's no room). Only the developer tools menu nests, and it sits at the right edge.
         let side = if parent.is_some() { Placement::LeftStart } else { Placement::RightStart };
-        r = r.fill(p.surface_interactive_hover_bg).child(anchor(
-            surface(menu, entries, popups, access, p, Some(&id)),
-            &key,
-            side,
-            8.0,
-        ));
+        r = r.fill(p.surface_interactive_hover_bg);
+        let mut inner = Vec::new();
+        subs.push(anchor(surface(menu, entries, popups, access, p, Some(&id), &mut inner), &key, side, 8.0));
+        subs.extend(inner);
     }
     r
 }
@@ -419,6 +420,41 @@ mod tests {
             root = root.child(e);
         }
         root
+    }
+
+    #[derive(Default)]
+    struct Sub {
+        popups: Popups,
+        picked: bool,
+    }
+
+    fn sub_menu(s: &Sub, _: &mut rune::Cx<Sub>) -> El {
+        let p = crate::theme::palette(crate::theme::Kind::Dark);
+        let item = MenuItem::new("pick", "Pick").on_select(|s: &mut Sub| s.picked = true);
+        Menu::new("m").entry(MenuEntry::Item(MenuItem::new("a", "A"))).entry(MenuEntry::Submenu("q".into(), "Quality".into(), vec![MenuEntry::Item(item)])).el(&s.popups, |s: &mut Sub| &mut s.popups, p, &mut Vec::new());
+        let mut root = col().w_full().h_full();
+        for e in super::super::overlay::take_late() {
+            root = root.child(e);
+        }
+        root
+    }
+
+    #[test]
+    fn a_submenu_item_can_be_pressed() {
+        let mut s = Sub::default();
+        s.popups.open_at("m", [40.0, 40.0]);
+        s.popups.sub = Some("q".into());
+        let mut rt = rune::Runtime::with_text(s, sub_menu, (600.0, 400.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        rt.frame(1.0);
+        let r = rt.elements().into_iter().find(|e| e.label.as_deref() == Some("Pick") || e.text.as_deref() == Some("Pick")).expect("submenu item drawn").rect;
+        let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+        rt.pointer_move(x, y);
+        rt.frame(0.016);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.016);
+        assert!(rt.state.picked, "pressing the submenu item at {r:?} runs it");
     }
 
     #[test]

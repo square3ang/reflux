@@ -880,10 +880,18 @@ fn spawn_capture(stop: Arc<AtomicBool>, ended: Arc<AtomicBool>, slot: Arc<Mutex<
             None => list.into_iter().next(),
         };
         capturer.start_capture(source, callback);
+        // Paced by deadline, so the capture's own time doesn't eat into the frame rate.
+        let mut next = std::time::Instant::now();
         while !stop.load(Ordering::Relaxed) && !failed.load(Ordering::Relaxed) {
             capturer.capture_frame();
             let fps = live.lock().unwrap().0.fps;
-            std::thread::sleep(Duration::from_millis(1000 / fps.clamp(1, 60) as u64));
+            next += Duration::from_secs_f64(1.0 / fps.clamp(1, 120) as f64);
+            let now = std::time::Instant::now();
+            if next > now {
+                std::thread::sleep(next - now);
+            } else {
+                next = now;
+            }
         }
         if !stop.load(Ordering::Relaxed) {
             ended.store(true, Ordering::Relaxed);

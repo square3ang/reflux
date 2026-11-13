@@ -37,6 +37,8 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
+          # The runner image's libunwind-14-dev conflicts with libgstreamer1.0-dev's libunwind-dev.
+          sudo apt-get remove -y libunwind-14-dev || true
           sudo apt-get install -y pkg-config clang libglib2.0-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav libva-dev libdrm-dev libgbm-dev libx11-dev libxfixes-dev \
@@ -73,7 +75,8 @@ jobs:
 
   macos:
     needs: version
-    runs-on: macos-14
+    # Apple silicon.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

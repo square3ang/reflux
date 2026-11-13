@@ -573,7 +573,8 @@ impl Settings {
             "custom" => (self.screen_height, self.screen_fps, custom_hint),
             _ => (Some(1080), 30, ContentHint::Text),
         };
-        let (max_height, fps) = if higher { (max_height, fps.clamp(1, 60)) } else { (Some(max_height.unwrap_or(720).min(720)), fps.clamp(1, 30)) };
+        // `MAX_SCREEN_SHARE_FRAME_RATE_CEILING` (120) with higher video quality, else 30.
+        let (max_height, fps) = if higher { (max_height, fps.clamp(1, 120)) } else { (Some(max_height.unwrap_or(720).min(720)), fps.clamp(1, 30)) };
         let svc = match self.screen_svc.as_str() {
             "single_layer" => Svc::SingleLayer,
             "temporal" => Svc::Temporal,
@@ -623,7 +624,7 @@ pub fn screen_resolutions(higher: bool) -> Vec<(String, String)> {
 /// `SUPPORTED_SCREEN_SHARE_FRAME_RATES` as Fluxer offers them: 15 / 30, and 60 with the
 /// higher-quality feature.
 pub fn screen_frame_rates(higher: bool) -> Vec<(String, String)> {
-    let rates = if higher { &[15, 30, 60][..] } else { &[15, 30][..] };
+    let rates = if higher { &[15, 30, 60, 120][..] } else { &[15, 30][..] };
     rates.iter().map(|f| (f.to_string(), crate::i18n::tf("{frameRate} FPS", &[("frameRate", &f.to_string())]))).collect()
 }
 
@@ -1962,6 +1963,10 @@ mod tests {
         set.screen_fps = 60;
         let q = set.screen_quality(&paid, true);
         assert_eq!((q.max_height, q.fps, q.bitrate), (Some(1440), 60, Some(8_000_000)));
+        set.screen_fps = 120;
+        assert_eq!(set.screen_quality(&paid, true).fps, 120, "120 FPS with higher video quality");
+        assert_eq!(set.screen_quality(&free, false).fps, 30);
+        set.screen_fps = 60;
         // Presets own the values until a resolution/frame rate pick switches to Custom.
         set.streaming_mode = "gaming".into();
         let q = set.screen_quality(&paid, true);
@@ -1978,7 +1983,7 @@ mod tests {
         assert_eq!(screen_resolutions(false).iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(), ["480", "720"]);
         assert_eq!(screen_resolutions(true).len(), 5);
         assert_eq!(screen_frame_rates(false).len(), 2);
-        assert_eq!(screen_frame_rates(true).len(), 3);
+        assert_eq!(screen_frame_rates(true).len(), 4);
         let all = screen_bitrates(16_000_000, None);
         let rates: Vec<&str> = all.iter().map(|(v, _)| v.as_str()).collect();
         assert_eq!(rates, ["auto", "2000000", "4000000", "6000000", "8000000", "10000000", "15000000", "16000000"]);

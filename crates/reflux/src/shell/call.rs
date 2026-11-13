@@ -3652,7 +3652,8 @@ fn stream_quality_entries<S: 'static>(st: &ShellState, acc: ShellAccess<S>) -> (
     let premium = st.premium;
     let quality = st.voice.settings.screen_quality(&st.limits, st.limits.higher_video_quality);
     let mut fps = Vec::new();
-    for value in [15u32, 30, 60] {
+    // `OFFERED_SCREEN_SHARE_FRAME_RATES`.
+    for value in [15u32, 30, 60, 120] {
         let locked = value > 30 && !higher;
         if locked && !premium {
             continue;
