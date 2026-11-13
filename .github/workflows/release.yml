@@ -85,7 +85,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          # webrtc-sys's build script doesn't rerun on CUDA_HOME: a cache built without it keeps NVENC out.
+          key: cuda13
       - run: cargo build --release --locked -p reflux
+      - name: NVENC linked
+        run: strings target/release/reflux | grep -q libcuda.so.1
       - uses: actions/download-artifact@v4
         with:
           name: script-fonts
