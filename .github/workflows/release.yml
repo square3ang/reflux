@@ -71,6 +71,10 @@ jobs:
           echo "CC=clang-21" >> "$GITHUB_ENV"
           echo "CXX=clang++-21" >> "$GITHUB_ENV"
           echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
+          # webrtc-sys builds NVENC only if $CUDA_HOME/include/cuda.h exists (libcuda is dlopened).
+          pip install -q --target /tmp/cuda nvidia-cuda-runtime==13.0.96
+          test -f /tmp/cuda/nvidia/cu13/include/cuda.h
+          echo "CUDA_HOME=/tmp/cuda/nvidia/cu13" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
