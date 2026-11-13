@@ -1,16 +1,25 @@
-# A `v*` tag builds the Linux AppImage, the Windows setup and the macOS disk image and publishes
-# them as a GitHub release, the feed `desktop::updater` reads (GitHub adds each asset's SHA-256).
+# Builds the Linux AppImage, the Windows setup and the macOS disk image. A `v*` tag also
+# publishes them as a GitHub release, the feed `desktop::updater` reads (GitHub adds each asset's
+# SHA-256). Pushes to master build too, so the dependency caches are warm when a tag comes (a tag
+# run reads the default branch's caches): a release then compiles little more than reflux itself.
 name: release
 
 on:
   push:
+    branches: [master]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
   REFLUX_UPDATE_FEED: https://api.github.com/repos/${{ github.repository }}/releases/latest
 
 jobs:
@@ -23,7 +32,9 @@ jobs:
       - id: v
         run: |
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME doesn't match Cargo.toml $v"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME doesn't match Cargo.toml $v"; exit 1
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   linux:
@@ -33,22 +44,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Packages
         run: |
           sudo apt-get update
           # The runner image's libunwind-14-dev conflicts with libgstreamer1.0-dev's libunwind-dev.
           sudo apt-get remove -y libunwind-14-dev || true
-          sudo apt-get install -y pkg-config clang libglib2.0-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev \
+          sudo apt-get install -y pkg-config libglib2.0-dev libudev-dev libdbus-1-dev libasound2-dev libpulse-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav libva-dev libdrm-dev libgbm-dev libx11-dev libxfixes-dev \
-            libxdamage-dev libxrandr-dev libxcomposite-dev libxext-dev libwayland-dev libxkbcommon-dev file desktop-file-utils
+            libxdamage-dev libxrandr-dev libxcomposite-dev libxext-dev libwayland-dev libxkbcommon-dev file desktop-file-utils mold
+          # libwebrtc's hermetic libc++ needs clang 21+; 22.04 ships 14.
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 21
+          echo "CC=clang-21" >> "$GITHUB_ENV"
+          echo "CXX=clang++-21" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo build --release --locked -p reflux
       - run: sh packaging/linux/appimage.sh ${{ needs.version.outputs.version }}
       - uses: actions/upload-artifact@v4
         with:
           name: linux
           path: Reflux-*.AppImage
+          retention-days: 3
 
   windows:
     needs: version
@@ -57,6 +76,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo build --release --locked -p reflux
       - name: Setup
         shell: bash
@@ -72,6 +93,7 @@ jobs:
         with:
           name: windows
           path: Reflux-*-setup.exe
+          retention-days: 3
 
   macos:
     needs: version
@@ -81,14 +103,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo build --release --locked -p reflux
       - run: sh packaging/macos/bundle.sh ${{ needs.version.outputs.version }} Reflux-${{ needs.version.outputs.version }}-aarch64.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: macos
           path: Reflux-*.dmg
+          retention-days: 3
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [version, linux, windows, macos]
     runs-on: ubuntu-latest
     steps:

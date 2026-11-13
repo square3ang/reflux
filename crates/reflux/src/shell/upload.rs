@@ -314,7 +314,7 @@ pub fn tray<S: 'static>(st: &ShellState, pane: bool, p: &Palette, acc: ShellAcce
     let cards = list.iter().map(|u| card(st, u, p, acc));
     let strip = row().gap(24.0).pt(20.0).px(10.0).pb(10.0).children(cards);
     // The bar hangs above each card's top edge; the strip's top padding leaves it room.
-    Some(row().w_full().ml(6.0).mb(2.0).scroll_x().child(strip))
+    Some(row().ml(6.0).mb(2.0).scroll_x().child(strip))
 }
 
 fn card<S: 'static>(st: &ShellState, u: &Upload, p: &Palette, acc: ShellAccess<S>) -> El {
@@ -495,6 +495,29 @@ mod tests {
         assert_eq!(resolve(&cfg, &[], &[]).guild_emojis, 500);
         assert_eq!(resolve(&cfg, &[], &["MORE_EMOJI".into()]).guild_emojis, 1000, "a community's features raise its slots");
         assert_eq!(resolve(&cfg, &[], &["more_emoji".into()]).guild_emojis, 500, "features match exactly");
+    }
+
+    #[test]
+    fn a_short_window_clips_the_tray_not_the_input() {
+        // The composer's nesting: `out` > `boxed` > reply bar, `collapsible(tray)`, input row.
+        fn view(st: &ShellState, _: &mut rune::Cx<ShellState>) -> El {
+            let p = crate::theme::palette(crate::theme::Kind::Dark);
+            let tray = tray(st, false, p, |s: &mut ShellState| s).unwrap();
+            let boxed = col().w_full().shrink().min_h(0.0).label("box").child(row().w_full().h(40.0)).child(super::super::chat::collapsible(tray.label("strip")).label("tray")).child(row().w_full().h(44.0).label("input"));
+            let out = col().w_full().shrink().min_h(0.0).px(16.0).child(boxed);
+            col().w_full().h_full().child(col().w_full().grow(1.0).min_h(0.0).child(el().h(900.0))).child(out)
+        }
+        let mut st = ShellState::default();
+        add(&mut st, (0..6).map(|i| (format!("{i}.wav"), 5, Source::Bytes(Arc::new(vec![])))).collect());
+        let mut rt = rune::Runtime::with_text(st, view, (800.0, 200.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        let els = rt.elements();
+        let rect = |l: &str| els.iter().find(|e| e.label.as_deref() == Some(l)).unwrap_or_else(|| panic!("{l}")).rect;
+        let (input, tray, boxed) = (rect("input"), rect("tray"), rect("box"));
+        assert!(input[1] + input[3] <= 200.0, "the input stays in the window: {input:?}");
+        assert!(tray[1] + tray[3] <= input[1] && tray[3] < 230.0, "the tray gives way: {tray:?}");
+        let strip = rect("strip");
+        assert!(strip[0] + strip[2] <= boxed[0] + boxed[2] && tray[0] + tray[2] <= boxed[0] + boxed[2], "the tray scrolls inside the box: {strip:?} {boxed:?}");
     }
 
     #[test]

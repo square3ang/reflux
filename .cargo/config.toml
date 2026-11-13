@@ -4,3 +4,7 @@
 # CUDA include root, e.g. `ln -s /usr/local/cuda .cuda` or pip's `.../site-packages/nvidia/cu13`.
 # Without it, the build just warns and skips NVENC. A CUDA_HOME set in the environment wins.
 CUDA_HOME = { value = ".cuda", relative = true, force = false }
+
+# libwebrtc is built with the static CRT (/MT); everything linked with it must match.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

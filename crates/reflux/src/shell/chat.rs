@@ -1796,8 +1796,11 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         }));
     // `wrapperStyles.disabled` (opacity 0.6, not-allowed) on both the outer box and the input row.
     let input_row = if send_ok { input_row } else { input_row.opacity(0.6).cursor(rune::Cursor::NotAllowed) };
+    // `.textareaOuter` (flex 0 1 auto): when the column runs short, the box gives way.
     let mut boxed = col()
         .w_full()
+        .shrink()
+        .min_h(0.0)
         .radius(dim::FOOTER_BOX_RADIUS)
         .fill(p.background_textarea)
         .box_shadow(Shadow { x: 0.0, y: 0.0, blur: 0.0, spread: 1.0, color: if draft.focused && crate::look::with(|l| l.focus_ring) { p.floating_surface_ring_color_strong } else { p.floating_surface_ring_color }, inset: true });
@@ -1807,10 +1810,10 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         boxed = boxed.child(reply_bar(store, target, r, p, acc).key("reply-bar"));
     }
     if let Some(tray) = super::upload::tray(st, slot == Slot::Pane, p, acc).filter(|_| slot != Slot::Create) {
-        boxed = boxed.child(tray.key("tray"));
+        boxed = boxed.child(collapsible(tray).key("tray"));
     }
     if let Some(sticker) = super::expr::pending_sticker(store, st, cid, p, acc).filter(|_| slot == Slot::Main) {
-        boxed = boxed.child(sticker.key("pending-sticker"));
+        boxed = boxed.child(collapsible(sticker).key("pending-sticker"));
     }
     boxed = boxed.child(input_row.key("input-row"));
     if !send_ok {
@@ -1828,7 +1831,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
                 .pin(None, None, Some(12.0), Some(4.0)),
         );
     }
-    let mut out = col().w_full().px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
+    let mut out = col().w_full().shrink().min_h(0.0).px(dim::FOOTER_BOX_INSET).pb(dim::COMPOSER_BOX_INSET).fill(p.composer_surface_color);
     // The autocomplete list hangs above the box, as wide as it.
     if let Some((t, items)) = &ac {
         let list = autocomplete::view(store, st, t, items, p, acc, slot).pin(Some(0.0), None, Some(0.0), Some(8.0));
@@ -1962,6 +1965,11 @@ fn composer_key(st: &mut ShellState, channel: Snowflake, k: &rune::KeyEvent, las
 
 /// `ChannelReplyBar`: "Replying to **name**", the @ ON/OFF mention toggle and a close button, in
 /// the composer's action stack (`.composerActionStack`).
+/// `.collapsibleSection`: the tray and sticker rows shrink and clip before the input row does.
+pub(super) fn collapsible(section: El) -> El {
+    col().w_full().shrink().min_h(0.0).clip_rounded(0.0).child(section)
+}
+
 fn reply_bar<S: 'static>(store: &Store, target: &Message, r: ReplyTo, p: &Palette, acc: ShellAccess<S>) -> El {
     let name = author_name(store, target);
     let (line, b) = crate::i18n::tf_marked("Replying to <0>{authorNickname}</0>", &[("authorNickname", &name)]);
