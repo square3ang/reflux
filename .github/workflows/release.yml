@@ -36,6 +36,19 @@ jobs:
             echo "tag $GITHUB_REF_NAME doesn't match Cargo.toml $v"; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+      # The CJK/Arabic/Hebrew/Devanagari/Thai faces are gitignored; build them from Fluxer's.
+      - name: Script fonts
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/fluxerapp/fluxer /tmp/fluxer
+          git -C /tmp/fluxer sparse-checkout set packages/fonts/files
+          pip install -q fonttools brotli
+          mkdir -p script-fonts
+          python3 scripts/fonts-extract.py /tmp/fluxer/packages/fonts/files script-fonts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: script-fonts
+          path: script-fonts
+          retention-days: 3
 
   linux:
     needs: version
@@ -62,6 +75,10 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo build --release --locked -p reflux
+      - uses: actions/download-artifact@v4
+        with:
+          name: script-fonts
+          path: assets/fonts
       - run: sh packaging/linux/appimage.sh ${{ needs.version.outputs.version }}
       - uses: actions/upload-artifact@v4
         with:
@@ -79,6 +96,10 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo build --release --locked -p reflux
+      - uses: actions/download-artifact@v4
+        with:
+          name: script-fonts
+          path: assets/fonts
       - name: Setup
         shell: bash
         run: |
@@ -106,6 +127,10 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo build --release --locked -p reflux
+      - uses: actions/download-artifact@v4
+        with:
+          name: script-fonts
+          path: assets/fonts
       - run: sh packaging/macos/bundle.sh ${{ needs.version.outputs.version }} Reflux-${{ needs.version.outputs.version }}-aarch64.dmg
       - uses: actions/upload-artifact@v4
         with:

@@ -18,4 +18,8 @@ cp assets/media/images/app-icon.png "$tools/reflux.png"
 export PATH="$tools:$PATH" APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT="$PWD/Reflux-$version-$arch.AppImage"
 export GSTREAMER_PLUGINS_DIR="${GSTREAMER_PLUGINS_DIR:-$(pkg-config --variable=pluginsdir gstreamer-1.0)}"
 export GSTREAMER_HELPERS_DIR="${GSTREAMER_HELPERS_DIR:-$(pkg-config --variable=pluginscannerdir gstreamer-1.0)}"
-linuxdeploy --appdir "$app" --executable target/release/reflux --desktop-file packaging/reflux.desktop --icon-file "$tools/reflux.png" --plugin gstreamer --output appimage
+linuxdeploy --appdir "$app" --executable target/release/reflux --desktop-file packaging/reflux.desktop --icon-file "$tools/reflux.png" --plugin gstreamer
+# The plugin's hook ends in `[ -n "$GST_PTP_HELPER" ] && export ...`, which fails without that
+# helper, and AppRun sources hooks under `set -e`: the AppImage exited 1 before starting.
+echo true >> "$app/apprun-hooks/linuxdeploy-plugin-gstreamer.sh"
+linuxdeploy --appdir "$app" --output appimage
