@@ -23,6 +23,8 @@ pub mod tts;
 mod tray;
 pub mod updater;
 pub mod window;
+#[cfg(target_os = "linux")]
+mod wl_drop;
 
 use std::collections::{HashSet, VecDeque};
 
@@ -320,7 +322,9 @@ pub fn start(ui: &rune::AppHandle<State>) {
             ui.update(move |s, _| open_link(s, &l));
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    wl_drop::set_app(ui.clone());
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = ui;
 }
 

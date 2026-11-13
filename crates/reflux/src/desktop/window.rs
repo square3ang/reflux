@@ -36,6 +36,8 @@ pub fn on_window(w: &rune::WindowHandle) {
     OWN.store(id.unwrap_or(0), Ordering::Relaxed);
     MAIN.set(Some(w.clone()));
     super::badge::on_window(w);
+    #[cfg(target_os = "linux")]
+    super::wl_drop::on_window(w);
 }
 
 thread_local! {

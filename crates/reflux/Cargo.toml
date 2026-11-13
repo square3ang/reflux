@@ -51,8 +51,10 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 ashpd = { version = "0.14", default-features = false, features = ["async-io", "global_shortcuts", "background"] }
 # Unity LauncherEntry (dock badge / urgency); notify-rust already pulls zbus 5.
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
-# System idle time on Wayland (ext-idle-notify-v1); both already come with Rune.
-wayland-client = "0.31"
+# System idle time on Wayland (ext-idle-notify-v1), and file drops on winit's own connection
+# (`system`, which winit turns on anyway); both already come with Rune, as does libc.
+wayland-client = { version = "0.31", features = ["system"] }
+libc = "0.2"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 # X11 global shortcuts: the RECORD extension (x11rb is already in the tree through Rune).
 x11rb = { version = "0.13", features = ["record"] }

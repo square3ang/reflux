@@ -54,6 +54,7 @@ Rules:
 | Wayland: no in-app screen-share thumbnails; the Applications / Entire screen tabs steer the portal dialog | the portal can't enumerate sources | `shell/call.rs`, `reflux-voice` `ScreenSource::portal` | — |
 | The picker's source list refreshes every 2 s (Fluxer: 1 s), re-capturing every thumbnail | libwebrtc's capturer has no incremental thumbnail update | `app/voice.rs` `tick`, `Op::LoadScreenSources` | the SDK exposes a thumbnail stream |
 | Screen-share Devices tab lists capture devices by name, with no live preview | a preview needs camera permission and a second capture per device | `shell/call.rs` | device previews through the camera capture |
+| Wayland file drops come from our own `wl_data_device` on winit's connection, and land in the open channel wherever they're dropped (needs libwayland 1.23+) | winit 0.30 reports no Wayland drags, so Rune's `on_drop_files` never fires there | `desktop/wl_drop.rs`, `shell/chat.rs` (`drop_files`) | winit/Rune report Wayland drops |
 | Wayland ignores always-on-top for PiP pop-outs | winit can't request it | `popout.rs` | compositor protocol support |
 | Theme folders are rescanned every 2 s | same as Fluxer's polling fallback; no cross-platform file watcher used | `settings/theme_folder.rs` | add a notify-based watcher |
 | TTS through the platform's CLI voice (`spd-say`, `say`, PowerShell) | no speech API in Rune | `desktop/tts.rs` | — |
@@ -162,8 +163,8 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/compose.rs:323` Rune exposes the caret's rect, not the selection's, so the bar centres over the
 - `crates/reflux/src/compose.rs:360` Undo and Redo are always enabled (Rune doesn't expose the history depth).
 - `crates/reflux/src/desktop/hooks.rs:4` keyboard only; Fluxer's hooks also see mouse buttons, which our push-to-talk
-- `crates/reflux/src/desktop/mod.rs:302` macOS keeps our socket; drop it once a bundle (`CFBundleURLTypes`) hands links to `on_open_url`.
-- `crates/reflux/src/desktop/mod.rs:620` a deadline (`_exit`, skipping the atexit handlers and C++ destructors that hung), not
+- `crates/reflux/src/desktop/mod.rs:304` macOS keeps our socket; drop it once a bundle (`CFBundleURLTypes`) hands links to `on_open_url`.
+- `crates/reflux/src/desktop/mod.rs:624` a deadline (`_exit`, skipping the atexit handlers and C++ destructors that hung), not
 - `crates/reflux/src/desktop/notices.rs:7` no price-announcement / legacy-price nagbars (they need Stripe's billing state).
 - `crates/reflux/src/desktop/shortcuts.rs:394` KDE only (Fluxer leaves the keys to the desktop); other desktops keep theirs
 - `crates/reflux/src/desktop/spell.rs:8` no OS spellchecker engine.
@@ -173,8 +174,9 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/desktop/updater.rs:12` Reflux has no release feed yet, so without `REFLUX_UPDATE_FEED` the updater stays
 - `crates/reflux/src/desktop/window.rs:4` only the size is remembered. Rune reports no window position or maximized state
 - `crates/reflux/src/desktop/window.rs:6` no minimize-to-tray; Rune sends no minimize event to hide on.
-- `crates/reflux/src/desktop/window.rs:49` Wayland reports no placement, so leaving full screen from the window manager isn't
-- `crates/reflux/src/desktop/window.rs:92` the caption buttons are Rune's (46pt, Windows' own glyphs) rather than Fluxer's
+- `crates/reflux/src/desktop/window.rs:51` Wayland reports no placement, so leaving full screen from the window manager isn't
+- `crates/reflux/src/desktop/window.rs:94` the caption buttons are Rune's (46pt, Windows' own glyphs) rather than Fluxer's
+- `crates/reflux/src/desktop/wl_drop.rs:4` a drop anywhere on the window goes to the open channel (Fluxer's target is the chat
 - `crates/reflux/src/file_picker.rs:4` macOS and Windows (and desktops without the portal) pick one file per dialog; the
 - `crates/reflux/src/gst.rs:386` Fluxer's virtmic links new streams as PipeWire announces them; this rescans
 - `crates/reflux/src/i18n.rs:5` UI literals go through `t` where they're drawn (option tables via `RadioGroup`, `Select`,
@@ -232,15 +234,15 @@ The staff/developer-mode header menu (`DeveloperToolsContextMenu`) is ported. Ov
 - `crates/reflux/src/shell/status.rs:144` the per-status expiry submenus ("For 15 minutes" …) aren't offered; a status set
 - `crates/reflux/src/shell/switcher_extra.rs:102` Reflux keeps no other account connected, so there are no unread/mention sections or
 - `crates/reflux/src/shell/upload.rs:241` no "Send gift" (needs the instance's premium pricing state; gifts are bought in the
-- `crates/reflux/src/shell/voice.rs:1201` Rune's press has no pointer position, so a click anchors the menu to the
-- `crates/reflux/src/shell/voice.rs:1746` it opens below the button (Reflux's stream controls sit in the header, Fluxer's in
+- `crates/reflux/src/shell/voice.rs:1207` Rune's press has no pointer position, so a click anchors the menu to the
+- `crates/reflux/src/shell/voice.rs:1752` it opens below the button (Reflux's stream controls sit in the header, Fluxer's in
 - `crates/reflux/src/shell/voice_list.rs:87` no accent folding or ICU punctuation order, upgrade if names with accents sort wrong.
 - `crates/reflux/src/shell/voice_list.rs:136` LiveKit speakers are tracked per user, so all of a user's connections speak; upgrade when speaking is per connection.
 - `crates/reflux/src/shell/voice_list.rs:589` the shell doesn't know this client's connection ID, our latest voice state's stands in; upgrade when `ShellState` mirrors it.
 crates/reflux/src/theme/mod.rs:100:/// shortcut: the rest of `--font-fallback-sans` and `system-ui` are left to Rune's own fallbacks.
 - `crates/reflux/src/ui/controls.rs:313` it shows while the whole control is hovered (Rune's hover group), which also
 - `crates/reflux/src/ui/mark.rs:4` Rune keeps the element tree private, so text is marked where it's built: the shared
-- `crates/reflux/src/ui/menu.rs:230` rune can't tell us which way the parent flipped, so a nested submenu opens to the
+- `crates/reflux/src/ui/menu.rs:237` rune can't tell us which way the parent flipped, so a nested submenu opens to the
 - `crates/reflux/src/ui/misc.rs:67` the keyframes also scale each dot to .8; Rune's loop here is opacity only.
 - `crates/reflux/src/ui/misc.rs:77` rune-kit's track sits 2pt in from the ends and the thumb 2pt from the edge; Fluxer's
 - `scripts/fast-build.sh:5` a second, hand-maintained no-WebRTC implementation of reflux-voice's API; delete it

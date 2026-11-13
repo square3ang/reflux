@@ -5326,6 +5326,7 @@ dependencies = [
  "image",
  "jiff",
  "keyring",
+ "libc",
  "memmap2 0.9.12",
  "notify-rust",
  "objc2 0.6.5",

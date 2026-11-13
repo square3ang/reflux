@@ -413,7 +413,7 @@ mod tests {
         for i in 0..30 {
             m = m.entry(MenuEntry::Item(MenuItem::new(format!("i{i}"), "Item")));
         }
-        m.el(s, |s: &mut Popups| s, &p, &mut Vec::new());
+        m.el(s, |s: &mut Popups| s, p, &mut Vec::new());
         let mut root = col().w_full().h_full();
         for e in super::super::overlay::take_late() {
             root = root.child(e);

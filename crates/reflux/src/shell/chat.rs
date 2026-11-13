@@ -67,19 +67,7 @@ pub fn main<S: 'static>(store: &Store, st: &ShellState, channel: Option<&Channel
         // Files dragged in from other apps join the tray (`UploadManager.onDrop`).
         .on_drop_files({
             let (send, attach) = (super::gating::can_send(store, st, c), super::gating::can_attach(store, st, c));
-            move |s: &mut S, files, _| {
-                let st = acc(s);
-                st.drop_hover = false;
-                if !send {
-                    return;
-                }
-                if !attach {
-                    let images = !files.is_empty() && files.iter().all(|f| super::upload::content_type(&f.to_string_lossy()).starts_with("image/"));
-                    super::gating::deny_attach(st, images, send);
-                } else {
-                    super::upload::add_paths(st, files);
-                }
-            }
+            move |s: &mut S, files, _| drop_files(acc(s), send, attach, files)
         })
         .on_drop_hover(move |s: &mut S, over, _| acc(s).drop_hover = over);
     if st.drop_hover {
@@ -1584,6 +1572,20 @@ pub(super) enum Slot {
     Main,
     Pane,
     Create,
+}
+
+/// Files dropped on the chat (`UploadManager.onDrop`): into the tray, or why they can't be.
+pub fn drop_files(st: &mut ShellState, send: bool, attach: bool, files: &[std::path::PathBuf]) {
+    st.drop_hover = false;
+    if !send {
+        return;
+    }
+    if !attach {
+        let images = !files.is_empty() && files.iter().all(|f| super::upload::content_type(&f.to_string_lossy()).starts_with("image/"));
+        super::gating::deny_attach(st, images, send);
+    } else {
+        super::upload::add_paths(st, files);
+    }
 }
 
 /// Runs a composer handler on the slot's draft: the panel's composer and tray are swapped into

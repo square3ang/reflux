@@ -65,7 +65,7 @@ pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
     let tray = switch(st, p, acc, t(if mac { "Show menu bar icon" } else { "Show system tray icon" }), None, |p| p.tray, |p, v| p.tray = v);
     let close = switch_if(st, p, acc, t(if mac { "Close to menu bar" } else { "Close to tray" }), None, !pr.tray, |p| p.close_to_tray, |p, v| p.close_to_tray = v);
     let window = col().w_full().gap(16.0).child(login).child(minimized).child(remember).child(tray).child(close);
-    let mut global = switch(
+    let switch_row = switch(
         st,
         p,
         acc,
@@ -74,6 +74,8 @@ pub fn desktop<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) ->
         |p| p.global_shortcuts,
         |p, v| p.global_shortcuts = v,
     );
+    // The switch is a label | toggle row; the button goes under it, not into it.
+    let mut global = col().w_full().child(switch_row);
     // Wayland's portal: the desktop owns the keys, so it also owns the dialog that sets them
     // (`GlobalShortcutsPortal.configure`). Without assigned keys the shortcuts never fire.
     if crate::desktop::shortcuts::portal() {
