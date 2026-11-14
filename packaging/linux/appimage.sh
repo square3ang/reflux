@@ -22,4 +22,11 @@ linuxdeploy --appdir "$app" --executable target/release/reflux --desktop-file pa
 # The plugin's hook ends in `[ -n "$GST_PTP_HELPER" ] && export ...`, which fails without that
 # helper, and AppRun sources hooks under `set -e`: the AppImage exited 1 before starting.
 echo true >> "$app/apprun-hooks/linuxdeploy-plugin-gstreamer.sh"
+# The mount path changes every launch, so GStreamer rescans the bundled plugins each time: do it
+# in-process (no gst-plugin-scanner is bundled; each plugin's failed fork cost ~2 s overall), into
+# a registry of our own rather than invalidating the system one.
+cat >> "$app/apprun-hooks/linuxdeploy-plugin-gstreamer.sh" <<'EOF'
+export GST_REGISTRY_FORK=no
+export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/reflux/gstreamer-registry.bin"
+EOF
 linuxdeploy --appdir "$app" --output appimage
