@@ -123,9 +123,8 @@ fn main() {
     }
     if !rune::is_headless() {
         crash::install();
-        // GStreamer's first init can rescan every plugin (seconds; every launch in the AppImage,
-        // whose mount path changes), and the voice panel's camera check would wait on it.
-        std::thread::spawn(gst::available);
+        // Starts GStreamer's init in the background, ready by the time a view asks.
+        gst::available();
     }
     // The remembered size, and a launch at login with "Start minimized" stays in the tray.
     let prefs = if rune::is_headless() { desktop::Prefs::default() } else { session::load().desktop };

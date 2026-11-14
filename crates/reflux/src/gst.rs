@@ -90,13 +90,23 @@ mod imp {
     use gstreamer_app as gst_app;
     use gstreamer_video as gst_video;
 
+    static OK: OnceLock<bool> = OnceLock::new();
+
     fn init() -> bool {
-        static OK: OnceLock<bool> = OnceLock::new();
         *OK.get_or_init(|| gst::init().map_err(|e| eprintln!("reflux: gstreamer: {e}")).is_ok())
     }
 
+    /// Without blocking (views ask while rendering): false until a background init succeeds.
+    /// The first init can rescan every plugin for seconds (every launch in the AppImage).
     pub fn available() -> bool {
-        init()
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        if let Some(ok) = OK.get() {
+            return *ok;
+        }
+        STARTED.call_once(|| {
+            std::thread::spawn(init);
+        });
+        false
     }
 
     /// An RGBA appsink that hands every frame to `sink`.

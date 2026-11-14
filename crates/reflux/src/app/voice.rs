@@ -1505,6 +1505,7 @@ fn toggle_screen(s: &mut State) {
     // `hasHigherVideoQuality`: P2P calls get it for free.
     let higher = s.app.shell.limits.higher_video_quality || s.app.voice.call.as_ref().is_some_and(|c| c.mesh().is_some());
     let quality = s.app.shell.voice.settings.screen_quality(&s.app.shell.limits, higher);
+    // shortcut: on Linux this is false until GStreamer's background init ends (seconds after launch), so a share started sooner goes without app audio; block on init here if that bites.
     let app_audio = s.app.shell.voice.settings.stream_audio.clone().filter(|_| crate::audio_share::available());
     let codec = codec_label(&quality);
     // `Devices` in the picker: a camera / capture device published as the screen share.
