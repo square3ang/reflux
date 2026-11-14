@@ -359,33 +359,15 @@ mod imp {
         Some(())
     }
 
-    /// A `pipewiresrc` for one app's `object.serial`: GStreamer 1.22+ takes it as
-    /// `target-object`; 1.20 (the AppImage's) only has `path`, which takes the node id.
+    /// A `pipewiresrc` for one app's `object.serial` (`target-object`, GStreamer 1.22+).
     fn pipewiresrc(serial: &str) -> Option<gst::Element> {
         let el = gst::ElementFactory::make("pipewiresrc").build().ok()?;
-        if el.find_property("target-object").is_some() {
-            el.set_property("target-object", serial);
-        } else {
-            el.set_property("path", node_id(serial)?.to_string());
-        }
-        Some(el)
-    }
-
-    /// `object.serial` → the PipeWire node id (for GStreamer 1.20's `path`).
-    fn node_id(serial: &str) -> Option<u64> {
-        let out = std::process::Command::new("pw-dump").output().ok()?;
-        if !out.status.success() {
+        if el.find_property("target-object").is_none() {
+            eprintln!("reflux: stream audio: this GStreamer's pipewiresrc has no target-object (needs 1.22+)");
             return None;
         }
-        let objects: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-        objects.as_array()?.iter().find_map(|o| {
-            let ser = match &o["info"]["props"]["object.serial"] {
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::String(s) => s.clone(),
-                _ => return None,
-            };
-            (ser == serial).then(|| o["id"].as_u64()).flatten()
-        })
+        el.set_property("target-object", serial);
+        Some(el)
     }
 
     impl AudioCapture {
