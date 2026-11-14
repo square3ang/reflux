@@ -583,6 +583,10 @@ fn sync_tray(s: &mut State, dot: bool) {
         _ => {
             s.desktop.tray = None; // drop the old item first
             s.desktop.tray = tray::create(&look, on_tray);
+            // Hidden to a tray that's now gone (a failed rebuild): nothing could bring it back.
+            if s.desktop.tray.is_none() && !look.visible {
+                app::show_window();
+            }
         }
     }
 }
@@ -624,8 +628,10 @@ fn on_tray(e: TrayEvent) {
 // shortcut: a deadline (`_exit`, skipping the atexit handlers and C++ destructors that hung), not
 // a fix of whichever call teardown hangs; Rune logs where the quit was stuck.
 pub fn on_quit(s: &mut State, _: &mut rune::Tx) {
-    app::stop_for_crash(s);
+    // Before the hang-up: a call teardown that blocks would otherwise leave a windowless,
+    // trayless process running.
     rune::exit_deadline(std::time::Duration::from_secs(3));
+    app::stop_for_crash(s);
 }
 
 /// `App::on_close`: hide to the tray when it shows and close-to-tray is on, else quit.

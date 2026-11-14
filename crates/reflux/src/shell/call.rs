@@ -2651,7 +2651,9 @@ fn pip_corner(x: f32, y: f32, w: f32, h: f32, pw: f32, ph: f32) -> u8 {
 // shows for community calls only.
 pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let (Some((Some(guild), ch)), Some(user)) = (st.voice.channel, st.voice.watching) else { return };
-    if !st.voice.connected || st.channel == Some(ch) || st.voice.call_view || st.voice.stream_fullscreen || crate::look::with(|l| l.disable_screen_pip) {
+    // `pickLiveKitScreenShare`: only a live share shows; the streamer stopping hides it.
+    let ended = st.voice.watch_state == super::voice::WatchState::Ended;
+    if ended || !st.voice.connected || st.channel == Some(ch) || st.voice.call_view || st.voice.stream_fullscreen || crate::look::with(|l| l.disable_screen_pip) {
         return;
     }
     let channel = store.channels.get(&ch).map(|c| c.name.clone().unwrap_or_default()).unwrap_or_default();
@@ -3815,6 +3817,24 @@ mod tests {
         st.voice.focus = None;
         st.call.pin(None);
         assert_eq!(focus_of(&store, &st, &people, false).1, Some(None), "unpinning leaves no one focused");
+    }
+
+    /// The PiP shows the watched stream from elsewhere, and goes when the streamer stops.
+    #[test]
+    fn the_pip_goes_when_the_stream_ends() {
+        let mut st = ShellState::default();
+        st.voice.channel = Some((Some(Snowflake(1)), Snowflake(2)));
+        st.voice.connected = true;
+        st.voice.watching = Some(Snowflake(3));
+        st.voice.watch_state = super::super::voice::WatchState::Live;
+        let shown = |st: &ShellState| {
+            let mut layer = Vec::new();
+            pip(&Store::default(), st, crate::theme::palette(crate::theme::Kind::Dark), (|s: &mut ShellState| s) as ShellAccess<ShellState>, &mut layer);
+            !layer.is_empty()
+        };
+        assert!(shown(&st));
+        st.voice.watch_state = super::super::voice::WatchState::Ended;
+        assert!(!shown(&st));
     }
 
     #[test]
