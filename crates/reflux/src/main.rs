@@ -137,6 +137,8 @@ fn main() {
                 crash::poll(s);
                 return false;
             }
+            #[cfg(target_os = "linux")]
+            desktop::wl_drop::pump();
             crash::guard(|| match &mut s.shell_demo {
                 Some(d) => {
                     let older = d.serve_older(tx);

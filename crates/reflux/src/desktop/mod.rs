@@ -24,7 +24,7 @@ mod tray;
 pub mod updater;
 pub mod window;
 #[cfg(target_os = "linux")]
-mod wl_drop;
+pub(crate) mod wl_drop;
 
 use std::collections::{HashSet, VecDeque};
 

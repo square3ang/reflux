@@ -26,29 +26,54 @@ pub fn set_app(ui: rune::AppHandle<State>) {
     *APP.lock().unwrap_or_else(|e| e.into_inner()) = Some(ui);
 }
 
-/// `App::on_window`: on Wayland, starts listening for drops on the window's connection (once).
+/// winit's `wl_display`, from the window's surface.
+static DISPLAY: Mutex<Option<usize>> = Mutex::new(None);
+
+/// Our data device's objects. Kept forever: the `Connection` wraps winit's display, and dropping
+/// it tears that down under winit's feet (it crashed in `wl_proxy_destroy`).
+static WL: Mutex<Option<Wl>> = Mutex::new(None);
+
+struct Wl {
+    conn: Connection,
+    queue: wayland_client::EventQueue<Drops>,
+    drops: Drops,
+}
+
+/// `App::on_window`: notes the display; [`pump`] makes the objects.
 pub fn on_window(w: &rune::WindowHandle) {
     use rune::raw_window_handle::RawWindowHandle;
-    static STARTED: std::sync::Once = std::sync::Once::new();
     let Ok(Some(surface)) = w.with_raw_handle(|h| match h.as_raw() {
         RawWindowHandle::Wayland(h) => Some(h.surface.as_ptr() as usize),
         _ => None,
     }) else {
         return;
     };
-    let Some(ui) = APP.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
-    STARTED.call_once(|| {
-        let Some(display) = display_of(surface as *mut libc::c_void) else {
-            eprintln!("reflux: file drops: libwayland has no wl_proxy_get_display (needs 1.23)");
-            return;
-        };
-        let display = display as usize;
-        let _ = std::thread::Builder::new().name("reflux-wl-drop".into()).spawn(move || {
-            if let Err(e) = run(display as *mut libc::c_void, ui) {
+    match display_of(surface as *mut libc::c_void) {
+        Some(d) => *DISPLAY.lock().unwrap_or_else(|e| e.into_inner()) = Some(d as usize),
+        None => eprintln!("reflux: file drops: libwayland has no wl_proxy_get_display (needs 1.23)"),
+    }
+}
+
+/// Delivers what the compositor sent for our data device, from the frame's poll on winit's own
+/// thread: a second thread reading the same socket raced winit's reads and crashed.
+pub fn pump() {
+    let Some(display) = *DISPLAY.lock().unwrap_or_else(|e| e.into_inner()) else { return };
+    let mut wl = WL.lock().unwrap_or_else(|e| e.into_inner());
+    if wl.is_none() {
+        let Some(ui) = APP.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
+        match start(display as *mut libc::c_void, ui) {
+            Ok(w) => *wl = Some(w),
+            Err(e) => {
                 eprintln!("reflux: file drops: {e}");
+                return;
             }
-        });
-    });
+        }
+    }
+    let Some(w) = wl.as_mut() else { return };
+    if let Err(e) = w.queue.dispatch_pending(&mut w.drops) {
+        eprintln!("reflux: file drops: {e}");
+    }
+    let _ = w.conn.flush();
 }
 
 /// The `wl_display` a proxy of winit's belongs to, through the already loaded libwayland.
@@ -70,19 +95,17 @@ fn display_of(proxy: *mut libc::c_void) -> Option<*mut libc::c_void> {
     }
 }
 
-fn run(display: *mut libc::c_void, ui: rune::AppHandle<State>) -> Result<(), String> {
-    // SAFETY: winit's display lives as long as the app; our objects go on a queue of their own,
-    // which libwayland lets this thread read alongside winit's.
+fn start(display: *mut libc::c_void, ui: rune::AppHandle<State>) -> Result<Wl, String> {
+    // SAFETY: winit owns the display for the life of the app; our objects go on a queue of our
+    // own, and libwayland queues other queues' events rather than dropping them.
     let conn = Connection::from_backend(unsafe { Backend::from_foreign_display(display.cast()) });
-    let (globals, mut queue) = registry_queue_init::<Drops>(&conn).map_err(|e| e.to_string())?;
+    let (globals, queue) = registry_queue_init::<Drops>(&conn).map_err(|e| e.to_string())?;
     let qh = queue.handle();
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=1, ()).map_err(|e| e.to_string())?;
     let m: manager::WlDataDeviceManager = globals.bind(&qh, 1..=3, ()).map_err(|e| e.to_string())?;
     m.get_data_device(&seat, &qh, ());
-    let mut d = Drops { ui, conn: conn.clone(), uris: HashSet::new(), current: None };
-    loop {
-        queue.blocking_dispatch(&mut d).map_err(|e| e.to_string())?;
-    }
+    let drops = Drops { ui, conn: conn.clone(), uris: HashSet::new(), current: None };
+    Ok(Wl { conn, queue, drops })
 }
 
 struct Drops {

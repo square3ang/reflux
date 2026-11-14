@@ -359,6 +359,35 @@ mod imp {
         Some(())
     }
 
+    /// A `pipewiresrc` for one app's `object.serial`: GStreamer 1.22+ takes it as
+    /// `target-object`; 1.20 (the AppImage's) only has `path`, which takes the node id.
+    fn pipewiresrc(serial: &str) -> Option<gst::Element> {
+        let el = gst::ElementFactory::make("pipewiresrc").build().ok()?;
+        if el.find_property("target-object").is_some() {
+            el.set_property("target-object", serial);
+        } else {
+            el.set_property("path", node_id(serial)?.to_string());
+        }
+        Some(el)
+    }
+
+    /// `object.serial` → the PipeWire node id (for GStreamer 1.20's `path`).
+    fn node_id(serial: &str) -> Option<u64> {
+        let out = std::process::Command::new("pw-dump").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let objects: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        objects.as_array()?.iter().find_map(|o| {
+            let ser = match &o["info"]["props"]["object.serial"] {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => return None,
+            };
+            (ser == serial).then(|| o["id"].as_u64()).flatten()
+        })
+    }
+
     impl AudioCapture {
         /// `node`: an `object.serial` from [`audio_apps`].
         pub fn start(node: &str, mut sink: impl FnMut(&[f32]) + Send + 'static) -> Option<Self> {
@@ -368,7 +397,7 @@ mod imp {
             if node == crate::audio_share::SYSTEM_ID {
                 return Self::system(sink);
             }
-            let src = gst::ElementFactory::make("pipewiresrc").property_from_str("target-object", node).build().ok()?;
+            let src = pipewiresrc(node)?;
             let convert = gst::ElementFactory::make("audioconvert").build().ok()?;
             let resample = gst::ElementFactory::make("audioresample").build().ok()?;
             let caps = gst::Caps::builder("audio/x-raw").field("format", "F32LE").field("rate", 48_000i32).field("channels", 2i32).field("layout", "interleaved").build();
@@ -430,7 +459,7 @@ mod imp {
             let link_new = move |pipeline: &gst::Pipeline, mixer: &gst::Element, linked: &mut std::collections::HashSet<String>| {
                 for (serial, _) in apps(true) {
                     if linked.insert(serial.clone())
-                        && let Ok(src) = gst::ElementFactory::make("pipewiresrc").property_from_str("target-object", &serial).build()
+                        && let Some(src) = pipewiresrc(&serial)
                         && add_branch(pipeline, mixer, src).is_none()
                     {
                         eprintln!("reflux: system audio: couldn't capture node {serial}");
