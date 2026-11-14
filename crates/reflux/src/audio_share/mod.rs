@@ -35,8 +35,9 @@ pub fn available() -> bool {
 pub fn sources() -> Vec<(String, String)> {
     #[cfg(target_os = "linux")]
     {
-        // `AudioSourcePickerLinux`: "Entire system audio" above the apps.
-        if available() { std::iter::once((SYSTEM_ID.to_string(), crate::i18n::t("Entire system audio").to_string())).chain(crate::gst::audio_apps()).collect() } else { Vec::new() }
+        // `AudioSourcePickerLinux`: "Entire system audio" above the apps. Off the UI thread, so
+        // it waits for GStreamer's init rather than caching an empty list made before it ends.
+        if crate::gst::ready() { std::iter::once((SYSTEM_ID.to_string(), crate::i18n::t("Entire system audio").to_string())).chain(crate::gst::audio_apps()).collect() } else { Vec::new() }
     }
     #[cfg(any(windows, target_os = "macos"))]
     {

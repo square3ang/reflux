@@ -16,6 +16,11 @@ mkdir -p "$app/usr/bin"
 cp -R assets/fonts "$app/usr/bin/fonts"
 cp assets/media/images/app-icon.png "$tools/reflux.png"
 export PATH="$tools:$PATH" APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT="$PWD/Reflux-$version-$arch.AppImage"
+# The PipeWire plugin (screen/app audio, cameras) uses the host's libpipewire: a bundled one looks
+# for its modules and SPA plugins at the build distribution's paths. The env reaches the plugin's
+# own linuxdeploy run too.
+export LINUXDEPLOY_EXCLUDED_LIBRARIES='libpipewire-0.3.so*'
+test -f "$(pkg-config --variable=pluginsdir gstreamer-1.0)/libgstpipewire.so"
 export GSTREAMER_PLUGINS_DIR="${GSTREAMER_PLUGINS_DIR:-$(pkg-config --variable=pluginsdir gstreamer-1.0)}"
 export GSTREAMER_HELPERS_DIR="${GSTREAMER_HELPERS_DIR:-$(pkg-config --variable=pluginscannerdir gstreamer-1.0)}"
 linuxdeploy --appdir "$app" --executable target/release/reflux --desktop-file packaging/reflux.desktop --icon-file "$tools/reflux.png" --plugin gstreamer

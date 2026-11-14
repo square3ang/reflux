@@ -96,6 +96,11 @@ mod imp {
         *OK.get_or_init(|| gst::init().map_err(|e| eprintln!("reflux: gstreamer: {e}")).is_ok())
     }
 
+    /// [`available`] that waits for the init: for work off the UI thread.
+    pub fn ready() -> bool {
+        init()
+    }
+
     /// Without blocking (views ask while rendering): false until a background init succeeds.
     /// The first init can rescan every plugin for seconds (every launch in the AppImage).
     pub fn available() -> bool {
@@ -621,6 +626,11 @@ mod imp {
 #[cfg(not(all(feature = "gst", target_os = "linux")))]
 mod stub {
     pub fn available() -> bool {
+        false
+    }
+
+    #[allow(dead_code)]
+    pub fn ready() -> bool {
         false
     }
 
