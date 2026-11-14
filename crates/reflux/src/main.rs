@@ -121,6 +121,20 @@ fn main() {
     if windowed && app::live::scene().is_none() && !rune::single_instance("app.fluxer.reflux") {
         return;
     }
+    // `app.setAppUserModelId`: toasts post under this app's name and icon, not PowerShell's.
+    #[cfg(windows)]
+    if windowed {
+        let mut id = rune_notify::Identity::new(desktop::notify::APP_USER_MODEL_ID, "Fluxer");
+        if let Some(icon) = desktop::app_icon() {
+            id = id.icon(icon);
+        }
+        if let Err(e) = rune_notify::register(&id) {
+            eprintln!("reflux: notification identity: {e}");
+        }
+    }
+    // The window and taskbar take the exe's icon (`build.rs`); MSVC builds only carry it.
+    #[cfg(all(windows, target_env = "msvc"))]
+    rune::set_app_icon_resource(1);
     if !rune::is_headless() {
         crash::install();
         // Starts GStreamer's init in the background, ready by the time a view asks.

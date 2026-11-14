@@ -1,0 +1,3 @@
+// The executable's icon: Explorer, Start menu and shortcuts show it, and the window and taskbar
+// load it at their own sizes (`rune::set_app_icon_resource(1)`).
+1 ICON "reflux.ico"

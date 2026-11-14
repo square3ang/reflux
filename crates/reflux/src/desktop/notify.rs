@@ -11,6 +11,9 @@ use crate::i18n::t;
 
 /// Linux `.desktop` id (`packaging/reflux.desktop`), for the notification hint and the badge.
 pub const DESKTOP_ID: &str = "reflux";
+/// Windows `AppUserModelID`, the toasts' identity (`main` registers it).
+#[cfg(windows)]
+pub const APP_USER_MODEL_ID: &str = "app.fluxer.reflux";
 
 /// "Name (#channel)" / "Name (Group name)" / "Name", as Fluxer titles non-macOS notifications.
 pub fn title(store: &Store, m: &Message) -> String {
@@ -127,6 +130,35 @@ fn fallback(stickers: &[reflux_model::StickerItem], attachments: &[reflux_model:
 
 /// Shows one notification; `on_click` runs on the notification's thread when it's clicked.
 pub fn show(title: String, body: String, image: Option<PathBuf>, on_click: impl FnOnce() + Send + 'static) {
+    #[cfg(windows)]
+    std::thread::spawn(move || {
+        use tauri_winrt_notification::{IconCrop, Toast};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dismissed = tx.clone();
+        // Electron's toast: the icon as the circular app logo beside the text.
+        let mut toast = Toast::new(APP_USER_MODEL_ID).title(&title).text1(&body);
+        if let Some(p) = &image {
+            toast = toast.icon(p, IconCrop::Circular, "");
+        }
+        let toast = toast
+            .on_activated(move |_| {
+                let _ = tx.send(true);
+                Ok(())
+            })
+            .on_dismissed(move |_| {
+                let _ = dismissed.send(false);
+                Ok(())
+            });
+        match toast.show() {
+            Ok(()) => {
+                if rx.recv() == Ok(true) {
+                    on_click();
+                }
+            }
+            Err(e) => eprintln!("reflux: notification: {e:?}"),
+        }
+    });
+    #[cfg(not(windows))]
     std::thread::spawn(move || {
         let mut n = notify_rust::Notification::new();
         n.appname("Fluxer").summary(&title).body(&body);

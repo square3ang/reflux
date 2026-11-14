@@ -262,7 +262,7 @@ fn op<S: 'static>(acc: ShellAccess<S>, o: Op) -> impl Fn(&mut S) + 'static {
 }
 
 /// One tile: a participant (camera or avatar) or their screen share.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Tile {
     user: Snowflake,
     screen: bool,
@@ -726,22 +726,27 @@ fn compact_safe(height: f32) -> (f32, f32) {
     (host_h * 0.3 - 23.0, host_h * 0.34)
 }
 
-/// Whether the call view shows the focus layout and what it focuses, as `layout` decides.
-fn focus_of(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)], compact: bool) -> (Vec<Tile>, Option<Tile>) {
+/// Whether the call view shows the focus layout (`Some`) and its main tile, if any, as `layout`
+/// decides.
+fn focus_of(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)], compact: bool) -> (Vec<Tile>, Option<Option<Tile>>) {
     let all = call_tiles(st, store.my_id(), people);
-    let [gw, gh] = grid_area(compact);
-    let packed = pack_grid(all.len(), gw, gh, compact);
     let focused = st.call.pinned(st.voice.focus).and_then(|u| all.iter().copied().find(|t| t.user == u && (t.screen || !all.iter().any(|x| x.user == u && x.screen))));
-    // `gridOverflow`: a grid that can't fit every tile at its minimum size shows focus instead.
-    let focused = focused.or_else(|| (packed.visible < all.len()).then(|| all.first().copied()).flatten());
-    (all, focused)
+    if focused.is_some() {
+        return (all, Some(focused));
+    }
+    // `gridOverflow`: a full call view whose grid can't fit every tile at its minimum size shows
+    // focus with no main tile (`mainTrack` follows the real layout), every tile in the members
+    // row; the compact view keeps the grid (`usesFocusFallbackGrid`).
+    let [gw, gh] = grid_area(compact);
+    let overflow = !compact && pack_grid(all.len(), gw, gh, compact).visible < all.len();
+    (all, overflow.then_some(None))
 }
 
 /// The view-level facts the call view's chrome needs about its layout.
 fn focus_info(store: &Store, st: &ShellState, people: &[(Snowflake, &VoiceState)]) -> Option<FocusInfo> {
     let (all, f) = focus_of(store, st, people, false);
     let f = f?;
-    Some(FocusInfo { members_row: st.call.focus_members_row && all.len() > 1, screen: f.screen.then_some(f.user) })
+    Some(FocusInfo { members_row: st.call.focus_members_row && all.len() > usize::from(f.is_some()), screen: f.filter(|f| f.screen).map(|f| f.user) })
 }
 
 /// The tile area: the packed grid, or one focused/pinned tile with a row of the rest.
@@ -753,7 +758,7 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
     let make = |t: Tile, pres: Pres| state(t.user).map(|vs| tile_in(store, st, guild, t, vs, pres, hud, p, acc)).unwrap_or_else(el);
     let grid_key = if compact { "call-grid-compact" } else { "call-grid" };
     if let Some(f) = focused {
-        if compact {
+        if let (true, Some(f)) = (compact, f) {
             // The compact view shows just the focused tile, as `.focusLayoutContentCompact`'s
             // main: no host padding (`.layoutHostFullHeightFocus`), `100cqh - 0.5rem` tall.
             return col().w_full().grow(1.0).min_h(0.0).py(4.0).items_center().child(slot(make(f, Pres::FocusMain), "call-focus-compact"));
@@ -777,8 +782,8 @@ fn layout<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, 
 /// `focusLayoutContentFullscreen`: the focused tile as large a 16:9 box as fits above what the
 /// members row reserves, the row 72px up from the bottom (resizable by its divider), and the
 /// Show / Hide members toggle; the header and control bar float over it.
-fn focus_layout<S: 'static>(f: Tile, all: &[Tile], st: &ShellState, make: &dyn Fn(Tile, Pres) -> El, acc: ShellAccess<S>) -> El {
-    let rest: Vec<Tile> = all.iter().copied().filter(|t| *t != f).collect();
+fn focus_layout<S: 'static>(f: Option<Tile>, all: &[Tile], st: &ShellState, make: &dyn Fn(Tile, Pres) -> El, acc: ShellAccess<S>) -> El {
+    let rest: Vec<Tile> = all.iter().copied().filter(|t| Some(*t) != f).collect();
     let [aw, ah] = rune::memo::layout_size("call-focus").unwrap_or([960.0, 600.0]);
     let show_row = !rest.is_empty() && st.call.focus_members_row;
     // `--voice-focus-members-row-height`: the dragged height, else clamp(86px, 13cqh, 112px),
@@ -787,8 +792,11 @@ fn focus_layout<S: 'static>(f: Tile, all: &[Tile], st: &ShellState, make: &dyn F
     let row_h = st.call.members_row_h.unwrap_or((ah * 0.13).clamp(86.0, 112.0)).min(max_h).max(64.0);
     let reserved = if show_row { FOCUS_CLEARANCE + row_h + 8.0 } else { 0.0 };
     let tw = aw.min((ah - reserved).max(0.0) * 16.0 / 9.0);
-    let main = el().size(tw, tw * 9.0 / 16.0).fill(surface_0()).child(make(f, Pres::FocusMain));
-    let mut c = el().key("call-focus").w_full().h_full().child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(reserved)).center().child(main).key("main"));
+    let mut c = el().key("call-focus").w_full().h_full();
+    if let Some(f) = f {
+        let main = el().size(tw, tw * 9.0 / 16.0).fill(surface_0()).child(make(f, Pres::FocusMain));
+        c = c.child(row().pin(Some(0.0), Some(0.0), Some(0.0), Some(reserved)).center().child(main).key("main"));
+    }
     if show_row {
         // `.focusLayoutMembersRow`: 6px clamp(12px, 2vw, 24px) padding, scrolling sideways with no
         // scrollbar; `.focusLayoutMembersRowInner` centres (`margin-inline: auto`).
@@ -3789,6 +3797,24 @@ mod tests {
         ui.set_layout(LayoutMode::Focus);
         ui.pin(None);
         assert_eq!(ui.layout, LayoutMode::Grid, "unpinning returns to the grid");
+    }
+
+    /// `gridOverflow` shows focus with no main tile, so unpinning never leaves anyone stuck in it.
+    #[test]
+    fn an_overflowing_grid_focuses_no_one_until_a_tile_is_pinned() {
+        let states: Vec<VoiceState> = (1..=30).map(|u| vs(u, false)).collect();
+        let people: Vec<_> = states.iter().map(|v| (v.user_id.unwrap(), v)).collect();
+        let store = Store::default();
+        let mut st = ShellState::default();
+        let (all, f) = focus_of(&store, &st, &people, false);
+        assert_eq!(f, Some(None), "every tile in the members row");
+        assert_eq!(focus_of(&store, &st, &people, true).1, None, "the compact view keeps the grid");
+        st.voice.focus = Some(all[3].user);
+        st.call.pin(Some(all[3].user));
+        assert_eq!(focus_of(&store, &st, &people, false).1, Some(Some(all[3])));
+        st.voice.focus = None;
+        st.call.pin(None);
+        assert_eq!(focus_of(&store, &st, &people, false).1, Some(None), "unpinning leaves no one focused");
     }
 
     #[test]

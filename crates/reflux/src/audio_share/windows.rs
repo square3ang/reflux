@@ -1,17 +1,25 @@
-//! WASAPI loopback of the default render device: the system mix minus silence on Windows.
-//! Shared mode only, so the endpoint must be running; WASAPI delivers its mix format and we
-//! convert/resample to 48 kHz stereo. Drop stops the capture thread.
+//! WASAPI loopback: the system mix minus this process's own sound (process loopback, Windows 10
+//! 2004+, as Chromium's `loopbackWithMute`), else the whole default render device. Shared mode
+//! only; we convert/resample to 48 kHz stereo. Drop stops the capture thread.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_NOPERSIST,
-    IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, eConsole, eRender,
+    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_LOOPBACK,
+    AUDCLNT_STREAMFLAGS_NOPERSIST, AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation, IActivateAudioInterfaceCompletionHandler,
+    IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
+    PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, eConsole, eRender,
 };
-use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+use windows::Win32::System::Com::StructuredStorage::{PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0};
+use windows::Win32::System::Com::{BLOB, CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
+use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::System::Variant::VT_BLOB;
+use windows::core::Interface;
 
 use super::{Resampler, SampleFormat, le_to_f32};
 
@@ -71,25 +79,14 @@ impl Drop for Com {
 unsafe fn capture(stop: &AtomicBool, sink: &mut impl FnMut(&[f32]), ready: &Sender<Result<(), String>>) -> Result<(), String> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().map_err(|e| format!("COM: {e}"))?;
     let _com = Com;
-    let enumerator: IMMDeviceEnumerator =
-        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.map_err(|e| format!("device enumerator: {e}"))?;
-    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.map_err(|e| format!("default render device: {e}"))?;
-    let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.map_err(|e| format!("audio client: {e}"))?;
-    let mix = unsafe { client.GetMixFormat() }.map_err(|e| format!("mix format: {e}"))?;
-    let format = unsafe { mix_format(mix) };
-    let init = unsafe {
-        client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_NOPERSIST,
-            0,
-            0,
-            mix,
-            None,
-        )
+    let (client, (rate, channels, sample), event) = match unsafe { process_client() } {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("reflux: system audio: {e}; capturing the whole device, this app included");
+            let (client, format) = unsafe { device_client() }?;
+            (client, format, None)
+        }
     };
-    unsafe { CoTaskMemFree(Some(mix.cast())) };
-    let (rate, channels, sample) = format?;
-    init.map_err(|e| format!("loopback stream: {e}"))?;
     let capture: IAudioCaptureClient = unsafe { client.GetService() }.map_err(|e| format!("capture client: {e}"))?;
     unsafe { client.Start() }.map_err(|e| format!("start: {e}"))?;
     let _ = ready.send(Ok(()));
@@ -105,7 +102,10 @@ unsafe fn capture(stop: &AtomicBool, sink: &mut impl FnMut(&[f32]), ready: &Send
             }
         };
         if frames == 0 {
-            std::thread::sleep(Duration::from_millis(10));
+            match &event {
+                Some(e) => _ = unsafe { WaitForSingleObject(e.0, 100) },
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
             continue;
         }
         while frames > 0 {
@@ -136,6 +136,95 @@ unsafe fn capture(stop: &AtomicBool, sink: &mut impl FnMut(&[f32]), ready: &Send
     }
     let _ = unsafe { client.Stop() };
     Ok(())
+}
+
+/// The event a process-loopback client signals when it has audio.
+struct Event(HANDLE);
+
+impl Drop for Event {
+    fn drop(&mut self) {
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+#[windows::core::implement(IActivateAudioInterfaceCompletionHandler)]
+struct Activated(Mutex<Option<Sender<()>>>);
+
+impl IActivateAudioInterfaceCompletionHandler_Impl for Activated_Impl {
+    fn ActivateCompleted(&self, _: windows::core::Ref<IActivateAudioInterfaceAsyncOperation>) -> windows::core::Result<()> {
+        if let Some(tx) = self.0.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = tx.send(());
+        }
+        Ok(())
+    }
+}
+
+type Format = (u32, usize, SampleFormat);
+
+/// Everything this machine plays except this process tree (its voice chat, sounds and the
+/// stream it watches), as 48 kHz stereo float.
+unsafe fn process_client() -> Result<(IAudioClient, Format, Option<Event>), String> {
+    let params = AUDIOCLIENT_ACTIVATION_PARAMS {
+        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                TargetProcessId: std::process::id(),
+                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+            },
+        },
+    };
+    // Borrows `params`; never cleared (PropVariantClear would free the stack blob).
+    let prop = PROPVARIANT {
+        Anonymous: PROPVARIANT_0 {
+            Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                vt: VT_BLOB,
+                Anonymous: PROPVARIANT_0_0_0 {
+                    blob: BLOB { cbSize: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32, pBlobData: (&raw const params).cast_mut().cast() },
+                },
+                ..Default::default()
+            }),
+        },
+    };
+    let (tx, rx) = channel();
+    let handler: IActivateAudioInterfaceCompletionHandler = Activated(Mutex::new(Some(tx))).into();
+    let op = unsafe { ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&prop), &handler) }
+        .map_err(|e| format!("process loopback: {e}"))?;
+    rx.recv_timeout(Duration::from_secs(3)).map_err(|_| "process loopback: activation timed out".to_string())?;
+    let mut hr = windows::core::HRESULT(0);
+    let mut unknown = None;
+    unsafe { op.GetActivateResult(&mut hr, &mut unknown) }.map_err(|e| format!("process loopback: {e}"))?;
+    hr.ok().map_err(|e| format!("process loopback: {e}"))?;
+    let client: IAudioClient = unknown.ok_or("process loopback: no client")?.cast().map_err(|e| format!("process loopback: {e}"))?;
+    // Process loopback has no mix format (GetMixFormat is E_NOTIMPL): ask for ours.
+    let format = WAVEFORMATEX {
+        wFormatTag: 3, // WAVE_FORMAT_IEEE_FLOAT
+        nChannels: 2,
+        nSamplesPerSec: 48_000,
+        nAvgBytesPerSec: 48_000 * 8,
+        nBlockAlign: 8,
+        wBitsPerSample: 32,
+        cbSize: 0,
+    };
+    let flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+    unsafe { client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200_000, 0, &format, None) }.map_err(|e| format!("process loopback stream: {e}"))?;
+    let event = Event(unsafe { CreateEventW(None, false, false, None) }.map_err(|e| format!("event: {e}"))?);
+    unsafe { client.SetEventHandle(event.0) }.map_err(|e| format!("event handle: {e}"))?;
+    Ok((client, (48_000, 2, SampleFormat::F32), Some(event)))
+}
+
+/// The whole default render device, in its mix format.
+unsafe fn device_client() -> Result<(IAudioClient, Format), String> {
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.map_err(|e| format!("device enumerator: {e}"))?;
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.map_err(|e| format!("default render device: {e}"))?;
+    let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.map_err(|e| format!("audio client: {e}"))?;
+    let mix = unsafe { client.GetMixFormat() }.map_err(|e| format!("mix format: {e}"))?;
+    let format = unsafe { mix_format(mix) };
+    let init = unsafe { client.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_NOPERSIST, 0, 0, mix, None) };
+    unsafe { CoTaskMemFree(Some(mix.cast())) };
+    let format = format?;
+    init.map_err(|e| format!("loopback stream: {e}"))?;
+    Ok((client, format))
 }
 
 /// `(rate, channels, sample format)` of a shared-mode mix format.

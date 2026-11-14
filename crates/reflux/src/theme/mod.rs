@@ -114,6 +114,12 @@ pub fn sans_family() -> String {
     out.extend((!first.is_empty()).then_some(first));
     out.extend(SCRIPTS.iter().map(|(f, _)| *f).filter(|f| *f != first));
     out.extend(["Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR"]);
+    // `'Segoe UI', …, 'Segoe UI Symbol'` (then `sans-serif`, Arial): Rune asks Windows for a
+    // fallback only for characters none of our fonts has, so one only Fluxer Mono has (▝ U+259D)
+    // drew as tofu in sans text. Chromium's order, as Rune's own symbol fallback uses.
+    if cfg!(windows) {
+        out.extend(["Segoe UI", "Arial", "Times New Roman", "Segoe UI Symbol"]);
+    }
     out.join(", ")
 }
 

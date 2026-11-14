@@ -431,7 +431,7 @@ fn on_message(s: &mut State, m: &Message) {
 }
 
 /// Fluxer's app icon as a file, the notification image when the author has no avatar.
-fn app_icon() -> Option<std::path::PathBuf> {
+pub(crate) fn app_icon() -> Option<std::path::PathBuf> {
     let path = dirs::cache_dir()?.join("reflux/fluxer.png");
     if !path.exists() {
         std::fs::create_dir_all(path.parent()?).ok()?;
