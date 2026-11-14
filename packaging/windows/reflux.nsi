@@ -14,8 +14,9 @@ SetCompressor /SOLID lzma
 
 !define UNINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\Reflux"
 
-!define MUI_ICON "${__FILEDIR__}\reflux.ico"
-!define MUI_UNICON "${__FILEDIR__}\reflux.ico"
+; makensis runs in this script's folder.
+!define MUI_ICON "reflux.ico"
+!define MUI_UNICON "reflux.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\reflux.exe"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
