@@ -902,6 +902,26 @@ pub(crate) fn prepend_older(store: &mut Store, tx: &mut rune::Tx, channel: Snowf
 }
 
 /// Runs what the shell queued since the last frame; true when anything ran.
+/// Intents `voice::run` handles. Kept beside the routing match so a new voice intent fails the
+/// test instead of falling through to `actions::run`, which ignores it.
+fn voice_intent(i: &crate::shell::Intent) -> bool {
+    use crate::shell::Intent;
+    matches!(
+        i,
+        Intent::JoinVoice { .. }
+            | Intent::LeaveVoice
+            | Intent::VoiceSelf
+            | Intent::ToggleScreen
+            | Intent::Watch(_)
+            | Intent::AddStream(_)
+            | Intent::SyncWatches
+            | Intent::RemoveStream(_)
+            | Intent::LoadDevices
+            | Intent::VoiceDevices
+            | Intent::Voice(_)
+    )
+}
+
 pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     s.app.shell.now_ms = now_ms();
     // `--font-sans` / `--font-mono` overrides in the theme CSS.
@@ -977,14 +997,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     crate::settings::patch(s, serde_json::json!({ "locale": code }));
                 }
             }
-            i @ (Intent::JoinVoice { .. }
-            | Intent::LeaveVoice
-            | Intent::VoiceSelf
-            | Intent::ToggleScreen
-            | Intent::Watch(_)
-            | Intent::LoadDevices
-            | Intent::VoiceDevices
-            | Intent::Voice(_)) => voice::run(s, i),
+            i if voice_intent(&i) => voice::run(s, i),
             other => actions::run(s, other),
         }
     }
@@ -1070,6 +1083,29 @@ mod tests {
         assert_eq!(super::iso8601(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(super::iso8601(1_420_070_400_000), "2015-01-01T00:00:00.000Z");
         assert_eq!(super::iso8601(1_709_210_096_789), "2024-02-29T12:34:56.789Z");
+    }
+
+    #[test]
+    fn every_voice_intent_reaches_the_voice_runtime() {
+        use crate::shell::Intent;
+        use reflux_model::Snowflake;
+        let voice = [
+            Intent::JoinVoice { guild: None, channel: Snowflake(1) },
+            Intent::LeaveVoice,
+            Intent::VoiceSelf,
+            Intent::ToggleScreen,
+            Intent::Watch(Some(Snowflake(1))),
+            Intent::AddStream(Snowflake(2)),
+            Intent::SyncWatches,
+            Intent::RemoveStream(Snowflake(2)),
+            Intent::LoadDevices,
+            Intent::VoiceDevices,
+            Intent::Voice(crate::shell::voice::Op::LoadCameras),
+        ];
+        for i in voice {
+            assert!(super::voice_intent(&i), "{i:?} would fall through to actions::run");
+        }
+        assert!(!super::voice_intent(&Intent::Logout));
     }
 }
 

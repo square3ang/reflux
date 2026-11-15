@@ -3763,6 +3763,34 @@ mod tests {
     }
 
     #[test]
+    fn the_add_stream_button_takes_its_own_press() {
+        #[derive(Default)]
+        struct App { store: Store, voice: ShellState, vs: VoiceState }
+        fn acc(s: &mut App) -> &mut ShellState { &mut s.voice }
+        fn view(a: &App, _: &mut rune::Cx<App>) -> El {
+            // A grid tile for user 2's share while user 1's is watched: it shows both buttons,
+            // and the tile's own press must not win.
+            let t = Tile { user: Snowflake(2), screen: true };
+            tile_in(&a.store, &a.voice, Some(Snowflake(9)), t, &a.vs, Pres::Grid, true, crate::theme::palette(crate::theme::Kind::Dark), acc)
+        }
+        let mut app = App::default();
+        app.voice.voice.channel = Some((Some(Snowflake(9)), Snowflake(9)));
+        app.voice.voice.watching = Some(Snowflake(1));
+        app.vs = vs(2, true);
+        let mut rt = rune::Runtime::with_text(app, view, (400.0, 225.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        rt.frame(0.016);
+        let r = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("add-stream")).expect("Add stream drawn").rect;
+        let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.016);
+        assert!(rt.state.voice.intents.iter().any(|i| matches!(i, Intent::AddStream(u) if *u == Snowflake(2))), "the + adds a stream");
+        assert!(!rt.state.voice.intents.iter().any(|i| matches!(i, Intent::Watch(_))), "the + never replaces the watch set");
+    }
+
+    #[test]
     fn prioritized_tiles_rank_streaming_then_speaking_then_held() {
         let (a, b, c, d) = (vs(1, false), vs(2, true), vs(3, false), vs(4, false));
         let people = vec![(Snowflake(1), &a), (Snowflake(2), &b), (Snowflake(3), &c), (Snowflake(4), &d)];
