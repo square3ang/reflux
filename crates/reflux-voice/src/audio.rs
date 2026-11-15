@@ -72,6 +72,8 @@ pub struct Mixer {
     /// Whose screen share audio plays: only the watched stream's (`ScreenShareSubscriptionPolicy`
     /// subscribes to a stream's audio only while watching it).
     pub watching: Option<u64>,
+    /// Further watched shares (`Add stream`): their audio plays too.
+    pub watching_extra: Vec<u64>,
     pub deaf: bool,
     pub output: f32,
 }
@@ -86,6 +88,7 @@ impl Default for Mixer {
             muted_users: HashSet::new(),
             muted_streams: HashSet::new(),
             watching: None,
+            watching_extra: Vec::new(),
             deaf: false,
             output: 1.0,
         }
@@ -116,7 +119,7 @@ impl Mixer {
         let g = match src.kind {
             Kind::Voice if self.muted_users.contains(&src.user) => 0.0,
             Kind::Voice => self.user_volume.get(&src.user).copied().unwrap_or(1.0),
-            Kind::Stream if self.muted_streams.contains(&src.user) || self.watching != Some(src.user) => 0.0,
+            Kind::Stream if self.muted_streams.contains(&src.user) || (self.watching != Some(src.user) && !self.watching_extra.contains(&src.user)) => 0.0,
             Kind::Stream => self.stream_volume.get(&src.user).copied().unwrap_or(1.0),
             Kind::Entrance => self.entrance_volume.get(&src.user).copied().unwrap_or(1.0),
             Kind::Monitor => 1.0,
@@ -799,6 +802,12 @@ mod tests {
         m.push(src(Kind::Stream, 2), &[0.25; 2]);
         m.mix(&mut out);
         assert_eq!(out, [0.25; 2], "only user 2's stream");
+        // `Add stream`: the added share's audio plays too.
+        m.watching_extra.push(1);
+        m.push(src(Kind::Stream, 1), &[0.5; 2]);
+        m.push(src(Kind::Stream, 2), &[0.25; 2]);
+        m.mix(&mut out);
+        assert_eq!(out, [0.75; 2], "both watched streams mix");
     }
 
     #[test]

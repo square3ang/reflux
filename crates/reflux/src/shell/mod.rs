@@ -133,6 +133,12 @@ pub enum Intent {
     ToggleScreen,
     /// Show this user's screen share (`None` stops).
     Watch(Option<Snowflake>),
+    /// `Add stream`: keep the streams being watched and add this one.
+    AddStream(Snowflake),
+    /// The watched set changed on its own (a streamer stopped, one took over): resubscribe.
+    SyncWatches,
+    /// `stopWatchingStreamKey`: drop one watched share, keeping the others.
+    RemoveStream(Snowflake),
     /// List microphones and speakers into `voice.devices`.
     LoadDevices,
     /// `voice.input` / `voice.output` changed.

@@ -312,7 +312,9 @@ fn video(st: &ShellState, me: Snowflake, t: Tile) -> Option<&Pixels> {
     let v = &st.voice;
     match (t.screen, t.user == me) {
         (true, true) if v.screen && v.own_share.size().0 > 0 => Some(&v.own_share),
-        (true, _) => (v.watching == Some(t.user)).then_some(&v.stream),
+        (true, _) if v.watching == Some(t.user) => Some(&v.stream),
+        // `Add stream`: an added share has its own frames.
+        (true, _) => v.extra_streams.get(&t.user).map(|s| &s.pixels).filter(|p| p.size() != (0, 0)),
         // `showMyOwnCamera`: ours is only hidden from our own view, the track stays published.
         (false, true) => (v.camera && st.call.show_own_camera).then_some(&v.self_view),
         (false, false) => v.videos.get(&t.user),
@@ -358,7 +360,8 @@ fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>,
     let fit = rune::SurfaceFit::Fit;
     let mut body = full().radius(r).clip_rounded(r);
     let mut overlays: Vec<El> = Vec::new();
-    let watched = t.screen && t.user != me && v.watching == Some(t.user);
+    let primary = t.screen && t.user != me && v.watching == Some(t.user);
+    let watched = t.screen && t.user != me && v.is_watching(t.user);
     // `useOwnScreenSharePreviewState`: our share freezes while the window is in the background.
     let own_paused = t.screen && t.user == me && st.desktop.unfocused && crate::look::with(|l| l.pause_preview_unfocused);
     let shown = video(st, me, t).filter(|px| px.size() != (0, 0));
@@ -366,25 +369,34 @@ fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>,
     let mut live_info = None;
     if watched {
         // `ScreenShareBufferingFrame` (corner over the dimmed last frame, else full), the failed
-        // frame, or `streamEndedOverlay`.
-        let state = if v.watch_state == WatchState::Idle { WatchState::Buffering } else { v.watch_state };
-        let last = v.stream.size() != (0, 0);
-        body = body.fill(surface_0());
-        if last {
-            body = body.pixels_fit(&v.stream, fit);
-        }
-        match state {
-            WatchState::Failed(code) => overlays.push(super::voice::failure_frame(code, p).key("failed")),
-            WatchState::Ended => overlays.push(super::voice::ended_overlay(h, p, acc).key("ended")),
-            WatchState::Buffering if last => {
-                overlays.push(full().fill(rgba(0, 0, 0, 0.5)).key("dimmed"));
-                overlays.push(super::voice::buffering_frame(true, w).key("buffering"));
+        // frame, or `streamEndedOverlay`. An added stream shows its frames, or buffering.
+        if primary {
+            let state = if v.watch_state == WatchState::Idle { WatchState::Buffering } else { v.watch_state };
+            let last = v.stream.size() != (0, 0);
+            body = body.fill(surface_0());
+            if last {
+                body = body.pixels_fit(&v.stream, fit);
             }
-            WatchState::Buffering => overlays.push(super::voice::buffering_frame(false, w).key("buffering")),
-            _ => {
-                has_video = last;
-                live_info = super::voice::stream_info(&v.stream, v.watch_fps);
+            match state {
+                WatchState::Failed(code) => overlays.push(super::voice::failure_frame(code, p).key("failed")),
+                WatchState::Ended => overlays.push(super::voice::ended_overlay(h, p, acc).key("ended")),
+                WatchState::Buffering if last => {
+                    overlays.push(full().fill(rgba(0, 0, 0, 0.5)).key("dimmed"));
+                    overlays.push(super::voice::buffering_frame(true, w).key("buffering"));
+                }
+                WatchState::Buffering => overlays.push(super::voice::buffering_frame(false, w).key("buffering")),
+                _ => {
+                    has_video = last;
+                    live_info = super::voice::stream_info(&v.stream, v.watch_fps);
+                }
             }
+        } else if let Some(px) = shown {
+            has_video = true;
+            live_info = super::voice::stream_info(px, 0.0);
+            body = body.fill(surface_0()).pixels_fit(px, fit);
+        } else {
+            body = body.fill(surface_0());
+            overlays.push(super::voice::buffering_frame(false, w).key("buffering"));
         }
     } else if let Some(px) = shown {
         has_video = true;
@@ -399,7 +411,7 @@ fn tile_in<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>,
             Some(px) => body = body.fill(surface_0()).pixels_fit(&px, fit).child(full().fill(rgba(0, 0, 0, 0.6))),
             None => body = body.fill(rgb(0x24, 0x24, 0x27)),
         }
-        overlays.push(watch_overlay(t.user, w, p, acc).key("watch"));
+        overlays.push(watch_overlay(t.user, w, v.watching.is_some() || !v.watching_more.is_empty(), p, acc).key("watch"));
     } else if t.screen {
         body = body.fill(surface_0());
     } else {
@@ -576,10 +588,9 @@ fn tile_badge(label: El, fill: Color) -> El {
 }
 
 /// `WatchStreamOverlay`: the primary Watch stream button (`Button variant="primary"`: the
-/// brand colour) on `--voice-overlay-strong`; narrow tiles shrink it, then drop its label.
-fn watch_overlay<S: 'static>(user: Snowflake, w: f32, p: &Palette, acc: ShellAccess<S>) -> El {
-    // shortcut: no "Add stream" button; reflux watches one stream at a time. Add it with
-    // multi-stream watching.
+/// brand colour) on `--voice-overlay-strong`, with `Add stream` beside it while one is watched
+/// (`canAddStream={viewerStreamCount > 0}`); narrow tiles shrink it, then drop its label.
+fn watch_overlay<S: 'static>(user: Snowflake, w: f32, can_add: bool, p: &Palette, acc: ShellAccess<S>) -> El {
     let small = w <= 230.0;
     let mut button = row()
         .h(if small { 30.0 } else { 32.0 })
@@ -600,18 +611,36 @@ fn watch_overlay<S: 'static>(user: Snowflake, w: f32, p: &Palette, acc: ShellAcc
         let f = if small { 12.0 } else { 13.0 };
         button = button.px(if small { 10.0 } else { 12.0 }).child(text(t("Watch stream")).font(font(f, 600.0).lh(f * 1.2)).color(p.brand_primary_fill).truncate());
     }
-    el()
-        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-        .fill(rgba(0, 0, 0, 0.78))
-        .center()
-        .child(button.key("watch-stream").on_press(move |s: &mut S| {
+    // `canAddStream`: `Add stream` sits beside `Watch stream` while something is already watched.
+    let mut buttons = row().gap(8.0).center();
+    buttons = buttons.child(button.key("watch-stream").on_press(move |s: &mut S| {
             // `handleWatch`: watch and pin the share.
             let sh = acc(s);
             sh.voice.watching = Some(user);
             sh.intents.push(Intent::Watch(Some(user)));
             sh.voice.focus = Some(user);
             sh.call.pin(Some(user));
-        }))
+        }));
+    if can_add {
+        let add = row()
+            .size(if small { 30.0 } else { 32.0 }, if small { 30.0 } else { 32.0 })
+            .center()
+            .radius(8.0)
+            .fill(rgba(255, 255, 255, 0.12))
+            .border(1.0, hud_border())
+            .hover(rgba(255, 255, 255, 0.2))
+            .cursor(rune::Cursor::Pointer)
+            .role("button")
+            .label(t("Add stream"))
+            .child(icon(&icons::PLUS_BOLD, 16.0).color(Color::WHITE))
+            .on_press(move |s: &mut S| acc(s).intents.push(Intent::AddStream(user)));
+        buttons = buttons.child(add.key("add-stream"));
+    }
+    el()
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .fill(rgba(0, 0, 0, 0.78))
+        .center()
+        .child(buttons)
 }
 
 /// `FeedHiddenOverlay`: "Camera hidden" and a secondary "Show camera" button.
@@ -3530,9 +3559,9 @@ fn stream_tile_groups<S: 'static>(store: &Store, st: &ShellState, user: Snowflak
         ];
         return vec![active_share_entries(st, p, acc), vec![popout()], vec![MenuEntry::Submenu("stream-more".into(), t("More options").into(), more)]];
     }
-    let watching = st.voice.watching == Some(user);
+    let watching = st.voice.is_watching(user);
     let state = if watching {
-        MenuEntry::Item(MenuItem::new("stop-watching", t("Stop watching")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| super::voice::stop_watching(s, acc)))
+        MenuEntry::Item(MenuItem::new("stop-watching", t("Stop watching")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| acc(s).intents.push(Intent::RemoveStream(user))))
     } else {
         MenuEntry::Item(MenuItem::new("watch", t("Watch stream")).icon(&icons::MONITOR_PLAY_FILL).on_select(move |s: &mut S| {
             let sh = acc(s);

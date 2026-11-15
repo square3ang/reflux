@@ -42,6 +42,10 @@ pub struct Voice {
     pub pings: Vec<u32>,
     /// The user whose screen share the viewer shows, and its frames.
     pub watching: Option<Snowflake>,
+    /// `addWatchedStreamKey`: streams watched besides [`Self::watching`] (`Add stream`).
+    pub watching_more: Vec<Snowflake>,
+    /// Their frames and counters (the primary stream keeps [`Self::stream`]).
+    pub extra_streams: HashMap<Snowflake, ExtraStream>,
     /// The viewer draws our own published share (Fluxer shows it by default); false while we
     /// watch ourselves without a local track (a capture-device share).
     pub self_stream: bool,
@@ -162,6 +166,14 @@ pub enum WatchState {
     Ended,
 }
 
+/// A stream the viewer added besides the primary one (`Add stream`).
+#[derive(Clone)]
+pub struct ExtraStream {
+    pub pixels: Pixels,
+    pub frames: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub started: Instant,
+}
+
 /// `WATCH_ATTEMPT_TIMEOUT_MS`: no first frame ends the attempt.
 pub const WATCH_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
 /// A live stream that stops producing frames shows the buffering frame again.
@@ -171,6 +183,41 @@ pub const FIRST_FRAME_TIMEOUT_CODE: i32 = -2303;
 pub const REPUBLISH_TIMEOUT_CODE: i32 = -2304;
 
 impl Voice {
+    /// Whether the viewer watches `user`'s share, primary or added.
+    pub fn is_watching(&self, user: Snowflake) -> bool {
+        self.watching == Some(user) || self.watching_more.contains(&user)
+    }
+
+    /// Every watched stream, the primary first.
+    pub fn watched(&self) -> impl Iterator<Item = Snowflake> + '_ {
+        self.watching.into_iter().chain(self.watching_more.iter().copied())
+    }
+
+    /// Stops watching one stream: the primary hands over to the first added one.
+    pub fn unwatch(&mut self, user: Snowflake) {
+        if self.watching == Some(user) {
+            match self.watching_more.first().copied() {
+                Some(next) => {
+                    let stream = self.extra_streams.remove(&next);
+                    self.watching_more.remove(0);
+                    self.begin_watch(next);
+                    if let Some(s) = stream {
+                        self.stream = s.pixels;
+                        self.stream_frames = s.frames;
+                        self.watch_started = Some(s.started);
+                    }
+                }
+                None => self.end_watch(),
+            }
+        } else {
+            self.watching_more.retain(|u| *u != user);
+            self.extra_streams.remove(&user);
+            if self.focus == Some(user) {
+                self.focus = None;
+            }
+        }
+    }
+
     /// Starts (or restarts) a watch: no subscription internals, so the blank frame is the
     /// "publication missing / attaching" state and the first rendered frame moves it to live.
     pub fn begin_watch(&mut self, user: Snowflake) {
@@ -192,6 +239,8 @@ impl Voice {
     pub fn end_watch(&mut self) {
         let watched = self.watching.or(self.watch_for);
         self.watching = None;
+        self.watching_more.clear();
+        self.extra_streams.clear();
         self.watch_for = None;
         self.watch_started = None;
         self.watch_frame = 0;
@@ -244,26 +293,41 @@ impl Voice {
             self.watch_state = WatchState::Idle;
             return changed;
         };
+        // A streamer who stopped sharing drops out of the watched set; the primary hands over
+        // to an added stream before the ended overlay shows.
+        let (me, channel, screen) = (store.my_id(), self.channel, self.screen);
+        let live_stream = |u: Snowflake| {
+            if u == me {
+                screen
+            } else {
+                channel.and_then(|(g, c)| store.voice_states.get(&(g, u)).map(|s| s.self_stream && s.channel_id == Some(c))).unwrap_or(false)
+            }
+        };
+        let mut changed = false;
+        if !live_stream(user) {
+            // The tile stays up behind the ended overlay, unless an added stream takes over.
+            if self.watching_more.is_empty() {
+                if self.watch_state != WatchState::Ended {
+                    self.watch_state = WatchState::Ended;
+                    crate::popout::stream_ended();
+                    return true;
+                }
+                return false;
+            }
+            self.unwatch(user);
+            return true;
+        }
+        let dropped: Vec<Snowflake> = self.watching_more.iter().copied().filter(|u| !live_stream(*u)).collect();
+        for u in dropped {
+            self.unwatch(u);
+            changed = true;
+        }
         if self.watch_for != Some(user) || self.watch_started.is_none() {
             self.begin_watch(user);
             return true;
         }
         let started = self.watch_started.unwrap_or(now);
-        let live = if user == store.my_id() {
-            self.screen
-        } else {
-            self.channel.and_then(|(g, c)| store.voice_states.get(&(g, user)).map(|s| s.self_stream && s.channel_id == Some(c))).unwrap_or(false)
-        };
-        if !live {
-            if self.watch_state != WatchState::Ended {
-                self.watch_state = WatchState::Ended;
-                crate::popout::stream_ended();
-                return true;
-            }
-            return false;
-        }
         let frames = self.stream_frames.load(Ordering::Relaxed);
-        let mut changed = false;
         if frames != self.watch_frame {
             self.watch_frame = frames;
             self.watch_frame_at = Some(now);
@@ -929,6 +993,8 @@ impl ShellState {
         }
         (v.channel, v.connected, v.failed, v.screen, v.ping, v.watching) = (Some((guild, channel)), false, None, false, None, None);
         (v.camera, v.encrypted, v.server, v.reconnecting, v.focus) = (false, false, None, false, None);
+        v.watching_more.clear();
+        v.extra_streams.clear();
         v.speaking.clear();
         v.pings.clear();
         v.videos.clear();
@@ -1446,7 +1512,12 @@ pub fn layer<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
 /// after `WATCH_FIRST_FRAME_TIMEOUT`, and a wake keeps the deadline reachable.
 pub fn watch_poll(store: &Store, st: &mut ShellState, tx: &mut rune::Tx) -> bool {
     let now = Instant::now();
+    let before: Vec<Snowflake> = st.voice.watched().collect();
     let mut changed = st.voice.watch_step(store, now);
+    if before != st.voice.watched().collect::<Vec<_>>() {
+        st.intents.push(Intent::SyncWatches);
+        changed = true;
+    }
     if st.voice.volume_close.is_some_and(|at| now >= at) {
         st.voice.volume_close = None;
         changed = true;
@@ -2066,6 +2137,54 @@ mod tests {
         assert_eq!(v.watching, Some(Snowflake(2)), "the tile stays up behind the ended overlay");
         v.end_watch();
         assert_eq!((v.watching, v.watch_state, v.watch_frame), (None, WatchState::Idle, 0));
+    }
+
+    #[test]
+    fn added_streams_take_over_when_the_primary_ends() {
+        let mut store = watch_store(true);
+        store.voice_states.insert(
+            (Some(Snowflake(9)), Snowflake(3)),
+            reflux_model::VoiceState { user_id: Some(Snowflake(3)), channel_id: Some(Snowflake(9)), connection_id: Some("c3".into()), self_stream: true, ..Default::default() },
+        );
+        let mut v = Voice { channel: Some((Some(Snowflake(9)), Snowflake(9))), ..Default::default() };
+        let t0 = Instant::now();
+        v.begin_watch(Snowflake(2));
+        v.stream_frame();
+        v.watch_step(&store, t0 + Duration::from_millis(100));
+        assert_eq!(v.watch_state, WatchState::Live);
+
+        // `Add stream`: the second share keeps its own frames; the primary stays focused.
+        v.watching_more.push(Snowflake(3));
+        v.extra_streams.insert(Snowflake(3), ExtraStream { pixels: Pixels::default(), frames: Default::default(), started: t0 });
+        v.extra_streams.get(&Snowflake(3)).unwrap().frames.store(7, Ordering::Relaxed);
+        assert!(v.is_watching(Snowflake(3)) && v.is_watching(Snowflake(2)));
+        assert_eq!(v.watched().collect::<Vec<_>>(), [Snowflake(2), Snowflake(3)]);
+        assert!(!v.watch_step(&store, t0 + Duration::from_millis(200)), "an added stream alone does not redraw");
+        assert_eq!((v.watching, v.watch_state), (Some(Snowflake(2)), WatchState::Live));
+
+        // The primary stops sharing: the added stream becomes the primary with its frames.
+        let mut ended = watch_store(false);
+        ended.voice_states.insert((Some(Snowflake(9)), Snowflake(3)), store.voice_states[&(Some(Snowflake(9)), Snowflake(3))].clone());
+        assert!(v.watch_step(&ended, t0 + Duration::from_millis(300)));
+        assert_eq!((v.watching, v.watching_more.len()), (Some(Snowflake(3)), 0), "the added stream takes over");
+        assert_eq!(v.watch_started, Some(t0), "its frame counter and start carry over");
+        assert_eq!(v.stream_frames.load(Ordering::Relaxed), 7);
+        assert_eq!(v.watch_state, WatchState::Buffering, "its first frame arrives at once");
+        v.stream_frame();
+        v.watch_step(&ended, t0 + Duration::from_millis(400));
+        assert_eq!(v.watch_state, WatchState::Live);
+
+        // The last streamer stops: `Stream ended`, and the tile stays up behind it.
+        let none = watch_store(false);
+        assert!(v.watch_step(&none, t0 + Duration::from_millis(500)));
+        assert_eq!((v.watching, v.watch_state), (Some(Snowflake(3)), WatchState::Ended));
+
+        // Stopping an added stream directly drops only it.
+        v.watching = Some(Snowflake(2));
+        v.watching_more = vec![Snowflake(3)];
+        v.extra_streams.insert(Snowflake(3), ExtraStream { pixels: Pixels::default(), frames: Default::default(), started: t0 });
+        v.unwatch(Snowflake(3));
+        assert_eq!((v.watching, v.watching_more.len(), v.extra_streams.len()), (Some(Snowflake(2)), 0, 0));
     }
 
     #[test]

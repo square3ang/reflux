@@ -232,7 +232,7 @@ fn card_preview(store: &Store, st: &ShellState, guild: Option<Snowflake>, channe
 #[allow(clippy::too_many_arguments)]
 fn stream_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Snowflake>, channel: Snowflake, user: Snowflake, key: &str, p: &Palette, acc: ShellAccess<S>) {
     let own = user == store.my_id() && st.voice.channel == Some((guild, channel));
-    let watching = st.voice.watching == Some(user);
+    let watching = st.voice.is_watching(user);
     let pending = st.voice.watch_on_join == Some(user);
     let can_watch = store.permissions(channel).contains(Permissions::CONNECT);
     let disabled = own || watching || pending || !can_watch;

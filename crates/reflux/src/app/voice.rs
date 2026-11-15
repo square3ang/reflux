@@ -47,6 +47,8 @@ pub struct VoiceRt {
     screen_sources_loading: bool,
     screen_sources_at: Option<std::time::Instant>,
     watch: Option<tokio::task::AbortHandle>,
+    /// `Add stream`: the renderers of the streams watched besides the primary one.
+    extra_watch: HashMap<Snowflake, tokio::task::AbortHandle>,
     /// Draws our own share into `Voice::own_share` for its call tile.
     own_render: Option<tokio::task::AbortHandle>,
     pub(super) devices_loading: bool,
@@ -116,6 +118,12 @@ pub(super) fn run(s: &mut State, i: Intent) {
         }
         Intent::ToggleScreen => toggle_screen(s),
         Intent::Watch(user) => watch(s, user),
+        Intent::AddStream(user) => add_stream(s, user),
+        Intent::SyncWatches => {
+            send_state(s);
+            sync_watches(s);
+        }
+        Intent::RemoveStream(user) => remove_stream(s, user),
         Intent::LoadDevices => spawn(async move {
             if let Ok(d) = tokio::task::spawn_blocking(reflux_voice::devices).await {
                 update(move |s| s.app.shell.voice.devices = Some(d));
@@ -467,10 +475,15 @@ fn start_call(s: &mut State, channel: Snowflake) {
 /// The op 4 payload for the shell's current voice state (`channel` `None` = leave).
 fn payload(s: &State, channel: Option<(Option<Snowflake>, Snowflake)>) -> UpdateVoiceState {
     let v = &s.app.shell.voice;
-    // `viewer_stream_keys`: `{guild or "dm"}:{channel}:{connection}` of the stream we watch.
-    let watching = v.watching.zip(channel).and_then(|(u, (g, c))| {
-        let state = s.app.store.voice_states.get(&(g, u))?;
-        Some(format!("{}:{c}:{}", g.map_or("dm".to_string(), |g| g.to_string()), state.connection_id.as_deref()?))
+    // `viewer_stream_keys`: `{guild or "dm"}:{channel}:{connection}` of every stream we watch
+    // (`addWatchedStreamKey` keeps them all).
+    let watching = channel.map(|(g, c)| {
+        v.watched()
+            .filter_map(|u| {
+                let state = s.app.store.voice_states.get(&(g, u))?;
+                Some(format!("{}:{c}:{}", g.map_or("dm".to_string(), |g| g.to_string()), state.connection_id.as_deref()?))
+            })
+            .collect::<Vec<_>>()
     });
     UpdateVoiceState {
         guild_id: channel.and_then(|(g, _)| g),
@@ -482,7 +495,7 @@ fn payload(s: &State, channel: Option<(Option<Snowflake>, Snowflake)>) -> Update
         // A camera/device share publishes as a screen share too (`Devices` in the picker), so
         // the server and other clients see us streaming.
         self_stream: v.screen && (s.app.voice.share.is_some() || s.app.voice.device_share.is_some()),
-        viewer_stream_keys: channel.map(|_| watching.map(|k| vec![k])),
+        viewer_stream_keys: watching.map(Some),
         // Only `true` agrees; leaving it out never switches a call.
         p2p: channel.filter(|(_, c)| s.app.voice.p2p_agreed == Some(*c)).map(|_| true),
         ..Default::default()
@@ -575,6 +588,8 @@ pub(super) fn leave(s: &mut State, tell_gateway: bool) {
     }
     (v.channel, v.connected, v.screen, v.ping, v.watching, v.camera, v.call_view) = (None, false, false, None, None, false, false);
     (v.encrypted, v.server, v.reconnecting, v.focus, v.transmitting) = (false, None, false, None, false);
+    v.watching_more.clear();
+    v.extra_streams.clear();
     v.speaking.clear();
     v.pings.clear();
     v.videos.clear();
@@ -596,6 +611,9 @@ fn drop_call(s: &mut State) {
     *rt.feed.lock().unwrap() = None;
     if let Some(w) = rt.watch.take() {
         w.abort();
+    }
+    for (_, h) in rt.extra_watch.drain() {
+        h.abort();
     }
     for h in rt.videos.drain().map(|(_, h)| h).chain(rt.audio.drain().map(|(_, h)| h)) {
         h.abort();
@@ -683,7 +701,7 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                     if s.app.voice.generation == generation
                         && let Some(call) = &s.app.voice.call
                     {
-                        call.sync_streams(s.app.shell.voice.watching.map(|u| u.0), None);
+                        call.sync_streams(&s.app.shell.voice.watched().map(|u| u.0).collect::<Vec<_>>(), None);
                     }
                 });
             }
@@ -721,7 +739,9 @@ pub(super) fn on_server_update(s: &mut State, v: &VoiceServerUpdate) {
                                 return;
                             }
                             if s.app.shell.voice.watching == Some(user) {
-                                watch(s, Some(user));
+                                attach_primary(s, user);
+                            } else if s.app.shell.voice.watching_more.contains(&user) {
+                                sync_watches(s);
                             }
                         }),
                         (RemoteTrack::Audio(t), _, source) => {
@@ -939,7 +959,9 @@ fn on_mesh_event(call: &Arc<Call>, generation: u64, ev: mesh::Event) {
                 }),
                 (Src::ScreenShare, Some(_)) => update(move |s| {
                     if current(s) && s.app.shell.voice.watching == Some(Snowflake(user)) {
-                        watch(s, Some(Snowflake(user)));
+                        attach_primary(s, Snowflake(user));
+                    } else if current(s) && s.app.shell.voice.watching_more.contains(&Snowflake(user)) {
+                        sync_watches(s);
                     }
                 }),
                 (_, None) => update(move |s| {
@@ -1654,6 +1676,9 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if let Some(w) = s.app.voice.watch.take() {
         w.abort();
     }
+    // A new primary watch replaces the set (`replaceViewerStreamKeys`).
+    s.app.shell.voice.watching_more.clear();
+    s.app.shell.voice.extra_streams.clear();
     match user {
         Some(u) if s.app.shell.voice.watch_for != Some(u) => {
             let sh = &mut s.app.shell;
@@ -1675,21 +1700,27 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
     if user.is_none() {
         crate::popout::stream_ended();
     }
-    // A P2P peer only sends its screen share to those who want it.
-    if let Some(mesh) = s.app.voice.call.as_ref().and_then(|c| c.mesh()) {
-        mesh.set_watching(user.map(|u| u.0));
-    }
-    // Only the watched stream is subscribed (its arrival watches again via `TrackSubscribed`),
-    // and only its audio plays: the mixer also drops a share's audio that arrives before an
-    // unsubscribe lands (auto-subscribe on join).
-    if let Some(call) = &s.app.voice.call {
-        call.sync_streams(user.map(|u| u.0), None);
-        if let Some(m) = call.mixer() {
-            m.lock().unwrap().watching = user.map(|u| u.0);
-        }
-    }
     s.app.shell.voice.self_stream = false;
-    let (Some(user), Some(call)) = (user, &s.app.voice.call) else { return };
+    sync_watches(s);
+    render_primary(s);
+}
+
+/// `TrackSubscribed` / mesh `Event::Remote` for the primary: attaches the still-missing watch,
+/// otherwise only restarts its renderer (added streams stay watched).
+#[cfg(feature = "voice-webrtc")]
+fn attach_primary(s: &mut State, user: Snowflake) {
+    if s.app.shell.voice.watch_for != Some(user) {
+        watch(s, Some(user));
+    } else {
+        render_primary(s);
+    }
+}
+
+fn render_primary(s: &mut State) {
+    if let Some(w) = s.app.voice.watch.take() {
+        w.abort();
+    }
+    let (Some(user), Some(call)) = (s.app.shell.voice.watching, &s.app.voice.call) else { return };
     // Our own stream: Fluxer's tile draws the local track, so the viewer shows it as-is.
     let own = (user == s.app.store.my_id()).then(|| s.app.voice.share.as_ref().and_then(|sh| sh.track())).flatten();
     s.app.shell.voice.self_stream = own.is_some();
@@ -1707,6 +1738,93 @@ fn watch(s: &mut State, user: Option<Snowflake>) {
             frames.fetch_add(1, Ordering::Relaxed);
         }));
         s.app.voice.watch = Some(task.abort_handle());
+    }
+}
+
+/// `addWatchedStreamKey`: adds a stream beside the primary one, leaving its focus and pin alone.
+fn add_stream(s: &mut State, user: Snowflake) {
+    let v = &mut s.app.shell.voice;
+    if v.is_watching(user) {
+        return;
+    }
+    if v.watching.is_none() {
+        watch(s, Some(user));
+        return;
+    }
+    let stream = crate::shell::voice::ExtraStream { pixels: rune::Pixels::default(), frames: Default::default(), started: std::time::Instant::now() };
+    v.watching_more.push(user);
+    v.extra_streams.insert(user, stream);
+    send_state(s);
+    sync_watches(s);
+    crate::desktop::play(s, crate::desktop::Sound::ViewerJoin);
+}
+
+/// `stopWatchingStreamKey`: drops one share; the primary hands over to an added one.
+fn remove_stream(s: &mut State, user: Snowflake) {
+    s.app.shell.voice.unwatch(user);
+    if s.app.shell.voice.watching.is_none() {
+        s.app.shell.voice.stream_fullscreen = false;
+        s.app.shell.popups.close();
+        if let Some(w) = s.app.voice.watch.take() {
+            w.abort();
+        }
+        crate::popout::stream_ended();
+    }
+    send_state(s);
+    sync_watches(s);
+    crate::desktop::play(s, crate::desktop::Sound::ViewerLeave);
+}
+
+/// Starts the renderer of every added stream, stops those no longer watched, and tells the call
+/// which streams and stream audio the viewer wants.
+fn sync_watches(s: &mut State) {
+    let primary = s.app.shell.voice.watching;
+    let watched: Vec<Snowflake> = s.app.shell.voice.watching_more.clone();
+    // An added stream that became primary keeps its renderer (its frames moved into `stream`).
+    let mut promoted = None;
+    s.app.voice.extra_watch.retain(|u, task| {
+        let keep = Some(*u) == primary || watched.contains(u);
+        if !keep {
+            task.abort();
+        } else if Some(*u) == primary {
+            promoted = Some(*u);
+        }
+        keep
+    });
+    if let Some(task) = promoted.and_then(|u| s.app.voice.extra_watch.remove(&u)) {
+        if let Some(old) = s.app.voice.watch.take() {
+            old.abort();
+        }
+        s.app.voice.watch = Some(task);
+    }
+    let Some(call) = s.app.voice.call.clone() else { return };
+    for user in &watched {
+        if s.app.voice.extra_watch.get(user).is_some_and(|h| !h.is_finished()) {
+            continue;
+        }
+        s.app.voice.extra_watch.remove(user);
+        let Some(stream) = s.app.shell.voice.extra_streams.get(user).cloned() else { continue };
+        let Some(track) = call.screen_track(user.0) else { continue };
+        let Some(b) = super::BRIDGE.get() else { continue };
+        let (pixels, frames) = (stream.pixels, stream.frames);
+        let task = b.rt.spawn(reflux_voice::render_video(track, move |w, h, rgba| {
+            pixels.set(w, h, rgba);
+            frames.fetch_add(1, Ordering::Relaxed);
+        }));
+        s.app.voice.extra_watch.insert(*user, task.abort_handle());
+    }
+    // `ScreenShareSubscriptionPolicy`: subscribe the watched shares (and no other), and let only
+    // their audio play.
+    let (primary, more) = (s.app.shell.voice.watching.map(|u| u.0), watched.iter().map(|u| u.0).collect::<Vec<_>>());
+    let all: Vec<u64> = primary.into_iter().chain(more).collect();
+    call.sync_streams(&all, None);
+    if let Some(m) = call.mixer() {
+        let mut m = m.lock().unwrap();
+        m.watching = primary;
+        m.watching_extra = all.iter().copied().filter(|u| Some(*u) != primary).collect();
+    }
+    if let Some(mesh) = call.mesh() {
+        mesh.set_watching(primary);
     }
 }
 

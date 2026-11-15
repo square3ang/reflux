@@ -49,6 +49,8 @@ pub mod audio {
         pub muted_users: HashSet<u64>,
         pub muted_streams: HashSet<u64>,
         pub watching: Option<u64>,
+        /// Further watched shares (`Add stream`): their audio plays too.
+        pub watching_extra: Vec<u64>,
         pub deaf: bool,
         pub output: f32,
     }
@@ -62,6 +64,7 @@ pub mod audio {
                 muted_users: HashSet::new(),
                 muted_streams: HashSet::new(),
                 watching: None,
+                watching_extra: Vec::new(),
                 deaf: false,
                 output: 1.0,
             }
@@ -354,7 +357,7 @@ impl Call {
         false
     }
 
-    pub fn sync_streams(&self, _watching: Option<u64>, _previewing: Option<u64>) {}
+    pub fn sync_streams(&self, _watch: &[u64], _previewing: Option<u64>) {}
 
     pub fn screen_track(&self, _user: u64) -> Option<RtcVideoTrack> {
         None
