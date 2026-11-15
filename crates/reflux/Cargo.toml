@@ -60,6 +60,8 @@ x11rb = { version = "0.13", features = ["record"] }
 gstreamer = { version = "0.24", optional = true }
 gstreamer-app = { version = "0.24", optional = true }
 gstreamer-video = { version = "0.24", optional = true }
+# Whether GIO can do TLS (libsoup's https), so playback picks souphttpsrc over curlhttpsrc.
+gio-sys = { version = "0.21", optional = true }
 
 [target."cfg(not(windows))".dependencies]
 # Desktop notifications: org.freedesktop.Notifications on Linux, NSUserNotification on macOS.
@@ -104,7 +106,7 @@ dispatch2 = { version = "0.3", default-features = false, features = ["std", "obj
 # `voice` builds WebRTC (LiveKit + libwebrtc, the slowest dependency); without it `voice-webrtc`
 # is off and calls / screen share / camera are unavailable — `scripts/fast-build.sh` for UI work.
 default = ["gst", "voice"]
-gst = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video"]
+gst = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gio-sys"]
 voice = ["voice-webrtc"]
 voice-webrtc = ["reflux-voice/webrtc"]
 

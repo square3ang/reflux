@@ -24,6 +24,11 @@ test -f "$(pkg-config --variable=pluginsdir gstreamer-1.0)/libgstpipewire.so"
 export GSTREAMER_PLUGINS_DIR="${GSTREAMER_PLUGINS_DIR:-$(pkg-config --variable=pluginsdir gstreamer-1.0)}"
 export GSTREAMER_HELPERS_DIR="${GSTREAMER_HELPERS_DIR:-$(pkg-config --variable=pluginscannerdir gstreamer-1.0)}"
 linuxdeploy --appdir "$app" --executable target/release/reflux --desktop-file packaging/reflux.desktop --icon-file "$tools/reflux.png" --plugin gstreamer
+# GIO's TLS module, built against the bundled glib and gnutls: without it libsoup can't fetch
+# https and attachment videos fall back to curlhttpsrc, which stalls after a seek.
+mkdir -p "$app/usr/lib/gio/modules"
+cp "$(pkg-config --variable=giomoduledir gio-2.0)/libgiognutls.so" "$app/usr/lib/gio/modules/"
+test -f "$app/usr/lib/libgnutls.so.30"
 # The plugin's hook ends in `[ -n "$GST_PTP_HELPER" ] && export ...`, which fails without that
 # helper, and AppRun sources hooks under `set -e`: the AppImage exited 1 before starting.
 echo true >> "$app/apprun-hooks/linuxdeploy-plugin-gstreamer.sh"
@@ -35,5 +40,7 @@ cat >> "$app/apprun-hooks/linuxdeploy-plugin-gstreamer.sh" <<'EOF'
 unset GST_REGISTRY_REUSE_PLUGIN_SCANNER
 export GST_REGISTRY_FORK=no
 export GST_REGISTRY="${XDG_CACHE_HOME:-$HOME/.cache}/reflux/gstreamer-registry.bin"
+# Only the bundled GIO modules: the host's are built against its own glib.
+export GIO_MODULE_DIR="${APPDIR}/usr/lib/gio/modules"
 EOF
 linuxdeploy --appdir "$app" --output appimage

@@ -98,19 +98,32 @@ mod imp {
                 eprintln!("reflux: gstreamer: {e}");
                 return false;
             }
-            // The AppImage has no GIO TLS module that loads with its own glib, so libsoup can't
-            // fetch https: most attachment videos never played ("This video can't be played.").
-            // libcurl in the bundle has its own TLS, so stream through it when it's there.
-            let registry = gst::Registry::get();
-            if let Some(curl) = registry.lookup_feature("curlhttpsrc") {
-                use gst::prelude::*;
-                curl.set_rank(gst::Rank::PRIMARY);
-                if let Some(soup) = registry.lookup_feature("souphttpsrc") {
-                    soup.set_rank(gst::Rank::NONE);
+            // libsoup streams https through GIO's TLS module. The AppImage bundles one
+            // (`GIO_MODULE_DIR`); without any, https videos never played ("This video can't be
+            // played."), so fall back to libcurl, which has its own TLS. Only as a fallback: the
+            // bundle's curlhttpsrc (1.24) stalls after any seek, so dragging the seek bar froze
+            // the clip for good.
+            if !tls_backend() {
+                let registry = gst::Registry::get();
+                if let Some(curl) = registry.lookup_feature("curlhttpsrc") {
+                    use gst::prelude::*;
+                    curl.set_rank(gst::Rank::PRIMARY);
+                    if let Some(soup) = registry.lookup_feature("souphttpsrc") {
+                        soup.set_rank(gst::Rank::NONE);
+                    }
                 }
             }
             true
         })
+    }
+
+    /// Whether GIO has a TLS backend (libsoup can fetch https).
+    fn tls_backend() -> bool {
+        // SAFETY: the default backend is a process-wide singleton GIO owns; both calls only read it.
+        unsafe {
+            let backend = gio_sys::g_tls_backend_get_default();
+            !backend.is_null() && gio_sys::g_tls_backend_supports_tls(backend) != 0
+        }
     }
 
     /// [`available`] that waits for the init: for work off the UI thread.
@@ -595,6 +608,44 @@ mod imp {
             a.is_some_and(|a| (a - b).abs() < 0.15)
         }
 
+
+        /// A seek-bar drag (40 seeks, a frame apart) on a remote clip, then playback must go on.
+        /// Needs the network: `REFLUX_SEEK_URL=https://… cargo test -p reflux drag_seeks -- --ignored`
+        /// (run under the AppImage's libraries to check the bundle's http source).
+        #[test]
+        #[ignore]
+        fn drag_seeks_keep_a_remote_clip_playing() {
+            let url = std::env::var("REFLUX_SEEK_URL").expect("REFLUX_SEEK_URL");
+            let frames = Frames::default();
+            let f = frames.clone();
+            let mut player = VideoPlayer::new(&url, move |w, h, rgba| {
+                let mut f = f.lock().unwrap();
+                *f = (f.0 + 1, w, h, rgba);
+            })
+            .unwrap();
+            player.playbin.set_property("audio-sink", gst::ElementFactory::make("fakesink").property("sync", true).build().unwrap());
+            player.play();
+            let t = Instant::now();
+            while frames.lock().unwrap().0 < 10 {
+                player.poll();
+                assert!(t.elapsed() < Duration::from_secs(20), "no start");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let dur = player.duration().unwrap_or(30.0);
+            for i in 0..40 {
+                player.seek(dur * 0.1 + dur * 0.6 * i as f64 / 40.0);
+                player.poll();
+                std::thread::sleep(Duration::from_millis(16));
+            }
+            let n = frames.lock().unwrap().0;
+            let t = Instant::now();
+            while frames.lock().unwrap().0 < n + 20 {
+                player.poll();
+                assert!(t.elapsed() < Duration::from_secs(20), "stuck after drag: frames {n}, pos {:?}, playing {}, ended {}", player.position(), player.playing, player.ended);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(player.position().is_some_and(|p| p > dur * 0.5), "the drag landed at {:?}", player.position());
+        }
 
         #[test]
         fn plays_pauses_seeks_and_ends() {
