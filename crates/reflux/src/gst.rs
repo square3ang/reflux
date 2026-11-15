@@ -228,6 +228,13 @@ mod imp {
                     }
                     gst::MessageView::Error(e) => {
                         eprintln!("reflux: video: {} ({:?})", e.error(), e.debug());
+                        // A toast-sized stderr no one sees: keep the last errors for a report.
+                        if let Some(dir) = crate::session::dir() {
+                            let path = dir.join("video.txt");
+                            let old = std::fs::read_to_string(&path).unwrap_or_default();
+                            let tail: String = old.chars().skip(old.len().saturating_sub(8192)).collect();
+                            let _ = std::fs::write(&path, format!("{tail}{} ({:?})\n", e.error(), e.debug()));
+                        }
                         (self.playing, changed) = (false, true);
                     }
                     _ => {}

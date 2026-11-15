@@ -539,7 +539,9 @@ pub fn attachments<S: 'static>(store: &Store, st: &ShellState, m: &Message, p: &
             file_card(a, p, acc)
         };
         out.push(match footnote {
-            Some(f) => col().items_start().child(card.key("card")).child(f.key("expiry")),
+            // `w_full`: a start-aligned column is as wide as its content, so the card's
+            // `width: 100%` would come out at its min-content width (an ellipsis and "10…").
+            Some(f) => col().w_full().items_start().child(card.key("card")).child(f.key("expiry")),
             None => card,
         }
         .key(format!("att-{}", a.id)));
@@ -1168,6 +1170,26 @@ fn text_preview<S: 'static>(st: &ShellState, a: &Attachment, p: &Palette, acc: S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Found live: with the expiry footnote the card sat in a start-aligned column and came out
+    /// at its min-content width (`width: 100%` needs a definite parent).
+    #[test]
+    fn the_file_card_fills_the_message_column() {
+        struct St(Attachment, super::super::ShellState);
+        fn view(s: &St, _: &mut rune::Cx<St>) -> El {
+            col().w(500.0).items_start().child(
+                col()
+                    .w_full()
+                    .items_start()
+                    .child(super::file_card(&s.0, crate::theme::palette(crate::theme::Kind::Dark), (|s: &mut St| &mut s.1) as crate::shell::ShellAccess<St>).key("card")),
+            )
+        }
+        let a = Attachment { filename: "sq3ng.figcraft".into(), size: 10_500, content_type: "application/octet-stream".into(), url: Some("https://x/f".into()), ..Default::default() };
+        let mut rt = rune::Runtime::with_text(St(a, Default::default()), view, (500.0, 200.0), rune::Env::new(true, 1.0), rune::text::TextSystem::new(crate::theme::FONTS, crate::theme::FAMILIES));
+        rt.frame(0.0);
+        let card = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("card")).expect("the card");
+        assert!(card.rect[2] >= 300.0, "the card is {} px wide", card.rect[2]);
+    }
 
     #[test]
     fn cards_scale_media_down_to_fit() {
