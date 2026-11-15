@@ -23,7 +23,7 @@ use pulse::mainloop::standard::{IterateResult, Mainloop};
 use pulse::sample::{Format, Spec};
 use pulse::stream::Direction;
 
-use super::{Apm, IoThread, MicChain, Mixer, FRAME, RATE};
+use super::{Apm, IoThread, MicChain, Mixer, PlaybackDelay, FRAME, RATE};
 
 /// Playback queued in the server. The old cpal path used the ALSA plugin's small default
 /// buffer, so a mixer lock or a scheduler hiccup between callbacks was an audible xrun; the
@@ -175,7 +175,7 @@ fn resolve(dir: Direction, wanted: Option<&str>) -> Option<Option<String>> {
 
 /// Plays the mixer on `device` at 48 kHz stereo through the server. `None` when no server
 /// answers or the stream cannot be opened (the caller falls back to cpal).
-pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: Apm) -> Option<IoThread> {
+pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: Apm, playback: PlaybackDelay) -> Option<IoThread> {
     let target = resolve(Direction::Playback, device)?;
     let attr = BufferAttr {
         maxlength: u32::MAX,
@@ -199,6 +199,7 @@ pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: A
         // swing (users report one after a few minutes) can be traced to the gain or the audio.
         let debug = std::env::var_os("REFLUX_DEBUG_AUDIO").is_some_and(|v| v != "0");
         let mut logged = std::time::Instant::now();
+        let mut last_latency = std::time::Instant::now();
         let mut peak = 0f32;
         while !st.load(Ordering::Relaxed) {
             mixer.lock().unwrap().mix(&mut mix);
@@ -228,6 +229,14 @@ pub(super) fn open_output(device: Option<&str>, mixer: Arc<Mutex<Mixer>>, apm: A
             if let Some(apm) = apm.lock().unwrap().as_mut() {
                 let mut i16pcm: Vec<i16> = mix.iter().map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16).collect();
                 let _ = apm.process_reverse_stream(&mut i16pcm, RATE as i32, 1);
+            }
+            // Queued, not played: how long the server holds it before the speakers, for the mic
+            // chain to tell the echo canceller. Every 100 ms is enough (it drifts slowly).
+            if last_latency.elapsed() >= std::time::Duration::from_millis(100) {
+                last_latency = std::time::Instant::now();
+                if let Ok(pulse::time::MicroSeconds(us)) = simple.get_latency() {
+                    playback.set((us / 1000).min(u32::MAX as u64) as u32);
+                }
             }
         }
     });

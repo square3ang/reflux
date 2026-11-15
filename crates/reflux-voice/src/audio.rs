@@ -295,6 +295,25 @@ fn config(supported: Vec<cpal::SupportedStreamConfigRange>, default: cpal::Suppo
 
 type Apm = Arc<Mutex<Option<AudioProcessingModule>>>;
 
+/// How far the far end handed to the echo canceller is from the speakers, in ms: the output
+/// thread's measured playout latency. On Linux it's what PulseAudio reports, so the canceller
+/// isn't left guessing (and cutting the near end while it guesses).
+#[derive(Clone, Default)]
+pub struct PlaybackDelay(Arc<std::sync::atomic::AtomicU32>);
+
+impl PlaybackDelay {
+    fn set(&self, ms: u32) {
+        self.0.store(ms, Ordering::Relaxed);
+    }
+
+    pub fn ms(&self) -> Option<i32> {
+        match self.0.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(ms as i32),
+        }
+    }
+}
+
 /// The local speaking ring from the gate: 0 = no gate (push-to-talk, studio), 1 = quiet,
 /// 2 = talking. Fluxer's own ring is the worklet's speaking state, not the server's list.
 pub const SPEAKING_NONE: u8 = 0;
@@ -314,6 +333,8 @@ pub struct Engine {
     noise_state: Arc<AtomicU8>,
     input: Mutex<Option<IoThread>>,
     output: Mutex<Option<IoThread>>,
+    /// The speakers' measured latency, for the echo canceller's far end.
+    playback: PlaybackDelay,
     /// Whether the mic chain also plays into [`Engine::mixer`] (the mic test).
     monitor: Arc<AtomicBool>,
 }
@@ -328,7 +349,7 @@ impl Engine {
     pub fn new() -> Self {
         // No WebRTC processing on the source: ours runs before it; queue 0 = 10 ms frames, sync.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), RATE, 1, 0);
-        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), speaking: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default(), monitor: Arc::default() };
+        let engine = Self { mixer: Arc::default(), source, level: Arc::default(), speaking: Arc::default(), processing: Arc::default(), apm: Arc::default(), noise_state: Arc::default(), input: Mutex::default(), output: Mutex::default(), playback: PlaybackDelay::default(), monitor: Arc::default() };
         engine.set_processing(Processing::default());
         engine
     }
@@ -376,7 +397,7 @@ impl Engine {
         *slot = None;
         let (mixer, apm) = (self.mixer.clone(), self.apm.clone());
         #[cfg(target_os = "linux")]
-        if let Some(thread) = pulse::open_output(name, mixer.clone(), apm.clone()) {
+        if let Some(thread) = pulse::open_output(name, mixer.clone(), apm.clone(), self.playback.clone()) {
             *slot = Some(thread);
             return true;
         }
@@ -409,7 +430,7 @@ impl Engine {
         if let Some(path) = std::env::var_os("REFLUX_TEST_SAMPLE") {
             match read_wav(std::path::Path::new(&path)) {
                 Some((samples, rate)) if rate == RATE && !samples.is_empty() => {
-                    let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
+                    let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor, PlaybackDelay::default());
                     let stop = Arc::new(AtomicBool::new(false));
                     let st = stop.clone();
                     std::thread::spawn(move || {
@@ -432,7 +453,7 @@ impl Engine {
             }
         }
         if std::env::var_os("REFLUX_TEST_TONE").is_some_and(|v| v != "0") {
-            let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor);
+            let chain = MicChain::new(RATE, source, apm, processing, level, speaking, noise_state, monitor, PlaybackDelay::default());
             let stop = Arc::new(AtomicBool::new(false));
             let st = stop.clone();
             std::thread::spawn(move || {
@@ -449,14 +470,14 @@ impl Engine {
             return true;
         }
         #[cfg(target_os = "linux")]
-        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), speaking.clone(), noise_state.clone(), monitor.clone())) {
+        if let Some(thread) = pulse::open_input(name.as_deref(), MicChain::new(RATE, source.clone(), apm.clone(), processing.clone(), level.clone(), speaking.clone(), noise_state.clone(), monitor.clone(), self.playback.clone())) {
             *slot = Some(thread);
             return true;
         }
         *slot = run_stream(move || {
             let device = input_device(name.as_deref())?;
             let cfg = config(device.supported_input_configs().ok()?.collect(), device.default_input_config().ok()?);
-            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, speaking, noise_state, monitor);
+            let chain = MicChain::new(cfg.sample_rate(), source, apm, processing, level, speaking, noise_state, monitor, PlaybackDelay::default());
             match cfg.sample_format() {
                 cpal::SampleFormat::F32 => build_input::<f32>(&device, &cfg, chain),
                 cpal::SampleFormat::I16 => build_input::<i16>(&device, &cfg, chain),
@@ -609,10 +630,10 @@ const CHAIN_QUEUE: usize = 4;
 
 impl MicChain {
     #[allow(clippy::too_many_arguments)]
-    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>)) -> Self {
+    fn new(rate: u32, source: NativeAudioSource, apm: Apm, processing: Arc<Mutex<Processing>>, level: Arc<AtomicU32>, speaking: Speaking, noise_state: Arc<AtomicU8>, monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>), playback: PlaybackDelay) -> Self {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(CHAIN_QUEUE);
         std::thread::spawn(move || {
-            let mut inner = MicChainInner { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), deep: crate::deepfilter::Deep::new(noise_state), gate: None, speaking, level, monitor, watch: Watch::default() };
+            let mut inner = MicChainInner { resampler: Resampler::new(rate, RATE), pending: Vec::new(), source, apm, processing, denoise: nnnoiseless::DenoiseState::new(), deep: crate::deepfilter::Deep::new(noise_state), gate: None, speaking, level, monitor, playback, watch: Watch::default() };
             let mut stalled = false;
             loop {
                 match rx.recv_timeout(Duration::from_secs(3)) {
@@ -663,6 +684,7 @@ struct MicChainInner {
     speaking: Speaking,
     level: Arc<AtomicU32>,
     monitor: (Arc<Mutex<Mixer>>, Arc<AtomicBool>),
+    playback: PlaybackDelay,
     watch: Watch,
 }
 
@@ -710,6 +732,11 @@ impl MicChainInner {
             let mut pcm: Vec<i16> = frame.iter().copied().map(to_i16).collect();
             let input = peak(&pcm);
             if let Some(apm) = self.apm.lock().unwrap().as_mut() {
+                // The far end was handed over when it was queued; this is how long until it
+                // plays, so the echo canceller doesn't search for (or cancel) the wrong thing.
+                if let Some(ms) = self.playback.ms() {
+                    let _ = apm.set_stream_delay_ms(ms);
+                }
                 let _ = apm.process_stream(&mut pcm, RATE as i32, 1);
             }
             let after_apm = peak(&pcm);
