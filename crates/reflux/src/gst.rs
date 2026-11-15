@@ -93,7 +93,24 @@ mod imp {
     static OK: OnceLock<bool> = OnceLock::new();
 
     fn init() -> bool {
-        *OK.get_or_init(|| gst::init().map_err(|e| eprintln!("reflux: gstreamer: {e}")).is_ok())
+        *OK.get_or_init(|| {
+            if let Err(e) = gst::init() {
+                eprintln!("reflux: gstreamer: {e}");
+                return false;
+            }
+            // The AppImage has no GIO TLS module that loads with its own glib, so libsoup can't
+            // fetch https: most attachment videos never played ("This video can't be played.").
+            // libcurl in the bundle has its own TLS, so stream through it when it's there.
+            let registry = gst::Registry::get();
+            if let Some(curl) = registry.lookup_feature("curlhttpsrc") {
+                use gst::prelude::*;
+                curl.set_rank(gst::Rank::PRIMARY);
+                if let Some(soup) = registry.lookup_feature("souphttpsrc") {
+                    soup.set_rank(gst::Rank::NONE);
+                }
+            }
+            true
+        })
     }
 
     /// [`available`] that waits for the init: for work off the UI thread.
@@ -577,6 +594,7 @@ mod imp {
         fn near(a: Option<f64>, b: f64) -> bool {
             a.is_some_and(|a| (a - b).abs() < 0.15)
         }
+
 
         #[test]
         fn plays_pauses_seeks_and_ends() {
