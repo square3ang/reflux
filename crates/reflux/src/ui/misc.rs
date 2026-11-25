@@ -1,7 +1,7 @@
 //! Small pieces: `<MentionBadge>`, `<NotificationDot>`, `<Spinner>` and `<Scroller>`
 //! (`components/{MentionBadge,NotificationDot,Spinner}.module.css`, `scroller/ScrollerTrack.module.css`).
 
-use rune::{Color, El, LoopSpec, Shadow, el, row, text};
+use rune::{Beat, Color, Easing, El, LoopSpec, Sequence, Shadow, el, row, text};
 use rune_kit::{ScrollBar, ScrollBarStyle};
 
 use super::rgba;
@@ -57,16 +57,20 @@ pub enum SpinnerSize {
     Large,
 }
 
-/// `<Spinner>`: three `text-secondary` dots pulsing over 1.4s, staggered .2s.
+/// `<Spinner>`: three `text-secondary` dots pulsing 0.3/0.8→1/1→0.3/0.8 over 1.4s, staggered .2s.
 pub fn spinner(size: SpinnerSize, p: &Palette) -> El {
+    const BEATS: &[Beat] = &[
+        Beat::new(0.0).opacity(0.3).scale(0.8),
+        Beat::new(0.7).opacity(1.0).scale(1.0).easing(Easing::EASE_IN_OUT),
+        Beat::new(1.4).opacity(0.3).scale(0.8).easing(Easing::EASE_IN_OUT),
+    ];
     let d = match size {
         SpinnerSize::Small => 6.0,
         SpinnerSize::Medium => 8.0,
         SpinnerSize::Large => 10.0,
     };
-    // shortcut: the keyframes also scale each dot to .8; Rune's loop here is opacity only.
     row().center().gap(2.0).children((0..3).map(move |i| {
-        el().size(d, d).radius(4.0).fill(p.text_secondary).looping(LoopSpec::opacity(1.4, 0.2 * i as f64, 0.3, 1.0))
+        el().size(d, d).radius(4.0).fill(p.text_secondary).looping(LoopSpec::sequence(Sequence::new(BEATS).delay(0.2 * i as f64).repeating()))
     }))
 }
 
@@ -74,89 +78,19 @@ pub fn spinner(size: SpinnerSize, p: &Palette) -> El {
 /// `scrollbar-thumb-bg` pill (4 wide thin, 8 regular; 24 and 40 long at least), `-hover` under
 /// the pointer.
 pub fn scroller(viewport: El, regular: bool, p: &Palette) -> El {
-    // shortcut: rune-kit's track sits 2pt in from the ends and the thumb 2pt from the edge; Fluxer's
-    // track runs end to end and its regular thumb sits 4 in. `webkit_parts` moves the thumb 4 in
-    // but also takes a clear border off both ends of the drawn thumb (8pt shorter, 4 in from the
-    // ends), which is further off. Upgrade when `ScrollBarStyle` sets the edge gap and inset alone.
+    // shortcut: rune-kit's thumb sits 2pt from the edge (Fluxer's regular thumb sits 4 in).
+    // `webkit_parts` moves it 4 in but also takes a clear border off both ends of the thumb.
+    // Upgrade when `ScrollBarStyle` sets the edge gap alone.
     let (w, min) = if regular { (8.0, 40.0) } else { (4.0, 24.0) };
     viewport.scroll_bar_styled(
-        ScrollBarStyle::neutral(true).thumb(p.scrollbar_thumb_bg).thumb_hover(p.scrollbar_thumb_bg_hover).width(w).hover_width(w).min_thumb(min),
+        ScrollBarStyle::neutral(true).thumb(p.scrollbar_thumb_bg).thumb_hover(p.scrollbar_thumb_bg_hover).track_inset(0.0).width(w).hover_width(w).min_thumb(min),
     )
-}
-
-/// Points Rune scrolls per wheel line (`wheel_delta`'s `LineDelta`).
-const RUNE_LINE: f32 = 40.0;
-/// Points Chromium scrolls per wheel detent: 120 on Wayland, X11 and Windows since
-/// `ozone/wayland: Fix high resolution scroll handling` (M140; Fluxer's Electron 44 is M146).
-const WHEEL_STEP: f32 = 120.0;
-
-/// `REFLUX_DEBUG_WHEEL`: logs each wheel delta [`chromium_wheel`] hears.
-fn debug_wheel() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_WHEEL").is_some())
 }
 
 /// `REFLUX_DEBUG_SCROLL`: log a message list's offsets (history paging's anchoring).
 pub(crate) fn debug_scroll() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("REFLUX_DEBUG_SCROLL").is_some())
-}
-
-thread_local! {
-    /// Each [`chromium_wheel`] viewport's last scroll position.
-    static WHEEL: std::cell::RefCell<std::collections::HashMap<String, rune::ScrollPos>> = Default::default();
-}
-
-/// Chromium's wheel step on a vertical scroll viewport: a notched wheel's line steps go
-/// Chromium's [`WHEEL_STEP`], at once (no glide). Trackpads and free-spinning wheels (`precise`)
-/// and modified wheels scroll as before. `key` names a marker (`{key}-wheel`, absolute and
-/// empty) the step finds the viewport by, so it must be unique among what's on screen; the
-/// viewport's own key is left alone.
-pub fn chromium_wheel<S: 'static>(viewport: El, key: &str) -> El {
-    chromium_wheel_with::<S>(viewport, key, |_| {})
-}
-
-/// [`chromium_wheel`] for a viewport that also follows its offset with `f` (`on_scroll_offset`).
-pub fn chromium_wheel_with<S: 'static>(viewport: El, key: &str, f: impl Fn(rune::ScrollPos) + 'static) -> El {
-    let mark = format!("{key}-wheel");
-    let (k1, k2) = (mark.clone(), mark.clone());
-    viewport
-        .child(el().absolute(0.0, 0.0).size(0.0, 0.0).inert().key(mark))
-        .on_scroll_offset(move |pos| {
-            if debug_scroll() && k1.starts_with("msgs") {
-                eprintln!("scroll {k1}: offset {:.1} max {:.1}", pos.offset[1], pos.max[1]);
-            }
-            WHEEL.with_borrow_mut(|m| m.insert(k1.clone(), pos));
-            f(pos);
-        })
-        .on_wheel(move |_: &mut S, e: rune::WheelEvent, tx: &mut rune::Tx| {
-            let m = e.mods;
-            if debug_wheel() {
-                eprintln!("wheel {k2}: dy {} dx {} precise {} phase {:?} mods {:?}", e.dy, e.dx, e.precise, e.phase, m);
-            }
-            if e.precise || e.dx != 0.0 || e.dy == 0.0 || m.cmd || m.ctrl || m.alt || m.shift {
-                return false;
-            }
-            let Some(to) = WHEEL.with_borrow(|w| {
-                let pos = w.get(&k2)?;
-                Some((pos.offset[1] - e.dy * WHEEL_STEP / RUNE_LINE).clamp(0.0, pos.max[1].max(0.0)))
-            }) else {
-                return false;
-            };
-            tx.scroll_to_y(k2.clone(), to);
-            true
-        })
-}
-
-/// [`chromium_wheel`] chained after `.scroll(…)`.
-pub trait ChromiumWheel {
-    fn chromium_wheel<S: 'static>(self, key: impl AsRef<str>) -> El;
-}
-
-impl ChromiumWheel for El {
-    fn chromium_wheel<S: 'static>(self, key: impl AsRef<str>) -> El {
-        chromium_wheel::<S>(self, key.as_ref())
-    }
 }
 
 #[cfg(test)]

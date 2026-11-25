@@ -78,7 +78,7 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com"
 # `#[implement]` (the process-loopback activation handler) names this crate.
 windows-core = "0.62"
 # The toasts' AppUserModelID, name and icon (otherwise they post as PowerShell).
-rune-notify = { git = "https://github.com/anomalyco/rune", rev = "9ef8a17cbf5d91de1f9cbab908c622f03b644114" }
+rune-notify = { git = "https://github.com/anomalyco/rune", rev = "8fa6403ae9c34b502f22cf04946bd803bb18d7da" }
 # Toasts with the avatar as the small logo (`appLogoOverride`); notify-rust only does the large
 # inline image. Already in the tree under notify-rust.
 tauri-winrt-notification = "0.8"

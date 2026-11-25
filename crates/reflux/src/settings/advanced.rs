@@ -6,7 +6,7 @@
 
 use reflux_store::Store;
 use rune::{El, TextEdit, col, el, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 use serde_json::json;
 
 use super::search_index::{ADDED, ITEMS};

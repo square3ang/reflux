@@ -876,27 +876,23 @@ fn fetch_older(s: &State, channel: Snowflake) {
             Ok(()) => inst.rest.messages(channel, MessagePage::Before(oldest), PAGE).await,
             Err(e) => Err(e),
         };
-        update_tx(move |s, tx| match r {
-            Ok(page) if s.app.generation == generation => prepend_older(&mut s.app.store, tx, channel, page),
+        update_tx(move |s, _| match r {
+            Ok(page) if s.app.generation == generation => prepend_older(&mut s.app.store, channel, page),
             Ok(_) => {}
             Err(e) => eprintln!("reflux: older messages of {channel}: {e}"),
         });
     });
 }
 
-/// Adds an older page above what's loaded, holding the message that was first where it shows.
-pub(crate) fn prepend_older(store: &mut Store, tx: &mut rune::Tx, channel: Snowflake, page: Vec<reflux_model::Message>) {
-    // shortcut: Rune's virtual list holds the topmost row in view, which at the top of what's
-    // loaded is the head filler: the page went in under it, the filler stayed in view and
-    // loaded the next page, on to the channel's start. Holding the first message lands the
-    // page above it, as Fluxer does.
-    if let Some(m) = store.messages.get(&channel).and_then(|w| w.messages.first()) {
-        if crate::ui::misc::debug_scroll() {
+/// Adds an older page above what's loaded; Rune's virtual list skips the `no_scroll_anchor`
+/// head filler and anchors on the first real message beneath it.
+pub(crate) fn prepend_older(store: &mut Store, channel: Snowflake, page: Vec<reflux_model::Message>) {
+    if crate::ui::misc::debug_scroll() {
+        if let Some(m) = store.messages.get(&channel).and_then(|w| w.messages.first()) {
             eprintln!("scroll: prepend {} msgs above {}", page.len(), m.id);
+        } else {
+            eprintln!("scroll: prepend {} msgs with nothing loaded", page.len());
         }
-        tx.keep_on_screen(crate::shell::chat::row_key(m, store.my_id()));
-    } else if crate::ui::misc::debug_scroll() {
-        eprintln!("scroll: prepend {} msgs with nothing loaded", page.len());
     }
     store.prepend_messages(channel, page, PAGE as usize);
 }

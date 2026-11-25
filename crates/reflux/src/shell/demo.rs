@@ -148,7 +148,8 @@ impl Demo {
                 serde_json::from_value(message(oldest - k * 60_000, 0, [1001, 1002, 1003][(k % 3) as usize], &format!("older message {k}"), extra)).ok()
             })
             .collect();
-        crate::app::prepend_older(&mut self.store, tx, channel, page);
+        let _ = tx;
+        crate::app::prepend_older(&mut self.store, channel, page);
         true
     }
 

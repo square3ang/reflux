@@ -238,9 +238,7 @@ pub(super) fn results<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsU
         let mut section = col().key(format!("hit-{tab}")).w_full().child(head);
         if expanded {
             // `data-settings-section`: the query is marked inside the inline tab.
-            crate::ui::mark::set(&ui.searched);
-            let body = tabs::body(store, st, ui, tab, p, acc, layer);
-            crate::ui::mark::clear();
+            let body = crate::ui::mark::highlight(tabs::body(store, st, ui, tab, p, acc, layer), &ui.searched);
             section = section.child(col().w_full().gap(8.0).py(16.0).child(body));
         }
         out = out.child(section);

@@ -34,24 +34,20 @@ pub fn on_window(w: &rune::WindowHandle) {
         _ => 0,
     });
     OWN.store(id.unwrap_or(0), Ordering::Relaxed);
-    MAIN.set(Some(w.clone()));
     super::badge::on_window(w);
-    #[cfg(target_os = "linux")]
-    super::wl_drop::on_window(w);
 }
 
 thread_local! {
-    static MAIN: std::cell::RefCell<Option<rune::WindowHandle>> = const { std::cell::RefCell::new(None) };
+    /// Whether the main window is full screen (`Cx::is_full_screen`), updated each view.
+    static FULL_SCREEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The main window was last seen full screen while `watch`ed.
     static WAS_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The main window left full screen since the last call, read from its placement while `watch`
-/// (off, it forgets, so a full screen still being entered doesn't read as left).
-// shortcut: Wayland reports no placement, so leaving full screen from the window manager isn't
-// noticed there; the next exit enters it again.
+/// The main window left full screen since the last call while `watch`ed (off, it forgets, so
+/// a full screen still being entered doesn't read as left).
 pub fn left_full_screen(watch: bool) -> bool {
-    let now = watch && MAIN.with_borrow(|w| w.as_ref().and_then(|w| w.placement()).is_some_and(|p| p.full_screen));
+    let now = watch && FULL_SCREEN.get();
     WAS_FULL.replace(now) && !now
 }
 
@@ -118,6 +114,7 @@ pub fn titlebar(cx: &mut rune::Cx<State>, palette: impl FnOnce() -> crate::theme
 /// The root: zooms the app as Electron's `setZoomFactor` does (`Cx::zoom`), and records the
 /// window size in window points (the layout is in zoomed ones).
 pub fn root(cx: &mut rune::Cx<State>, content: El) -> El {
+    FULL_SCREEN.set(cx.is_full_screen());
     cx.zoom(zoom());
     let dir = if crate::i18n::rtl() { rune::Direction::Rtl } else { rune::Direction::Ltr };
     el().w_full().h_full().dir(dir).on_layout(|s: &mut State, r| s.desktop.size = [r[2] * zoom(), r[3] * zoom()]).child(content)

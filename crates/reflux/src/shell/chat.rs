@@ -2,7 +2,6 @@
 //! (`ChannelHeader`, `ChannelMessages`, `ChannelDivider`, `theme/styles/Message.module.css`,
 //! `MessageReactions`, `textarea/TextareaInput`).
 
-use crate::ui::ChromiumWheel;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -652,10 +651,10 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     let compact = store.settings.message_display_compact;
     let head = more && !rows.is_empty();
     if head {
-        rows.insert(0, col().w_full().key(format!("{pre}msgs-head-filler")).child(super::skeleton::messages(c.id, compact, p)).child(el().h(16.0)));
+        rows.insert(0, col().w_full().key(format!("{pre}msgs-head-filler")).no_scroll_anchor().child(super::skeleton::messages(c.id, compact, p)).child(el().h(16.0)));
     }
     if newer && !rows.is_empty() {
-        rows.push(col().w_full().key(format!("{pre}msgs-tail-filler")).child(super::skeleton::messages(c.id, compact, p)));
+        rows.push(col().w_full().key(format!("{pre}msgs-tail-filler")).no_scroll_anchor().child(super::skeleton::messages(c.id, compact, p)));
     }
     let n_rows = rows.len();
     let cid = c.id;
@@ -703,7 +702,7 @@ pub(super) fn messages<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
     // and centring miss rows in an overflowing `justify_end` viewport (seen live: a jump showed
     // an empty list).
     let viewport = if list_fits && !newer { viewport.justify_end() } else { viewport };
-    let viewport = crate::ui::chromium_wheel::<S>(viewport, &format!("{pre}msgs-scroll"));
+    let viewport = viewport;
     let mut area = col().w_full().grow(1.0).min_h(0.0).child(scroller(viewport, true, p));
     if newer || rows_below > PRESENT_ROWS {
         area = area.child(present_bar(cid, pre, p, acc));
@@ -1679,21 +1678,31 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         Slot::Pane => "thread-composer",
         Slot::Create => "thread-create-composer",
     };
-    // `ComposerCustomEmoji`: custom emoji pills are transparent chips with the image over them.
-    let emoji: Vec<_> = draft.pills().filter_map(|(r, id)| Some((r, crate::compose::emoji_pill(id)?))).collect();
-    let hl = |i: usize| format!("{field_key}-e{i}");
+    // `ComposerCustomEmoji`: custom emoji pills draw their image via `El::pill_image` on a
+    // transparent chip.
+    let pill_imgs: std::collections::HashMap<String, rune::Pixels> = draft
+        .pills()
+        .filter_map(|(_, id)| {
+            let eid = crate::compose::emoji_pill(id)?;
+            let crate::media::Load::Ready(px) = st.media.asset(|b, _| crate::media::emoji_url(b, &eid.to_string())) else { return None };
+            Some((id.to_string(), px))
+        })
+        .collect();
     let field = text_input(draft, font(16.0, 400.0).lh(22.0))
         .key(field_key)
         .decorations(spelling)
         .pill_colors(p.markup_mention_fill, Some(p.markup_mention_text))
         .pill_icon(crate::compose::pill_icon)
+        .pill_image(move |id| pill_imgs.get(id).cloned())
         .pill_style(|id| match crate::compose::emoji_pill(id) {
             Some(_) => rune::PillStyle::new().bg(Color::TRANSPARENT).fg(Color::TRANSPARENT),
             None => rune::PillStyle::new(),
         })
-        .text_highlights(emoji.iter().enumerate().map(|(i, (r, _))| rune::TextHighlight::new(r.clone(), Color::TRANSPARENT).key(hl(i))))
-        .on_secondary_press(move |s: &mut S, at, _| {
-            crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y], slot != Slot::Main);
+        .on_secondary_press(move |_: &mut S, at, tx| {
+            let pane = slot != Slot::Main;
+            tx.text_offset_at(field_key, at.x, at.y, move |s: &mut S, offset, _| {
+                crate::desktop::nagbar::open_spell_menu(acc(s), [at.x, at.y], pane, offset);
+            });
         })
         .w_full()
         .color(p.text_chat)
@@ -1736,19 +1745,6 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
             let submit = submit.clone();
             move |s: &mut S, _| submit(s)
         });
-    // Each custom emoji's image, 22px, centred on its pill and on the line's bottom
-    // (`vertical-align: bottom`), where the field laid them out last frame.
-    let images: Vec<El> = emoji
-        .iter()
-        .enumerate()
-        .filter_map(|(i, (_, id))| {
-            let [fx, fy, _, _] = rune::memo::layout(field_key)?;
-            let ph = rune::memo::layout(&hl(i))?;
-            let crate::media::Load::Ready(px) = st.media.asset(|b, _| crate::media::emoji_url(b, &id.to_string())) else { return None };
-            let side = crate::compose::EMOJI_SIDE;
-            Some(el().absolute(ph[0] - fx + (ph[2] - side) / 2.0, ph[1] - fy + ph[3] - side).size(side, side).pixels_fit(&px, rune::SurfaceFit::Fit).inert().key(format!("{}-img", hl(i))))
-        })
-        .collect();
     // The thread side panel has its own "+" menu and tray; the new-thread pane has none.
     let plus_id = if slot == Slot::Pane { "thread-composer-plus" } else { "composer-plus" };
     let plus = button(&icons::PLUS_BOLD, t("Upload")).key(plus_id);
@@ -1772,7 +1768,7 @@ pub(super) fn composer<S: 'static>(store: &Store, st: &ShellState, c: &Channel, 
         .child(row().px((dim::MESSAGE_AVATAR_SIZE - 32.0) / 2.0).child(plus))
         // `max-height: 50svh`: the field scrolls past half the window.
         .child({
-            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).chromium_wheel::<S>(format!("composer-{slot:?}")).child(col().w_full().child(field).children(images));
+            let column = col().grow(1.0).min_w(0.0).pt((32.0 - 22.0) / 2.0).max_h(rune::memo::layout_size(super::BODY_KEY).map_or(400.0, |[_, h]| h / 2.0)).scroll(ScrollSpec { stick_bottom: true }).child(field);
             if send_ok { column } else { column.inert() }
         })
         // `TextareaButtons` renders nothing while disabled.

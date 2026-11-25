@@ -334,12 +334,11 @@ pub fn spans(text: &str, caret: usize, color: rune::Color) -> Vec<rune::Span> {
     })
 }
 
-/// The misspelling a context menu is about: the one at the caret, else the last before it,
-/// else the first.
-// shortcut: Rune gives no text offset for a pointer position, so the caret stands in for it.
-pub fn pick(text: &str, caret: usize) -> Option<(Range<usize>, String)> {
+/// The misspelling a context menu is about: the one at `offset` (from the pointer via
+/// `Tx::text_offset_at`, else the caret), else the last before it, else the first.
+pub fn pick(text: &str, offset: usize) -> Option<(Range<usize>, String)> {
     let all = misspelled(text, usize::MAX);
-    let r = all.iter().find(|r| r.start <= caret && caret <= r.end).or_else(|| all.iter().rev().find(|r| r.end <= caret)).or(all.first())?;
+    let r = all.iter().find(|r| r.start <= offset && offset <= r.end).or_else(|| all.iter().rev().find(|r| r.end <= offset)).or(all.first())?;
     Some((r.clone(), text[r.clone()].to_string()))
 }
 

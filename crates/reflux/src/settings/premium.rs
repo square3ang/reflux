@@ -8,7 +8,7 @@ use reflux_model::PremiumType;
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, Tx, col, icon, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 use serde_json::Value;
 
 use crate::i18n::{t, tf};

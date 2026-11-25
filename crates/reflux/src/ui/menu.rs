@@ -9,7 +9,7 @@ use rune::{Color, El, Icon, Key, Tx, col, el, row, text};
 use super::icon;
 
 use super::overlay::{Placement, PopupAccess, Popups, anchor, anchor_at_point, popout_shadow};
-use super::{ChromiumWheel, mix, over};
+use super::{mix, over};
 use crate::icons;
 use crate::theme::{Palette, font};
 
@@ -165,7 +165,7 @@ fn surface<S: 'static>(menu: &str, entries: Vec<MenuEntry<S>>, popups: &Popups, 
     }
     // `.menuScroller`: the entries scroll when the menu is capped to the room it has.
     let scroll = format!("{menu}-scroll-{}", parent.unwrap_or(""));
-    let list = col().key(scroll.clone()).shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>(scroll).child(c);
+    let list = col().key(scroll.clone()).shrink().min_h(0.0).scroll(rune::ScrollSpec { stick_bottom: false }).child(c);
     let mut c = col()
         .min_w(208.0)
         .max_w(344.0)
@@ -237,12 +237,14 @@ fn submenu<S: 'static>(menu: &str, popups: &Popups, access: impl PopupAccess<S>,
         })
         .on_press(move |s: &mut S| access(s).sub = Some(pid.clone()));
     if open {
-        // shortcut: rune can't tell us which way the parent flipped, so a nested submenu opens to the
-        // left (it flips right when there's no room). Only the developer tools menu nests, and it sits at the right edge.
-        let side = if parent.is_some() { Placement::LeftStart } else { Placement::RightStart };
+        let side = match parent.and_then(|par| rune::memo::anchor_placement(&format!("{menu}-sub-menu-{par}"))) {
+            Some((rune::Side::Left, _)) => Placement::LeftStart,
+            _ => Placement::RightStart,
+        };
         r = r.fill(p.surface_interactive_hover_bg);
         let mut inner = Vec::new();
-        subs.push(anchor(surface(menu, entries, popups, access, p, Some(&id), &mut inner), &key, side, 8.0));
+        let sub = surface(menu, entries, popups, access, p, Some(&id), &mut inner).key(format!("{menu}-sub-menu-{id}"));
+        subs.push(anchor(sub, &key, side, 8.0));
         subs.extend(inner);
     }
     r

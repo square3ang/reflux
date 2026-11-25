@@ -223,13 +223,18 @@ impl<S: 'static> Button<S> {
     }
 }
 
-/// `.spinner`: three 5px dots pulsing 1→0.3→1 over 1.4s, staggered 0.2s.
+/// `.spinner`: three 5px dots pulsing 0.3/0.8→1/1→0.3/0.8 over 1.4s, staggered 0.2s.
 pub fn spinner(color: Color) -> El {
+    const BEATS: &[rune::Beat] = &[
+        rune::Beat::new(0.0).opacity(0.3).scale(0.8),
+        rune::Beat::new(0.7).opacity(1.0).scale(1.0).easing(rune::Easing::EASE_IN_OUT),
+        rune::Beat::new(1.4).opacity(0.3).scale(0.8).easing(rune::Easing::EASE_IN_OUT),
+    ];
     row().center().gap(2.0).children((0..3).map(|i| {
         rune::el()
             .size(5.0, 5.0)
             .radius(2.5)
             .fill(color)
-            .looping(LoopSpec::opacity(1.4, 0.2 * i as f64, 0.3, 1.0))
+            .looping(LoopSpec::sequence(rune::Sequence::new(BEATS).delay(0.2 * i as f64).repeating()))
     }))
 }

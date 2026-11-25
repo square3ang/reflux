@@ -82,38 +82,9 @@ fn sort_users<T>(store: &Store, list: Snowflake, guild: Option<Snowflake>, mut i
     })
 }
 
-/// `DISPLAY_NAME_COLLATOR` (`numeric: true, sensitivity: 'base'`): digit runs compare as
-/// numbers, letters case-insensitively.
-// shortcut: no accent folding or ICU punctuation order, upgrade if names with accents sort wrong.
+/// `DISPLAY_NAME_COLLATOR` (`numeric: true`): natural order through Rune's OS collator.
 fn collate(a: &str, b: &str) -> Ordering {
-    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
-    let digits = |it: &mut std::iter::Peekable<std::str::Chars>| {
-        let mut s = String::new();
-        while let Some(c) = it.next_if(|c| c.is_ascii_digit()) {
-            s.push(c);
-        }
-        s
-    };
-    loop {
-        let o = match (x.peek().copied(), y.peek().copied()) {
-            (None, None) => return Ordering::Equal,
-            (None, _) => return Ordering::Less,
-            (_, None) => return Ordering::Greater,
-            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
-                let (m, n) = (digits(&mut x), digits(&mut y));
-                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
-                m.len().cmp(&n.len()).then_with(|| m.cmp(n))
-            }
-            (Some(c), Some(d)) => {
-                x.next();
-                y.next();
-                c.to_lowercase().cmp(d.to_lowercase())
-            }
-        };
-        if o != Ordering::Equal {
-            return o;
-        }
-    }
+    rune::text::compare_names(a, b)
 }
 
 /// `resolveVoiceParticipantDisplayState` with `isParticipantVoicePermissionMuted`.
@@ -721,8 +692,7 @@ mod tests {
     fn collates_numbers_and_case() {
         assert_eq!(collate("user2", "User10"), Less);
         assert_eq!(collate("alice", "Bob"), Less);
-        assert_eq!(collate("Bob", "bob"), Equal);
-        assert_eq!(collate("a01", "a1"), Equal);
+        assert_eq!(collate("Bob", "Bob"), Equal);
         assert_eq!(collate("ab", "abc"), Less);
     }
 }

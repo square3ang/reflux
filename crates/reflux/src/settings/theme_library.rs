@@ -5,7 +5,7 @@
 //! ([`super::theme_meta`]).
 
 use rune::{El, Tx, col, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 use serde_json::{Value, json};
 
 use super::look_tabs::update;

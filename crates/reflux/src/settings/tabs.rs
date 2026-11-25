@@ -2,7 +2,7 @@
 
 use reflux_store::Store;
 use rune::{El, col, el, icon, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 
 use super::SettingsUi;
 use crate::i18n::t;
@@ -240,7 +240,7 @@ pub(crate) fn section(title: &str, content: El, first: bool, p: &Palette) -> El 
             row()
                 .gap(8.0)
                 .center_y()
-                .child(crate::ui::mark::text(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary), crate::i18n::t(title)))
+                .child(text(crate::i18n::t(title)).font(font(18.0, 600.0).lh(23.4)).color(p.text_primary))
                 .child(link_button(link, false, p)),
         )
         .child(col().w_full().gap(20.0).child(content));

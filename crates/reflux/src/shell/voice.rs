@@ -4,7 +4,6 @@
 //! (`LocalVoiceStateMachine.ts`) and the stream viewer (`WatchStreamOverlay`,
 //! `StreamFocusHeaderInfo`, `StreamSpectatorsPopout`, `ScreenShareBufferingFrame`).
 
-use crate::ui::ChromiumWheel;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1147,7 +1146,7 @@ fn selectable_button<S: 'static>(i: &'static Icon, label: &str, selected: bool, 
 }
 
 /// `.mediaButton`: half the row, 32 tall, a 1px hover-coloured border; green while active.
-fn media_button<S: 'static>(i: &'static Icon, label: &str, active: bool, disabled: bool, p: &Palette, on: impl Fn(&mut S) + 'static) -> El {
+fn media_button<S: 'static>(i: &'static Icon, label: &str, active: bool, disabled: bool, p: &Palette, on: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
     let (bg, fg, border) = if active {
         (mix(p.status_online, Color::TRANSPARENT, 15.0), p.status_online, mix(p.status_online, Color::TRANSPARENT, 30.0))
     } else {
@@ -1169,7 +1168,7 @@ fn media_button<S: 'static>(i: &'static Icon, label: &str, active: bool, disable
         b = b.opacity(0.5);
     } else {
         let hover = if active { mix(p.status_online, Color::TRANSPARENT, 20.0) } else { mix(p.control_button_normal_text, Color::TRANSPARENT, 10.0) };
-        b = b.hover(hover).cursor(rune::Cursor::Pointer).on_press(on);
+        b = b.hover(hover).cursor(rune::Cursor::Pointer).on_press_tx(on);
         if !active {
             // `:hover` border: a ring over the resting one, shown with the hover group.
             b = b.child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(dim::RADIUS_MD).border(1.0, p.background_modifier_selected).group_opacity(0.0, 1.0));
@@ -1262,18 +1261,26 @@ pub fn panel<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Shell
     // `LocalParticipantControls`: a right-click on the camera opens its settings menu; while
     // sharing, a click or right-click on the share button opens `ActiveScreenShareMenu`.
     let cam_disabled = !v.connected || !can_stream || !cam_ok;
-    let mut camera = media_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, cam_disabled, p, move |s: &mut S| {
+    let mut camera = media_button(if v.camera { &icons::CAMERA_FILL } else { &icons::CAMERA_SLASH_FILL }, camera_label, v.camera, cam_disabled, p, move |s: &mut S, _| {
         acc(s).intents.push(Intent::Voice(Op::ToggleCamera))
     });
     if !cam_disabled {
         camera = camera.on_secondary_press(move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(super::call::MENU_CAMERA, [at.x, at.y]));
     }
     let share_disabled = !v.connected || !can_stream;
-    let mut share = media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, share_disabled, p, move |s: &mut S| {
+    let mut share = media_button(&icons::MONITOR_PLAY_FILL, screen_label, v.screen, share_disabled, p, move |s: &mut S, tx| {
         let sh = acc(s);
-        // shortcut: Rune's press has no pointer position, so a click anchors the menu to the
-        // button where Fluxer opens it at the pointer; a right-click opens at the pointer.
-        if sh.voice.screen { sh.popups.toggle(SHARE_MENU) } else { super::call::open_screen_picker(sh) }
+        if sh.voice.screen {
+            if sh.popups.is_open(SHARE_MENU) {
+                sh.popups.close();
+            } else if let Some(pt) = tx.press_point() {
+                sh.popups.open_at(SHARE_MENU, [pt.x, pt.y]);
+            } else {
+                sh.popups.toggle(SHARE_MENU);
+            }
+        } else {
+            super::call::open_screen_picker(sh);
+        }
     });
     if v.screen && !share_disabled {
         share = share.key(SHARE_MENU).on_secondary_press(move |s: &mut S, at: rune::PointerPress, _: &mut rune::Tx| acc(s).popups.open_at(SHARE_MENU, [at.x, at.y]));
@@ -1687,7 +1694,7 @@ fn spectators_card<S: 'static>(store: &Store, st: &ShellState, guild: Option<Sno
             .child(icon(if w.mobile { &icons::DEVICE_MOBILE } else { &icons::DESKTOP }, 14.0).color(p.text_primary_muted));
         list = list.child(row);
     }
-    card.child(crate::ui::misc::scroller(list.max_h(272.0).scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("voice-watchers"), false, p))
+    card.child(crate::ui::misc::scroller(list.max_h(272.0).scroll(rune::ScrollSpec { stick_bottom: false }), false, p))
 }
 
 /// `ScreenShareBufferingFrame`: nine dots orbiting the centre over black, sized by the frame's

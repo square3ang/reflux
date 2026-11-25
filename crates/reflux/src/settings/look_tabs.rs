@@ -4,7 +4,7 @@
 
 use reflux_store::Store;
 use rune::{El, TextEdit, Tx, col, el, row, text_input};
-use crate::ui::mark::marked as text;
+use rune::text;
 use serde_json::json;
 
 use super::desktop_tabs;
@@ -65,7 +65,7 @@ fn radio<S: 'static>(p: &Palette, options: &[(&str, &str, Option<&str>)], value:
 }
 
 fn muted(s: &str, p: &Palette) -> El {
-    crate::ui::mark::marked(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap()
+    text(s).font(font(14.0, 400.0).lh(20.0)).color(p.text_secondary).wrap()
 }
 
 /// A numeric select whose options are `values` labelled by `label`.

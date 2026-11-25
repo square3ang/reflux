@@ -295,9 +295,6 @@ pub struct Names<'a> {
     pub emoji: &'a dyn Fn(&str) -> Option<Option<rune::Pixels>>,
 }
 
-/// Stands in for an emoji image (`.inlineEmojiImage`, 20 square, then the 4 gap) in the text.
-const EMOJI_SLOT: &str = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
-
 const TEXT_MAX: usize = 200;
 
 fn duration(secs: f64) -> String {
@@ -413,9 +410,8 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
                 let (txt, code, dot) = placeholder(p, n);
                 // `renderEmoji`: a known custom emoji's image before its `:name:`.
                 if let Some(link) = link_of(p, n).filter(|l| l.starts_with("emoji:")) {
-                    let start = out.len();
-                    out.push_str(EMOJI_SLOT);
-                    spans.push((start..out.len(), false, None, Some(link)));
+                    let at = out.len();
+                    spans.push((at..at, false, None, Some(link)));
                 }
                 let start = out.len();
                 out.push_str(&txt);
@@ -433,45 +429,37 @@ pub fn compose(st: &Sentence, n: &Names) -> (String, Vec<Styled>) {
     (out, spans)
 }
 
-/// The sentence as a wrapping text element; `key` names it (its emoji images find their slots
-/// through it). `links` wires the text's links.
+/// The sentence as a wrapping text element with in-flow emoji images (`El::inline`). `links`
+/// wires the text's links.
 pub fn sentence(st: &Sentence, n: &Names, size: f32, color: Color, p: &Palette, key: &str, links: impl FnOnce(El) -> El) -> El {
     let (txt, ranges) = compose(st, n);
     let lh = size * 1.45;
     let emoji_id = |l: &Option<String>| l.as_deref().and_then(|l| l.strip_prefix("emoji:")).map(str::to_string);
     let spans = ranges
         .iter()
-        .flat_map(|(r, code, dot, link)| match (code, dot) {
-            _ if emoji_id(link).is_some() => crate::shell::markdown::sized_placeholder(&Span::new(r.start, r.end).color(Color::TRANSPARENT), size, lh, 24.0, 20.0).to_vec(),
-            (_, Some(c)) => vec![Span::new(r.start, r.end).color(*c)],
-            (true, _) => vec![Span::new(r.start, r.end).mono().size(size - 1.0).bg(p.bg_code_block, 2.0)],
-            _ => vec![Span::new(r.start, r.end).bold().color(p.text_primary)],
+        .filter(|(_, _, _, link)| emoji_id(link).is_none())
+        .map(|(r, code, dot, _)| match (code, dot) {
+            (_, Some(c)) => Span::new(r.start, r.end).color(*c),
+            (true, _) => Span::new(r.start, r.end).mono().size(size - 1.0).bg(p.bg_code_block, 2.0),
+            _ => Span::new(r.start, r.end).bold().color(p.text_primary),
         })
         .collect::<Vec<_>>();
-    let mut e = rich(txt, spans).font(font(size, 400.0).lh(lh)).color(color).wrap().key(key);
-    let mut slots = Vec::new();
+    let mut e = rich(txt, spans).font(font(size, 400.0).lh(lh)).color(color).wrap().w_full().key(key);
+    let slot = rune::InlineBox::new(24.0, 20.0).align(rune::InlineAlign::TextBottom);
     for (i, (r, _, _, link)) in ranges.into_iter().enumerate() {
         match (emoji_id(&link), link) {
-            (Some(id), _) => slots.push((format!("{key}-e{i}"), r, id)),
+            (Some(id), _) => {
+                let img = match (n.emoji)(&id).flatten() {
+                    Some(px) => rune::row().items_end().child(rune::el().size(20.0, 20.0).pixels_fit(&px, rune::SurfaceFit::Fit)),
+                    None => rune::el(),
+                };
+                e = e.inline(r.start, slot, img.key(format!("img-{key}-e{i}")));
+            }
             (None, Some(id)) => e = e.link(rune::Link::new(r, id).hover(rune::LinkPaint::new().underline(p.text_primary))),
             _ => {}
         }
     }
-    if slots.is_empty() {
-        return links(e);
-    }
-    e = e.text_highlights(slots.iter().map(|(k, r, _)| rune::TextHighlight::new(r.clone(), Color::TRANSPARENT).key(k.clone())));
-    // Slots are found where the text was laid out last frame; `vertical-align: bottom`.
-    let at = rune::memo::layout(key);
-    let imgs: Vec<El> = slots
-        .iter()
-        .filter_map(|(k, _, id)| {
-            let (t, s) = (at?, rune::memo::layout(k)?);
-            let px = (n.emoji)(id)??;
-            Some(rune::el().key(format!("img-{k}")).absolute(s[0] - t[0], s[1] - t[1] + s[3] - 20.0).size(20.0, 20.0).pixels_fit(&px, rune::SurfaceFit::Fit))
-        })
-        .collect();
-    rune::col().w_full().child(links(e.w_full())).children(imgs)
+    links(e)
 }
 
 #[cfg(test)]

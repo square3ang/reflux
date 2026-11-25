@@ -73,7 +73,20 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     }
     let sh = s.shell_demo.as_ref().map_or(&s.app.shell, |d| &d.shell);
     let (a, b) = sh.composer.range();
-    compose::CARET.set(if sh.composer.focused && a != b { cx.caret("composer") } else { None });
+    compose::CARET.set(if sh.composer.focused && a != b {
+        let rects = cx.field_selection_rects("composer");
+        if rects.is_empty() {
+            cx.caret("composer")
+        } else {
+            let x0 = rects.iter().map(|r| r[0]).fold(f32::INFINITY, f32::min);
+            let y0 = rects.iter().map(|r| r[1]).fold(f32::INFINITY, f32::min);
+            let x1 = rects.iter().map(|r| r[0] + r[2]).fold(f32::NEG_INFINITY, f32::max);
+            let y1 = rects.iter().map(|r| r[1] + r[3]).fold(f32::NEG_INFINITY, f32::max);
+            Some([x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)])
+        }
+    } else {
+        None
+    });
     quick_css_syntax::CARET.set(if sh.form.text.get("quick-css").is_some_and(|e| e.focused) { cx.caret("quick-css") } else { None });
     let content = crash::shown().is_none().then(|| {
         crash::guard(|| match (&s.gallery, &s.shell_demo) {
@@ -151,8 +164,6 @@ fn main() {
                 crash::poll(s);
                 return false;
             }
-            #[cfg(target_os = "linux")]
-            desktop::wl_drop::pump();
             crash::guard(|| match &mut s.shell_demo {
                 Some(d) => {
                     let older = d.serve_older(tx);

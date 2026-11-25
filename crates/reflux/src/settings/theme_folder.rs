@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
 use rune::{El, Tx, col, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 
 use super::look_tabs::update;
 use crate::i18n::{t, tf, tp};

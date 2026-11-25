@@ -2,10 +2,9 @@
 //! `MessagePreview.module.css`): newest pin first, Jump and Unpin on hover, more on scroll.
 //! Pins load once per channel and follow the gateway like `ChannelPins.ts`. The popout resizes
 //! like `useResizablePane` (default 480×640, min 320×200, 16px from the window, size kept).
-// shortcut: only the left and bottom edges resize (the ones facing away from the anchor; Rune
-// has no diagonal resize cursor for corners and the anchored edges would need re-placement).
+// shortcut: only the left, bottom, and bottom-left edges resize (the ones facing away from the
+// anchor; the anchored top/right edges would need re-placement).
 
-use crate::ui::ChromiumWheel;
 use reflux_model::{Channel, ChannelType, Message, Permissions, Snowflake};
 use reflux_store::Store;
 use rune::{El, ScrollSpec, col, el, icon, row, text};
@@ -83,17 +82,35 @@ fn size(st: &ShellState) -> (f32, f32) {
     (w.clamp(MIN_SIZE.0, (vw - 2.0 * VIEWPORT_PADDING).max(MIN_SIZE.0)), h.clamp(MIN_SIZE.1, (vh - top - VIEWPORT_PADDING).max(MIN_SIZE.1)))
 }
 
-/// A resize strip: `horizontal` drags the left edge, else the bottom one.
-fn handle<S: 'static>(horizontal: bool, acc: ShellAccess<S>) -> El {
-    let strip = if horizontal { el().pin(Some(0.0), Some(-4.0), None, Some(0.0)).w(8.0).cursor(rune::Cursor::ResizeColumn) } else { el().pin(None, Some(0.0), Some(-4.0), Some(0.0)).h(8.0).cursor(rune::Cursor::ResizeRow) };
-    let label = if horizontal { "Resize pinned messages from the left edge" } else { "Resize pinned messages from the bottom edge" };
-    strip.role("separator").label(t(label)).key(format!("pins-resize-{}", if horizontal { "left" } else { "bottom" })).on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
+#[derive(Clone, Copy)]
+enum Edge {
+    Left,
+    Bottom,
+    BottomLeft,
+}
+
+/// A resize strip or corner handle on the edges facing away from the anchor.
+fn handle<S: 'static>(edge: Edge, acc: ShellAccess<S>) -> El {
+    thread_local! {
+        static START: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((0.0, 0.0)) };
+    }
+    let (strip, label, id) = match edge {
+        Edge::Left => (el().pin(Some(-4.0), Some(0.0), None, Some(0.0)).w(8.0).cursor(rune::Cursor::ResizeEw), "Resize pinned messages from the left edge", "left"),
+        Edge::Bottom => (el().pin(Some(0.0), None, Some(0.0), Some(-4.0)).h(8.0).cursor(rune::Cursor::ResizeNs), "Resize pinned messages from the bottom edge", "bottom"),
+        Edge::BottomLeft => (el().pin(Some(-4.0), None, None, Some(-4.0)).size(12.0, 12.0).cursor(rune::Cursor::ResizeNesw), "Resize pinned messages from the bottom-left corner", "bottom-left"),
+    };
+    strip.role("separator").label(t(label)).key(format!("pins-resize-{id}")).on_drag(move |s: &mut S, d: &mut rune::Drag, _| {
         let st = acc(s);
-        let (w, h) = size(st);
         if d.phase == rune::Phase::Down {
-            d.data = if horizontal { w } else { h };
+            START.set(size(st));
         }
-        st.prefs.pins_popout_size = Some(if horizontal { ((d.data - d.dx).round(), h) } else { (w, (d.data + d.dy).round()) });
+        let (w0, h0) = START.get();
+        let next = match edge {
+            Edge::Left => ((w0 - d.dx).round(), h0),
+            Edge::Bottom => (w0, (h0 + d.dy).round()),
+            Edge::BottomLeft => ((w0 - d.dx).round(), (h0 + d.dy).round()),
+        };
+        st.prefs.pins_popout_size = Some(next);
         let fitted = size(st);
         st.prefs.pins_popout_size = Some(fitted);
         if d.phase == rune::Phase::Up {
@@ -163,7 +180,7 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
             list = list.child(state(&icons::FLAG_CHECKERED_FILL, 48.0, t("You're at the end"), t("Pinned messages show up here."), 200.0, p).key("end"));
         }
     }
-    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("pins-list").key("pins-list").child(list), false, p);
+    let body = scroller(col().w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).key("pins-list").child(list), false, p);
     let (w, h) = size(st);
     let surface = col()
         .size(w, h)
@@ -176,8 +193,9 @@ pub fn popout<S: 'static>(store: &Store, st: &ShellState, c: &Channel, p: &Palet
         .label(t("Pinned messages"))
         .child(header)
         .child(col().w_full().grow(1.0).min_h(0.0).child(body))
-        .child(handle(true, acc))
-        .child(handle(false, acc))
+        .child(handle(Edge::Left, acc))
+        .child(handle(Edge::Bottom, acc))
+        .child(handle(Edge::BottomLeft, acc))
         .modal(true, move |s: &mut S| acc(s).popups.close());
     layer.push(anchor(surface, POPOUT, Placement::BottomEnd, 8.0));
 }

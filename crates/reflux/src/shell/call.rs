@@ -1777,8 +1777,7 @@ pub fn region_options(st: &ShellState) -> Vec<(String, String)> {
             out.push((id.to_string(), region_display_name(id, r["name"].as_str().unwrap_or_default())));
         }
     }
-    // shortcut: `localeCompare` is approximated by a case-insensitive compare.
-    out.sort_by_key(|(_, n)| n.to_lowercase());
+    out.sort_by(|(_, a), (_, b)| rune::text::compare_names(a, b));
     out.insert(0, ("automatic".to_string(), t("Automatic").to_string()));
     out
 }
@@ -2070,12 +2069,15 @@ fn call_participants_row<S: 'static>(store: &Store, st: &ShellState, c: &Channel
         let face = match in_call(u) {
             Some(vs) => super::voice::voice_avatar(store, st, u, size, st.voice.speaking.contains(&u), vs.mute || vs.self_mute, vs.deaf || vs.self_deaf, surface, p).participant_menu(u, None, acc),
             None => {
-                // `.callParticipantRinging`: a 2.2s white ring spreading max(8, 18%) and fading.
-                // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread
-                // instead of growing; brightness(.55) saturate(.85) is a .55 dim over the dark banner.
-                let spread = (size * 0.18).round().max(8.0) / 2.0;
+                // `.callParticipantRinging`: a 2.2s white ring spreading max(8, 18%) and fading;
+                // brightness(.55) saturate(.85) is a .55 dim over the dark banner.
+                const PULSE: &[rune::Beat] = &[
+                    rune::Beat::new(0.0).opacity(0.6).scale(1.0),
+                    rune::Beat::new(1.5).opacity(0.0).scale(1.36).easing(rune::Easing::EASE_OUT),
+                    rune::Beat::new(2.2).opacity(0.0).scale(1.36).easing(rune::Easing::LINEAR),
+                ];
                 el().size(size, size)
-                    .child(el().pin(Some(-spread), Some(-spread), Some(-spread), Some(-spread)).radius(999.0).fill(rgba(255, 255, 255, 0.25)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 1.0)))
+                    .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(999.0).fill(rgba(255, 255, 255, 0.35)).looping(rune::LoopSpec::sequence(rune::Sequence::new(PULSE).repeating())))
                     .child(avatar(store, st, u, size, None, surface, p).dim(0.55))
                     .on_secondary_press(move |s: &mut S, at, _| acc(s).open_menu(super::Target::User { user: u, guild: None, dm: None }, [at.x, at.y]))
             }
@@ -2505,9 +2507,7 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
     let ignore: std::rc::Rc<dyn Fn(&mut S)> = if mocked { std::rc::Rc::new(end_mock) } else { std::rc::Rc::new(ignore_call(acc, channel, me)) };
     let secondary = rgba(235, 235, 245, 0.55);
     let shadow = |y: f32, blur: f32, color: Color| Shadow { x: 0.0, y, blur, spread: 0.0, color, inset: false };
-    // `.circleButton`: 64px, its colour's glow; hover is the lighter colour.
-    // shortcut: Rune has no brightness filter or pressed offset, so hover only swaps the colour
-    // and a press doesn't move the button 1px down.
+    // `.circleButton`: 64px, its colour's glow; hover is the lighter colour, press shifts 1px down.
     let circle = |glyph: El, bg: Color, hover: Color, glow: Color, label: &str, on: Box<dyn Fn(&mut S)>| {
         col()
             .gap(10.0)
@@ -2519,6 +2519,7 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
                     .radius(32.0)
                     .fill(bg)
                     .hover(hover)
+                    .press_offset(0.0, 1.0)
                     .box_shadow(shadow(6.0, 16.0, glow))
                     .cursor(rune::Cursor::Pointer)
                     .role("button")
@@ -2533,10 +2534,14 @@ pub fn incoming<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: Sh
         None => avatar(store, st, caller, 80.0, None, rgb(0x2c, 0x2c, 0x2e), p),
     };
     // `.avatar`: a 96px shell with a 2.2s ring pulse spreading 10px.
-    // shortcut: Rune loops opacity only, so the ring fades in and out at half its spread.
+    const INCOMING_PULSE: &[rune::Beat] = &[
+        rune::Beat::new(0.0).opacity(0.5).scale(1.0),
+        rune::Beat::new(1.5).opacity(0.0).scale(1.21).easing(rune::Easing::EASE_OUT),
+        rune::Beat::new(2.2).opacity(0.0).scale(1.21).easing(rune::Easing::LINEAR),
+    ];
     let face = el()
         .size(96.0, 96.0)
-        .child(el().pin(Some(-5.0), Some(-5.0), Some(-5.0), Some(-5.0)).radius(999.0).fill(rgba(255, 255, 255, 0.18)).looping(rune::LoopSpec::opacity(2.2, 0.0, 0.0, 0.5)))
+        .child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).radius(999.0).fill(rgba(255, 255, 255, 0.25)).looping(rune::LoopSpec::sequence(rune::Sequence::new(INCOMING_PULSE).repeating())))
         .child(row().w_full().h_full().center().radius(999.0).fill(rgba(255, 255, 255, 0.04)).box_shadow(shadow(12.0, 28.0, rgba(0, 0, 0, 0.45))).clip_rounded(48.0).child(face));
     let stack = col()
         .w_full()
@@ -2745,13 +2750,12 @@ pub fn pip<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellAc
         .child(el().w_full().h_full().pixels_fit(&st.voice.stream, rune::SurfaceFit::Fit))
         .child(hud)
         // `PiPOverlay`'s bottom-right resize grip: 240px up to 70% of the window, 16:9.
-        // shortcut: Rune has no diagonal resize cursor, so it shows the row one.
         .child(
             el()
                 .key("pip-resize")
                 .pin(None, None, Some(0.0), Some(0.0))
                 .size(18.0, 18.0)
-                .cursor(rune::Cursor::ResizeRow)
+                .cursor(rune::Cursor::ResizeNwse)
                 .role("separator")
                 .label(t("Resize stream"))
                 .on_drag(move |s: &mut S, d: &mut rune::Drag, _| {

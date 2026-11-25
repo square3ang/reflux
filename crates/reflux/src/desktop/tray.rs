@@ -25,10 +25,9 @@ pub fn menu(l: &Look) -> Vec<TrayItem> {
         TrayItem::action("mute", t(if l.mute { "Unmute microphone" } else { "Mute microphone" })),
         TrayItem::action("deafen", t(if l.deaf { "Undeafen" } else { "Deafen" })),
     ];
-    // shortcut: Fluxer only adds Disconnect while connected, but Rune's SNI menu numbers items
-    // by position and KDE keeps an id's old type across a layout update (a separator stays one,
-    // wearing the next label). Keeping the shape fixed avoids that; disabled outside a call.
-    m.push(TrayItem::action("disconnect", t("Disconnect")).enabled(l.in_voice));
+    if l.in_voice {
+        m.push(TrayItem::action("disconnect", t("Disconnect")));
+    }
     m.push(TrayItem::Separator);
     m.push(TrayItem::action("quit", tf("Quit {appName}", &app)));
     m

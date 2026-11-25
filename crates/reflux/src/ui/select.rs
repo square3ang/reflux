@@ -1,7 +1,6 @@
 //! `<Select>`: Fluxer's read-only `FormCombobox` (`components/form/FormCombobox.module.css`),
 //! default and compact sizes.
 
-use crate::ui::ChromiumWheel;
 use std::f32::consts::PI;
 use std::rc::Rc;
 
@@ -142,7 +141,7 @@ impl<'a, S: 'static> Select<'a, S> {
                         .key(format!("{}-list", self.id))
                         .w_full()
                         .max_h(300.0)
-                        .scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>(format!("{}-list", self.id))
+                        .scroll(rune::ScrollSpec { stick_bottom: false })
                         .child(col().w_full().pt(4.0).px(4.0).pb(4.0).gap(1.0).children(rows)),
                     false,
                     p,
@@ -157,7 +156,7 @@ impl<'a, S: 'static> Select<'a, S> {
         }
 
         match self.label {
-            Some(l) => col().gap(4.0).child(super::mark::marked(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)).child(trigger),
+            Some(l) => col().gap(4.0).child(text(l).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)).child(trigger),
             None => trigger,
         }
     }

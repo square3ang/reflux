@@ -23,8 +23,6 @@ pub mod tts;
 mod tray;
 pub mod updater;
 pub mod window;
-#[cfg(target_os = "linux")]
-pub(crate) mod wl_drop;
 
 use std::collections::{HashSet, VecDeque};
 
@@ -225,7 +223,7 @@ pub fn demo(sh: &mut crate::shell::ShellState, store: &mut reflux_store::Store, 
             spell::insert("dictionary-en", dict);
             sh.composer = rune::TextEdit::new("this is a tset of speling ");
             sh.composer.set_caret(12);
-            nagbar::open_spell_menu(sh, [560.0, 640.0], false);
+            nagbar::open_spell_menu(sh, [560.0, 640.0], false, None);
         }
         "toast" => toast(&mut sh.desktop, "Added \"Fluxer\" to dictionary", true),
         "streamer" => {
@@ -322,9 +320,7 @@ pub fn start(ui: &rune::AppHandle<State>) {
             ui.update(move |s, _| open_link(s, &l));
         }
     }
-    #[cfg(target_os = "linux")]
-    wl_drop::set_app(ui.clone());
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(target_os = "macos"))]
     let _ = ui;
 }
 

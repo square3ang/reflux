@@ -3,7 +3,6 @@
 //! (`KeyboardShortcutsCheatsheetModal`) and the first-Tab `KeyboardModeIntroModal`. Kept per
 //! account on this device ([`super::AccountPrefs`]).
 
-use crate::ui::ChromiumWheel;
 use rune::{Color, El, Key, KeyEvent, Shadow, col, el, icon, row, text};
 use serde::{Deserialize, Serialize};
 
@@ -77,9 +76,17 @@ pub fn label(a: Action) -> String {
     }
 }
 
+/// First Tab anywhere in the shell (from `El::on_key_preview`, before a focused field consumes
+/// Tab) turns on the keyboard-mode intro once.
+pub fn preview_tab(sh: &mut ShellState, k: &KeyEvent) {
+    if k.key == Key::Tab && !mine(sh).keyboard_intro_seen && sh.settings.is_none() && sh.dialog.is_none() {
+        sh.nav.keyboard_intro = true;
+        update_mine(sh, |m| m.keyboard_intro_seen = true);
+    }
+}
+
 /// Keys the shell takes before any keybind: the recorder's capture ("Keybinds are paused
-/// while recording"), and the first Tab with nothing focused turning on keyboard mode.
-// shortcut: a Tab inside a field moves focus without showing the intro.
+/// while recording").
 pub fn on_key(sh: &mut ShellState, k: &KeyEvent) -> bool {
     // The popout closed some other way (the settings modal or its tab changed, a press outside):
     // recording ends with it.
@@ -101,10 +108,7 @@ pub fn on_key(sh: &mut ShellState, k: &KeyEvent) -> bool {
         }
         return true;
     }
-    if k.key == Key::Tab && !mine(sh).keyboard_intro_seen && sh.settings.is_none() && sh.dialog.is_none() {
-        sh.nav.keyboard_intro = true;
-        update_mine(sh, |m| m.keyboard_intro_seen = true);
-    }
+    preview_tab(sh, k);
     false
 }
 
@@ -673,7 +677,7 @@ fn cheatsheet<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>) -> 
         .label(t("Keybinds"))
         .focusable(true)
         .focus_ring(2.0, -2.0, p.focus_primary)
-        .scroll(rune::ScrollSpec { stick_bottom: false }).chromium_wheel::<S>("keybinds")
+        .scroll(rune::ScrollSpec { stick_bottom: false })
         .child(row().w_full().gap(12.0).px(14.0).py(14.0).items_start().children(cols))
         .modal(true, close);
     el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

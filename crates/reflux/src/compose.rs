@@ -76,16 +76,10 @@ pub fn emoji_pill(id: &str) -> Option<Snowflake> {
     id.parse().ok().map(Snowflake)
 }
 
-/// `.customEmoji` in the composer: 1.375em (22px at 16px) and 1px either side.
-pub const EMOJI_SIDE: f32 = 22.0;
-
-/// A custom emoji pill's label: no-break spaces that, with the chip's margin and padding
-/// (Rune's `PillMetrics` at 16px: 2 × 7.68), make the pill `.customEmoji`'s 24px. The emoji's
-/// image is drawn over it; the chip itself is transparent.
+/// A custom emoji pill's zero-width label: `El::pill_image` draws the image in the chip's
+/// leading slot, and `serialize` swaps the pill back for its `<a:name:id>` token.
 pub fn emoji_label() -> String {
-    let nbsp = rune::text::advance("\u{a0}", crate::theme::font(16.0, 400.0)).max(1.0);
-    let room = EMOJI_SIDE + 2.0 - 2.0 * (16.0f32 * 0.12 + 16.0 * 0.36);
-    "\u{a0}".repeat(((room / nbsp).round() as usize).max(1))
+    "\u{200b}".to_string()
 }
 
 /// What a typed `:name:` becomes (`resolveTypedEmojiToken`): a unicode emoji's text, or a
@@ -306,22 +300,21 @@ pub fn toggle(edit: &mut TextEdit, w: &str) {
 }
 
 thread_local! {
-    /// The composer's caret line `[x, y, w, h]` (zoomed points) while it has a selection, read
-    /// from `Cx::caret` by the root view; the format toolbar floats above it.
+    /// The composer's selection bounding rect `[x, y, w, h]` (zoomed points) while it has a
+    /// selection, read from `Cx::field_selection_rects` by the root view; the format toolbar
+    /// floats above it.
     pub static CARET: std::cell::Cell<Option<[f32; 4]>> = const { std::cell::Cell::new(None) };
 }
 
 /// The format toolbar over the composer's selection (`FormattingToolbar`), in the root layer.
 pub fn floating_toolbar<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) {
     let Some(c) = CARET.get() else { return };
-    layer.push(rune::el().key("format-caret").absolute(c[0], c[1]).size(1.0, 1.0));
+    layer.push(rune::el().key("format-caret").absolute(c[0], c[1]).size(c[2].max(1.0), c[3].max(1.0)));
     layer.push(toolbar(&st.composer, p, acc).anchored("format-caret", rune::Side::Top, rune::Align::Center, 8.0));
 }
 
 /// `.toolbar`: 3 padding, 2 gap, radius 8, 1px border, 0 4 12 shadow; 28px buttons with an
 /// 18px icon, radius 5. Pressing keeps the composer focused.
-// shortcut: Rune exposes the caret's rect, not the selection's, so the bar centres over the
-// caret end of the selection; no Alt+F10 roving.
 pub fn toolbar<S: 'static>(edit: &TextEdit, p: &Palette, acc: ShellAccess<S>) -> El {
     let mut bar = row()
         .key("format-toolbar")
@@ -357,7 +350,6 @@ pub fn toolbar<S: 'static>(edit: &TextEdit, p: &Palette, acc: ShellAccess<S>) ->
 
 /// `TextareaContextMenu`'s Undo/Redo and Cut/Copy/Paste/Select all groups, after the spelling
 /// items.
-// shortcut: Undo and Redo are always enabled (Rune doesn't expose the history depth).
 pub fn edit_items<S: 'static>(st: &ShellState, mut m: Menu<S>, after_spelling: bool, acc: ShellAccess<S>) -> Menu<S> {
     let close = move |s: &mut S| {
         let sh = acc(s);
@@ -366,14 +358,15 @@ pub fn edit_items<S: 'static>(st: &ShellState, mut m: Menu<S>, after_spelling: b
     };
     let draft = if st.desktop.menu_pane { &st.threads.composer } else { &st.composer };
     let has_sel = draft.range().0 != draft.range().1;
+    let (undo_len, redo_len) = draft.history_len();
     if after_spelling {
         m = m.separator();
     }
-    m.item(MenuItem::new("undo", "Undo").icon(&icons::ARROW_COUNTER_CLOCKWISE_FILL).on_select(move |s: &mut S| {
+    m.item(MenuItem::new("undo", "Undo").icon(&icons::ARROW_COUNTER_CLOCKWISE_FILL).disabled(undo_len == 0).on_select(move |s: &mut S| {
         menu_draft(acc(s)).undo();
         close(s);
     }))
-    .item(MenuItem::new("redo", "Redo").icon(&icons::ARROW_CLOCKWISE_FILL).on_select(move |s: &mut S| {
+    .item(MenuItem::new("redo", "Redo").icon(&icons::ARROW_CLOCKWISE_FILL).disabled(redo_len == 0).on_select(move |s: &mut S| {
         menu_draft(acc(s)).redo();
         close(s);
     }))

@@ -924,7 +924,13 @@ pub fn view<S: 'static>(store: &Store, st: &ShellState, p: &Palette, acc: ShellA
     layer.extend(badges::list_modal(st, p, acc));
     badges::tip_layer(st, p, &mut layer);
     layer.extend(neko::view(st, p, acc));
-    let body = body.on_pointer_move(move |s: &mut S, at| neko::track(acc(s), at.x, at.y)).on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
+    let body = body
+        .on_pointer_move(move |s: &mut S, at| neko::track(acc(s), at.x, at.y))
+        .on_key_preview(move |s: &mut S, k: &rune::KeyEvent, _| {
+            crate::nav::keys::preview_tab(acc(s), k);
+            false
+        })
+        .on_key_up(move |s: &mut S, k: &rune::KeyEvent, _| {
         let sh = acc(s);
         let key = crate::keybinds::key_name(k);
         if sh.voice.ptt_held && sh.voice.settings.ptt_key.as_deref() == Some(key.as_str()) {

@@ -10,7 +10,7 @@ use reflux_model::{Permissions, Snowflake};
 use reflux_store::Store;
 use reqwest::Method;
 use rune::{El, TextEdit, col, el, row, text_input};
-use crate::ui::mark::marked as text;
+use rune::text;
 use serde_json::{Map, Value};
 
 use super::account::{AccountModal, muted, open, small_button, txt};
@@ -148,7 +148,7 @@ pub(crate) fn picked_px(st: &ShellState, url: &str) -> Option<rune::Pixels> {
 // ---- View --------------------------------------------------------------------------------------
 
 fn label(s: &str, p: &Palette) -> El {
-    crate::ui::mark::marked(s).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)
+    text(s).font(font(14.0, 500.0).lh(20.0)).color(p.text_primary)
 }
 
 pub(super) fn tab<S: 'static>(store: &Store, st: &ShellState, ui: &SettingsUi, p: &Palette, acc: ShellAccess<S>, layer: &mut Vec<El>) -> El {

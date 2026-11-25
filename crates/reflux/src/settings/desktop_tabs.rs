@@ -4,7 +4,7 @@
 //! (`appearance_tab/{ScalingTab,StreamerModeTab}.tsx`).
 
 use rune::{El, col, row};
-use crate::ui::mark::marked as text;
+use rune::text;
 
 use super::tabs::section;
 use crate::desktop::Prefs;

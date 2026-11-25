@@ -200,12 +200,13 @@ pub fn layer<S: 'static>(st: &ShellState, p: &Palette, acc: ShellAccess<S>, laye
 }
 
 /// The composer's right click (`TextareaContextMenu`): the spelling items for the misspelling
-/// at (or before) the caret, then the edit groups. `pane`: the thread panel's composer.
-pub fn open_spell_menu(sh: &mut ShellState, at: [f32; 2], pane: bool) -> bool {
+/// at `offset` (pointer offset from `Tx::text_offset_at`, else the caret), then the edit groups.
+/// `pane`: the thread panel's composer.
+pub fn open_spell_menu(sh: &mut ShellState, at: [f32; 2], pane: bool, offset: Option<usize>) -> bool {
     sh.desktop.menu_pane = pane;
     let d = if pane { &sh.threads.composer } else { &sh.composer };
-    let (caret, _) = d.range();
-    sh.desktop.spell_menu = if sh.prefs.spellcheck { super::spell::pick(&d.text, caret) } else { None };
+    let at_byte = offset.unwrap_or_else(|| d.range().0);
+    sh.desktop.spell_menu = if sh.prefs.spellcheck { super::spell::pick(&d.text, at_byte) } else { None };
     sh.popups.open_at("spell-menu", at);
     true
 }
